@@ -29,7 +29,7 @@ export function componentModule(relative, { user = '', project = 'default', stor
       jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
     } }).outputText;
     vm.runInNewContext(code, {
-      module, exports: module.exports, console, Date, Math, JSON, URL,
+      module, exports: module.exports, console, Date, Math, JSON, URL, AbortController, AbortSignal,
       localStorage: storage, sessionStorage: storage,
       window: { location: { pathname: "/", origin: "http://127.0.0.1:7860" } },
       setTimeout, clearTimeout, setInterval, clearInterval, ...globals,

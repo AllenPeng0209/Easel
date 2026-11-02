@@ -15,6 +15,11 @@ export interface AgentArtifact {
   status: 'available' | 'unavailable';
   createdAt: number;
   url: string;
+  storageMode?: 'snapshot' | 'legacy-current';
+  revision?: number | null;
+  sha256?: string | null;
+  bundleSha256?: string | null;
+  reviewStatus?: 'unreviewed' | 'unknown';
 }
 
 export interface AgentEvent {

@@ -14,11 +14,12 @@
     "production_migration_directories": [
       "composer",
       "message",
-      "navigation"
+      "navigation",
+      "deliverables"
     ],
     "managed_clone_is_gitignored": true
   },
-  "status_notice": "D01 committed as 3086ca8. C19 initialization race verified and pending its own commit; other backlog requirements remain incomplete.",
+  "status_notice": "D01 committed 3086ca8; C19 initialization committed f5118d9; D08 immutable delivery storage/preview slice verified in this feature commit. B30/D30 approval-version linkage and remaining backlog are open.",
   "selected_packages": [
     {
       "upstream_path": "packages/client/ui-conversation",
@@ -6854,6 +6855,32 @@
       "necessary_changes": "保留上游有限静态依赖/opaque frame内Blob机制；增加图片二进制、当前IP受控related读取及现有尺寸消息；不扩module/CSS递归。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D08",
+      "upstream_path": "packages/client/ui-deliverables/src/client/host-read-store.ts",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "57078fd7b910dca1f2f03f96381f0f1d158c4e513d793f6445ed4e4cb877d09c",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/HostReadStore.ts",
+      "destination_sha256": "0de08f4e10e27af91ca4653feab536f09c7b06a29db20901ef8a2330bae94e01",
+      "reuse_kind": "adapted",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "保留上游fetch-once/cache/retry/dispose生命周期；替换Cordis为Easel URL记录bridge、projectFetch以及可擦除TS构造语法。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "D08_feature_slice_verified"
+    },
+    {
+      "feature_id": "D08",
+      "upstream_path": "packages/client/ui-deliverables/src/client/ReviewTab.module.css",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "bea639f5e84a020eba6aae92929d17ef4de61fa86131c03738efc5493960de0a",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/ReviewTab.module.css",
+      "destination_sha256": "fcd38420002b35347303f29b6bbadecf321238a1619526b7ab9226298ed56971",
+      "reuse_kind": "verbatim",
+      "body_matches_upstream_after_provenance_header": true,
+      "necessary_changes": "原CSS正文不变，仅添加MIT与固定commit来源头。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "D08_feature_slice_verified"
     }
   ],
   "product_backlog": "docs/agent-workbench-backlog.md",
@@ -6963,7 +6990,7 @@
     },
     {
       "destination_path": "web/frontend/src/lib/agentEvents.ts",
-      "destination_sha256": "d6b5929fe1d52460da12a293b11ec9f67883823d792ac5b3dbb1c202da34e594",
+      "destination_sha256": "d69a4e8a22e56b24d47ce7e8f8b9e5e87c3210b7f4ed23eec14a2df04f1aee6d",
       "source_reference": "packages/client/ui-tool/src/client/tool/models/tool-call-model.ts",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
@@ -6972,7 +6999,9 @@
       "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
       "feature_id": "BASELINE",
       "baseline_destination_sha256": "f9b25f587f36ff8f86d72785635705a7c456bd7a51fcc72e65bb7c03188e2004",
-      "working_tree_feature": "D01"
+      "working_tree_feature": "D01",
+      "prior_feature_sha256": "d6b5929fe1d52460da12a293b11ec9f67883823d792ac5b3dbb1c202da34e594",
+      "current_feature": "D08"
     },
     {
       "destination_path": "easel/agent_policy.py",
@@ -7026,42 +7055,50 @@
     {
       "feature_id": "D01",
       "destination_path": "easel/chat_artifacts.py",
-      "destination_sha256": "ed38501031a8f18541ddf7b95a9b8bf4ff834fd54d2f23098ef8b8232b405506",
+      "destination_sha256": "d97d7b79350eaed313dc9133c355f19eba45343328912435fa1ac6b6b7fd0301",
       "source_reference": "packages/deliverables/tool-present/src/index.ts",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
       "changes": "Easel Python当前文件声明store：批次验证、原子保存和严格IP/文件边界；不提供D08不可变快照，非上游Python复制。",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "prior_feature_sha256": "ed38501031a8f18541ddf7b95a9b8bf4ff834fd54d2f23098ef8b8232b405506",
+      "current_feature": "D08"
     },
     {
       "feature_id": "D01",
       "destination_path": "web/frontend/src/lib/deliverables.ts",
-      "destination_sha256": "f1292eba4b8d2253dd02031b69b6a88d41529b23c4ebeeecf31523ba204b3de6",
+      "destination_sha256": "d7c5b167463fa61b1e809f4e6b774271f4a832a420601c4533d94a92cdabe367",
       "source_reference": "packages/client/ui-deliverables/src/client/turn-deliverables.ts",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
       "changes": "结构化artifact事件到Easel授权文件卡的映射、路径校验与旧画廊去重。",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "prior_feature_sha256": "f1292eba4b8d2253dd02031b69b6a88d41529b23c4ebeeecf31523ba204b3de6",
+      "current_feature": "D08"
     },
     {
       "feature_id": "D01",
       "destination_path": "web/frontend/src/components/DeliverableCards.tsx",
-      "destination_sha256": "24771378fa1d2b78a12a7d72e9b6e5807571915f31095dd26ca2bba8e712bbc6",
+      "destination_sha256": "749a5a06c6ac60a50620e152e457bb9e9dec5ec5664d2ebbabf6d3fc562e2404",
       "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.tsx",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
       "changes": "组合已迁移PresentedFileCard/PresentRow与Easel受控资源访问/预览；组件Host适配，不登记成原样复制。",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "prior_feature_sha256": "24771378fa1d2b78a12a7d72e9b6e5807571915f31095dd26ca2bba8e712bbc6",
+      "current_feature": "D08"
     },
     {
       "feature_id": "D01",
       "destination_path": "web/frontend/src/styles/deliverables.css",
-      "destination_sha256": "54e19c5bd0e2bd23d551fc2674beeae6ce2d441d095706fe2ab100ab660a0bab",
+      "destination_sha256": "f4729b3e0da21e774865bf62b5444d4bbb2b0a80c1ee927278173865a0457d33",
       "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.module.css",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
       "changes": "Easel主题token和容器样式适配。",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "prior_feature_sha256": "54e19c5bd0e2bd23d551fc2674beeae6ce2d441d095706fe2ab100ab660a0bab",
+      "current_feature": "D08"
     },
     {
       "feature_id": "D01",
@@ -7074,19 +7111,61 @@
     {
       "feature_id": "D01",
       "destination_path": "web/frontend/src/lib/htmlPreview.ts",
-      "destination_sha256": "3376e7ccea0d743a2cdda419e1d102580cbe350471e77a5d1703c0a59f65a509",
+      "destination_sha256": "25ad83766703e2abc3dcebe236e69460994f6c34d2605e10e524545b08092639",
       "reuse_kind": "easel_integration_adapter",
       "changes": "原文件和受控related reader绑定；不向iframe提供认证信息或任意API读取能力。",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "prior_feature_sha256": "3376e7ccea0d743a2cdda419e1d102580cbe350471e77a5d1703c0a59f65a509",
+      "current_feature": "D08"
+    },
+    {
+      "feature_id": "D08",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/record-store.ts",
+      "destination_sha256": "f76cc30204eb410ef54068bc89da1323fff6e8257dc8ff3899ee63677a2192b5",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "verification_status": "D08_feature_slice_verified"
+    },
+    {
+      "feature_id": "D08",
+      "destination_path": "web/frontend/src/lib/snapshotArchive.ts",
+      "destination_sha256": "6476d1e62976248146283d991c129f0c8ae375b2c1e8e19a2c6a1273bfa6bc9c",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "verification_status": "D08_feature_slice_verified"
+    },
+    {
+      "feature_id": "D08",
+      "destination_path": "web/frontend/src/components/SnapshotArchivePreview.tsx",
+      "destination_sha256": "8b806d3a65037e27f188b33bce7eb77eadf0f200213ee45b23d55634322077ef",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "verification_status": "D08_feature_slice_verified"
+    },
+    {
+      "feature_id": "D08",
+      "destination_path": "easel/artifact_blobs.py",
+      "destination_sha256": "78e6816c72dae5d0b78ae74c97219a4b97797b2868237ce25f0e32fe0146af47",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "verification_status": "D08_feature_slice_verified"
+    },
+    {
+      "feature_id": "D08",
+      "destination_path": "easel/artifact_archives.py",
+      "destination_sha256": "1a314731726bb252d6b6e09313239492621972903c74ad34215e713649e01ea4",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "verification_status": "D08_feature_slice_verified"
     }
   ],
   "migration_summary": {
-    "source_migration_files": 32,
-    "verbatim_original_bodies": 12,
-    "adapted_upstream_files": 20,
-    "integration_adapters": 22,
+    "source_migration_files": 34,
+    "verbatim_original_bodies": 13,
+    "adapted_upstream_files": 21,
+    "integration_adapters": 27,
     "baseline_source_migration_files": 22,
-    "functional_verification": "baseline_and_D01_verified_other_backlog_remains",
+    "functional_verification": "D01_C19_and_D08_delivery_slice_verified_remaining_backlog_open",
     "sha_notice": "Destination hashes are from the feature-only prospective commit tree, excluding parallel account changes.",
     "D01_source_files_verified": 10
   },
@@ -7205,11 +7284,11 @@
     },
     {
       "path": "web/app.py",
-      "sha256": "c35276e9c343dcd443d5f5314ccb6a6e3b265a5a6919ed8495e34bbedeed2e2f",
+      "sha256": "ce6108b4cb3f4ea9584235dab8a7d9e75cbf5635549b2820dfe4eef90a97df06",
       "role": "Easel native/UI integration code; not a claim of upstream source copying",
       "baseline_sha256": "bdd9009cde83d98ef4420828e2597d6ae284c6411eadead212bdf8be0f7db739",
-      "working_tree_feature": "D01",
-      "verification_status": "included_in_D01_only_verified_snapshot"
+      "working_tree_feature": "D08",
+      "verification_status": "D08_feature_slice_verified"
     },
     {
       "path": "web/frontend/src/App.tsx",
@@ -7229,7 +7308,7 @@
     "sha_notice": "All recorded target hashes refreshed after the final dynamic-tool and countdown changes were frozen on 2026-11-03."
   },
   "baseline_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
-  "current_feature": "C19-initialization",
+  "current_feature": "D08",
   "feature_work": {
     "D01": {
       "status": "verified_committed",
@@ -7374,7 +7453,7 @@
       ]
     },
     "C19-initialization": {
-      "status": "verified_awaiting_feature_commit",
+      "status": "committed_verified",
       "scope": "Only repeated SQLite journal-mode negotiation removed; claim ownership and existing modes preserved. C23 pagination remains separate.",
       "files": [
         "web/chat_history.py",
@@ -7391,7 +7470,160 @@
         "event_prefix_preserved": true,
         "integrity": "all ok"
       },
-      "source_kind": "Easel storage adapter; upstream writer/idempotency semantics preserved, not verbatim Python copying"
+      "source_kind": "Easel storage adapter; upstream writer/idempotency semantics preserved, not verbatim Python copying",
+      "commit": "f5118d9"
+    },
+    "D08": {
+      "status": "verified_feature_slice",
+      "scope": "Immutable captured root/finite HTML dependency bytes, same-call idempotency, scoped revision history, version-pinned ZIP and prose/media preview. Approval-version binding remains B30/D30.",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_contracts": [
+        "packages/deliverables/workspace-changes/src/capture.ts",
+        "packages/client/ui-deliverables/src/client/host-read-store.ts",
+        "packages/client/ui-deliverables/src/client/ReviewTab.module.css"
+      ],
+      "python_notice": "Host adaptation of capture/wx/same-content and existing Easel durable-copy semantics; not a verbatim Python port.",
+      "acceptance_record": "docs/agent-feature-acceptance/D08.md",
+      "runtime_proof": ".scratch/d08/browser-proof.json",
+      "runtime_url": "http://127.0.0.1:7862/",
+      "verification_data_scope": "isolated project+actor sessions; real native Codex; background jobs disabled",
+      "code_snapshots": [
+        {
+          "path": "easel/chat_artifacts.py",
+          "sha256": "d97d7b79350eaed313dc9133c355f19eba45343328912435fa1ac6b6b7fd0301"
+        },
+        {
+          "path": "easel/artifact_blobs.py",
+          "sha256": "78e6816c72dae5d0b78ae74c97219a4b97797b2868237ce25f0e32fe0146af47"
+        },
+        {
+          "path": "easel/artifact_archives.py",
+          "sha256": "1a314731726bb252d6b6e09313239492621972903c74ad34215e713649e01ea4"
+        },
+        {
+          "path": "web/access_control.py",
+          "sha256": "575494469cbedfe989087bc940af6303bd9ac26023abe394381362ee795523c5"
+        },
+        {
+          "path": "web/frontend/src/components/ArtifactGallery.tsx",
+          "sha256": "e95e16ac7eaa0d924c4be4263a18049e2b8bae4a197ec96b462032d2086a777c"
+        },
+        {
+          "path": "web/frontend/src/components/DeliverableCards.tsx",
+          "sha256": "749a5a06c6ac60a50620e152e457bb9e9dec5ec5664d2ebbabf6d3fc562e2404"
+        },
+        {
+          "path": "web/frontend/src/components/MessageBubble.tsx",
+          "sha256": "5ce588e2661139c36cf1286db8c2215b985a14b8593020584ad84e1392b8daa9"
+        },
+        {
+          "path": "web/frontend/src/components/SnapshotArchivePreview.tsx",
+          "sha256": "8b806d3a65037e27f188b33bce7eb77eadf0f200213ee45b23d55634322077ef"
+        },
+        {
+          "path": "web/frontend/src/lib/agentEvents.ts",
+          "sha256": "d69a4e8a22e56b24d47ce7e8f8b9e5e87c3210b7f4ed23eec14a2df04f1aee6d"
+        },
+        {
+          "path": "web/frontend/src/lib/artifacts.ts",
+          "sha256": "86f635e5386abd3d385cfb863191054687d91404264b9e3f7920a16045aa46b3"
+        },
+        {
+          "path": "web/frontend/src/lib/deliverables.ts",
+          "sha256": "d7c5b167463fa61b1e809f4e6b774271f4a832a420601c4533d94a92cdabe367"
+        },
+        {
+          "path": "web/frontend/src/lib/htmlPreview.ts",
+          "sha256": "25ad83766703e2abc3dcebe236e69460994f6c34d2605e10e524545b08092639"
+        },
+        {
+          "path": "web/frontend/src/lib/snapshotArchive.ts",
+          "sha256": "6476d1e62976248146283d991c129f0c8ae375b2c1e8e19a2c6a1273bfa6bc9c"
+        },
+        {
+          "path": "web/frontend/src/styles/deliverables.css",
+          "sha256": "f4729b3e0da21e774865bf62b5444d4bbb2b0a80c1ee927278173865a0457d33"
+        },
+        {
+          "path": "web/frontend/src/vendor/deepseek-harness/deliverables/HostReadStore.ts",
+          "sha256": "0de08f4e10e27af91ca4653feab536f09c7b06a29db20901ef8a2330bae94e01"
+        },
+        {
+          "path": "web/frontend/src/vendor/deepseek-harness/deliverables/ReviewTab.module.css",
+          "sha256": "fcd38420002b35347303f29b6bbadecf321238a1619526b7ab9226298ed56971"
+        },
+        {
+          "path": "web/frontend/src/vendor/deepseek-harness/deliverables/record-store.ts",
+          "sha256": "f76cc30204eb410ef54068bc89da1323fff6e8257dc8ff3899ee63677a2192b5"
+        },
+        {
+          "path": "tests/frontend/agentMessagesHarness.mjs",
+          "sha256": "b890b87d265718b74dce561906400cb998ee1584ed019a51826d83b793dbee43"
+        },
+        {
+          "path": "tests/frontend/deliverablesHtmlPack.test.mjs",
+          "sha256": "f70a0d1830ff525630af7c454505fadb0fe8aa6666d1d4a0ba5b8fb585c2fc35"
+        },
+        {
+          "path": "tests/frontend/deliverableVersions.test.mjs",
+          "sha256": "1b356067d408c96642a4197dd62f723a53abc8a2d8c498401eb493a0ae3ec492"
+        },
+        {
+          "path": "tests/frontend/snapshotArchive.test.mjs",
+          "sha256": "1d8802f11492c4db2f4c9d644f1e405db36267a72366e43011a30a80fde001a4"
+        },
+        {
+          "path": "tests/test_artifact_blobs.py",
+          "sha256": "9432c16daffb97b3131e57ddeffced8e8def2e0133d8407f43ad80ff9eb13cfb"
+        },
+        {
+          "path": "tests/test_artifact_snapshot_archives.py",
+          "sha256": "ffb9aae5a3223137201bf1a6312743796e648595f63ebfdc2d26ddbfe51106a9"
+        },
+        {
+          "path": "tests/test_artifact_version_http.py",
+          "sha256": "e47f55025665724a6bd7cc09cea0a8fe53b3360088ef2e3e8c4257fce9ab8dbc"
+        },
+        {
+          "path": "tests/test_chat_artifact_versions.py",
+          "sha256": "a02d5b921843258eb4456733611c6637f13a1559da862b888d62f0a3e402bafb"
+        },
+        {
+          "path": "tests/test_chat_artifacts.py",
+          "sha256": "58b8fb533c5c6dadbc7e9ccd2f283f8f87d1a89bbd9d7a780c91ea7f141c8c40"
+        },
+        {
+          "path": "web/app.py",
+          "sha256": "ce6108b4cb3f4ea9584235dab8a7d9e75cbf5635549b2820dfe4eef90a97df06"
+        }
+      ],
+      "approval_version_binding_status": "open_B30_D30",
+      "verification": {
+        "candidate_code_tree": "ac1cfedda568997e489844e331ba52aa1461e712",
+        "backend_passed": 2236,
+        "backend_skipped": 17,
+        "backend_warnings": 2,
+        "backend_exit": 0,
+        "frontend_passed": 414,
+        "frontend_failed": 0,
+        "frontend_exit": 0,
+        "build_exit": 0,
+        "lint_exit": 0,
+        "compile_exit": 0,
+        "diff_check_exit": 0,
+        "real_browser_downloads": 18,
+        "overwritten_then_deleted_sources": true,
+        "root_html_same_bytes_new_dependency_bundle": true,
+        "restart_restored_versions": true,
+        "html_image_dimensions": [
+          480,
+          160
+        ],
+        "iframe_image_origin": "blob:null",
+        "console_errors": 0,
+        "runtime_frontend": "D08-only candidate build",
+        "scope_notice": "Final bookkeeping changes only documentation/provenance after candidate-code tests; independent account changes excluded."
+      }
     }
   }
 }

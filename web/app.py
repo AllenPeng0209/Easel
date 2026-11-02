@@ -11,6 +11,7 @@ else:
     import fcntl
 import hashlib
 import ipaddress
+import io
 import json
 import re
 import shutil
@@ -30,6 +31,7 @@ from contextlib import asynccontextmanager
 from contextvars import copy_context
 import ipaddress
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,6 +63,7 @@ from easel import harnesses
 from easel.harnesses import store as harness_store
 from easel.harnesses.base import HarnessError, RunRequest
 from easel.chat_artifacts import ArtifactError, ChatArtifactStore
+from easel.artifact_archives import ArchiveSnapshotReader
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
 from web.chat_history import ChatHistoryStore, validated_session
 try:
@@ -3484,15 +3487,36 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 if isinstance(file.get('description'), str) else {})})
         try:
             store = _chat_artifact_store()
-            artifacts = await asyncio.to_thread(store.present, safe_files, session_id=sk,
-                turn_id=turn_id, call_id=call_id, inbox_scope=_attachment_scope(sk))
+            cancelled = threading.Event()
+            worker = asyncio.create_task(asyncio.to_thread(store.present, safe_files, session_id=sk,
+                turn_id=turn_id, call_id=call_id, inbox_scope=_attachment_scope(sk), cancelled=cancelled.is_set))
+            try:
+                artifacts = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                cancelled.set()
+                # Cancelling a to_thread await alone leaves the writer running.
+                # Drain it so no late commit/event can outlive the stopped turn.
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if worker.done():
+                    try:
+                        worker.result()
+                    except BaseException:
+                        pass
+                raise
         except ArtifactError:
             raise
         except (OSError, sqlite3.Error):
             raise HarnessError('交付记录保存失败，未创建成功交付卡，请检查本地存储后重试') from None
         _require_host_tools()
-        receive('agent_event', {'id': uuid.uuid4().hex, 'kind': 'artifact', 'callId': call_id,
-            'artifacts': artifacts, 'status': 'available', 'completedAt': int(time.time() * 1000)})
+        if not getattr(artifacts, 'replayed', False):
+            receive('agent_event', {'id': uuid.uuid4().hex, 'kind': 'artifact', 'callId': call_id,
+                'artifacts': artifacts, 'status': 'available', 'completedAt': int(time.time() * 1000)})
         return artifacts
 
     async def watch_privileges():
@@ -3671,21 +3695,77 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
     return "".join(full_text)
 
 
+def _artifact_metadata(store, artifact_id):
+    try:
+        metadata = store.get(artifact_id)
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    if metadata is None:
+        raise HTTPException(404, '交付物不存在')
+    return metadata
+
+
+async def _artifact_acquire(factory, *args, dispose=None, **kwargs):
+    """Transfer a worker-owned resource only if the awaiting route accepts it.
+
+    Cancelling ``to_thread`` does not stop its worker. Keep an explicit handoff
+    so a late FD/reader is closed even when the cancelled Future discards it.
+    Factories remain responsible for their own partially constructed resources.
+    """
+    lock = threading.Lock()
+    abandoned = False
+    ready = None
+    finish = dispose or (lambda resource: resource.close())
+
+    def produce():
+        nonlocal ready
+        resource = factory(*args, **kwargs)
+        with lock:
+            if not abandoned:
+                ready = resource
+                return resource
+        finish(resource)
+
+    try:
+        resource = await asyncio.to_thread(produce)
+    except BaseException:
+        with lock:
+            abandoned = True
+            resource, ready = ready, None
+        if resource is not None:
+            finish(resource)
+        raise
+    with lock:
+        ready = None
+    return resource
+
+
 @app.get('/api/chat/artifacts/{artifact_id}')
 async def api_chat_artifact(artifact_id: str):
     _require_operation()
     store = _chat_artifact_store()
-    metadata = store.get(artifact_id)
-    if metadata is None:
-        raise HTTPException(404, '交付物不存在')
+    metadata = _artifact_metadata(store, artifact_id)
     try:
-        with store.open_content(artifact_id, inbox_scope=_attachment_scope(metadata['sessionId'])):
-            pass
+        await asyncio.to_thread(store.verify_available, artifact_id,
+            inbox_scope=_attachment_scope(metadata['sessionId']))
     except ArtifactError:
-        # The declaration survives deletion or a later forbidden path change;
-        # only availability changes. D01 references current files, not snapshots.
+        # Keep declaration identity if a legacy source disappears or snapshot
+        # storage is damaged. Unavailable versions never read a current fallback.
+        _require_operation()
         return {**metadata, 'status': 'unavailable'}
+    _require_operation()
     return metadata
+
+
+@app.get('/api/chat/artifacts/{artifact_id}/versions')
+async def api_chat_artifact_versions(artifact_id: str):
+    _require_operation()
+    try:
+        versions = await asyncio.to_thread(_chat_artifact_store().versions, artifact_id)
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    _require_operation()
+    return {'versions': versions}
 
 
 def _html_related_response(content: bytes, mime: str) -> Response:
@@ -3699,9 +3779,7 @@ def _html_related_response(content: bytes, mime: str) -> Response:
 async def api_chat_artifact_related(artifact_id: str, path: str):
     _require_operation()
     store = _chat_artifact_store()
-    metadata = store.get(artifact_id)
-    if metadata is None:
-        raise HTTPException(404, '交付物不存在')
+    metadata = _artifact_metadata(store, artifact_id)
     try:
         content, mime = await asyncio.to_thread(store.read_related, artifact_id, path,
             inbox_scope=_attachment_scope(metadata['sessionId']))
@@ -3727,17 +3805,31 @@ async def api_chat_legacy_artifact_related(document: str, path: str):
 async def api_chat_artifact_content(artifact_id: str, request: Request, download: bool = False):
     _require_operation()
     store = _chat_artifact_store()
-    metadata = store.get(artifact_id)
-    if metadata is None:
-        raise HTTPException(404, '交付物不存在')
+    metadata = _artifact_metadata(store, artifact_id)
     try:
-        stream = store.open_content(artifact_id, inbox_scope=_attachment_scope(metadata['sessionId']))
+        stream = await _artifact_acquire(store.open_content, artifact_id,
+            inbox_scope=_attachment_scope(metadata['sessionId']))
     except ArtifactError as error:
         raise HTTPException(error.status_code, str(error)) from None
+    try:
+        _require_operation()
+        info = os.fstat(stream.fileno())
+        return _artifact_stream_response(stream, metadata, request, download, info=info,
+            etag=f'"{metadata["sha256"]}"' if metadata.get('storageMode') == 'snapshot' else None)
+    except BaseException:
+        stream.close()
+        raise
+
+
+def _artifact_stream_response(stream, metadata, request: Request, download: bool,
+                              *, info, etag=None, close=None):
+    """Serve a verified immutable/root/member stream without reopening its path."""
+    finish = close or stream.close
     disposition = 'attachment' if download else 'inline'
-    info = os.fstat(stream.fileno())
     headers = {'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store',
         'Content-Disposition': f"{disposition}; filename*=UTF-8''{urllib.parse.quote(metadata['name'], safe='')}"}
+    if etag:
+        headers['ETag'] = etag
     if Path(metadata['name']).suffix.lower() in {'.html', '.htm', '.svg', '.xml', '.xhtml'}:
         headers['Content-Security-Policy'] = "sandbox allow-scripts; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'"
     # Reuse the installed Starlette FileResponse's stat validators and byte-range
@@ -3753,11 +3845,11 @@ async def api_chat_artifact_content(artifact_id: str, request: Request, download
         try:
             ranges = FileResponse._parse_range_header(http_range, info.st_size)
         except RangeNotSatisfiable:
-            stream.close()
+            finish()
             headers.update({'content-range': f'bytes */{info.st_size}', 'content-length': '0'})
             return Response(status_code=416, headers=headers)
         except MalformedRangeHeader:
-            stream.close()
+            finish()
             raise HTTPException(400, 'Range 请求无效') from None
         if len(ranges) == 1:
             start, end = ranges[0]
@@ -3767,7 +3859,7 @@ async def api_chat_artifact_content(artifact_id: str, request: Request, download
         # HTTP permits ignoring a multiple-range request. Do not pretend this
         # bounded single-file reader implements multipart/byteranges.
     if request.method == 'HEAD':
-        stream.close()
+        finish()
         return Response(status_code=status, headers=headers)
     def body():
         try:
@@ -3780,9 +3872,110 @@ async def api_chat_artifact_content(artifact_id: str, request: Request, download
                 remaining -= len(chunk)
                 yield chunk
         finally:
-            stream.close()
+            finish()
     return StreamingResponse(body(), status_code=status, media_type=metadata['mime'], headers=headers,
-                             background=BackgroundTask(stream.close))
+                             background=BackgroundTask(finish))
+
+
+async def _artifact_archive_reader(artifact_id):
+    store = _chat_artifact_store()
+    metadata = _artifact_metadata(store, artifact_id)
+    if metadata.get('storageMode') != 'snapshot' or not metadata['name'].lower().endswith('.zip'):
+        raise HTTPException(400, '该交付没有固定的 ZIP 版本')
+    def open_reader():
+        stream = store.open_content(artifact_id)
+        try:
+            return ArchiveSnapshotReader(stream)
+        except BaseException:
+            stream.close()
+            raise
+    try:
+        reader = await _artifact_acquire(open_reader)
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    return metadata, reader
+
+
+@app.get('/api/chat/artifacts/{artifact_id}/archive')
+async def api_chat_artifact_archive(artifact_id: str):
+    _require_operation()
+    _, reader = await _artifact_archive_reader(artifact_id)
+    try:
+        files = await asyncio.to_thread(reader.index)
+        _require_operation()
+        return {'files': [{**entry,
+            'url': f'/api/chat/artifacts/{artifact_id}/archive/{entry["index"]}/content'} for entry in files]}
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    finally:
+        reader.close()
+
+
+@app.get('/api/chat/artifacts/{artifact_id}/archive/{index}/content')
+@app.head('/api/chat/artifacts/{artifact_id}/archive/{index}/content')
+async def api_chat_artifact_archive_content(artifact_id: str, index: int, request: Request, download: bool = False):
+    _require_operation()
+    metadata, reader = await _artifact_archive_reader(artifact_id)
+    pending_member = False
+
+    def open_member():
+        try:
+            return reader.open_member(index)
+        except BaseException:
+            reader.close()
+            raise
+
+    def close_member(member):
+        try:
+            member.close()
+        finally:
+            reader.close()
+
+    try:
+        entries = await asyncio.to_thread(reader.index)
+        entry = next((item for item in entries if item['index'] == index), None)
+        if entry is None:
+            raise HTTPException(404, '该版本不存在此 ZIP 成员')
+        # HEAD reports the fixed index metadata without decompressing a body.
+        if request.method == 'HEAD':
+            stream = io.BytesIO()
+        else:
+            # If cancelled while opening, the worker retains the reader until
+            # the late member is closed; never close ZipFile under that worker.
+            pending_member = True
+            member = await _artifact_acquire(open_member, dispose=close_member)
+            pending_member = False
+            stream = member.stream
+        _require_operation()
+        info = SimpleNamespace(st_size=entry['size'], st_mtime=metadata['createdAt'] / 1000)
+        def close_stream():
+            try:
+                stream.close()
+            finally:
+                reader.close()
+        return _artifact_stream_response(stream, entry, request, download, info=info,
+            etag=f'"{metadata["sha256"]}-{index}-{entry["crc32"]}"', close=close_stream)
+    except ArtifactError as error:
+        reader.close()
+        raise HTTPException(error.status_code, str(error)) from None
+    except BaseException:
+        if not pending_member:
+            reader.close()
+        raise
+
+
+@app.get('/api/chat/artifacts/{artifact_id}/archive/{index}/related')
+async def api_chat_artifact_archive_related(artifact_id: str, index: int, path: str):
+    _require_operation()
+    _, reader = await _artifact_archive_reader(artifact_id)
+    try:
+        content, mime = await asyncio.to_thread(reader.read_related, index, path)
+        _require_operation()
+        return _html_related_response(content, mime)
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    finally:
+        reader.close()
 
 
 class ChatSessionsRequest(BaseModel):

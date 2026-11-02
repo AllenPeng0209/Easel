@@ -26,6 +26,40 @@ def file_in(environment, path, content=b'file'):
     return full
 
 
+def legacy_store_for(environment, files, *, session_id='s', turn_id='t', project='default'):
+    """Seed genuine pre-D08 rows/schema, then exercise their real migration."""
+    import json
+    import mimetypes
+    import sqlite3
+    import uuid
+    from contextlib import closing
+    from easel.chat_artifacts import ChatArtifactStore
+    workspace, outputs, sessions = environment
+    sessions.mkdir(parents=True, exist_ok=True)
+    values = []
+    with closing(sqlite3.connect(sessions / 'chat_artifacts.sqlite3')) as connection:
+        connection.execute('CREATE TABLE artifacts (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, '
+            'turn_id TEXT NOT NULL,path TEXT NOT NULL,position INTEGER NOT NULL,payload TEXT NOT NULL,'
+            'UNIQUE(session_id,turn_id,path))')
+        for position, value in enumerate(files):
+            path = Path(value['path'])
+            relative = path.relative_to(outputs) if path.is_absolute() else Path(*path.parts[1:])
+            identifier = uuid.uuid4().hex
+            metadata = {'artifactId': identifier, 'projectId': project, 'sessionId': session_id,
+                'turnId': turn_id, 'path': relative.as_posix(), 'workspacePath': 'outputs/' + relative.as_posix(),
+                'name': relative.name, 'mime': mimetypes.guess_type(relative.name)[0] or 'application/octet-stream',
+                'size': (outputs / relative).stat().st_size, 'status': 'available', 'createdAt': 1,
+                'url': f'/api/chat/artifacts/{identifier}/content'}
+            if 'description' in value:
+                metadata['description'] = value['description']
+            connection.execute('INSERT INTO artifacts VALUES(?,?,?,?,?,?)',
+                (identifier, session_id, turn_id, relative.as_posix(), position, json.dumps(metadata)))
+            values.append(identifier)
+        connection.commit()
+    store = ChatArtifactStore(sessions, outputs, workspace, project)
+    return store, [store.get(identifier) for identifier in values]
+
+
 def test_explicit_declaration_survives_reload_without_prose_links(artifact_environment):
     from easel.chat_artifacts import ChatArtifactStore
     full = file_in(artifact_environment, 'topic/报告.txt', b'')
@@ -116,8 +150,8 @@ def test_manual_export_zip_and_current_session_inbox_are_allowed(artifact_enviro
 def test_content_open_rechecks_replaced_symlink_and_never_serves_external_bytes(artifact_environment):
     from easel.chat_artifacts import ArtifactError
     full = file_in(artifact_environment, 'topic/file.txt', b'original')
-    store = store_for(artifact_environment)
-    artifact = store.present([{'path': str(full)}], session_id='s', turn_id='t', call_id='call')[0]
+    store, records = legacy_store_for(artifact_environment, [{'path': str(full)}])
+    artifact = records[0]
     external = artifact_environment[0].parent / 'external.txt'
     external.write_bytes(b'private')
     full.unlink()
@@ -126,10 +160,10 @@ def test_content_open_rechecks_replaced_symlink_and_never_serves_external_bytes(
         store.open_content(artifact['artifactId'])
 
 
-def test_file_content_is_current_file_not_an_immutable_snapshot(artifact_environment):
+def test_legacy_file_content_is_current_file_not_an_immutable_snapshot(artifact_environment):
     full = file_in(artifact_environment, 'topic/file.txt', b'original')
-    store = store_for(artifact_environment)
-    artifact = store.present([{'path': str(full)}], session_id='s', turn_id='t', call_id='call')[0]
+    store, records = legacy_store_for(artifact_environment, [{'path': str(full)}])
+    artifact = records[0]
     full.write_bytes(b'updated')
     with store.open_content(artifact['artifactId']) as stream:
         assert stream.read() == b'updated'
@@ -176,9 +210,9 @@ def artifact_http_environment(tmp_path, monkeypatch):
     (tmp_path / 'outputs' / 'topic' / 'report.txt').write_bytes(b'owned-result')
     (tmp_path / 'outputs' / 'topic' / 'page.html').write_text('<script>document.body.dataset.preview="ready"</script>')
     with actor_context(owner.get('/api/auth/me').json()), project_context('default', tmp_path):
-        store = ChatArtifactStore(web._sessions_dir(), web._outputs_dir(), web._workspace_root(), 'default')
-        files = store.present([{'path': 'outputs/topic/report.txt'}, {'path': 'outputs/topic/page.html'}],
-                              session_id='owner-session', turn_id='owner-turn', call_id='present-call')
+        store, files = legacy_store_for((web._workspace_root(), web._outputs_dir(), web._sessions_dir()),
+            [{'path': 'outputs/topic/report.txt'}, {'path': 'outputs/topic/page.html'}],
+            session_id='owner-session', turn_id='owner-turn')
     return tmp_path, owner, members, client, files
 
 
@@ -252,8 +286,8 @@ def test_native_declaration_is_persisted_before_structured_success_event(tmp_pat
 
 def test_open_content_keeps_verified_descriptor_if_path_is_replaced_later(artifact_environment):
     full = file_in(artifact_environment, 'topic/file.txt', b'original')
-    store = store_for(artifact_environment)
-    artifact = store.present([{'path': str(full)}], session_id='s', turn_id='t', call_id='call')[0]
+    store, records = legacy_store_for(artifact_environment, [{'path': str(full)}])
+    artifact = records[0]
     external = artifact_environment[0].parent / 'external.txt'
     external.write_bytes(b'private')
     with store.open_content(artifact['artifactId']) as stream:
@@ -587,8 +621,8 @@ def related_artifacts(artifact_environment):
     file_in(artifact_environment, 'topic/assets/style.css', b'body{color:blue}')
     file_in(artifact_environment, 'topic/assets/app.js', b'window.previewReady=true')
     file_in(artifact_environment, 'public/shared.css', b'.shared{color:red}')
-    store = store_for(artifact_environment)
-    metadata = store.present([{'path': 'outputs/topic/page.html'}], session_id='s', turn_id='t', call_id='call')[0]
+    store, records = legacy_store_for(artifact_environment, [{'path': 'outputs/topic/page.html'}])
+    metadata = records[0]
     return artifact_environment, store, metadata
 
 
@@ -661,14 +695,13 @@ def test_legacy_related_reader_cannot_use_owner_private_or_inbox_source(artifact
         assert caught.value.status_code == 403
 
 
-def test_declared_inbox_html_related_assets_stay_in_same_session_scope(artifact_environment):
+def test_legacy_inbox_html_related_assets_stay_in_same_session_scope(artifact_environment):
     from easel.chat_artifacts import ArtifactError
     file_in(artifact_environment, '_inbox/mine/batch/index.html', b'html')
     file_in(artifact_environment, '_inbox/mine/batch/style.css', b'my-css')
     file_in(artifact_environment, '_inbox/other/batch/style.css', b'other-css')
-    store = store_for(artifact_environment)
-    metadata = store.present([{'path': 'outputs/_inbox/mine/batch/index.html'}],
-                             session_id='s', turn_id='t', call_id='call', inbox_scope='mine')[0]
+    store, records = legacy_store_for(artifact_environment, [{'path': 'outputs/_inbox/mine/batch/index.html'}])
+    metadata = records[0]
     assert store.read_related(metadata['artifactId'], 'style.css', inbox_scope='mine')[0] == b'my-css'
     with pytest.raises(ArtifactError) as caught:
         store.read_related(metadata['artifactId'], '../../other/batch/style.css', inbox_scope='mine')

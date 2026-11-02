@@ -2,6 +2,17 @@
 
 日期：2026-11-03。产品清单见 [agent-workbench-backlog.md](agent-workbench-backlog.md)。本文区分“上游已下载”“源代码已复用”“接口已适配”“本机已验收”，四者不能互相替代。
 
+## 当前逐功能状态
+
+| 条目 | 当前结论 | 验收/实现边界 |
+|---|---|---|
+| D01 | 已真实验收并提交 `3086ca8` | 显式交付卡、真实下载、PNG/HTML与刷新去重已验收，原HTML403已关闭 |
+| C19 | 并发初始化修复已提交 `f5118d9` | 仅关闭该并发初始化修复；C23分页仍待，不能扩大为所有目录能力已完成 |
+| D08 | 固定版本切片已验收；批准部分未完 | 候选代码2236后端/414前端、构建/lint、隔离7862真实18次下载与HTML/ZIP通过；随本记录独立提交，B30/D30继续 |
+| B30／D30 | 后续P0 | 精确hash/版本、批准主体和真实发布回执联动仍待，不由版本store/预览替代 |
+
+144项继续逐项开发、自测、真实验收和独立commit。以下基线及初期阶段保留为历史记录，不能覆盖本表当前状态。React/TS/CSS按实际来源记复用；Python原生引擎、store与IP业务边界是必要适配，不声称上游Python原样复制。
+
 ## 已固定的上游来源
 
 | 项目 | 核验值 |
@@ -29,11 +40,11 @@
 | 引擎事件 | `ui-tool`／`ui-trajectory` 的身份和生命周期契约 | Codex／ACP → Python SSE → App消息状态 | Python引擎协议无法直接导入React包；必须保留 callId／parent、参数、输出与终态的对应关系 | 协议适配通过回归及本机Codex命令验收；非复制上游Python |
 | 自主问答 | `ui-user-questions`、Inbox、Goal、Approval 契约 | 服务端默认决策、截止时间、持久问题记录；前端呈现和答复 | 默认策略、权限校验和竞态必须在服务器执行；不靠浏览器定时器假装自动推进 | 服务端默认/问答策略回归通过；AUT未全关闭 |
 | 会话目录 | `session-controller` 持久会话头与投影契约 | 授权服务器目录、本地历史导入与重建 | 现有user/IP目录隔离；迁移旧localStorage；不丢弃原生历史边界 | 目录回归/本机刷新与重命名已验收；跨浏览器场景按清单 |
-| 产物与业务卡 | `ui-deliverables`、`workspace-changes`、`ui-workflow-run`、右侧预览 | 复用交付视图，接选题／制作／审阅／发布实体 | 现有revision/hash、RBAC和真实回执不能被通用文件UI替代 | 下一批P0；本轮未实现交付/业务聊天闭环 |
+| 产物与业务卡 | `ui-deliverables`、`workspace-changes`、`ui-workflow-run`、右侧预览 | 复用交付视图，接选题／制作／审阅／发布实体 | 现有revision/hash、RBAC和真实回执不能被通用文件UI替代 | D01已提交3086ca8；D08版本store/UI切片已验收并随本记录独立提交；B30/D30业务批准与回执仍后续P0 |
 
 上游 React 包依赖其 Cordis、Store、Host/preset 和 workspace 包体系；Easel 当前为 React 前端与 Python/FastAPI 后端。直接将插件入口 import 进来不会自动具备对应服务。对原样复制文件保留源路径与 SHA；对适配文件说明变动范围。不要为迁移删除 Easel 已有的 IP、平台账号、权限和工坊业务能力。
 
-## 本轮首批实施顺序
+## 首批实施顺序（历史计划）
 
 1. M00 固定源与许可证。已完成本地来源核验；不代表功能完成。
 2. 并行 M01 结构化事件与 M02 附件、草稿。用户消息与真实工具状态先能可靠保留。
@@ -121,7 +132,7 @@
 
 基线实际迁移文件 22 个，其中原始正文逐字复用 10 个、适配迁移 12 个。另有 14 个本地集成适配文件单列，不混入原样复用统计。根代理最终全量回归与限定本机链路验收已通过；不能据此关闭全部144项或宣称M09/M10业务闭环已完成。
 
-## 最终冻结验证结论
+## 基线冻结验证结论（历史）
 
 根代理报告：后端2032 passed/17 skipped（2项既有deprecation warnings）、前端356 passed/0 failed，构建/lint/diff-check exit0；主chunk约636KB为既有构建提示。实际IAB已登录Codex工具执行 `printf EASEL_AGENT_SMOKE_OK`，工具卡保留command/output/exitCode0；运行中队列消息随后自动执行，刷新恢复两轮与工具记录。桌面1280px轨道56px、447px手机抽屉开闭已实测，console error为空。
 
@@ -131,7 +142,7 @@
 
 根代理的完整验收说明见 [agent-workbench-verification.md](agent-workbench-verification.md)，包含本机搜索/重命名保持、截图、自动化日志位置和未验收边界。
 
-## 原生默认问答最终补验
+## 基线原生默认问答补验（历史）
 
 新建Codex会话已完成真实 `easel_ask_user` → 风格输入卡 → 无人填写 → 25.0秒默认专业 → 继续真实shell `printf EASEL_DEFAULT_CONTINUED` → 输出及exitCode0 → 最终汇报。默认历史、倒计时与快捷操作可见，截图为 `.scratch/agent-workbench-verification/input-default-complete.jpg`。
 
@@ -139,23 +150,30 @@
 
 旧未注册的原生线程不能经 `thread/resume` 追加工具，需新建对话；旧ID与历史保留，不能声称旧线程已无缝具备卡片。最终全量后端2032 passed/17 skipped（2旧warning）、前端356 passed；最终build exit0（108 modules，index-BSJixOw6.js约636.21KB既有体积提示）、lint零warning、diff-check通过。M09/M10与持久目标/待答future重启等未完成范围保持不变。
 
-## D01逐功能阶段：进行中、未验收、未提交
+## D01初始逐功能阶段（历史，已由3086ca8收口）
 
-基线commit为 `1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b`。D01新增显式present声明、受控当前文件store和文件卡；下列源/目标SHA已核验，但HTML相对图片403仍阻止关闭。D08不可变快照/历史版本是下一项，不混入本次提交。每功能验收记录见 [D01.md](agent-feature-acceptance/D01.md)，通用模板见 [agent-feature-acceptance-template.md](agent-feature-acceptance-template.md)。
+此段保留D01初期历史：基线commit为 `1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b`，当时显式present/store/文件卡已落地，但HTML相对图片403未通过。后续已修复、真实验收并提交3086ca8；以下初期文件列表不表示当前仍未验收。D08保持独立开发和提交。每功能验收记录见 [D01.md](agent-feature-acceptance/D01.md)，通用模板见 [agent-feature-acceptance-template.md](agent-feature-acceptance-template.md)。
 
-| D01当前实际文件 | 上游原路径 | 复用方式 | 当前状态 |
+| D01初期迁移文件（历史列表） | 上游原路径 | 复用方式 | 当前状态 |
 |---|---|---|---|
-| web/frontend/src/vendor/deepseek-harness/deliverables/Deliverables.module.css | packages/client/ui-deliverables/src/client/Deliverables.module.css | verbatim | 来源/SHA已核验；功能进行中未验收 |
-| web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.module.css | packages/client/ui-deliverables/src/client/PresentRow.module.css | verbatim | 来源/SHA已核验；功能进行中未验收 |
-| web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.tsx | packages/client/ui-deliverables/src/client/PresentRow.tsx | adapted | 来源/SHA已核验；功能进行中未验收 |
-| web/frontend/src/vendor/deepseek-harness/deliverables/PresentedFileCard.tsx | packages/client/ui-deliverables/src/client/PresentedFileCard.tsx | adapted | 来源/SHA已核验；功能进行中未验收 |
-| web/frontend/src/vendor/deepseek-harness/deliverables/file-metadata.ts | packages/client/ui-primitives/src/FileTypeIcon.tsx | adapted | 来源/SHA已核验；功能进行中未验收 |
-| web/frontend/src/vendor/deepseek-harness/deliverables/presented.ts | packages/client/ui-deliverables/src/presented.ts | adapted | 来源/SHA已核验；功能进行中未验收 |
-| web/frontend/src/vendor/deepseek-harness/deliverables/turn-deliverables.ts | packages/client/ui-deliverables/src/client/turn-deliverables.ts | adapted | 来源/SHA已核验；功能进行中未验收 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/Deliverables.module.css | packages/client/ui-deliverables/src/client/Deliverables.module.css | verbatim | 历史阶段：当时未验收，后续D01已提交3086ca8 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.module.css | packages/client/ui-deliverables/src/client/PresentRow.module.css | verbatim | 历史阶段：当时未验收，后续D01已提交3086ca8 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.tsx | packages/client/ui-deliverables/src/client/PresentRow.tsx | adapted | 历史阶段：当时未验收，后续D01已提交3086ca8 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/PresentedFileCard.tsx | packages/client/ui-deliverables/src/client/PresentedFileCard.tsx | adapted | 历史阶段：当时未验收，后续D01已提交3086ca8 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/file-metadata.ts | packages/client/ui-primitives/src/FileTypeIcon.tsx | adapted | 历史阶段：当时未验收，后续D01已提交3086ca8 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/presented.ts | packages/client/ui-deliverables/src/presented.ts | adapted | 历史阶段：当时未验收，后续D01已提交3086ca8 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/turn-deliverables.ts | packages/client/ui-deliverables/src/client/turn-deliverables.ts | adapted | 历史阶段：当时未验收，后续D01已提交3086ca8 |
 
-D01声明工具目前只在新Codex线程注册；旧未注册resume保留ID/历史且需新建，ACP未注册对应MCP/present工具，不能声称支持。根代理阶段证据为67项后端、12项前端、真实3文件卡、文本真实字节和PNG预览；HTML相对资源修复、最终构建/回归及功能commit仍待完成。Python store和Host边界列为Easel适配，不声称上游Python原样复制。
+D01声明工具目前只在新Codex线程注册；旧未注册resume保留ID/历史且需新建，ACP未注册对应MCP/present工具，不能声称支持。初期阶段证据曾为67项后端、12项前端、真实3卡/文本/PNG；随后HTML修复与最终回归/真实验收已通过，D01已提交3086ca8。Python store和Host边界列为Easel适配，不声称上游Python原样复制。
 
 
 ## D01 验证更新（2026-11-03）
 
-D01已在独立功能代码树通过2122项后端、378项前端与真实Codex/下载/PNG/HTML验收；HTML原403已由上游有限资源打包及受控related读取关闭。功能待单独提交，完整记录见 `docs/agent-feature-acceptance/D01.md`。旧阶段的D01 WIP/403描述为历史证据，不代表当前未修复；D08仍未实现。
+D01已在独立功能代码树通过2122项后端、378项前端与真实Codex/下载/PNG/HTML验收；HTML原403已由上游有限资源打包及受控related读取关闭。功能已独立提交3086ca8，完整记录见 `docs/agent-feature-acceptance/D01.md`。旧阶段WIP/403为历史证据。D08固定版本store/UI已独立验收，随本记录提交；批准版本联动仍不标完成。
+
+## 当前收尾状态
+
+D01已真实验收并提交 `3086ca8`；C19并发初始化修复已提交 `f5118d9`，C23分页仍待。D08固定版本store和UI切片已验收：2236后端、414前端、构建/lint及隔离7862真实V1/V2、覆盖/删源18次下载与HTML/ZIP通过，随本记录独立提交；批准版本联动尚未关闭。B30/D30的精确hash批准与真实发布回执联动仍为后续P0，144项持续逐项推进。
+
+
+当前D08固定版本功能验收见 [D08.md](agent-feature-acceptance/D08.md)：2236后端通过/17跳过、414前端通过、构建/lint/编译/差异通过；18次真实浏览器下载hash、覆盖与删源后的HTML/ZIP版本保持通过。此验收覆盖固定交付切片，不关闭B30/D30精确版本批准或其余计划项。来源manifest登记新增HostReadStore与ReviewTab源码迁移及必要Python持久化适配。

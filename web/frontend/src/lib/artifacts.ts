@@ -5,11 +5,15 @@ export interface Artifact {
   kind: 'image' | 'html' | 'video' | 'audio' | 'pdf';
   /** Current-file HTML resources, independent of its opaque content URL. */
   baseUrl?: string;
+  storageMode?: 'snapshot' | 'legacy-current';
+  /** Logical source coordinates only; immutable bytes are always read by ID. */
+  sourcePath?: string;
 }
 
 /** A preview may set a resource base only inside the current IP's media tree. */
-export function previewBaseUrl(artifact: Pick<Artifact, 'url' | 'baseUrl'>, origin: string): string {
-  const fallback = new URL('.', new URL(artifact.url, origin)).href;
+export function previewBaseUrl(artifact: Pick<Artifact, 'url' | 'baseUrl' | 'storageMode'>, origin: string): string {
+  const fallback = new URL('.', new URL(projectUrl(artifact.url), origin)).href;
+  if (artifact.storageMode === 'snapshot') return fallback;
   const prefix = projectUrl('/api/media/');
   const raw = artifact.baseUrl;
   if (!raw || !raw.startsWith(prefix) || !raw.endsWith('/') || /[?#]/.test(raw)) return fallback;

@@ -6,11 +6,11 @@ import type { Artifact } from '../lib/artifacts';
 import { IconChevron, IconOutputs } from './icons';
 
 function HtmlArtifact({ artifact }: { artifact: Artifact }) {
-  const { url, baseUrl } = artifact;
+  const { url, baseUrl, storageMode, sourcePath } = artifact;
   const frame = useRef<HTMLIFrameElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const [source, setSource] = useState('');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | boolean>(false);
   const [bounds, setBounds] = useState({ width: 800, height: 600 });
   const [available, setAvailable] = useState({ width: 640, height: 480 });
   const token = useRef(crypto.randomUUID());
@@ -19,13 +19,13 @@ function HtmlArtifact({ artifact }: { artifact: Artifact }) {
     token.current = crypto.randomUUID();
     setSource('');
     setError(false);
-    void loadPackedHtmlArtifact({ url, baseUrl }, token.current, controller.signal).then(html => {
+    void loadPackedHtmlArtifact({ url, baseUrl, storageMode, sourcePath }, token.current, controller.signal).then(html => {
       if (!controller.signal.aborted) setSource(html);
-    }).catch(() => {
-      if (!controller.signal.aborted) setError(true);
+    }).catch(error => {
+      if (!controller.signal.aborted) setError(error && typeof error.message === 'string' ? error.message : true);
     });
     return () => controller.abort();
-  }, [url, baseUrl]);
+  }, [url, baseUrl, storageMode, sourcePath]);
   useEffect(() => {
     const observer = new ResizeObserver(entries => {
       const rect = entries[0].contentRect;
@@ -47,7 +47,7 @@ function HtmlArtifact({ artifact }: { artifact: Artifact }) {
   const fitted = fitArtifact(bounds.width, bounds.height, available.width - 24, available.height - 24);
   return (
     <div className="artifact-html-stage" ref={stage}>
-      {error ? <span className="artifact-hint">HTML 预览加载失败，可<a href={url} download={artifact.name}>下载原文件</a></span>
+      {error ? <span className="artifact-hint">{typeof error === 'string' ? error : 'HTML 预览加载失败'}，可<a href={url} download={artifact.name}>下载原文件</a></span>
         : !source ? <span className="artifact-hint">正在加载预览…</span>
         : <div className="artifact-html-fit" style={{ width: fitted.width, height: fitted.height }}>
           <iframe ref={frame} srcDoc={source} title={artifact.name} sandbox="allow-scripts" allow="clipboard-write"

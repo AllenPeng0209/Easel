@@ -7,7 +7,8 @@ import { IconCopy, IconCheck, IconRetry } from './icons';
 import { extractArtifacts } from '../lib/artifacts';
 import ArtifactGallery from './ArtifactGallery';
 import DeliverableCards from './DeliverableCards';
-import { deliverablesFromEvents, omitDeclaredArtifacts } from '../lib/deliverables';
+import { deliverablesFromEvents, legacyArchivesForDeliverables, omitDeclaredArtifacts,
+  pinSnapshotLinks, rejectedSnapshotPaths } from '../lib/deliverables';
 import UserAttachments from './UserAttachments';
 import AgentEventPanel from './AgentEventPanel';
 import { UserMessageBubble } from '../vendor/deepseek-harness/message/UserMessageBubble';
@@ -51,6 +52,7 @@ function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) 
 export default function MessageBubble({ message, isStreaming, thinking, activity, stillWorking, events, actions }: MessageBubbleProps) {
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
+  const rejectedPaths = useMemo(() => rejectedSnapshotPaths(effEvents), [effEvents]);
   const rendered = useMemo(() => {
     if (message.role === 'user' || !message.content) return { html: '', artifacts: [], archives: [] };
     // 助手正文里裸露的产物路径先转成前端可用链接（文件直开、图片内联、目录跳内容库）。
@@ -58,12 +60,12 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
     // 误判成目录、未闭合的 ``` 会误伤命令示例里的 outputs/），转换只在流式结束后
     // 对完整正文做一次，避免闪烁成错误链接再跳变。
     const body = isStreaming ? message.content : linkifyOutputs(message.content);
-    const html = externalizeMediaLinks(renderMarkdown(body));
+    const html = pinSnapshotLinks(externalizeMediaLinks(renderMarkdown(body)), declared, rejectedPaths, !isStreaming);
     return isStreaming ? { html, artifacts: [], archives: [] } : extractArtifacts(html);
-  }, [message.content, message.role, isStreaming]);
-  const legacyArtifacts = useMemo(() => omitDeclaredArtifacts(rendered.artifacts, declared), [rendered.artifacts, declared]);
-  // ZIP member previews are different content from the ZIP delivery card.
-  const legacyArchives = rendered.archives;
+  }, [message.content, message.role, isStreaming, declared, rejectedPaths]);
+  const legacyArtifacts = useMemo(() => omitDeclaredArtifacts(rendered.artifacts, declared, rejectedPaths), [rendered.artifacts, declared, rejectedPaths]);
+  // Legacy ZIPs retain D22's current-file index. Snapshots use their bound member API.
+  const legacyArchives = useMemo(() => legacyArchivesForDeliverables(rendered.archives, declared, rejectedPaths), [rendered.archives, declared, rejectedPaths]);
 
   // ---- 用户消息 ----
   if (message.role === 'user') {
@@ -133,6 +135,7 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
           {livePanel}
           <AgentEventPanel events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
           {message.content && <div dangerouslySetInnerHTML={{ __html: rendered.html }} />}
+          {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
           <DeliverableCards artifacts={declared} />
           {!isStreaming && (legacyArtifacts.length > 0 || legacyArchives.length > 0) && (
             <ArtifactGallery artifacts={legacyArtifacts} archives={legacyArchives} />

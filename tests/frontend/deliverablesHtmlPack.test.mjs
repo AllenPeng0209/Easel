@@ -11,7 +11,8 @@ const utf8 = text => new TextEncoder().encode(text);
 const png = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZ1cAAAAASUVORK5CYII=', 'base64'));
 const source = '<!doctype html><html><head><link rel="stylesheet" href="./main.css"></head><body><img src="preview.png"><script src="app.js"></script></body></html>';
 const id = 'a'.repeat(32);
-const artifact = { url: `/api/projects/ip-one/chat/artifacts/${id}/content`, baseUrl: '/api/projects/ip-one/media/reports/demo/' };
+const artifact = { url: `/api/projects/ip-one/chat/artifacts/${id}/content`, baseUrl: '/api/projects/ip-one/media/reports/demo/',
+  storageMode: 'legacy-current', sourcePath: 'reports/demo/index.html' };
 
 function environment(files = {}) {
   const { document } = parseHTML('<!doctype html><html><head></head><body></body></html>');

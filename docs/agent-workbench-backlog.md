@@ -2,7 +2,7 @@
 
 日期：2026-11-03。输入基线：上一轮 144 项去重差异；新增 AUT01–AUT08 自主执行要求。本文用于开发跟踪，不能将计划、源码迁移或测试通过直接当作真实业务任务已完成。
 
-当前逐功能阶段以基线commit `1a4c8b7` 为起点；**D01进行中，HTML相对资源403尚未关闭；D08下一项，未开发**。每功能自测和独立commit由根代理完成，来源维护者不stage/commit。
+当前逐功能阶段以基线commit `1a4c8b7` 为起点：**D01已真实验收并提交 `3086ca8`；C19并发初始化修复已提交 `f5118d9`；D08固定版本存储/预览切片已验收，本记录随功能独立提交；批准与版本联动仍归B30/D30。** B30/D30批准与精确hash联动仍为后续P0；144项继续逐项自测、验收和独立提交。
 
 用户目标：以 AI 对话作为内容生产与运营入口；默认自主推进至目标完成，仅在必要时显示输入卡。普通偏好无人回答时采用可见、可追溯默认答案继续；与现有权限或外部公开动作有关的批准保持精确确认边界。
 
@@ -15,20 +15,20 @@
 - 直接复用固定提交的上游实现；复用代码保留 MIT 许可证及来源。Python 引擎、IP/RBAC、业务任务与发布回执属于必要适配层，不能把一段通用 UI 当成已打通业务。
 - 每个行为改动先有失败用例，再迁移代码、通过回归、构建和实际界面检查。涉及真实生产或发布，还需另有实际任务与回执证据。
 
-当前执行：M09中的D01进行中（未验收、未提交），D08是下一项独立功能；M10仍为后续P0。基线当时的交付/优先级保留为历史记录，不能覆盖最新逐功能状态。
+当前执行：M09中的D01已提交；D08固定版本store/UI已验收：候选树2236项后端、414项前端、构建/lint及7862真实V1/V2、覆盖/删源后18次下载哈希与HTML/ZIP通过；批准版本联动仍待B30/D30。C19修复不包含C23分页；B30/D30与M10业务确认仍为后续P0。历史阶段记录不覆盖本段当前状态。
 
 ## 开发包、依赖和验收
 
 | 包 | 顺序 | 工作包 | 前置依赖 | 交付范围 | 优先复用 | 验收门槛 | 状态 |
 |---|---|---|---|---|---|---|---|
-| M00 | P0 | 来源、许可证与可重复迁移基线 | 无 | 已建立固定 revision 的上游 clone、MIT 署名和候选来源清单；实际复用代码单独登记。 | 官方仓库 LICENSE、package.json 和各 package 源码 | 校验提交 SHA、复制的文件 hash、许可证、构建依赖；能区分原样复用、适配和 Easel 专属代码。 | 已核验：官方clone、固定SHA、MIT、实际迁移来源与目标SHA；22个源码迁移文件逐项登记。 |
+| M00 | P0 | 来源、许可证与可重复迁移基线 | 无 | 已建立固定 revision 的上游 clone、MIT 署名和候选来源清单；实际复用代码单独登记。 | 官方仓库 LICENSE、package.json 和各 package 源码 | 校验提交 SHA、复制的文件 hash、许可证、构建依赖；能区分原样复用、适配和 Easel 专属代码。 | 已核验：官方clone、固定SHA、MIT、实际迁移来源与目标SHA；基线22个、D01新增10个、D08新增2个源码迁移文件逐项登记；适配层另列。 |
 | M01 | P0 | 结构化消息、工具事件与持久化 | M00 | 保留工具身份、输入、结果和生命周期，作为任务卡、轨迹和后台状态的基础。 | ui-tool、ui-trajectory、session-controller | 真实开始→输出→完成事件使用同一 callId；刷新与续流不产生重复卡；失败也有稳定终态。 | 基础已通过全量回归与本机Codex验收：命令/输出/exitCode0、消息持久化与刷新恢复；完整轨迹/各引擎真实覆盖仍未完成。 |
 | M02 | P0 | 附件、提交准入和每会话草稿 | M00 | 先修复附件不可见与并发上传提前解锁，再补缩略图、取消、错误重试和草稿。 | ui-attachment、ui-conversation draft/editor | 仅附件发送可见；两批上传未全部结束不能发送；切 user/IP/session 不串草稿。 | 本轮实现与356项前端回归/构建通过：附件消息、上传准入、草稿、预览/取消/重试；非逐项真实浏览器文件上传验收。 |
 | M03 | P0 | 自主推进、默认答案与必要人工输入 | M01、M02 | 默认自主完成可逆生产任务；偏好问答超时采用透明默认值；授权和凭据有独立边界。 | ui-user-questions、ui-approval、ui-goal、session inbox 契约 | 关闭浏览器仍由服务器执行默认策略；重复回答只生效一次；权限类问题不超时批准；历史保留真实决策。 | 普通默认答案/安全拒绝与记录通过回归；新Codex会话已实测输入卡→无人填→25秒默认→继续shell。旧未注册原生线程需新建；durable goal/pending future重启仍未完成。 |
-| M04 | P0 | 服务器会话目录与可恢复历史 | M01 | 以服务器授权目录为真源，迁移现有浏览器历史，取消按100条截断的持久化策略。 | session-controller、ui-workspace | 至少101条会话可检索；换浏览器可找回；旧会话导入幂等，归档和删除保留边界清楚。 | SQLite目录、墓碑与user/IP隔离已通过回归；本机两轮刷新恢复已验收，跨浏览器人工恢复链未另做真实验收。 |
+| M04 | P0 | 服务器会话目录与可恢复历史 | M01 | 以服务器授权目录为真源，迁移现有浏览器历史，取消按100条截断的持久化策略。 | session-controller、ui-workspace | 至少101条会话可检索；换浏览器可找回；旧会话导入幂等，归档和删除保留边界清楚。 | SQLite目录恢复基础保留；C19并发初始化修复已独立提交f5118d9；跨浏览器其他场景按条目验收，C23分页仍待开发。 |
 | M05 | P0 | 停止回执与后台任务控制 | M01、M03 | 停止显示真实后端确认；聊天流与媒体后台任务分别管理。 | ui-jobs、session-controller cancel | 停止失败不能显示已停止；单任务取消不误停其他任务；不可取消外部动作继续核实回执。 | 真实proc结束且supervisor释放才stopped，失败/未确认状态回归通过；完整媒体后台job工作台未完成。 |
-| M09 | P0→P1 | 交付协议、版本与并排预览 | M01、M02、M04 | P0先做明确交付和版本身份；P1再做右侧工作区、diff及Office/表格预览。 | ui-deliverables、workspace-changes、ui-sidebar-right、ui-sidebar-documentpreview | 不依赖正文链接识别文件；可核对历史/当前/批准版本；预览失败仍可访问原文件；只读预览不冒充编辑。 | D01显式交付已验证待独立提交；D08版本固定仍为下一项P0，并排/高级预览后续。 |
-| M10 | P0→P1 | 真实自媒体业务卡和发布回执 | M01、M03、M05、M09 | 复用通用工具/workflow卡框架，接现有选题、稿件、工坊、审阅和发布服务。 | ui-tool、ui-workflow-run；Easel既有业务服务 | 卡片引用真实topic/project/revision/publication ID；服务端检查IP角色；导出/提交/发布成功互不混用。 | 下一批P0：聊天业务卡与精确发布回执本轮未实现；保留既有工坊/发布服务，不冒充聊天已整合。 |
+| M09 | P0→P1 | 交付协议、版本与并排预览 | M01、M02、M04 | P0先做明确交付和版本身份；P1再做右侧工作区、diff及Office/表格预览。 | ui-deliverables、workspace-changes、ui-sidebar-right、ui-sidebar-documentpreview | 不依赖正文链接识别文件；可核对历史/当前/批准版本；预览失败仍可访问原文件；只读预览不冒充编辑。 | D01显式交付已真实验收并提交3086ca8；D08固定版本store/UI已验收，候选树2236后端/414前端、构建/lint、真实V1/V2及删源下载/HTML/ZIP通过；批准绑定后续B30/D30。 |
+| M10 | P0→P1 | 真实自媒体业务卡和发布回执 | M01、M03、M05、M09 | 复用通用工具/workflow卡框架，接现有选题、稿件、工坊、审阅和发布服务。 | ui-tool、ui-workflow-run；Easel既有业务服务 | 卡片引用真实topic/project/revision/publication ID；服务端检查IP角色；导出/提交/发布成功互不混用。 | 后续P0：B30/D30批准对象、精确hash/版本和真实发布回执联动仍未完成；D08的版本存储/预览不等于批准链已完成。 |
 | M06 | P1 | 消息阅读、渲染与代码显示 | M01、M02 | 复用上游渲染、代码卡和阅读跟随行为，保留现有媒体和消毒策略。 | ui-chat、ui-primitives | 上翻不抢位置；回底可用；复制反馈真实；流式未闭合围栏与多代码块稳定。 | 本轮气泡、复制、预览、阅读跟随基础已通过回归；高亮/数学/增量Markdown等剩余项未实现。 |
 | M07 | P1 | 结构化输入、引用、队列与纠偏 | M02、M03、M04 | 先建立 Host 能力，再迁移编辑节点、命令补全、Queue/Steer 和模型控件。 | ui-conversation、ui-reference、ui-input-trigger、ui-model-selection | 引用带授权对象身份；Queue有服务端回执；运行中纠偏只投递一次；不支持的能力明确禁用。 | 队列基础已本机验收：运行中排队、自动随后执行、刷新保留；richtext/@/slash/Steer和完整模型控件未完成。 |
 | M08 | P1 | Todo、计划审阅与子 Agent 工作台 | M01、M03、M05 | 真实计划和子任务事件驱动视图；不从自然语言猜任务已完成。 | ui-plan、ui-subagent、ui-goal、ui-tool todo | 可查看父子任务和精确会话；方案变更使批准失效；只停止指定子任务；未提供能力不伪造控件。 | 下一批P1：durable goal、正式计划审阅、Todo/子Agent工作台尚未交付；只有事件基础。 |
@@ -50,7 +50,7 @@
 | AUT05 | P0 | 授权、凭据与公开动作边界 | M03、M10 | 普通偏好超时可继续；发布批准、提权、账号更换、付款及敏感凭据不被默认答案自动批准；允许继续准备和校验可逆产物。 | 权限请求超时得到等待/拒绝等明确状态；不会无批准公开发布；变更账号、内容版本或payload使原确认失效。 | secret投影/风险降级阻止与权限读取边界通过回归；公开业务动作仍必须真实批准，不能以本次smoke宣称全部业务策略验收。 |
 | AUT06 | P0 | 持久执行、恢复与幂等 | M01、M04、M05 | 任务与决策保存在服务端；续流、恢复、工具重试保留request/task/call身份；不可幂等外部动作先查实际回执。 | 重连或浏览器重开不重复制作/发布；状态可恢复；限流、上游短暂错误有真实重试记录和可停止控制。 | 部分已验证：持久目录/队列及turn_claims幂等，8并发仅1赢家；本机排队→执行→刷新恢复通过；通用任务恢复和pending future重启未交付。 |
 | AUT07 | P1 | 无进展、失败和停止 | M01、M05、M08 | 失败可执行合理恢复分支；真正缺认证/权限或多次无进展时标blocked并显示必要输入；停止服从后端终态。 | 不会无限循环相同失败；失败原因、已完成部分和可恢复入口可见；停止失败不显示成功，停后不偷偷继续新步骤。 | 拒绝/blocked和真实停止状态通过回归；通用无进展检测、durable goal暂停恢复未实现。 |
-| AUT08 | P1 | 完成检查和可核对交付 | M09、M10 | 完成前检查目标清单、产物存在/版本、工具结果和发布回执；将残余阻塞与已完成内容分别呈现。 | 一次任务包含正文、附件或业务动作时可逐项验收；无真实文件或回执不能勾选完成；交付关联正确IP和当前批准版本。 | 仅有自主指令完成标准及本机工具结果smoke；交付协议、业务目标清单和通用终验引擎尚未实现，下一批M09/M10继续。 |
+| AUT08 | P1 | 完成检查和可核对交付 | M09、M10 | 完成前检查目标清单、产物存在/版本、工具结果和发布回执；将残余阻塞与已完成内容分别呈现。 | 一次任务包含正文、附件或业务动作时可逐项验收；无真实文件或回执不能勾选完成；交付关联正确IP和当前批准版本。 | D01显式交付已真实验收并提交；D08固定版本store/UI切片已验收并随本记录独立提交。通用目标终验、业务清单及B30/D30精确hash批准/回执仍待继续。 |
 
 ## 144 项完整开发映射
 
@@ -125,7 +125,7 @@
 | B27 | 子 Agent 树、计数和独立会话 | P1 | M08／M01、M03、M05 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-subagent/README.md:28-36](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L28-L36)<br>[packages/bundle/web-app/cordis.patch.yml:385-386](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L385-L386) | 主任务可展开“调研/脚本/剪辑/复核”子任务，每个有稳定会话身份；可只读查看真实消息；用户只能看当前 IP 有权访问的子会话。 | 计划中；未验收 |
 | B28 | 可继续子任务的追问及独立中断 | P2 | M08／M01、M03、M05 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-subagent/README.md:40-44](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L40-L44)<br>[packages/client/ui-subagent/README.md:68-70](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L68-L70) | 支持受权限约束地向可继续的脚本子任务补充说明；中止子任务不误停同批其他任务；只读子任务明确不能追问；显示名称不作为权限身份。 | 计划中；未验收 |
 | B29 | 并发执行者的活动、耗时和用量 | P2 | M08／M01、M03、M05 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-subagent/README.md:36](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L36)<br>[packages/client/ui-subagent/README.md:64-66](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L64-L66) | 并发任务各自显示活动和实际用量/耗时，未知值留空；失败/取消/拒绝/限额对业务应分别标记；不直接照搬 DSH 仍聚合的非正常 inactive 状态。 | 计划中；未验收 |
-| B30 | 授权卡关联具体动作和主体 | P0 | M03／M01、M02 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-approval/README.md:11](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L11)<br>[packages/client/ui-approval/README.md:38](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L38) | 发布确认卡必须列出 IP、平台账号、目标受众、文案/媒体预览、版本、立即或定时；批准绑定精确 payload hash/版本；内容或账号变化必须重批；双击不重复发布。 | 计划中；未验收 |
+| B30 | 授权卡关联具体动作和主体 | P0 | M03／M01、M02 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-approval/README.md:11](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L11)<br>[packages/client/ui-approval/README.md:38](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L38) | 发布确认卡必须列出 IP、平台账号、目标受众、文案/媒体预览、版本、立即或定时；批准绑定精确 payload hash/版本；内容或账号变化必须重批；双击不重复发布。 | 后续P0，尚未验收：批准绑定具体IP/账号/动作及精确payload hash/版本；D08固定版本基础不代表本批准链已完成。 |
 | B31 | 一次授权与长期授权的明确边界 | P1 | M03／M01、M02 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-approval/README.md:21-23](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L21-L23)<br>[packages/client/ui-approval/README.md:38](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L38) | 显示“仅本次/当前会话”及动作范围；公开发布、账号变更等始终按业务策略人工确认；自动批准普通读取/工作区编辑要可查，不提供笼统“永远允许发布”。 | 部分已通过本轮代码/回归验证：加固普通自动读取的敏感目录/工作区边界；按能力主体授权明细仍待补。 |
 | B32 | 审批提交中、防重复与权限撤销 | P1 | M03／M01、M02 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-approval/README.md:21](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L21)<br>[packages/client/ui-user-questions/README.md:50-54](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-user-questions/README.md#L50-L54) | 批准按钮发送后显示“提交中”，仅服务端确认后关闭；过期/替换/撤权立即禁用；两浏览器同时批准只产生一次有效决策；旧请求响应不能影响新卡。 | 计划中；未验收 |
 | B33 | 单选、多选和自定义答复 | 保持 | M03／M01、M02 | 保留 Easel；按上游契约回归<br>[packages/client/ui-user-questions/README.md:28-34](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-user-questions/README.md#L28-L34)<br>[packages/bundle/web-app/cordis.patch.yml:461-462](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L461-L462) | 保留多选加自定义回答；长批次分页或分组，固定提交按钮；缺题定位到首个未答项；中文输入法 Enter 只确认候选，不意外提交批准。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
@@ -154,7 +154,7 @@
 | C16 | 历史轮次重试/编辑边界 | P1 | M11／M04、M06 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-chat/src/client/chat/MessageIconActions.tsx:66-83](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-chat/src/client/chat/MessageIconActions.tsx#L66-L83) | 保留最后轮重试；为历史修订提供明确的分叉路径；各 adapter 声明回滚/分叉能力，不支持时不可伪造历史编辑。 | 计划中；未验收 |
 | C17 | 整段会话导出 Markdown/原始日志 | P1 | M11／M04、M06 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/bundle/web-app/cordis.patch.yml:66-68](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L66-L68)<br>[packages/session-query/session-log-export/README.md:28-36](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/session-query/session-log-export/README.md#L28-L36) | 支持导出当前 IP 授权内会话为可读 Markdown，附件用稳定标签/许可链接；明确是否含工具日志；原始日志另设技术导出权限。 | 部分已通过本轮代码/回归验证：当前可见会话Markdown导出；完整raw日志ZIP与导入未实现。 |
 | C18 | 分享链接和协作写入 | 观察 | M11／M04、M06 | 先验证需求与 Host 条件；暂不承诺照搬<br>[packages/experimental/liveshare/README.md:12-12](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/experimental/liveshare/README.md#L12)<br>[packages/experimental/liveshare/README.md:30-38](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/experimental/liveshare/README.md#L30-L38) | 若做分享，必须定义指定用户/有效期/只读与可写边界，撤销后立即失效，且不突破 IP 的成员授权。 | 待验证／产品判断 |
-| C19 | 服务器会话目录与跨浏览器恢复 | P0 | M04／M01 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/api/session-controller/README.md:36-40](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/api/session-controller/README.md#L36-L40)<br>[packages/api/session-controller/README.md:46-50](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/api/session-controller/README.md#L46-L50) | 服务端持久化 user+IP 的会话目录与标题/归档/更新时间，客户端启动分页读取；清 localStorage 后重新登录能恢复授权内目录。 | 目录恢复基础保留；并发初始化锁修复已验证：4专项、54相关回归、8000次claim零错误，待本项单独提交。分页仍按C23继续。 |
+| C19 | 服务器会话目录与跨浏览器恢复 | P0 | M04／M01 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/api/session-controller/README.md:36-40](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/api/session-controller/README.md#L36-L40)<br>[packages/api/session-controller/README.md:46-50](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/api/session-controller/README.md#L46-L50) | 服务端持久化 user+IP 的会话目录与标题/归档/更新时间，客户端启动分页读取；清 localStorage 后重新登录能恢复授权内目录。 | 并发初始化修复已独立提交f5118d9：4专项、54相关回归、8000次claim零错误；目录恢复基础保留。本修复不包含C23分页，也不宣称所有跨浏览器场景已实测。 |
 | C20 | 刷新后恢复活跃会话 | 保持 | M04／M01 | 保留 Easel；按上游契约回归<br>[packages/client/ui-workspace/README.md:86-88](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-workspace/README.md#L86-L88) | 回归同页刷新、关闭重开、切 IP 后刷新和重命名后刷新；活跃记录缺失时回退可解释，不混入其他身份。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
 | C21 | 多标签并发占用与控制权反馈 | P2 | M04／M01 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/api/session-controller/README.md:48-48](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/api/session-controller/README.md#L48)<br>[packages/client/ui-model-selection/README.md:62-62](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-model-selection/README.md#L62) | 保持后端写锁；明确显示另一窗口正在使用、可只读查看/新建的选择；并行标签不会重复提交或覆盖本地目录。 | 计划中；未验收 |
 | C22 | 断流后结果回放与刷新续接 | 保持 | M04／M01 | 保留 Easel；按上游契约回归<br>[packages/api/session-controller/README.md:54-58](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/api/session-controller/README.md#L54-L58)<br>[packages/client/ui-trajectory/README.md:28](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-trajectory/README.md#L28) | 做中途断网/刷新/重复事件/任务已完成/日志已过期的回归，确保一条回答不重复、不缺尾，失败明确可重试。 | 现有断流/续接随全量回归保留；本机两轮消息与工具记录刷新恢复已验收。 |
@@ -178,7 +178,7 @@
 | D05 | 会话独立的预览标签与面板状态 | P2 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-sidebar-right/README.md:63-70](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-right/README.md#L63-L70) | 先实现每会话 2-4 个资源标签、当前资源和面板宽度；A/B 会话切换不混用资源；刷新可恢复合法资源地址。 | 计划中；未验收 |
 | D06 | 一轮到底改了哪些文件 | P1 | M09／M01、M02、M04 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/bundle/web-app/cordis.patch.yml:360-363](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L360-L363)<br>[packages/client/ui-deliverables/README.md:28](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L28) | 一轮修改两个内容文件、新增一张封面，结果摘要列出三个授权文件；无变更不造摘要；中断、二进制、超限有明确说明。 | 计划中；未验收 |
 | D07 | 修改前后对比 | P1 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-deliverables/README.md:49-53](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L49-L53) | 文案/脚本显示可读的前后段落差异；图片/视频给并排版本与生成参数；比较地址固定到版本，不悄悄展示最新版。 | 计划中；未验收 |
-| D08 | 区分历史交付、当前文件和已批准版本 | P0 | M09／M01、M02、M04 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:49](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L49)<br>[packages/client/ui-deliverables/README.md:118-122](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L118-L122) | 聊天交付物固定引用不可变 artifactId/revision/hash；文件被覆盖后旧交付仍可取回或显示已不可用；批准卡明确绑定原版本。 | 下一项（尚未开发）：不可变交付/历史版本、hash与批准版本；与D01当前文件声明分开验收和提交。 |
+| D08 | 区分历史交付、当前文件和已批准版本 | P0 | M09／M01、M02、M04 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:49](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L49)<br>[packages/client/ui-deliverables/README.md:118-122](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L118-L122) | 聊天交付物固定引用不可变 artifactId/revision/hash；文件被覆盖后旧交付仍可取回或显示已不可用；批准卡明确绑定原版本。 | 固定版本store/UI已验收（2236后端、414前端、构建/lint、真实18次下载及HTML/ZIP通过），随本记录独立提交；原行批准部分仍待后续。B30/D30批准精确hash联动另为后续P0。 |
 | D09 | 资源更新、重载与错误恢复 | P1 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-sidebar-documentpreview/README.md:55-60](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L55-L60) | 每资源显示加载/可用/已更新/不可用/失败，提供重试；更新中保留旧内容但明确版本；ZIP失败不能静默消失。 | 计划中；未验收 |
 | D10 | Word/PowerPoint交付物查看 | P1 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/bundle/web-app/cordis.patch.yml:283-289](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L283-L289)<br>[packages/client/ui-sidebar-documentpreview/README.md:98-112](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L98-L112) | DOCX/PPTX可看转换预览并下载原文件；未安装转换服务或缺字体时准确提示；无需实现在线Office编辑。 | 计划中；未验收 |
 | D11 | 运营表格预览 | P1 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-sidebar-documentpreview/README.md:75-79](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L75-L79)<br>[packages/client/ui-sidebar-documentpreview/README.md:89](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L89) | CSV/XLSX可只读切工作表、复制单元格、保留数字/前导零；公式未计算或图表未显示必须说明；下载保持原文件。 | 计划中；未验收 |
@@ -199,7 +199,7 @@
 | D26 | 选题来源到创作的结构化承接 | P1 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:67-69](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L67-L69)<br>[packages/client/ui-workflow-run/README.md:28-36](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-workflow-run/README.md#L28-L36) | 从选题入口发起后，聊天显示可展开的来源卡；携带topicId/平台/URL/采集时间并落到成稿关联；标题同名也能追溯准确来源。 | 计划中；未验收 |
 | D28 | 视频画布是真业务编辑器，应接回聊天 | P1 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-sidebar-documentpreview/README.md:144-145](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L144-L145) | AI生成工坊项目卡并指向准确projectId/revision；有权限者在侧面打开专属画布，无权限者打开交付审阅；画布保存/导出后回传状态及交付版本到原聊天。 | 计划中；未验收 |
 | D29 | 交付版本、人工批准与发布记录的关联 | 保持 | M12／相应基础包 | 保留 Easel；按上游契约回归<br>[packages/client/ui-deliverables/README.md:37-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37-L39)<br>[packages/client/ui-deliverables/README.md:118](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L118) | 聊天中审阅卡复用服务端工坊状态，显示版本/hash和人工/模拟标志；改版后旧批准不会批准新文件；已发布卡显示绑定版本和真实平台链接。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
-| D30 | 人工/自动发布与回执真实性 | P0 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:37-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37-L39)<br>[packages/client/ui-sidebar-browser/README.md:28-32](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-browser/README.md#L28-L32) | 聊天卡区分draft/exported/submitted/confirmed/failed；引用服务器任务/内容版本/平台链接；人工确认标注来源；无平台回执不显示自动验证成功；重复点击不重复发布。 | 计划中；未验收 |
+| D30 | 人工/自动发布与回执真实性 | P0 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:37-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37-L39)<br>[packages/client/ui-sidebar-browser/README.md:28-32](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-browser/README.md#L28-L32) | 聊天卡区分draft/exported/submitted/confirmed/failed；引用服务器任务/内容版本/平台链接；人工确认标注来源；无平台回执不显示自动验证成功；重复点击不重复发布。 | 后续P0，尚未验收：真实发布回执与精确内容hash/版本、账号及批准联动；无平台回执不能报发布成功，D08不代替此链。 |
 | D31 | 商业IP、owner/operator/viewer的隔离 | 保持 | M12／相应基础包 | 保留 Easel；按上游契约回归<br>[docs/user/guide/public-deployments.md:21-35](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/docs/user/guide/public-deployments.md#L21-L35)<br>[packages/client/ui-sidebar-files/README.md:58-66](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-files/README.md#L58-L66) | 同一用户不同IP资源不串；viewer不能操作、operator不能管账号/成员；侧栏文件、下载、预览、引用继续修改和后台任务都复用同一服务器授权，不仅隐藏按钮。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
 | D32 | 未来只读聊天的 HTML 预览策略 | 观察 | M12／相应基础包 | 先验证需求与 Host 条件；暂不承诺照搬<br>[packages/client/ui-sidebar-documentpreview/README.md:51-62](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L51-L62) | 开放 viewer 聊天前统一角色与资源可信级别策略；两入口采用一致静态/交互配置，交互预览继续使用隔离 iframe。 | 待验证／产品判断 |
 
@@ -237,7 +237,7 @@
 | 7 | M11剩余会话能力 | P1→P2 | 分叉、归档Undo、手工排序、raw日志、大纲、全局命令；全文搜索仍需显式启用 |
 | 8 | M09高级预览、M12可选集成 | P2／观察 | Office/表格、并排文件工作区、Desktop/分享/市场；按真实需求和Host条件实施 |
 
-## 冻结版本验证证据
+## 基线冻结版本验证证据（历史）
 
 以下为根代理提供的最终执行结果；来源与目标文件SHA由清单维护者另行核对。整体回归通过说明本轮冻结代码在这些测试中通过，不代表每个未实现功能或所有真实引擎/业务场景均已验证。
 
@@ -258,7 +258,7 @@
 
 本机截图：`.scratch/agent-workbench-verification/desktop.jpg`、`.scratch/agent-workbench-verification/mobile.jpg`、`.scratch/agent-workbench-verification/input-default-complete.jpg`。截图是本机证据产物，不代替全部输入、工具、权限或业务状态测试。
 
-仍未交付：M09/M10聊天交付/业务闭环、durable goal/pause/resume、进程重启后pending question future恢复、所有工具专用视图、完整嵌套轨迹、richtext/@/slash/Steer及其他上表保留的缺口。高风险动作无人确认时安全拒绝或blocked，不将沉默当批准。
+基线时仍未交付（历史范围；当前以顶部和逐功能记录为准）：M09/M10聊天交付/业务闭环、durable goal/pause/resume、进程重启后pending question future恢复、所有工具专用视图、完整嵌套轨迹、richtext/@/slash/Steer及其他上表保留的缺口。高风险动作无人确认时安全拒绝或blocked，不将沉默当批准。
 
 ## Codex 原生输入卡启用条件
 
@@ -268,11 +268,21 @@ Codex默认模式的原生 `request_user_input` 受模式门禁限制。本轮�
 
 本次真实验收是在新建会话中完成，未填写任何答案：卡片默认专业，服务端25秒后决策并继续实际shell，输出EASEL_DEFAULT_CONTINUED且退出0。这证明该链路可用，不代表持久目标、所有业务回执或所有旧会话都已完成迁移。
 
-## 逐功能开发阶段（基线后）
+## 逐功能开发阶段（当前）
 
-根代理已建立前期工作基线commit `1a4c8b7`。后续按144项稳定编号逐项开发、每项自测和独立功能commit。当前仅D01进行中，**未验收、未提交**；D08是下一项，不能混入D01完成声明或提交。
+基线commit为 `1a4c8b7`。144项保持稳定编号，继续逐项开发、每项自测/真实验收并独立提交，不以一个通用UI或邻项通过代替整项完成。
 
-- D01逐项记录：[agent-feature-acceptance/D01.md](agent-feature-acceptance/D01.md)。
-- 每功能模板：[agent-feature-acceptance-template.md](agent-feature-acceptance-template.md)。
-- 已有基线测试/截图是历史基线证据，不能替代本轮新增D01代码的最终验收。
-- 新`present`原生工具当前仅在新建Codex线程注册。旧未注册线程的resume不追加工具且保留ID/历史，需新建对话；ACP未注册对应MCP/工具，不能显示或声称已支持。
+| 条目 | 当前状态 | 边界 |
+|---|---|---|
+| `D01` | 已真实验收并提交 `3086ca8` | 显式present、鉴权文件卡、真实下载/PNG/HTML及刷新去重已验收；HTML原403已关闭 |
+| `C19` | 并发初始化修复已提交 `f5118d9` | 不包含C23按turn分页；其他目录/跨浏览器场景继续按各项验收 |
+| `D08` | 固定版本切片已验收；批准部分未完 | 固定版本store/UI、全量2236后端/414前端、构建/lint及隔离7862真实18次下载/HTML/ZIP通过；随本记录独立提交，B30/D30继续 |
+| `B30／D30` | 后续P0，尚未完成 | 批准必须与具体主体、账号、动作和精确hash/版本及真实发布回执联动，不能由D08版本存储替代 |
+
+- D01记录：[agent-feature-acceptance/D01.md](agent-feature-acceptance/D01.md)。后续功能使用各自记录，不混入同一功能commit。
+- 每功能模板：[agent-feature-acceptance-template.md](agent-feature-acceptance-template.md)。基线和历史阶段测试/截图不替代当前功能最终验收。
+- 新`present`工具的已验收支持条件保持明确：新建Codex线程注册；旧未注册resume不追加工具并保留ID/历史，需新建；ACP未注册对应MCP/工具，不能声称支持。
+- 只将实际迁移的React/TS/CSS称为源码复用；Python store、原生引擎、IP权限及业务边界属于必要适配，不夸大为上游Python原样复制。
+
+
+当前D08固定版本功能验收见 [D08.md](agent-feature-acceptance/D08.md)：2236后端通过/17跳过、414前端通过、构建/lint/编译/差异通过；18次真实浏览器下载hash、覆盖与删源后的HTML/ZIP版本保持通过。此验收覆盖固定交付切片，不关闭B30/D30精确版本批准或其余计划项。来源manifest登记新增HostReadStore与ReviewTab源码迁移及必要Python持久化适配。

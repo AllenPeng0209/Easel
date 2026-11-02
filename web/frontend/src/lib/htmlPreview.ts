@@ -5,7 +5,7 @@ import { projectFetch, projectUrl } from './projectScope';
 import { createHtmlDocument } from '../vendor/deepseek-harness/html/bootstrap';
 import { packHtml, type ReadHtmlRelative } from '../vendor/deepseek-harness/html/pack';
 
-type HtmlArtifactSource = Pick<Artifact, 'url' | 'baseUrl'>;
+type HtmlArtifactSource = Pick<Artifact, 'url' | 'baseUrl' | 'storageMode' | 'sourcePath'>;
 const MAX_DOCUMENT_BYTES = 32 * 1024 * 1024;
 const MAX_ASSET_BYTES = 4 * 1024 * 1024;
 const STATIC_SUFFIX = /\.(?:js|css|png|jpe?g|gif|webp|avif|bmp|ico|svg)$/i;
@@ -21,20 +21,44 @@ function assertPublicParts(parts: string[]): void {
       || PRIVATE_SEGMENT.test(part) || CREDENTIAL_SUFFIX.test(part))) throw new Error('HTML 资源不在当前 IP 的公开内容目录');
 }
 
-function sourceRoute(source: HtmlArtifactSource): { route: string; id?: string; document?: string } {
+/** Logical paths bound relative references; they never select an authenticated endpoint. */
+function logicalSourceParts(path?: string): string[] {
+  if (!path || /^(?:[a-z][a-z\d+.-]*:|[/\\])/iu.test(path) || unsafeCharacters(path)) throw new Error('HTML 来源路径无效');
+  const parts: string[] = [];
+  for (const part of path.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (!parts.length) throw new Error('HTML 来源路径不能越出内容目录');
+      parts.pop();
+    } else parts.push(part);
+  }
+  if (!parts.length || !/\.html?$/i.test(parts.at(-1)!)) throw new Error('HTML 来源路径无效');
+  return parts;
+}
+
+export function sourceRoute(source: HtmlArtifactSource): { route: string; related?: string; document?: string; snapshot: boolean } {
+  if (typeof source.url !== 'string' || !source.url.startsWith('/') || source.url.startsWith('//')
+      || unsafeCharacters(source.url)) throw new Error('HTML 来源不是当前 IP 的授权内容');
   const route = projectUrl(source.url.split(/[?#]/)[0]);
   const artifactPrefix = projectUrl('/api/chat/artifacts/');
-  const id = route.startsWith(artifactPrefix) ? /^([a-f0-9]{32})\/content$/.exec(route.slice(artifactPrefix.length))?.[1] : undefined;
-  if (id) return { route, id };
+  const match = route.startsWith(artifactPrefix)
+    ? /^([a-f0-9]{32})(?:\/archive\/(0|[1-9]\d*))?\/content$/.exec(route.slice(artifactPrefix.length)) : null;
+  if (match && (match[2] === undefined || Number.isSafeInteger(Number(match[2])))) {
+    const snapshot = source.storageMode === 'snapshot' || match[2] !== undefined;
+    if (snapshot) logicalSourceParts(source.sourcePath);
+    return { route, related: route.replace(/\/content$/, '/related'), snapshot };
+  }
+  if (source.storageMode === 'snapshot') throw new Error('HTML 快照来源不是当前 IP 的固定交付文件');
   const mediaPrefix = projectUrl('/api/media/');
   if (!route.startsWith(mediaPrefix)) throw new Error('HTML 来源不是当前 IP 的授权内容');
   const document = decodeURIComponent(route.slice(mediaPrefix.length));
   if (unsafeCharacters(document) || !/\.html?$/i.test(document)) throw new Error('HTML 来源路径无效');
   assertPublicParts(document.split('/'));
-  return { route, document };
+  return { route, document, snapshot: false };
 }
 
-function sourceDirectory(source: HtmlArtifactSource, origin: string, document?: string): string[] {
+function sourceDirectory(source: HtmlArtifactSource, origin: string, document?: string, snapshot = false): string[] {
+  if (snapshot) return logicalSourceParts(source.sourcePath).slice(0, -1);
   if (document) return document.split('/').slice(0, -1);
   const base = previewBaseUrl(source, origin);
   const prefix = new URL(projectUrl('/api/media/'), origin).href;
@@ -75,7 +99,7 @@ async function readBytes(response: Response, limit: number, signal: AbortSignal)
 
 /**
  * Only the static packer owns this reader; it is never exposed to iframe messages.
- * The server revalidates canonical paths and rejects symlinks/private targets.
+ * The server authorizes immutable manifest members or revalidates legacy paths.
  */
 export function createReadHtmlRelative(source: HtmlArtifactSource, lifetime: AbortSignal): ReadHtmlRelative {
   return async (reference, signal) => {
@@ -87,18 +111,28 @@ export function createReadHtmlRelative(source: HtmlArtifactSource, lifetime: Abo
       throw new Error('HTML 资源必须使用受支持的相对文件路径');
     }
     const coordinates = sourceRoute(source);
-    const parts = sourceDirectory(source, window.location.origin, coordinates.document);
+    const parts = sourceDirectory(source, window.location.origin, coordinates.document, coordinates.snapshot);
     for (const part of path.split('/')) {
       if (!part || part === '.') continue;
       if (part === '..') {
         if (!parts.length) throw new Error('HTML 资源不能越出当前 IP 内容目录');
         parts.pop();
-      } else parts.push(part);
+      } else {
+        // Existing logical inbox ancestry can be legitimate. A reference cannot
+        // introduce private system paths into a privileged parent-side read.
+        if (coordinates.snapshot && (part.startsWith('.') || (!parts.length && part.startsWith('_'))
+            || PRIVATE_SEGMENT.test(part) || CREDENTIAL_SUFFIX.test(part))) {
+          throw new Error('HTML 资源不能引用私有内容目录');
+        }
+        parts.push(part);
+      }
     }
-    assertPublicParts(parts);
+    if (coordinates.snapshot) {
+      if (!parts.length) throw new Error('HTML 资源路径无效');
+    } else assertPublicParts(parts);
     const query = new URLSearchParams({ path });
     let endpoint: string;
-    if (coordinates.id) endpoint = `/api/chat/artifacts/${coordinates.id}/related`;
+    if (coordinates.related) endpoint = coordinates.related;
     else {
       query.set('document', coordinates.document!);
       endpoint = '/api/chat/artifact-related';
@@ -135,6 +169,6 @@ export async function loadPackedHtmlArtifact(source: HtmlArtifactSource, token: 
     report();
   })();`;
   return createHtmlDocument({ ...bundle, preview: {
-    baseUrl: previewBaseUrl(source, window.location.origin), script,
+    baseUrl: previewBaseUrl(coordinates.snapshot ? { ...source, storageMode: 'snapshot' } : source, window.location.origin), script,
   } });
 }
