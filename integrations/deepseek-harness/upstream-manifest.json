@@ -18,7 +18,7 @@
     ],
     "managed_clone_is_gitignored": true
   },
-  "status_notice": "Baseline 1a4c8b7 and D01 are separately recorded. D01 is verified and awaiting its own feature commit. Other backlog items, including D08 immutable revisions, remain incomplete.",
+  "status_notice": "D01 committed as 3086ca8. C19 initialization race verified and pending its own commit; other backlog requirements remain incomplete.",
   "selected_packages": [
     {
       "upstream_path": "packages/client/ui-conversation",
@@ -6998,7 +6998,7 @@
     },
     {
       "destination_path": "web/chat_history.py",
-      "destination_sha256": "479255df5134e8adc0fbce27f47188d593bc2b55878194def553bfb87963d6db",
+      "destination_sha256": "f801cf1174540583c4b167821d05b984c8a5eb7adc4b70183352e650928f8cf0",
       "source_reference": "packages/api/session-controller/README.md",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
@@ -7229,12 +7229,12 @@
     "sha_notice": "All recorded target hashes refreshed after the final dynamic-tool and countdown changes were frozen on 2026-11-03."
   },
   "baseline_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
-  "current_feature": "D01",
+  "current_feature": "C19-initialization",
   "feature_work": {
     "D01": {
-      "status": "verified_awaiting_feature_commit",
+      "status": "verified_committed",
       "baseline_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
-      "feature_commit": null,
+      "feature_commit": "3086ca88b6c317e702496349d6c27ea2ea265ba4",
       "scope": "Explicit present declarations, current-file store, structured events and authenticated file cards. D08 immutable versions are excluded.",
       "source_migration_files": [
         "web/frontend/src/vendor/deepseek-harness/deliverables/Deliverables.module.css",
@@ -7372,6 +7372,26 @@
         "HTML module/CSS recursion not added",
         "historical availability is not automatically refreshed (D09)"
       ]
+    },
+    "C19-initialization": {
+      "status": "verified_awaiting_feature_commit",
+      "scope": "Only repeated SQLite journal-mode negotiation removed; claim ownership and existing modes preserved. C23 pagination remains separate.",
+      "files": [
+        "web/chat_history.py",
+        "tests/test_chat_catalog_concurrency.py"
+      ],
+      "verification": {
+        "consumer_cases": 4,
+        "root_related_passed": 54,
+        "root_stress_claims": 8000,
+        "root_stress_failures": 0,
+        "root_red_failures": 20,
+        "root_red_claims": 200,
+        "single_winner": true,
+        "event_prefix_preserved": true,
+        "integrity": "all ok"
+      },
+      "source_kind": "Easel storage adapter; upstream writer/idempotency semantics preserved, not verbatim Python copying"
     }
   }
 }

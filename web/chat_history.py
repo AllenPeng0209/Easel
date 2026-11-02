@@ -62,9 +62,10 @@ class ChatHistoryStore:
                 "(turn_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, payload_hash TEXT NOT NULL, owner_pid INTEGER NOT NULL)")
 
     def _connect(self):
-        connection = sqlite3.connect(self.path, timeout=10)
-        connection.execute("PRAGMA journal_mode=WAL")
-        return connection
+        # Journal-mode changes require a lock upgrade even for read consumers.
+        # Preserve the file's existing mode; transaction/claim ownership does
+        # not depend on repeatedly negotiating WAL during concurrent startup.
+        return sqlite3.connect(self.path, timeout=10)
 
     def sessions(self) -> list[dict]:
         with self._connect() as connection:
