@@ -10,7 +10,7 @@ const ts = require('typescript');
 
 // Load the actual TSX component tree. CSS-module names are retained for markup
 // assertions; no component or state reducer is replaced with a test double.
-export function componentModule(relative, { user = '', project = 'default', storageValues, globals = {} } = {}) {
+export function componentModule(relative, { user = '', project = 'default', storageValues, globals = {}, externals = {} } = {}) {
   const cache = new Map();
   const values = storageValues || new Map();
   values.set('easel_authenticated_user', user);
@@ -33,7 +33,8 @@ export function componentModule(relative, { user = '', project = 'default', stor
       localStorage: storage, sessionStorage: storage,
       window: { location: { pathname: "/", origin: "http://127.0.0.1:7860" } },
       setTimeout, clearTimeout, setInterval, clearInterval, ...globals,
-      require: name => name.startsWith('.') ? load(path.resolve(path.dirname(candidate), name)) : require(name),
+      require: name => name.startsWith('.') ? load(path.resolve(path.dirname(candidate), name))
+        : Object.hasOwn(externals, name) ? externals[name] : require(name),
     }, { filename: candidate });
     return module.exports;
   };

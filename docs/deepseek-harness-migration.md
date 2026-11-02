@@ -90,7 +90,7 @@
 
 2026-11-03 文档层校验：原 144 个唯一 ID 全部一对一映射；保留原始优先级统计（P0 12、P1 73、P2 36、保持17、观察6）；新增 AUT01–AUT08 共8项独立计数。候选来源文件按固定提交记录 SHA-256，MIT 原文一致。运行功能验收由各实施模块另附证据，本文不声称全部144项完成。
 
-## 实际迁移账本（冻结构建与回归已验证）
+## 基线实际迁移账本（冻结构建与回归已验证）
 
 以下按磁盘实际文件登记，源与目标SHA在manifest中保存。verbatim表示去除新增来源头后原始正文逐字相同；adapted表示依赖、类型或独立组件边界有适配。
 
@@ -119,7 +119,7 @@
 | web/frontend/src/vendor/deepseek-harness/navigation/order.ts | packages/client/ui-workspace/src/client/tree.ts | adapted | 从tree.ts抽取orderByRecency/pinCurrentBlank/sectionMembers纯函数；补本地最小元数据类型，非整文件原样复制。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/navigation/useModalLayer.ts | packages/client/ui-primitives/src/useModalLayer.ts | adapted | 保留上游模态键盘和焦点生命周期；移除相对导入.ts扩展名。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 
-当前实际迁移文件 22 个，其中原始正文逐字复用 10 个、适配迁移 12 个。另有 14 个本地集成适配文件单列，不混入原样复用统计。根代理最终全量回归与限定本机链路验收已通过；不能据此关闭全部144项或宣称M09/M10业务闭环已完成。
+基线实际迁移文件 22 个，其中原始正文逐字复用 10 个、适配迁移 12 个。另有 14 个本地集成适配文件单列，不混入原样复用统计。根代理最终全量回归与限定本机链路验收已通过；不能据此关闭全部144项或宣称M09/M10业务闭环已完成。
 
 ## 最终冻结验证结论
 
@@ -138,3 +138,24 @@
 原生 `request_user_input` 在默认模式受门禁，因此必要Python适配为新的 `thread/start` 注册 eager动态工具，`item/tool/call` 对接现有问答，再返回contentItems/success。工具定义和响应经过本机schema校验（0 errors）及新增12项协议回归。它是Easel原生引擎桥接，不登记成上游Python逐字复制。
 
 旧未注册的原生线程不能经 `thread/resume` 追加工具，需新建对话；旧ID与历史保留，不能声称旧线程已无缝具备卡片。最终全量后端2032 passed/17 skipped（2旧warning）、前端356 passed；最终build exit0（108 modules，index-BSJixOw6.js约636.21KB既有体积提示）、lint零warning、diff-check通过。M09/M10与持久目标/待答future重启等未完成范围保持不变。
+
+## D01逐功能阶段：进行中、未验收、未提交
+
+基线commit为 `1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b`。D01新增显式present声明、受控当前文件store和文件卡；下列源/目标SHA已核验，但HTML相对图片403仍阻止关闭。D08不可变快照/历史版本是下一项，不混入本次提交。每功能验收记录见 [D01.md](agent-feature-acceptance/D01.md)，通用模板见 [agent-feature-acceptance-template.md](agent-feature-acceptance-template.md)。
+
+| D01当前实际文件 | 上游原路径 | 复用方式 | 当前状态 |
+|---|---|---|---|
+| web/frontend/src/vendor/deepseek-harness/deliverables/Deliverables.module.css | packages/client/ui-deliverables/src/client/Deliverables.module.css | verbatim | 来源/SHA已核验；功能进行中未验收 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.module.css | packages/client/ui-deliverables/src/client/PresentRow.module.css | verbatim | 来源/SHA已核验；功能进行中未验收 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.tsx | packages/client/ui-deliverables/src/client/PresentRow.tsx | adapted | 来源/SHA已核验；功能进行中未验收 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/PresentedFileCard.tsx | packages/client/ui-deliverables/src/client/PresentedFileCard.tsx | adapted | 来源/SHA已核验；功能进行中未验收 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/file-metadata.ts | packages/client/ui-primitives/src/FileTypeIcon.tsx | adapted | 来源/SHA已核验；功能进行中未验收 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/presented.ts | packages/client/ui-deliverables/src/presented.ts | adapted | 来源/SHA已核验；功能进行中未验收 |
+| web/frontend/src/vendor/deepseek-harness/deliverables/turn-deliverables.ts | packages/client/ui-deliverables/src/client/turn-deliverables.ts | adapted | 来源/SHA已核验；功能进行中未验收 |
+
+D01声明工具目前只在新Codex线程注册；旧未注册resume保留ID/历史且需新建，ACP未注册对应MCP/present工具，不能声称支持。根代理阶段证据为67项后端、12项前端、真实3文件卡、文本真实字节和PNG预览；HTML相对资源修复、最终构建/回归及功能commit仍待完成。Python store和Host边界列为Easel适配，不声称上游Python原样复制。
+
+
+## D01 验证更新（2026-11-03）
+
+D01已在独立功能代码树通过2122项后端、378项前端与真实Codex/下载/PNG/HTML验收；HTML原403已由上游有限资源打包及受控related读取关闭。功能待单独提交，完整记录见 `docs/agent-feature-acceptance/D01.md`。旧阶段的D01 WIP/403描述为历史证据，不代表当前未修复；D08仍未实现。

@@ -2,6 +2,21 @@
  * Upstream: deepseek-ai/deepseek-harness @ ce7073d (MIT), ui-tool / ui-trajectory.
  * Engine events stay structured across live delivery, replay and persisted chat.
  */
+export interface AgentArtifact {
+  artifactId: string;
+  projectId: string;
+  sessionId: string;
+  turnId: string;
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  description?: string;
+  status: 'available' | 'unavailable';
+  createdAt: number;
+  url: string;
+}
+
 export interface AgentEvent {
   id: string;
   kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task';
@@ -19,6 +34,7 @@ export interface AgentEvent {
   questionId?: string;
   answers?: Record<string, string[]>;
   source?: string;
+  artifacts?: AgentArtifact[];
   [key: string]: unknown;
 }
 

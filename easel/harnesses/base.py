@@ -13,6 +13,8 @@ class HarnessError(Exception):
 Emit = Callable[[str, str | dict], None]
 Ask = Callable[[list[dict]], Awaitable[dict[str, list[str]]]]
 Bind = Callable[[str], None]
+# The host owns authorization, filesystem validation and durable receipts.
+Present = Callable[[list[dict], str], Awaitable[list[dict] | None]]
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,7 @@ class RunRequest:
     session_key: str = ""
     codex_auto_approve: bool = False
     autonomy_mode: str = "autonomous"
+    present: Present | None = None
 
 
 class Adapter(Protocol):

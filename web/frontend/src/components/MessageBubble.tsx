@@ -6,11 +6,15 @@ import { linkifyOutputs, externalizeMediaLinks } from '../lib/linkifyOutputs';
 import { IconCopy, IconCheck, IconRetry } from './icons';
 import { extractArtifacts } from '../lib/artifacts';
 import ArtifactGallery from './ArtifactGallery';
+import DeliverableCards from './DeliverableCards';
+import { deliverablesFromEvents, omitDeclaredArtifacts } from '../lib/deliverables';
 import UserAttachments from './UserAttachments';
 import AgentEventPanel from './AgentEventPanel';
 import { UserMessageBubble } from '../vendor/deepseek-harness/message/UserMessageBubble';
 import { useClipboardCopy } from '../vendor/deepseek-harness/message/use-clipboard-copy';
 import '../styles/agent-chat.css';
+
+const EMPTY_EVENTS: AgentEvent[] = [];
 
 export interface BubbleActions {
   onCopy: () => void | Promise<void>;
@@ -45,8 +49,10 @@ function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) 
 }
 
 export default function MessageBubble({ message, isStreaming, thinking, activity, stillWorking, events, actions }: MessageBubbleProps) {
+  const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
+  const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
   const rendered = useMemo(() => {
-    if (message.role === 'user') return { html: '', artifacts: [], archives: [] };
+    if (message.role === 'user' || !message.content) return { html: '', artifacts: [], archives: [] };
     // 助手正文里裸露的产物路径先转成前端可用链接（文件直开、图片内联、目录跳内容库）。
     // 流式中不转换：路径/围栏代码块可能被 SSE token 从中间切开（扩展名没收全会被
     // 误判成目录、未闭合的 ``` 会误伤命令示例里的 outputs/），转换只在流式结束后
@@ -55,6 +61,9 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
     const html = externalizeMediaLinks(renderMarkdown(body));
     return isStreaming ? { html, artifacts: [], archives: [] } : extractArtifacts(html);
   }, [message.content, message.role, isStreaming]);
+  const legacyArtifacts = useMemo(() => omitDeclaredArtifacts(rendered.artifacts, declared), [rendered.artifacts, declared]);
+  // ZIP member previews are different content from the ZIP delivery card.
+  const legacyArchives = rendered.archives;
 
   // ---- 用户消息 ----
   if (message.role === 'user') {
@@ -76,7 +85,6 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
   const liveActivity = isStreaming ? (activity || '') : '';
   const liveHint = isStreaming ? (stillWorking || '') : '';   // 防呆「未卡住」提示，附着显示、不顶掉真实状态
   const doneSteps = !isStreaming ? (message.activity || '') : '';
-  const effEvents = isStreaming ? events || [] : message.events || [];
 
   const livePanel = (effThinking || liveActivity || liveHint || doneSteps) ? (
     <div className="live-panel">
@@ -123,10 +131,11 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
       <div className="msg-col assistant">
         <div className="message-bubble assistant">
           {livePanel}
-          <AgentEventPanel events={effEvents} settled={!isStreaming} />
+          <AgentEventPanel events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
           {message.content && <div dangerouslySetInnerHTML={{ __html: rendered.html }} />}
-          {!isStreaming && (rendered.artifacts.length > 0 || rendered.archives.length > 0) && (
-            <ArtifactGallery artifacts={rendered.artifacts} archives={rendered.archives} />
+          <DeliverableCards artifacts={declared} />
+          {!isStreaming && (legacyArtifacts.length > 0 || legacyArchives.length > 0) && (
+            <ArtifactGallery artifacts={legacyArtifacts} archives={legacyArchives} />
           )}
           {isStreaming && <span className="streaming-cursor" />}
         </div>

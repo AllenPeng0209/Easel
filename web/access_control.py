@@ -126,6 +126,8 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return "view" if read else "manage_ip"
     if resource == "chat/sessions" or re.fullmatch(r"chat/sessions/[^/]+", resource):
         return "operate"
+    if resource == 'chat/artifact-related' or re.fullmatch(r"chat/artifacts/[a-f0-9]{32}(?:/(?:content|related))?", resource):
+        return "operate" if read else None
     if (resource.startswith(("login/", "logout/"))
             or re.fullmatch(r"accounts/[^/]+/(?:credentials|mp-login(?:/status)?)", resource)
             or (not read and re.fullmatch(r"interactions/channels(?:/[^/]+)?", resource))):

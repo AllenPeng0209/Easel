@@ -1,11 +1,12 @@
-import { projectFetch } from '../lib/projectScope';
 import { useEffect, useRef, useState } from 'react';
 import { artifactFromUrl, fitArtifact, mergeArtifacts } from '../lib/artifacts';
+import { loadPackedHtmlArtifact } from '../lib/htmlPreview';
 import { fetchArtifactArchive, mediaUrl } from '../lib/api';
 import type { Artifact } from '../lib/artifacts';
 import { IconChevron, IconOutputs } from './icons';
 
 function HtmlArtifact({ artifact }: { artifact: Artifact }) {
+  const { url, baseUrl } = artifact;
   const frame = useRef<HTMLIFrameElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const [source, setSource] = useState('');
@@ -15,32 +16,16 @@ function HtmlArtifact({ artifact }: { artifact: Artifact }) {
   const token = useRef(crypto.randomUUID());
   useEffect(() => {
     const controller = new AbortController();
-    void projectFetch(artifact.url, { signal: controller.signal }).then(async response => {
-      if (!response.ok) throw new Error('preview');
-      const html = await response.text();
-      const base = new URL('.', new URL(artifact.url, window.location.origin)).href;
-      const document = new DOMParser().parseFromString(html, 'text/html');
-      document.querySelectorAll('base').forEach(element => element.remove());
-      const baseElement = document.createElement('base');
-      baseElement.href = base;
-      document.head.prepend(baseElement);
-      const script = document.createElement('script');
-      script.textContent = `(() => {
-        const report = () => parent.postMessage({type:'easel-artifact-size',token:${JSON.stringify(token.current)},
-          width:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth),
-          height:Math.max(document.documentElement.scrollHeight,document.body.scrollHeight)}, '*');
-        addEventListener('load', report);
-        new ResizeObserver(report).observe(document.body);
-        document.fonts?.ready.then(report);
-        report();
-      })();`;
-      document.body.append(script);
-      if (!controller.signal.aborted) setSource('<!doctype html>' + document.documentElement.outerHTML);
+    token.current = crypto.randomUUID();
+    setSource('');
+    setError(false);
+    void loadPackedHtmlArtifact({ url, baseUrl }, token.current, controller.signal).then(html => {
+      if (!controller.signal.aborted) setSource(html);
     }).catch(() => {
       if (!controller.signal.aborted) setError(true);
     });
     return () => controller.abort();
-  }, [artifact.url]);
+  }, [url, baseUrl]);
   useEffect(() => {
     const observer = new ResizeObserver(entries => {
       const rect = entries[0].contentRect;
@@ -49,8 +34,9 @@ function HtmlArtifact({ artifact }: { artifact: Artifact }) {
     if (stage.current) observer.observe(stage.current);
     const resize = (event: MessageEvent) => {
       const data = event.data;
-      if (event.source !== frame.current?.contentWindow || data?.type !== 'easel-artifact-size'
-          || data.token !== token.current || !Number.isFinite(data.width) || !Number.isFinite(data.height)
+      if (event.source !== frame.current?.contentWindow || data?.token !== token.current) return;
+      if (data.type === 'easel-artifact-preview-error') { setError(true); return; }
+      if (data.type !== 'easel-artifact-size' || !Number.isFinite(data.width) || !Number.isFinite(data.height)
           || data.width <= 0 || data.height <= 0 || data.width > 20000 || data.height > 50000) return;
       setBounds(previous => previous.width === data.width && previous.height === data.height
         ? previous : { width: data.width, height: data.height });
@@ -61,7 +47,7 @@ function HtmlArtifact({ artifact }: { artifact: Artifact }) {
   const fitted = fitArtifact(bounds.width, bounds.height, available.width - 24, available.height - 24);
   return (
     <div className="artifact-html-stage" ref={stage}>
-      {error ? <span className="artifact-hint">预览加载失败，可在新标签打开原文件</span>
+      {error ? <span className="artifact-hint">HTML 预览加载失败，可<a href={url} download={artifact.name}>下载原文件</a></span>
         : !source ? <span className="artifact-hint">正在加载预览…</span>
         : <div className="artifact-html-fit" style={{ width: fitted.width, height: fitted.height }}>
           <iframe ref={frame} srcDoc={source} title={artifact.name} sandbox="allow-scripts" allow="clipboard-write"

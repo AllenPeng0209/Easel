@@ -18,7 +18,7 @@
     ],
     "managed_clone_is_gitignored": true
   },
-  "status_notice": "selected_packages is a reference-source inventory, not an enabled-feature list. migrated_files records actual source reuse and integration_adapters records Easel glue separately. Frozen tests/build and a bounded runtime path passed; remaining product requirements stay open.",
+  "status_notice": "Baseline 1a4c8b7 and D01 are separately recorded. D01 is verified and awaiting its own feature commit. Other backlog items, including D08 immutable revisions, remain incomplete.",
   "selected_packages": [
     {
       "upstream_path": "packages/client/ui-conversation",
@@ -6302,6 +6302,79 @@
           "sha256": "8ec634455961b2ad025f2173622100bdaf4e9d665e9fb27b5afb3bc36cb08451"
         }
       ]
+    },
+    {
+      "upstream_path": "packages/deliverables/tool-present",
+      "feature_id": "D01",
+      "selection_status": "reference_selected_not_a_claim_of_completed_migration",
+      "file_count": 16,
+      "files": [
+        {
+          "path": "packages/deliverables/tool-present/README.md",
+          "sha256": "756a2b86783edc61529e510092a525ef025b22398154e21aff5d9d68ac532ca4"
+        },
+        {
+          "path": "packages/deliverables/tool-present/README.zh.md",
+          "sha256": "387478d9e0cb5c29ff6c93d0a821817439938a7f572d799116e400f8c2f30536"
+        },
+        {
+          "path": "packages/deliverables/tool-present/locale/de.json",
+          "sha256": "1198d375c36cf5bc420fde35536d6e4d045b9752d0184078a7c9d40a4c3e0090"
+        },
+        {
+          "path": "packages/deliverables/tool-present/locale/en.json",
+          "sha256": "f365e64d4143ea5bd71d938f07dd9fafbeccee877e93192b1499f2bafcb77de6"
+        },
+        {
+          "path": "packages/deliverables/tool-present/locale/es.json",
+          "sha256": "012350af75af496c69d68506af1b36dd28ccd170de515a58c9d4a9a9fa6b1e52"
+        },
+        {
+          "path": "packages/deliverables/tool-present/locale/fr.json",
+          "sha256": "f2a534f71f59a6b65d3fb0a4b5aa243c2fe4e720c0eaef4703b02099ea11bc44"
+        },
+        {
+          "path": "packages/deliverables/tool-present/locale/ja.json",
+          "sha256": "9325f1503a4e2af838abdaee0031bb276b2e8bf6c2617d46d98eafb5b1294422"
+        },
+        {
+          "path": "packages/deliverables/tool-present/locale/pt.json",
+          "sha256": "7f1b156257cf823dddcc867e7b546bd6f963e772df8ef6b9e141d06f00ae2322"
+        },
+        {
+          "path": "packages/deliverables/tool-present/locale/ru.json",
+          "sha256": "fdf2b4c4f145c3a62777a677b87142fd1d1aefdd7aff8dcf1b19fe9f0d49804f"
+        },
+        {
+          "path": "packages/deliverables/tool-present/locale/zh.json",
+          "sha256": "c1470fa698c688e51dd1fed91362ea289547e0d4ce863b35a5c26cbf6bd8f414"
+        },
+        {
+          "path": "packages/deliverables/tool-present/package.json",
+          "sha256": "bb8f7e0f48417bf65abea79d7c0d94b68bfcbd6e4303deb36a03d5ca7e0d94d2"
+        },
+        {
+          "path": "packages/deliverables/tool-present/src/index.ts",
+          "sha256": "0e3e39810b8d819f7ee52e66662a3671d0cd33c2d9226db46a39b55feddd413c"
+        },
+        {
+          "path": "packages/deliverables/tool-present/src/types.ts",
+          "sha256": "417e4b43ac7a3241e5b045a7252716b08b3547bfdd9b9df9a8ffec76c7cad706"
+        },
+        {
+          "path": "packages/deliverables/tool-present/tests/built-errors.e2e.ts",
+          "sha256": "4568a40880cce86542917a5c3e5cf7025be272a4f12a1caa64f217dbc53de5ee"
+        },
+        {
+          "path": "packages/deliverables/tool-present/tests/present.spec.ts",
+          "sha256": "dcc250e1b699fb8f81d25b082fe836883c3f3a8126f69743e7b5ea4317eb8284"
+        },
+        {
+          "path": "packages/deliverables/tool-present/tsconfig.json",
+          "sha256": "0f57162449569f30367f3ef24ecd7ee06ce8bffae8aa4cec1b52028ebafd2f48"
+        }
+      ],
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
     }
   ],
   "migrated_files": [
@@ -6317,7 +6390,8 @@
       "necessary_changes": "保留上游CSS主体；增加Easel语义颜色token映射和小屏padding。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/ImageLightbox.tsx",
@@ -6331,7 +6405,8 @@
       "necessary_changes": "保留上游lightbox行为；仅将关闭图标替换为本地×字形并新增来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/file-size.ts",
@@ -6345,7 +6420,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-chat/src/client/chat/use-scroll-follow.ts",
@@ -6359,7 +6435,8 @@
       "necessary_changes": "保留ScrollFollowState及hook逻辑；把TypeScript构造参数属性展开为显式字段，以兼容当前Easel TS配置；新增MIT来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/DisclosureRow.module.css",
@@ -6373,7 +6450,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/DisclosureRow.tsx",
@@ -6387,7 +6465,8 @@
       "necessary_changes": "用Easel本地bridge替换clsx和图标依赖；为React 19 inert类型提供必要兼容；保留上游展开行结构。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-user-questions/src/client/QuestionReplyView.tsx",
@@ -6401,7 +6480,8 @@
       "necessary_changes": "从QuestionReplyView提取独立props组件；移除Cordis/Host绑定，改用现有图标和原生title；保留问答上下排版与复制行为。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-user-questions/src/client/QuestionReplyView.module.css",
@@ -6415,7 +6495,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/TextShimmer.module.css",
@@ -6429,7 +6510,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/TextShimmer.tsx",
@@ -6443,7 +6525,8 @@
       "necessary_changes": "用本地cx bridge替换clsx；保留上游闪烁状态与装饰文本逻辑。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/UserMessageBubble.module.css",
@@ -6457,7 +6540,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/UserMessageBubble.tsx",
@@ -6471,7 +6555,8 @@
       "necessary_changes": "用本地cx bridge替换clsx；保留上游消息气泡结构。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/clipboard.ts",
@@ -6485,7 +6570,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/file-size.ts",
@@ -6499,7 +6585,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-user-questions/src/client/draft-store.ts",
@@ -6513,7 +6600,8 @@
       "necessary_changes": "迁移draft-store存储生命周期；改用Easel user/IP范围storage桥接，收束本地问题/草稿类型。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-user-questions/src/client/question-reply.ts",
@@ -6527,7 +6615,8 @@
       "necessary_changes": "提取原有payload类型和问答复制函数；移除Cordis注册，将translator收束为本地函数边界。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/use-clipboard-copy.ts",
@@ -6541,7 +6630,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/focus.ts",
@@ -6555,7 +6645,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/keyboard-composition.ts",
@@ -6569,7 +6660,8 @@
       "necessary_changes": "原始实现正文保持逐字一致；仅添加MIT、commit与来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/session-query/session-log-export/src/markdown.ts",
@@ -6583,7 +6675,8 @@
       "necessary_changes": "仅以本地结构类型替换workspace包类型导入；保留原Markdown转换实现；新增MIT来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-workspace/src/client/tree.ts",
@@ -6597,7 +6690,8 @@
       "necessary_changes": "从tree.ts抽取orderByRecency/pinCurrentBlank/sectionMembers纯函数；补本地最小元数据类型，非整文件原样复制。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "upstream_path": "packages/client/ui-primitives/src/useModalLayer.ts",
@@ -6611,7 +6705,155 @@
       "necessary_changes": "保留上游模态键盘和焦点生命周期；移除相对导入.ts扩展名。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-deliverables/src/client/Deliverables.module.css",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "c7d3ac8539b549f49f5c356c56fd9e673486ad98e44c44dd42ab8f69bfbb2f6b",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/Deliverables.module.css",
+      "destination_sha256": "bfc14bf3d7e1d524b343a781b160be01f1ef0366a977a52bfef826d48c680f20",
+      "reuse_kind": "verbatim",
+      "verbatim_scope": "entire original body; added provenance header only",
+      "body_matches_upstream_after_provenance_header": true,
+      "necessary_changes": "上游原始CSS正文逐字保留；新增MIT/固定提交来源头。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "verification_scope": "Source provenance only. D01 still fails HTML relative-resource runtime acceptance; no feature commit yet."
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-deliverables/src/client/PresentRow.module.css",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "3bfed0d0ad6bd47d49ca070bfedec611ae355616cf60b19c0c8ec0aed458ed17",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.module.css",
+      "destination_sha256": "0bbefc88e3668a7c4c4eae53be98593c7041c19bdea913aff10a46ccdc42c35d",
+      "reuse_kind": "verbatim",
+      "verbatim_scope": "entire original body; added provenance header only",
+      "body_matches_upstream_after_provenance_header": true,
+      "necessary_changes": "上游原始CSS正文逐字保留；新增MIT/固定提交来源头。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "verification_scope": "Source provenance only. D01 still fails HTML relative-resource runtime acceptance; no feature commit yet."
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-deliverables/src/client/PresentRow.tsx",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "5bebbe78a18e62ad3f4da9d2b3931938f056bc53df0b6b3195939108f6fa854b",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.tsx",
+      "destination_sha256": "c068c781cb7be2510eb4d74f535a0446cd25e8220b45201a38c7adfadc4d894b",
+      "reuse_kind": "adapted",
+      "verbatim_scope": "selected implementation or types with local Host/dependency adaptation",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "保留上游present行主体，改为本地DisclosureRow/图标/locale及工具块最小类型桥接。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "verification_scope": "Source provenance only. D01 still fails HTML relative-resource runtime acceptance; no feature commit yet."
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-deliverables/src/client/PresentedFileCard.tsx",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "7e9440610e6d62d6eb0f564850cb2eaceef9ec75b4c40a92424d2c97f6136815",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/PresentedFileCard.tsx",
+      "destination_sha256": "27bc1bbe2bf4c24cfa2d5ad7fed6168d1bdcec44d7d1f2a8119d5a5d1c57c799",
+      "reuse_kind": "adapted",
+      "verbatim_scope": "selected implementation or types with local Host/dependency adaptation",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "保留上游文件卡主体，替换Cordis/Host依赖为本地类型、locale、路径和图标桥接；文件访问仍受Easel认证路由控制。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "verification_scope": "Source provenance only. D01 still fails HTML relative-resource runtime acceptance; no feature commit yet."
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-primitives/src/FileTypeIcon.tsx",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "4cf95fa56eb3bfa20d899672573a999acca6d63f03decd56bf46469422308252",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/file-metadata.ts",
+      "destination_sha256": "c7ca41bc8f96656022fac97202645c6a7702e5f8409b7cbdbf2589b4f5d1dd09",
+      "reuse_kind": "adapted",
+      "verbatim_scope": "selected implementation or types with local Host/dependency adaptation",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "从FileTypeIcon.tsx抽取fileExtension函数；本地resolveWorkspacePath只返回服务端验证过的outputs相对路径，不暴露Host cwd。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "verification_scope": "Source provenance only. D01 still fails HTML relative-resource runtime acceptance; no feature commit yet."
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-deliverables/src/presented.ts",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "e37dd6d370631a4872c436f96795f2acfad5a96c0178e8431761c40c5115d94f",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/presented.ts",
+      "destination_sha256": "9174421973423ca25a735a997d73803e9a2910d7b5233e15450196e5334410fd",
+      "reuse_kind": "adapted",
+      "verbatim_scope": "selected implementation or types with local Host/dependency adaptation",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "仅抽取上游PresentedFile/Host类型与isPresentedFile/basename等相关助手；非整个上游文件原样复制。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "verification_scope": "Source provenance only. D01 still fails HTML relative-resource runtime acceptance; no feature commit yet."
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-deliverables/src/client/turn-deliverables.ts",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "a567b9c5daace1468de892118c319ed5754b2a5e44284103a1d47ee10fdae93d",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/turn-deliverables.ts",
+      "destination_sha256": "1c062fec66ba0d5e8bad280ac4d774b66c5f3fa9ea5bcd133c994999c6f3d9a0",
+      "reuse_kind": "adapted",
+      "verbatim_scope": "selected implementation or types with local Host/dependency adaptation",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "抽取presentedForClosing按path保留最后声明的Map逻辑；将Cordis关闭轮次选择改为已验证声明列表，并提供本地最小类型。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser",
+      "verification_scope": "Source provenance only. D01 still fails HTML relative-resource runtime acceptance; no feature commit yet."
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-sidebar-documentpreview/src/client/html/pack.ts",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "7b63276004fb6b3eea706051fa23027b5291be1a1741ecaeb061093006e0d67e",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/html/pack.ts",
+      "destination_sha256": "97ac5acc9cbc29625ca2e76a2cf412eb673d49084d5db8b3df485da9747cd597",
+      "reuse_kind": "adapted",
+      "verbatim_scope": "upstream finite package/bootstrap with necessary authenticated-reader and static image byte adapters",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "保留上游有限静态依赖/opaque frame内Blob机制；增加图片二进制、当前IP受控related读取及现有尺寸消息；不扩module/CSS递归。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-sidebar-documentpreview/src/client/html/bootstrap.ts",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "4c9c9834166fdde444659d4bd311d07b080ce087d229064536fc665ec199dd52",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/html/bootstrap.ts",
+      "destination_sha256": "d56b48ab1232754789f2eb41e088be8f37bae77e0f6a38f583ca77c291f7a8aa",
+      "reuse_kind": "adapted",
+      "verbatim_scope": "upstream finite package/bootstrap with necessary authenticated-reader and static image byte adapters",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "保留上游有限静态依赖/opaque frame内Blob机制；增加图片二进制、当前IP受控related读取及现有尺寸消息；不扩module/CSS递归。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D01",
+      "upstream_path": "packages/client/ui-sidebar-documentpreview/src/client/html/bytes.ts",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "upstream_sha256": "b6da60105672540f9352db43d4d12b6bb937c80e8c14b0093cc9311766cbc130",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/html/bytes.ts",
+      "destination_sha256": "4a765f1771711159f62a6d10ab5565ce5307e8131d726e3f8d0fa8211b161b6e",
+      "reuse_kind": "adapted",
+      "verbatim_scope": "upstream finite package/bootstrap with necessary authenticated-reader and static image byte adapters",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "保留上游有限静态依赖/opaque frame内Blob机制；增加图片二进制、当前IP受控related读取及现有尺寸消息；不扩module/CSS递归。",
+      "license_path": "integrations/deepseek-harness/LICENSE",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
     }
   ],
   "product_backlog": "docs/agent-workbench-backlog.md",
@@ -6623,7 +6865,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "本地薄适配/结构类型，不登记为上游原样复用。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/vendor/deepseek-harness/message/bridge.tsx",
@@ -6631,7 +6874,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "本地薄适配/结构类型，不登记为上游原样复用。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/vendor/deepseek-harness/message/classes.ts",
@@ -6639,7 +6883,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "本地薄适配/结构类型，不登记为上游原样复用。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/vendor/deepseek-harness/navigation/markdown-types.ts",
@@ -6647,7 +6892,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "本地薄适配/结构类型，不登记为上游原样复用。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/lib/uploadQueue.ts",
@@ -6657,7 +6903,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "根据beginFileUpload/pumpFileUploads生命周期适配Easel REST、逐文件回执和AbortSignal；不是整文件复制。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/lib/chatDrafts.ts",
@@ -6667,7 +6914,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "草稿持久化契约适配；加入user/IP/session范围，持久化完整附件引用而非File字节。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/lib/chatReading.ts",
@@ -6677,7 +6925,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "滚动DOM绑定到迁移的上游阅读跟随控制器。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/lib/sessionNavigation.ts",
@@ -6687,7 +6936,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "Easel会话投影到上游排序函数和Markdown转换器。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/lib/sessionSync.ts",
@@ -6697,7 +6947,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "Easel授权目录的客户端合并与服务端同步适配；不是上游逐字代码。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/lib/chatControl.ts",
@@ -6707,17 +6958,21 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "本地取消请求/确认生命周期适配；不是上游逐字代码。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/frontend/src/lib/agentEvents.ts",
-      "destination_sha256": "f9b25f587f36ff8f86d72785635705a7c456bd7a51fcc72e65bb7c03188e2004",
+      "destination_sha256": "d6b5929fe1d52460da12a293b11ec9f67883823d792ac5b3dbb1c202da34e594",
       "source_reference": "packages/client/ui-tool/src/client/tool/models/tool-call-model.ts",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
       "changes": "原生事件到前端工具节点的契约适配与去重/终态合并。",
-      "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_status": "baseline_verified_but_current_feature_worktree_in_progress",
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE",
+      "baseline_destination_sha256": "f9b25f587f36ff8f86d72785635705a7c456bd7a51fcc72e65bb7c03188e2004",
+      "working_tree_feature": "D01"
     },
     {
       "destination_path": "easel/agent_policy.py",
@@ -6727,7 +6982,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "Python服务端默认策略和自主指令；参考上游问答生命周期。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "easel/harnesses/events.py",
@@ -6737,7 +6993,8 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "Python原生事件规范化、身份边和脱敏；参照上游工具树/模型契约，非复制上游Python。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
     },
     {
       "destination_path": "web/chat_history.py",
@@ -6747,16 +7004,91 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "SQLite持久会话目录与user/IP隔离适配，不改变原生引擎历史。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
-      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage."
+      "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
+      "feature_id": "BASELINE"
+    },
+    {
+      "feature_id": "D01",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/icons.tsx",
+      "destination_sha256": "a007cd415cf88a98b4807ecfaad1abd663cdc0da24cacfbd81ff502e08aab8aa",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "本地图标/最小类型桥接，不声称上游整文件复制。",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D01",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/types.ts",
+      "destination_sha256": "bcf3da78759e68c364440f996f64ba585747dd5c26915986601fbceccd3e4a92",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "本地图标/最小类型桥接，不声称上游整文件复制。",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D01",
+      "destination_path": "easel/chat_artifacts.py",
+      "destination_sha256": "ed38501031a8f18541ddf7b95a9b8bf4ff834fd54d2f23098ef8b8232b405506",
+      "source_reference": "packages/deliverables/tool-present/src/index.ts",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "Easel Python当前文件声明store：批次验证、原子保存和严格IP/文件边界；不提供D08不可变快照，非上游Python复制。",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D01",
+      "destination_path": "web/frontend/src/lib/deliverables.ts",
+      "destination_sha256": "f1292eba4b8d2253dd02031b69b6a88d41529b23c4ebeeecf31523ba204b3de6",
+      "source_reference": "packages/client/ui-deliverables/src/client/turn-deliverables.ts",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "结构化artifact事件到Easel授权文件卡的映射、路径校验与旧画廊去重。",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D01",
+      "destination_path": "web/frontend/src/components/DeliverableCards.tsx",
+      "destination_sha256": "24771378fa1d2b78a12a7d72e9b6e5807571915f31095dd26ca2bba8e712bbc6",
+      "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.tsx",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "组合已迁移PresentedFileCard/PresentRow与Easel受控资源访问/预览；组件Host适配，不登记成原样复制。",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D01",
+      "destination_path": "web/frontend/src/styles/deliverables.css",
+      "destination_sha256": "54e19c5bd0e2bd23d551fc2674beeae6ce2d441d095706fe2ab100ab660a0bab",
+      "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.module.css",
+      "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "Easel主题token和容器样式适配。",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D01",
+      "destination_path": "web/frontend/src/vendor/deepseek-harness/html/types.ts",
+      "destination_sha256": "684358fc764cf4b09902f07fc0ee0741a4b94992b056edd92699ec132bb1748a",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "Easel完整字节类型，替换上游RPC传输类型。",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
+    },
+    {
+      "feature_id": "D01",
+      "destination_path": "web/frontend/src/lib/htmlPreview.ts",
+      "destination_sha256": "3376e7ccea0d743a2cdda419e1d102580cbe350471e77a5d1703c0a59f65a509",
+      "reuse_kind": "easel_integration_adapter",
+      "changes": "原文件和受控related reader绑定；不向iframe提供认证信息或任意API读取能力。",
+      "verification_status": "verified_D01_code_snapshot_and_real_browser"
     }
   ],
   "migration_summary": {
-    "source_migration_files": 22,
-    "verbatim_original_bodies": 10,
-    "adapted_upstream_files": 12,
-    "integration_adapters": 14,
-    "functional_verification": "frozen_regression_and_build_passed_runtime_scope_bounded",
-    "sha_notice": "All recorded target hashes refreshed after the final dynamic-tool and countdown changes were frozen on 2026-11-03."
+    "source_migration_files": 32,
+    "verbatim_original_bodies": 12,
+    "adapted_upstream_files": 20,
+    "integration_adapters": 22,
+    "baseline_source_migration_files": 22,
+    "functional_verification": "baseline_and_D01_verified_other_backlog_remains",
+    "sha_notice": "Destination hashes are from the feature-only prospective commit tree, excluding parallel account changes.",
+    "D01_source_files_verified": 10
   },
   "verification": {
     "date": "2026-11-03",
@@ -6850,28 +7182,196 @@
       "preserves_existing_thread_ids_and_history": true,
       "additional_protocol_tests": 12,
       "native_schema_validation_errors": 0
-    }
+    },
+    "scope_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
+    "phase": "accepted_pre_feature_baseline"
   },
   "runtime_bridge_files": [
     {
       "path": "easel/harnesses/codex.py",
-      "sha256": "7b62cbf89e723cd0d40db712119688d8f8a883fb452437592e51df87c3866c1c",
-      "role": "Easel native/UI integration code; not a claim of upstream source copying"
+      "sha256": "3c012407bb36b98a44a164df7f544aa1998da04c08dcafdd848265d5faec0bfc",
+      "role": "Easel native/UI integration code; not a claim of upstream source copying",
+      "baseline_sha256": "7b62cbf89e723cd0d40db712119688d8f8a883fb452437592e51df87c3866c1c",
+      "working_tree_feature": "D01",
+      "verification_status": "included_in_D01_only_verified_snapshot"
     },
     {
       "path": "web/frontend/src/components/QuestionCards.tsx",
       "sha256": "d55c7bb003b314ea27711aab45a8e073900c5ed165a738110537e7cb14e291b9",
-      "role": "Easel native/UI integration code; not a claim of upstream source copying"
+      "role": "Easel native/UI integration code; not a claim of upstream source copying",
+      "baseline_sha256": "d55c7bb003b314ea27711aab45a8e073900c5ed165a738110537e7cb14e291b9",
+      "working_tree_feature": "D01",
+      "verification_status": "included_in_D01_only_verified_snapshot"
     },
     {
       "path": "web/app.py",
-      "sha256": "bdd9009cde83d98ef4420828e2597d6ae284c6411eadead212bdf8be0f7db739",
-      "role": "Easel native/UI integration code; not a claim of upstream source copying"
+      "sha256": "c35276e9c343dcd443d5f5314ccb6a6e3b265a5a6919ed8495e34bbedeed2e2f",
+      "role": "Easel native/UI integration code; not a claim of upstream source copying",
+      "baseline_sha256": "bdd9009cde83d98ef4420828e2597d6ae284c6411eadead212bdf8be0f7db739",
+      "working_tree_feature": "D01",
+      "verification_status": "included_in_D01_only_verified_snapshot"
     },
     {
       "path": "web/frontend/src/App.tsx",
       "sha256": "e22d0656df56fb593a406e59996de39ec5731ca31c09cb93010137094c2064ff",
-      "role": "Easel native/UI integration code; not a claim of upstream source copying"
+      "role": "Easel native/UI integration code; not a claim of upstream source copying",
+      "baseline_sha256": "e22d0656df56fb593a406e59996de39ec5731ca31c09cb93010137094c2064ff",
+      "working_tree_feature": "D01",
+      "verification_status": "included_in_D01_only_verified_snapshot"
     }
-  ]
+  ],
+  "baseline_migration_summary": {
+    "source_migration_files": 22,
+    "verbatim_original_bodies": 10,
+    "adapted_upstream_files": 12,
+    "integration_adapters": 14,
+    "functional_verification": "frozen_regression_and_build_passed_runtime_scope_bounded",
+    "sha_notice": "All recorded target hashes refreshed after the final dynamic-tool and countdown changes were frozen on 2026-11-03."
+  },
+  "baseline_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
+  "current_feature": "D01",
+  "feature_work": {
+    "D01": {
+      "status": "verified_awaiting_feature_commit",
+      "baseline_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
+      "feature_commit": null,
+      "scope": "Explicit present declarations, current-file store, structured events and authenticated file cards. D08 immutable versions are excluded.",
+      "source_migration_files": [
+        "web/frontend/src/vendor/deepseek-harness/deliverables/Deliverables.module.css",
+        "web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.module.css",
+        "web/frontend/src/vendor/deepseek-harness/deliverables/PresentRow.tsx",
+        "web/frontend/src/vendor/deepseek-harness/deliverables/PresentedFileCard.tsx",
+        "web/frontend/src/vendor/deepseek-harness/deliverables/file-metadata.ts",
+        "web/frontend/src/vendor/deepseek-harness/deliverables/presented.ts",
+        "web/frontend/src/vendor/deepseek-harness/deliverables/turn-deliverables.ts",
+        "web/frontend/src/vendor/deepseek-harness/html/pack.ts",
+        "web/frontend/src/vendor/deepseek-harness/html/bootstrap.ts",
+        "web/frontend/src/vendor/deepseek-harness/html/bytes.ts"
+      ],
+      "integration_adapters": [
+        "web/frontend/src/vendor/deepseek-harness/deliverables/icons.tsx",
+        "web/frontend/src/vendor/deepseek-harness/deliverables/types.ts",
+        "easel/chat_artifacts.py",
+        "web/frontend/src/lib/deliverables.ts",
+        "web/frontend/src/components/DeliverableCards.tsx",
+        "web/frontend/src/styles/deliverables.css",
+        "web/frontend/src/vendor/deepseek-harness/html/types.ts",
+        "web/frontend/src/lib/htmlPreview.ts"
+      ],
+      "host_integration_worktree_snapshots": [
+        {
+          "path": "easel/harnesses/base.py",
+          "sha256": "24eb1b37a4a4f3cf68d692dbfe45426b15a660af19e4257281ccd08ae3390b49",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded.",
+          "source_reference": "packages/deliverables/tool-present/src/types.ts",
+          "upstream_sha256": "417e4b43ac7a3241e5b045a7252716b08b3547bfdd9b9df9a8ffec76c7cad706",
+          "reuse_kind": "easel_host_contract_adapter_not_verbatim_copy"
+        },
+        {
+          "path": "easel/harnesses/codex.py",
+          "sha256": "3c012407bb36b98a44a164df7f544aa1998da04c08dcafdd848265d5faec0bfc",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded.",
+          "source_reference": "packages/deliverables/tool-present/src/index.ts",
+          "upstream_sha256": "0e3e39810b8d819f7ee52e66662a3671d0cd33c2d9226db46a39b55feddd413c",
+          "reuse_kind": "easel_host_contract_adapter_not_verbatim_copy"
+        },
+        {
+          "path": "web/app.py",
+          "sha256": "c35276e9c343dcd443d5f5314ccb6a6e3b265a5a6919ed8495e34bbedeed2e2f",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded.",
+          "source_reference": "packages/deliverables/tool-present/src/index.ts",
+          "upstream_sha256": "0e3e39810b8d819f7ee52e66662a3671d0cd33c2d9226db46a39b55feddd413c",
+          "reuse_kind": "easel_host_contract_adapter_not_verbatim_copy"
+        },
+        {
+          "path": "web/access_control.py",
+          "sha256": "ee7fe2ffcb8d9056d078f877788b075ea163ae346ce535053fd764d0683a253d",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded."
+        },
+        {
+          "path": "web/frontend/src/App.tsx",
+          "sha256": "e22d0656df56fb593a406e59996de39ec5731ca31c09cb93010137094c2064ff",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded.",
+          "source_reference": "packages/client/ui-deliverables/src/client/turn-deliverables.ts",
+          "upstream_sha256": "a567b9c5daace1468de892118c319ed5754b2a5e44284103a1d47ee10fdae93d",
+          "reuse_kind": "easel_host_contract_adapter_not_verbatim_copy"
+        },
+        {
+          "path": "web/frontend/src/components/ArtifactGallery.tsx",
+          "sha256": "a000950176d00cc184829cbfd19129d3d809f61cad712c0713dd646233db892a",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded."
+        },
+        {
+          "path": "web/frontend/src/components/MessageBubble.tsx",
+          "sha256": "765937a78563e3d5759db494f8d670e3fda9c7b2719b6cc5fc4afdccf5d16456",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded.",
+          "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.tsx",
+          "upstream_sha256": "3d7d7512f7da17a8918f4cd40d856828770472319102aaadb79ba83a20dd8e6c",
+          "reuse_kind": "easel_host_contract_adapter_not_verbatim_copy"
+        },
+        {
+          "path": "web/frontend/src/lib/agentEvents.ts",
+          "sha256": "d6b5929fe1d52460da12a293b11ec9f67883823d792ac5b3dbb1c202da34e594",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded."
+        },
+        {
+          "path": "web/frontend/src/lib/api.ts",
+          "sha256": "e6d16391a61c2ef11942d6e8e658abee7e23fa2624ae664fd7af7f759c83addb",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded."
+        },
+        {
+          "path": "web/frontend/src/lib/artifacts.ts",
+          "sha256": "e47fc926e0a77ce4f5107932486ec252750ad9a6e7d969ae709993ef8d2bf8aa",
+          "scope_notice": "Hash from the D01-only prospective commit tree; concurrent account changes are excluded."
+        }
+      ],
+      "stage_evidence": {
+        "reporter": "root and implementation agents; not final feature acceptance",
+        "backend_module_passed": 67,
+        "frontend_module_passed": 12,
+        "runtime_passed": [
+          "new Codex present declared 3 cards while prose only said delivery complete",
+          "text download returned verified real bytes",
+          "480x160 PNG preview rendered"
+        ],
+        "blocking_failure": "HTML relative image resource from opaque iframe lacks authenticated cookie and returns403; upstream pack/bootstrap/bytes migration is in progress.",
+        "final_build_regression_acceptance": "pending"
+      },
+      "provider_conditions": {
+        "new_codex_threads": "present dynamic tool registered",
+        "older_unregistered_native_threads": "resume cannot append tools; new conversation required; old ID/history preserved",
+        "acp": "corresponding MCP/present registration absent; unsupported for this new declaration protocol"
+      },
+      "next_feature": "D08",
+      "acceptance_record": "docs/agent-feature-acceptance/D01.md",
+      "acceptance_template": "docs/agent-feature-acceptance-template.md",
+      "verification": {
+        "source_tree": "D01-only staged code snapshot",
+        "backend_passed": 2122,
+        "backend_skipped": 17,
+        "frontend_passed": 378,
+        "build_exit": 0,
+        "lint_exit": 0,
+        "diff_check_exit": 0,
+        "runtime": [
+          "new Codex present call creates three cards without prose links",
+          "real browser text download bytes match",
+          "PNG and HTML image decode 480x160",
+          "HTML image uses blob:null without same-origin iframe flag",
+          "cold origin and refresh restore exactly three cards"
+        ],
+        "browser_proof": ".scratch/d01/verification/browser-proof.json",
+        "test_runtime": "http://127.0.0.1:7861/",
+        "background_workers": "disabled for validation server"
+      },
+      "open_blockers": [],
+      "remaining_limits": [
+        "D08 immutable bytes/revisions not implemented",
+        "old unregistered Codex threads need a new conversation",
+        "ACP present/MCP adapter not implemented",
+        "HTML module/CSS recursion not added",
+        "historical availability is not automatically refreshed (D09)"
+      ]
+    }
+  }
 }

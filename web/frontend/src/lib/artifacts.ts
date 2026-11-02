@@ -3,6 +3,26 @@ export interface Artifact {
   url: string;
   name: string;
   kind: 'image' | 'html' | 'video' | 'audio' | 'pdf';
+  /** Current-file HTML resources, independent of its opaque content URL. */
+  baseUrl?: string;
+}
+
+/** A preview may set a resource base only inside the current IP's media tree. */
+export function previewBaseUrl(artifact: Pick<Artifact, 'url' | 'baseUrl'>, origin: string): string {
+  const fallback = new URL('.', new URL(artifact.url, origin)).href;
+  const prefix = projectUrl('/api/media/');
+  const raw = artifact.baseUrl;
+  if (!raw || !raw.startsWith(prefix) || !raw.endsWith('/') || /[?#]/.test(raw)) return fallback;
+  let relative = raw.slice(prefix.length, -1);
+  for (let pass = 0; pass < 4; pass++) {
+    if (hasUnsafeCharacters(relative) || relative.split('/').some(part => part === '.' || part === '..' || !part && !!relative)) return fallback;
+    try {
+      const decoded = decodeURIComponent(relative);
+      if (decoded === relative) break;
+      relative = decoded;
+    } catch { return fallback; }
+  }
+  return new URL(raw, origin).href;
 }
 
 function hasUnsafeCharacters(value: string): boolean {

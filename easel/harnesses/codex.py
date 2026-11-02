@@ -53,6 +53,52 @@ EASEL_ASK_USER_TOOL = {
 }
 
 
+# Schema and description migrated from deepseek-ai/deepseek-harness (MIT,
+# Copyright (c) 2026 DeepSeek), commit ce7073d51254c26cd63b22a60835b8f948deb447:
+# packages/deliverables/tool-present/src/index.ts:38-58. The native dynamic-tool
+# envelope uses JSON Schema required arrays instead of DSH's required:true
+# parameter descriptors. Source notice: integrations/deepseek-harness/LICENSE.
+EASEL_PRESENT_TOOL = {
+    "type": "function", "name": "present", "deferLoading": False,
+    "description": (
+        "Declare existing files as final deliverables for the user. "
+        "Hosts may show presented files only after your turn ends, so call it once the files are final. "
+        "If the user needs to review files earlier, such as before a tool call that waits for their answer, link them in your message instead. "
+        "Use it when the user needs a separate file, especially Office documents, spreadsheets, and slide decks; "
+        "prefer your final response when that suffices. The user opens the current files; their contents are not copied. "
+        "In Easel, save files under the current IP workspace outputs directory; the host validates access and returns canonical metadata."
+    ),
+    "inputSchema": {
+        "type": "object", "additionalProperties": False, "required": ["files"],
+        "properties": {"files": {
+            "type": "array", "minItems": 1, "maxItems": 8,
+            "description": "Usually the 1-2 most important deliverables; at most 4 per call.",
+            "items": {
+                "type": "object", "additionalProperties": False, "required": ["path"],
+                "properties": {
+                    "path": {"type": "string", "description": "Path of an existing regular file. Relative paths use the Session working directory."},
+                    "description": {"type": "string", "description": "Brief description for the user."},
+                },
+            },
+        }},
+    },
+}
+
+
+def _present_files(arguments) -> list[dict]:
+    if not isinstance(arguments, dict) or set(arguments) != {"files"}:
+        raise ValueError("invalid present arguments")
+    files = arguments["files"]
+    if not isinstance(files, list) or not 1 <= len(files) <= 8:
+        raise ValueError("invalid file count")
+    for file in files:
+        if (not isinstance(file, dict) or set(file) - {"path", "description"}
+                or not isinstance(file.get("path"), str) or not file["path"].strip()
+                or ("description" in file and not isinstance(file["description"], str))):
+            raise ValueError("invalid presented file")
+    return files
+
+
 def _dynamic_questions(arguments) -> list[dict]:
     schema = EASEL_ASK_USER_TOOL["inputSchema"]["properties"]["questions"]["items"]
     if not isinstance(arguments, dict) or set(arguments) != {"questions"}:
@@ -160,6 +206,24 @@ class CodexAdapter:
                     turn_id and params.get("turnId", turn_id) != turn_id):
                 raise HarnessError("不属于当前会话的请求")
             if method == "item/tool/call":
+                if params.get("tool") == "present" and params.get("namespace") in (None, ""):
+                    try:
+                        files = _present_files(params.get("arguments"))
+                        call_id = params.get("callId")
+                        if (request.present is None or not isinstance(call_id, str) or not call_id
+                                or any(ord(character) < 32 for character in call_id)):
+                            raise ValueError("present is unavailable")
+                        metadata = await request.present(files, call_id)
+                        if not isinstance(metadata, list) or not metadata or any(not isinstance(file, dict) for file in metadata):
+                            raise ValueError("present was not accepted")
+                        result = json.dumps({"files": metadata}, ensure_ascii=False, allow_nan=False)
+                    except (ValueError, TypeError, OSError, HarnessError):
+                        # Do not echo rejected host paths, credentials or model
+                        # metadata, and do not swallow CancelledError.
+                        return {"success": False, "contentItems": [{"type": "inputText", "text":
+                            "File delivery was not accepted. Supply 1-8 existing regular files using only path and optional description, "
+                            "save them under the current IP outputs directory, and retry. No delivery was confirmed."}]}
+                    return {"success": True, "contentItems": [{"type": "inputText", "text": result}]}
                 if params.get("tool") != "easel_ask_user" or params.get("namespace") not in (None, ""):
                     raise HarnessError("不支持的 Codex 动态工具")
                 try:
@@ -210,7 +274,10 @@ class CodexAdapter:
             elif thread_id:
                 result = await rpc.call("thread/resume", {**options, "threadId": thread_id})
             else:
-                result = await rpc.call("thread/start", {**options, "dynamicTools": [EASEL_ASK_USER_TOOL]})
+                tools = [EASEL_ASK_USER_TOOL]
+                if request.present is not None:
+                    tools.append(EASEL_PRESENT_TOOL)
+                result = await rpc.call("thread/start", {**options, "dynamicTools": tools})
             resumed_id = (result.get("thread") or {}).get("id", "")
             if request.native_id and resumed_id != request.native_id:
                 raise HarnessError("Codex 返回了不同的原生会话 ID，不会替换已有历史")

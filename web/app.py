@@ -34,7 +34,9 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
+from starlette.responses import MalformedRangeHeader, RangeNotSatisfiable
 from pydantic import BaseModel, Field, StrictBool
 from typing import Literal
 from sse_starlette.sse import EventSourceResponse
@@ -58,6 +60,7 @@ from easel.request_identity import current_user, actor_key, ActorMap, ActorSet
 from easel import harnesses
 from easel.harnesses import store as harness_store
 from easel.harnesses.base import HarnessError, RunRequest
+from easel.chat_artifacts import ArtifactError, ChatArtifactStore
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
 from web.chat_history import ChatHistoryStore, validated_session
 try:
@@ -277,6 +280,10 @@ def _sessions_dir() -> Path:
     user = current_user()
     # Preserve the original local administrator's history during migration.
     return directory / 'users' / user['id'] if user and not _legacy_chat_owner() else directory
+
+
+def _chat_artifact_store() -> ChatArtifactStore:
+    return ChatArtifactStore(_sessions_dir(), _outputs_dir(), _workspace_root(), project_id())
 
 def _wechat_config_yaml() -> Path:
     return space_path(PROJECT_ROOT, WECHAT_CONFIG_YAML, 'wechat-publisher.yaml')
@@ -3462,6 +3469,32 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             raise HarnessError("此操作需要权限确认，请在流式对话中执行并确认权限")
         return await _harness_ask(sk, questions, receive, mode=req.autonomyMode)
 
+    async def present(files: list[dict], call_id: str) -> list[dict]:
+        # The native reverse-RPC callback already owns the verified Session and
+        # Turn. No caller-supplied user/IP/cookie can substitute that identity.
+        _require_host_tools()
+        safe_files = []
+        for file in files:
+            if not isinstance(file, dict):
+                raise ArtifactError('交付文件声明格式无效')
+            path = file.get('path')
+            if isinstance(path, str) and _scrub_secrets(path) != path:
+                raise ArtifactError('交付路径包含敏感配置，已拒绝', 403)
+            safe_files.append({**file, **({'description': _scrub_secrets(file['description'])}
+                if isinstance(file.get('description'), str) else {})})
+        try:
+            store = _chat_artifact_store()
+            artifacts = await asyncio.to_thread(store.present, safe_files, session_id=sk,
+                turn_id=turn_id, call_id=call_id, inbox_scope=_attachment_scope(sk))
+        except ArtifactError:
+            raise
+        except (OSError, sqlite3.Error):
+            raise HarnessError('交付记录保存失败，未创建成功交付卡，请检查本地存储后重试') from None
+        _require_host_tools()
+        receive('agent_event', {'id': uuid.uuid4().hex, 'kind': 'artifact', 'callId': call_id,
+            'artifacts': artifacts, 'status': 'available', 'completedAt': int(time.time() * 1000)})
+        return artifacts
+
     async def watch_privileges():
         nonlocal permission_revoked
         while True:
@@ -3507,7 +3540,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         request = RunRequest(message, _workspace_root(), env, native_id,
                              config["models"].get(runtime, ""), config["sandbox"], timeout,
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
-                             autonomy_mode=req.autonomyMode)
+                             autonomy_mode=req.autonomyMode, present=present)
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
             lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
@@ -3636,6 +3669,120 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
                 lock.release()
             _DIRECT_CHAT_TASKS.discard(task)
     return "".join(full_text)
+
+
+@app.get('/api/chat/artifacts/{artifact_id}')
+async def api_chat_artifact(artifact_id: str):
+    _require_operation()
+    store = _chat_artifact_store()
+    metadata = store.get(artifact_id)
+    if metadata is None:
+        raise HTTPException(404, '交付物不存在')
+    try:
+        with store.open_content(artifact_id, inbox_scope=_attachment_scope(metadata['sessionId'])):
+            pass
+    except ArtifactError:
+        # The declaration survives deletion or a later forbidden path change;
+        # only availability changes. D01 references current files, not snapshots.
+        return {**metadata, 'status': 'unavailable'}
+    return metadata
+
+
+def _html_related_response(content: bytes, mime: str) -> Response:
+    headers = {'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store'}
+    if mime == 'image/svg+xml':
+        headers['Content-Security-Policy'] = "sandbox allow-scripts; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'"
+    return Response(content, media_type=mime, headers=headers)
+
+
+@app.get('/api/chat/artifacts/{artifact_id}/related')
+async def api_chat_artifact_related(artifact_id: str, path: str):
+    _require_operation()
+    store = _chat_artifact_store()
+    metadata = store.get(artifact_id)
+    if metadata is None:
+        raise HTTPException(404, '交付物不存在')
+    try:
+        content, mime = await asyncio.to_thread(store.read_related, artifact_id, path,
+            inbox_scope=_attachment_scope(metadata['sessionId']))
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    _require_operation()
+    return _html_related_response(content, mime)
+
+
+@app.get('/api/chat/artifact-related')
+async def api_chat_legacy_artifact_related(document: str, path: str):
+    _require_operation()
+    try:
+        content, mime = await asyncio.to_thread(_chat_artifact_store().read_document_related, document, path)
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    _require_operation()
+    return _html_related_response(content, mime)
+
+
+@app.get('/api/chat/artifacts/{artifact_id}/content')
+@app.head('/api/chat/artifacts/{artifact_id}/content')
+async def api_chat_artifact_content(artifact_id: str, request: Request, download: bool = False):
+    _require_operation()
+    store = _chat_artifact_store()
+    metadata = store.get(artifact_id)
+    if metadata is None:
+        raise HTTPException(404, '交付物不存在')
+    try:
+        stream = store.open_content(artifact_id, inbox_scope=_attachment_scope(metadata['sessionId']))
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    disposition = 'attachment' if download else 'inline'
+    info = os.fstat(stream.fileno())
+    headers = {'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store',
+        'Content-Disposition': f"{disposition}; filename*=UTF-8''{urllib.parse.quote(metadata['name'], safe='')}"}
+    if Path(metadata['name']).suffix.lower() in {'.html', '.htm', '.svg', '.xml', '.xhtml'}:
+        headers['Content-Security-Policy'] = "sandbox allow-scripts; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'"
+    # Reuse the installed Starlette FileResponse's stat validators and byte-range
+    # parser, but NEVER call its path-opening transport: the verified FD must be
+    # retained through response streaming. These private helpers are covered by
+    # the range/If-Range/HEAD contract tests for dependency upgrades.
+    carrier = FileResponse(metadata['name'], media_type=metadata['mime'], headers=headers, stat_result=info)
+    headers = dict(carrier.headers)
+    start, end, status = 0, info.st_size, 200
+    http_range = request.headers.get('range')
+    if_range = request.headers.get('if-range')
+    if http_range and (if_range is None or carrier._should_use_range(if_range)):
+        try:
+            ranges = FileResponse._parse_range_header(http_range, info.st_size)
+        except RangeNotSatisfiable:
+            stream.close()
+            headers.update({'content-range': f'bytes */{info.st_size}', 'content-length': '0'})
+            return Response(status_code=416, headers=headers)
+        except MalformedRangeHeader:
+            stream.close()
+            raise HTTPException(400, 'Range 请求无效') from None
+        if len(ranges) == 1:
+            start, end = ranges[0]
+            status = 206
+            headers['content-range'] = f'bytes {start}-{end - 1}/{info.st_size}'
+            headers['content-length'] = str(end - start)
+        # HTTP permits ignoring a multiple-range request. Do not pretend this
+        # bounded single-file reader implements multipart/byteranges.
+    if request.method == 'HEAD':
+        stream.close()
+        return Response(status_code=status, headers=headers)
+    def body():
+        try:
+            stream.seek(start)
+            remaining = end - start
+            while remaining > 0:
+                chunk = stream.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+        finally:
+            stream.close()
+    return StreamingResponse(body(), status_code=status, media_type=metadata['mime'], headers=headers,
+                             background=BackgroundTask(stream.close))
 
 
 class ChatSessionsRequest(BaseModel):

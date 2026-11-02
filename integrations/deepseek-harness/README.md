@@ -17,3 +17,12 @@ Do not expose this source checkout as a user workspace or copy user credentials 
 Final tranche verification (2026-11-03): 22 upstream source migrations (10 original bodies verbatim, 12 adapted), with 14 Easel integration adapters recorded separately. Frozen regression/build and a bounded Codex/queue/refresh/navigation runtime path passed; see the manifest verification scope and backlog for incomplete requirements. This is not completion of all 144 comparison items.
 
 Final native-input acceptance: a new Codex thread called the registered `easel_ask_user` tool, showed the style card, received no manual answer, adopted the professional default after 25.0 seconds, and continued a real shell command successfully. Older unregistered native threads must start a new conversation because `thread/resume` cannot append dynamic tools; their IDs and history remain intact. Final whole-suite counts are 2032 backend passed/17 skipped and 356 frontend passed; build/lint/diff-check passed.
+
+## Per-feature phase after baseline 1a4c8b7
+
+D01 is in progress, not accepted and not committed. Current source/hash entries are recorded under `feature_work.D01`; the earlier whole-suite/runtime evidence belongs to the accepted baseline and does not close D01. Three declared cards, text bytes and PNG preview have stage evidence, but HTML relative resources still return403 from the opaque iframe and are being fixed. D08 immutable history is the next independent feature. New Codex threads currently register present; older unregistered threads need a new conversation, and ACP has no corresponding MCP/present registration.
+
+
+## D01 验证更新（2026-11-03）
+
+D01已在独立功能代码树通过2122项后端、378项前端与真实Codex/下载/PNG/HTML验收；HTML原403已由上游有限资源打包及受控related读取关闭。功能待单独提交，完整记录见 `docs/agent-feature-acceptance/D01.md`。旧阶段的D01 WIP/403描述为历史证据，不代表当前未修复；D08仍未实现。
