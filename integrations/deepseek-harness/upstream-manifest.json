@@ -19,7 +19,7 @@
     ],
     "managed_clone_is_gitignored": true
   },
-  "status_notice": "D01 3086ca8; C19 f5118d9; D08 97a2071 committed. B30 exact approval foundation verified in this feature commit. Strict identity gaps, native restore/AUT host isolation, D30 confirmation/recovery and the original remaining scope are open.",
+  "status_notice": "B30 foundation 11845ad; native registered tool resume correction verified in this feature commit. Real-platform identity/receipts, runtime recovery, AUT boundaries and all other original requirements remain open.",
   "selected_packages": [
     {
       "upstream_path": "packages/client/ui-conversation",
@@ -7356,11 +7356,11 @@
   "runtime_bridge_files": [
     {
       "path": "easel/harnesses/codex.py",
-      "sha256": "c32fe83536039c606ece0e34d9028d614449fb1b191d6ce169cdb7f7a87d723d",
+      "sha256": "bcd6a82f7738931a12c0df9d0cebac59497763c5f7b41bdf11915d484495abcc",
       "role": "Easel native/UI integration code; not a claim of upstream source copying",
       "baseline_sha256": "7b62cbf89e723cd0d40db712119688d8f8a883fb452437592e51df87c3866c1c",
-      "working_tree_feature": "B30",
-      "verification_status": "B30_exact_approval_foundation_verified"
+      "working_tree_feature": "B30-native-restore",
+      "verification_status": "verified_native_resume_and_full_backend"
     },
     {
       "path": "web/frontend/src/components/QuestionCards.tsx",
@@ -7396,7 +7396,7 @@
     "sha_notice": "All recorded target hashes refreshed after the final dynamic-tool and countdown changes were frozen on 2026-11-03."
   },
   "baseline_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
-  "current_feature": "B30",
+  "current_feature": "B30-native-restore",
   "feature_work": {
     "D01": {
       "status": "verified_committed",
@@ -7728,8 +7728,7 @@
         "ACP typed publication bridge absent",
         "hard-restart executing owner/lease recovery remains D30/AUT",
         "script exit zero is not public confirmed receipt",
-        "unrestricted shell/MCP is outside typed-business authority; no prompt-only OS security claim",
-        "already-registered native tool recovery across RPC/process restart still needs direct verification; current bridge fails closed for unknown resume"
+        "unrestricted shell/MCP is outside typed-business authority; no prompt-only OS security claim"
       ],
       "code_snapshots": [
         {
@@ -7903,7 +7902,40 @@
         "runtime_positive_result": "submitted, not confirmed",
         "frontend_unchanged_from_passing_440_test_build": true,
         "parallel_social_changes_excluded": true
-      }
+      },
+      "commit": "11845ad585dea26d34124fba4905d2c1b2beaff0",
+      "native_restore_fix": "B30-native-restore"
+    },
+    "B30-native-restore": {
+      "status": "verified",
+      "baseline_commit": "11845ad585dea26d34124fba4905d2c1b2beaff0",
+      "source_kind": "Native SDK persistent-tool protocol correction; preserves DeepSeek-style host/session boundaries, not a verbatim Python migration.",
+      "acceptance_record": "docs/agent-feature-acceptance/B30-native-restore.md",
+      "official_reference": "https://developers.openai.com/codex/app-server",
+      "verification": {
+        "candidate_code_tree": "01ebf4822488728dc2b3cdc18cbb19a8d4d83e56",
+        "backend_passed": 2447,
+        "backend_skipped": 17,
+        "backend_exit": 0,
+        "compile_exit": 0,
+        "diff_check_exit": 0,
+        "frontend_unchanged_from_11845ad": true,
+        "real_adapter_native_id_preserved": true,
+        "real_adapter_host_callback_count": 1,
+        "real_adapter_dispatch": false,
+        "real_adapter_process_pid": 52148,
+        "proof": ".scratch/native-restore/adapter-proof.json"
+      },
+      "files": [
+        {
+          "path": "easel/harnesses/codex.py",
+          "sha256": "bcd6a82f7738931a12c0df9d0cebac59497763c5f7b41bdf11915d484495abcc"
+        },
+        {
+          "path": "tests/test_native_publication_tool.py",
+          "sha256": "7bb3e695c2fea68d83f56a8591bfe34fb253b2c99f1b586eded4df80e9f48726"
+        }
+      ]
     }
   }
 }

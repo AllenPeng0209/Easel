@@ -18,15 +18,24 @@ thread=os.environ.get("PUBLICATION_NATIVE_ID") or "publication-thread"
 turn="publication-turn"
 for line in sys.stdin:
  m=json.loads(line)
- with open(os.environ["PUBLICATION_AUDIT"],"a",encoding="utf-8") as f: f.write(json.dumps(m)+"\\n")
+ with open(os.environ["PUBLICATION_AUDIT"],"a",encoding="utf-8") as f: f.write(json.dumps({"fixturePid":os.getpid(),**m})+"\\n")
  method=m.get("method")
  if method=="initialize": send({"id":m["id"],"result":{}})
  elif method in ("thread/start","thread/resume"):
   if method=="thread/resume": thread=m["params"]["threadId"]
+  else:
+   with open(os.environ["PUBLICATION_REGISTRATION"],"w",encoding="utf-8") as f:
+    json.dump({"threadId":thread,"tools":[tool["name"] for tool in m["params"].get("dynamicTools",[])]},f)
   send({"id":m["id"],"result":{"thread":{"id":thread}}})
  elif method=="turn/start":
   send({"id":m["id"],"result":{"turn":{"id":turn}}})
-  if os.environ.get("PUBLICATION_NO_CALL"):
+  registered=True
+  if os.environ.get("PUBLICATION_RESTORE_ROUTING"):
+   try:
+    with open(os.environ["PUBLICATION_REGISTRATION"],encoding="utf-8") as f: state=json.load(f)
+    registered=state.get("threadId")==thread and "easel_publish" in state.get("tools",[])
+   except FileNotFoundError: registered=False
+  if os.environ.get("PUBLICATION_NO_CALL") or not registered:
    send({"method":"turn/completed","params":{"threadId":thread,"turnId":turn,"turn":{"id":turn,"status":"completed"}}})
   else:
    params={"threadId":thread,"turnId":turn,"callId":"publication-call-1","tool":"easel_publish",
@@ -46,14 +55,16 @@ RECEIPT = {'requestId': 'publication-request-1', 'status': 'awaiting_approval',
            'message': '等待指定内容的真实人工批准'}
 
 
-def request_for(tmp_path, payload, publish, *, no_call=False, native_id='', overrides=None, session_key=''):
+def request_for(tmp_path, payload, publish, *, no_call=False, native_id='', overrides=None, session_key='', restore_routing=False):
     assert 'publish' in RunRequest.__dataclass_fields__, 'The host needs a typed publication callback'
     script = tmp_path / 'publication_wire.py'
     script.write_text(WIRE, encoding='utf-8')
     return RunRequest('Prepare public content through its host workflow', tmp_path, {
         **os.environ, 'PUBLICATION_AUDIT': str(tmp_path / 'publication_audit.jsonl'),
+        'PUBLICATION_REGISTRATION': str(tmp_path / 'publication-native-state.json'),
         'PUBLICATION_ARGS': json.dumps(payload), 'PUBLICATION_NATIVE_ID': native_id,
         'PUBLICATION_NO_CALL': '1' if no_call else '', 'PUBLICATION_OVERRIDES': json.dumps(overrides or {}),
+        'PUBLICATION_RESTORE_ROUTING': '1' if restore_routing else '',
     }, native_id=native_id, command=(sys.executable, str(script)), timeout=5, publish=publish,
         session_key=session_key)
 
@@ -204,17 +215,71 @@ def test_no_host_callback_is_an_explicit_failed_tool_result(tmp_path):
 
 
 def test_existing_threads_keep_history_and_do_not_claim_a_new_dynamic_tool(tmp_path):
+    seen = []
     async def publish(payload, call_id):
-        pytest.fail('An unregistered retained thread must not execute a publication callback')
-    result = run_tool(tmp_path, PAYLOAD, publish, native_id='original-thread')
+        seen.append((payload,call_id))
+        return RECEIPT
+    # An old native thread without a registration does not route this tool. It
+    # must not be modeled as a valid restored call that the host should reject.
+    result = run_tool(tmp_path, PAYLOAD, publish, native_id='original-thread', restore_routing=True)
     assert result['error'] is None
     assert result['identifiers'] == ['original-thread']
     assert not any(message.get('method') == 'thread/start' for message in result['messages'])
     resume = next(message['params'] for message in result['messages'] if message.get('method') == 'thread/resume')
     assert 'dynamicTools' not in resume
-    answer = tool_result(result)
-    assert answer['success'] is False
-    assert 'new conversation' in answer['contentItems'][0]['text'].lower()
+    assert seen == []
+    assert not any(message.get('id') == 'publication-reverse' for message in result['messages'])
+
+
+def test_a_registered_tool_is_restored_on_a_fresh_rpc_connection_with_the_same_native_id(tmp_path):
+    seen = []
+    async def publish(payload, call_id):
+        seen.append((payload,call_id))
+        return RECEIPT
+    original = run_tool(tmp_path, PAYLOAD, publish, no_call=True, restore_routing=True)
+    native_id = original['identifiers'][0]
+    restored = run_tool(tmp_path, PAYLOAD, publish, native_id=native_id, restore_routing=True)
+    assert restored['error'] is None
+    assert restored['identifiers'] == [native_id]
+    assert seen == [(PAYLOAD,'publication-call-1')]
+    assert tool_result(restored)['success'] is True
+    assert json.loads(tool_result(restored)['contentItems'][0]['text']) == RECEIPT
+    # Every run here owns a real separate RPC subprocess, unlike pooled reuse.
+    messages = restored['messages']
+    assert len({message['fixturePid'] for message in messages if message.get('method') == 'initialize'}) == 2
+    assert sum(message.get('method') == 'thread/start' for message in messages) == 1
+    resume = next(message['params'] for message in messages if message.get('method') == 'thread/resume')
+    assert resume['threadId'] == native_id
+    assert not {'dynamicTools','path','history'} & set(resume)
+    # The developer instructions describe native tool-list availability, rather
+    # than guessing an absent capability from a fresh process's empty cache.
+    assert 'unavailable in this retained' not in resume['developerInstructions']
+
+
+def test_a_restored_native_tool_still_requires_an_enabled_host_callback(tmp_path):
+    async def publish(payload,call_id):
+        pytest.fail('No callback expected in the registration-only turn')
+    original = run_tool(tmp_path,PAYLOAD,publish,no_call=True,restore_routing=True)
+    result = run_tool(tmp_path,PAYLOAD,None,native_id=original['identifiers'][0],restore_routing=True)
+    assert result['error'] is None
+    assert tool_result(result)['success'] is False
+
+
+@pytest.mark.parametrize('overrides,payload', [
+    ({'threadId':'foreign-thread'},PAYLOAD), ({'turnId':'foreign-turn'},PAYLOAD),
+    ({'turnId':None},PAYLOAD), ({'namespace':'foreign'},PAYLOAD), ({'callId':''},PAYLOAD),
+    ({},{**PAYLOAD,'artifactIds':['/private/source.png']}), ({},{**PAYLOAD,'command':'untrusted'}),
+])
+def test_restored_calls_keep_scope_authority_and_strict_payload_checks(tmp_path,overrides,payload):
+    seen = []
+    async def publish(value,call_id):
+        seen.append(value)
+        return RECEIPT
+    native_id = 'registered-thread'
+    (tmp_path/'publication-native-state.json').write_text(json.dumps({'threadId':native_id,'tools':['easel_publish']}))
+    result = run_tool(tmp_path,payload,publish,native_id=native_id,overrides=overrides,restore_routing=True)
+    assert seen == []
+    assert result['error'] is not None or tool_result(result)['success'] is False
 
 
 def test_a_tool_registered_on_a_pooled_thread_remains_usable_on_its_next_turn(tmp_path):

@@ -140,8 +140,8 @@ def _publication_payload(arguments) -> dict:
 
 def _publication_failure(*, unsupported=False) -> dict:
     message = (
-        'Typed publication is unsupported in this native thread. Start a new conversation with the host '
-        'publication workflow enabled. Do not substitute shell, browser or generic question approval.'
+        'The typed publication host channel is not enabled on this route. No publication was confirmed. '
+        'Do not substitute shell, browser or generic question approval.'
         if unsupported else
         'The host did not accept this publication request. Supply only a supported platform, title/body, '
         'tags, persona and immutable artifact IDs using the declared schema. No publication was confirmed.'
@@ -149,17 +149,22 @@ def _publication_failure(*, unsupported=False) -> dict:
     return {'success': False, 'contentItems': [{'type': 'inputText', 'text': message}]}
 
 
-def _publication_instructions(available: bool) -> str:
-    if available:
-        return ('\n\n## Easel typed publication workflow\nPublic publication must use easel_publish. '
+def _publication_instructions(host_enabled: bool) -> str:
+    if host_enabled:
+        return ('\n\n## Easel typed publication workflow\nWhen easel_publish is present in the native tool list, '
+                'public publication must use it. Codex may restore already registered tools when resuming '
+                'an existing thread; a fresh client connection does not mean those tools are absent. '
                 'Its host owns the exact payload and real human one-shot approval. Shell/browser/script '
                 'execution permission and easel_ask_user answers are not publication approval; do not '
                 'use either to replace or bypass this tool. Never invent a publication subject, account '
                 'identity, approval or receipt. A rejection, cancellation or unavailable host stops the '
-                'external action; finish independent preparation without claiming publication.')
-    return ('\n\n## Easel typed publication workflow\nTyped publication is unavailable in this retained '
-            'native thread. Keep its existing history; do not publish through shell, browser or scripts. '
-            'A new conversation with easel_publish enabled is required for this host workflow. '
+                'external action; finish independent preparation without claiming publication. '
+                'If an older native thread never registered easel_publish and its tool list lacks it, '
+                'keep the original thread and history; use a new conversation with the tool enabled '
+                'or an explicit supported migration. Do not claim that resume can append new tool definitions.')
+    return ('\n\n## Easel typed publication workflow\nThis request has no enabled typed publication host channel. '
+            'Preserve the existing thread and history; do not publish through shell, browser or scripts, '
+            'even if a native tool definition was retained. '
             'Generic ask_user answers never substitute for an exact-content publication approval.')
 
 
@@ -234,7 +239,6 @@ class CodexAdapter:
         thread_id = request.native_id
         turn_id = ""
         streamed: set[str] = set()
-        publication_registered = False
         events = EventProjector(emit, request.env)
 
         def notify(method, params):
@@ -286,8 +290,12 @@ class CodexAdapter:
                 raise HarnessError("不属于当前会话的请求")
             if method == "item/tool/call":
                 if params.get('tool') == 'easel_publish':
-                    if (request.publish is None or not publication_registered
-                            or params.get('namespace') not in (None, '')):
+                    # Native Codex persists dynamic tool definitions and routes
+                    # them again after thread/resume, including across processes.
+                    # A process-local registration cache is not an authority or
+                    # a reliable capability test. The typed host still owns all
+                    # actor/IP checks, exact approval and durable execution.
+                    if request.publish is None or params.get('namespace') not in (None, ''):
                         return _publication_failure(unsupported=True)
                     if not turn_id or params.get('turnId') != turn_id:
                         raise HarnessError('发布工具请求不属于当前回合')
@@ -360,7 +368,6 @@ class CodexAdapter:
         command = list(request.command) if request.command else (
             codex_override(request.env) or base_command("codex")) + ["app-server"]
         async with connection(request, command, notify, respond) as rpc:
-            publication_registered = bool(thread_id) and getattr(rpc, '_easel_publish_thread_id', None) == thread_id
             if rpc.initialized is None:
                 rpc.initialized = await rpc.call("initialize", {
                     "clientInfo": {"name": "easel", "version": __version__},
@@ -369,7 +376,7 @@ class CodexAdapter:
             options = {"cwd": str(request.cwd), "approvalPolicy": "on-request",
                        "sandbox": request.sandbox,
                        "developerInstructions": harness_instructions(request) + _publication_instructions(
-                           request.publish is not None and (not thread_id or publication_registered))}
+                           request.publish is not None)}
             if request.model:
                 options["model"] = request.model
             if thread_id and rpc.native_id == thread_id:
@@ -383,7 +390,6 @@ class CodexAdapter:
                 if request.publish is not None:
                     tools.append(EASEL_PUBLISH_TOOL)
                 result = await rpc.call("thread/start", {**options, "dynamicTools": tools})
-                publication_registered = request.publish is not None
             resumed_id = (result.get("thread") or {}).get("id", "")
             if request.native_id and resumed_id != request.native_id:
                 raise HarnessError("Codex 返回了不同的原生会话 ID，不会替换已有历史")
@@ -391,8 +397,6 @@ class CodexAdapter:
             if not thread_id:
                 raise HarnessError("Codex 未返回原生会话 ID")
             bind(thread_id)
-            if publication_registered:
-                rpc._easel_publish_thread_id = thread_id
             rpc.native_id = thread_id
             policy = {"type": "readOnly"} if request.sandbox == "read-only" else {
                 "type": "workspaceWrite", "writableRoots": [str(request.cwd)],
