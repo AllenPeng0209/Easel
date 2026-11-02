@@ -1,3 +1,4 @@
+import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -25,7 +26,7 @@ function loadApi(fetchImpl) {
   const module = { exports: {} };
   const sandbox = {
     exports: module.exports,
-    require: (name) => require(name),
+    require: (name) => name === './projectScope' ? projectScope : require(name),
     console,
     window: { location: { pathname: '/' } },
     AbortController,
@@ -37,7 +38,7 @@ function loadApi(fetchImpl) {
       return fetchImpl(...args);
     },
   };
-  runInNewContext(outputText, sandbox);
+  runWithProjectScope(outputText, sandbox);
   return { api: module.exports, calls };
 }
 

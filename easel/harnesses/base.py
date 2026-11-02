@@ -10,7 +10,7 @@ class HarnessError(Exception):
     pass
 
 
-Emit = Callable[[str, str], None]
+Emit = Callable[[str, str | dict], None]
 Ask = Callable[[list[dict]], Awaitable[dict[str, list[str]]]]
 Bind = Callable[[str], None]
 
@@ -35,6 +35,7 @@ class RunRequest:
     command: tuple[str, ...] = ()
     session_key: str = ""
     codex_auto_approve: bool = False
+    autonomy_mode: str = "autonomous"
 
 
 class Adapter(Protocol):

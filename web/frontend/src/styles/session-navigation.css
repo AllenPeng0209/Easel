@@ -1,0 +1,36 @@
+.session-history-controls { display: grid; gap: 6px; margin: 4px 4px 8px; }
+.session-history-controls input, .session-history-controls select { box-sizing: border-box; width: 100%; min-width: 0; padding: 7px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: 11px; }
+.session-history-controls input::placeholder { color: var(--text-tertiary); }
+.session-history-controls select { padding-top: 5px; padding-bottom: 5px; color: var(--text-secondary); }
+.session-pin-mark { flex-shrink: 0; color: var(--accent-end); font-size: 13px; margin-right: 5px; }
+.session-show-more { width: 100%; padding: 8px 7px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); text-align: left; font: inherit; font-size: 10px; cursor: pointer; }
+.session-show-more:hover { background: var(--surface-hover); color: var(--accent-end); }
+.session-archive-hint { margin: 2px 7px 5px; color: var(--text-tertiary); font-size: 10px; line-height: 1.5; }
+.session-export-error { margin: 5px 7px; color: var(--danger, #e17979); font-size: 11px; line-height: 1.5; }
+.session-state-dot { display: block; width: 6px; height: 6px; margin-left: 5px; flex-shrink: 0; border-radius: 50%; background: var(--accent-end); }
+.session-state-dot:is(.state-waiting, .state-approval, .state-question) { background: #d6a453; }
+.session-state-dot.state-failed { background: #d87575; }
+.session-state-dot:is(.state-unread, .state-completed-unread) { background: #5aaf8c; }
+#sidebar-archived-history .session-item { opacity: .75; cursor: default; }
+.sidebar-chat-history .session-item:focus-within .session-actions { display: flex; }
+.sidebar-chat-history .session-actions { max-width: 112px; }
+.sidebar-chat-history .session-act { min-width: 21px; }
+@media (pointer: coarse) { .sidebar-chat-history .session-actions { display: flex; } .sidebar-chat-history .session-item { min-height: 40px; } }
+
+/* Adapted from DSH ui-sidebar SidebarRoot / ui-layout AppFrame geometry. */
+.sidebar { transition: width .15s ease, min-width .15s ease; }
+.sidebar .sidebar-logo { gap: 8px; }
+.sidebar-shell-toggle { display: inline-flex; justify-content: center; align-items: center; flex-shrink: 0; width: 26px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 23px; cursor: pointer; }
+.sidebar-shell-toggle:hover { color: var(--text); background: var(--surface-hover); }
+.sidebar.sidebar-collapsed { width: 56px; min-width: 56px; }
+.sidebar-rail { display: flex; flex-direction: column; align-items: center; gap: 12px; height: 100%; padding: 17px 7px; }
+.sidebar-rail-action { display: flex; justify-content: center; align-items: center; width: 36px; height: 36px; border: 0; border-radius: 9px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.sidebar-rail-action:hover { background: var(--accent-soft); color: var(--accent-end); }
+.sidebar-rail-action:disabled { opacity: .45; cursor: default; }
+.sidebar-rail-settings { margin-top: auto; }
+.sidebar-mobile-opener { position: fixed; top: 10px; left: 10px; z-index: 65; width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elev); color: var(--text); font-size: 18px; cursor: pointer; }
+.sidebar.sidebar-drawer { position: fixed; inset: 0 auto 0 0; z-index: 71; width: min(290px, calc(100vw - 48px)); min-width: 0; box-shadow: var(--shadow-lg); transform: translateX(0); visibility: visible; transition: transform .18s ease; }
+.sidebar.sidebar-drawer.drawer-closed { transform: translateX(-100%); visibility: hidden; transition: transform .18s ease, visibility 0s linear .18s; }
+.sidebar-drawer-mask { position: fixed; inset: 0; z-index: 70; background: rgb(0 0 0 / .38); backdrop-filter: blur(2px); }
+@media (max-width: 767px) { .sidebar-mobile-opener ~ .main-content .space-breadcrumb { padding-left: 52px; } }
+@media (prefers-reduced-motion: reduce) { .sidebar, .sidebar.sidebar-drawer, .sidebar.sidebar-drawer.drawer-closed { transition: none; } }

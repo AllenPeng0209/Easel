@@ -1,0 +1,74 @@
+/** Copyright (c) 2026 DeepSeek. MIT License.
+ * Source: packages/client/ui-primitives/src/ImageLightbox.module.css
+ * Commit: ce7073d51254c26cd63b22a60835b8f948deb447
+ * License: integrations/deepseek-harness/LICENSE
+ * Easel adaptation: close glyph and theme variable bindings only.
+ */
+/* Full-viewport layer that blocks background clicks, including on the Windows caption. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+/* Painted area below the Windows caption; like Modal, the caption stays unpainted. */
+.stage {
+  position: absolute;
+  inset: var(--dsh-frame-chrome-top, 0px) 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+/* Shared dimming mask below the preview and its controls. */
+.mask {
+  position: absolute;
+  inset: 0;
+  background: var(--dsw-alias-bg-mask-1);
+  backdrop-filter: var(--dsw-mask-blur);
+}
+
+.image {
+  position: relative;
+  max-width: min(100%, 1600px);
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-specific-input-major);
+  border: 0;
+  box-shadow: var(--dsw-elevation-prominent);
+}
+
+.close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0.5px solid var(--dsw-alias-border-l2-darkmode-thin);
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-specific-input-major);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.close:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 3px; }
+
+/* Bind the upstream semantic tokens to the existing Easel palette. */
+.backdrop {
+  --dsw-alias-bg-mask-1: rgba(0, 0, 0, .82);
+  --dsw-mask-blur: blur(5px);
+  --dsw-radius-lg: 8px;
+  --dsw-specific-input-major: var(--bg-elev);
+  --dsw-elevation-prominent: var(--shadow-lg);
+  --dsw-alias-border-l2-darkmode-thin: var(--border);
+  --dsw-alias-label-primary: var(--text);
+  --dsw-focus-ring-width: 2px;
+  --dsw-focus-ring-color: var(--accent-start);
+}
+@media (max-width: 700px) { .stage { padding: 50px 15px; } }

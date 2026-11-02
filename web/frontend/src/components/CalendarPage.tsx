@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { fetchSchedule, createSchedule, updateSchedule, deleteSchedule, fetchScheduleContext } from '../lib/api';
 import type { ScheduleItem, ScheduleInput, ScheduleContext } from '../lib/api';
 import { IconCalendar, IconTrash, IconChevron } from './icons';
+import { useIpPermissions } from './ProjectSpace';
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   idea: { label: '选题', color: 'var(--text-tertiary)' },
@@ -29,6 +30,7 @@ const EMPTY: ScheduleInput = {
 };
 
 export default function CalendarPage() {
+  const { canOperate } = useIpPermissions();
   const today = useMemo(() => new Date(), []);
   const [cursor, setCursor] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [items, setItems] = useState<ScheduleItem[]>([]);
@@ -39,6 +41,7 @@ export default function CalendarPage() {
   const [ctx, setCtx] = useState<ScheduleContext | null>(null);
   const [showSuggest, setShowSuggest] = useState(true);
   const [dayView, setDayView] = useState<string | null>(null);   // 展开查看某天全部（date，null=关闭）
+  const [viewing, setViewing] = useState<ScheduleItem | null>(null);
 
   const load = useCallback(() => {
     fetchSchedule().then(setItems).catch(() => {});
@@ -71,11 +74,16 @@ export default function CalendarPage() {
   }, [cursor]);
 
   const openNew = (date: string) => {
+    if (!canOperate) return;
     setDayView(null);
     setEditing(null);
     setForm({ ...EMPTY, date, kind: filter === 'event' ? 'event' : 'content' });
   };
-  const openEdit = (it: ScheduleItem) => { setDayView(null); setEditing(it); setForm({ ...EMPTY, ...it }); };
+  const openEdit = (it: ScheduleItem) => {
+    setDayView(null);
+    if (!canOperate) { setViewing(it); return; }
+    setEditing(it); setForm({ ...EMPTY, ...it });
+  };
   const close = () => { setForm(null); setEditing(null); };
 
   // 单条 chip（活动=色条，内容=按状态上色的圆点），日历格与当天详情共用
@@ -104,7 +112,7 @@ export default function CalendarPage() {
   };
 
   const save = async () => {
-    if (!form || !form.title.trim() || !form.date) return;
+    if (!canOperate || !form || !form.title.trim() || !form.date) return;
     setSaving(true);
     try {
       if (editing) await updateSchedule(editing.id, form);
@@ -113,7 +121,7 @@ export default function CalendarPage() {
     } finally { setSaving(false); }
   };
   const remove = async () => {
-    if (!editing) return;
+    if (!canOperate || !editing) return;
     setSaving(true);
     try { await deleteSchedule(editing.id); close(); load(); } finally { setSaving(false); }
   };
@@ -138,6 +146,8 @@ export default function CalendarPage() {
           <button className="btn btn-sm" onClick={() => shift(1)}><IconChevron size={14} /></button>
         </div>
       </div>
+
+      {!canOperate && <p className="page-subtitle" role="status">当前为查看者权限，可以查看日历与排期详情。</p>}
 
       {showSuggest && suggestions.length > 0 && (
         <div className="cal-suggest">
@@ -208,15 +218,31 @@ export default function CalendarPage() {
               <div className="cal-dayview-list">
                 {list.map(renderChip)}
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+              {canOperate && <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
                 <button className="btn btn-sm btn-primary" onClick={() => openNew(dayView)}>+ 新增</button>
-              </div>
+              </div>}
             </div>
           </div>
         );
       })()}
 
-      {form && (
+      {viewing && <div className="overlay" onClick={() => setViewing(null)}>
+        <div className="modal" role="dialog" aria-modal="true" aria-labelledby="schedule-view-title" style={{ width: 440, maxWidth: '100%' }} onClick={event => event.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 id="schedule-view-title" style={{ margin: 0 }}>{viewing.title}</h3>
+            <button className="icon-btn" aria-label="关闭排期详情" onClick={() => setViewing(null)}>×</button>
+          </div>
+          <dl style={{ display: 'grid', gridTemplateColumns: '70px 1fr', gap: 12, fontSize: 13, lineHeight: 1.8 }}>
+            <dt>日期</dt><dd>{viewing.date}{viewing.end_date ? ` 至 ${viewing.end_date}` : ''}{viewing.time ? ` ${viewing.time}` : ''}</dd>
+            <dt>平台</dt><dd>{viewing.platform || '未指定'}</dd>
+            <dt>状态</dt><dd>{kindOf(viewing) === 'event' ? viewing.event_type || '平台活动' : STATUS_META[viewing.status]?.label || viewing.status}</dd>
+            {viewing.note && <><dt>备注</dt><dd style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{viewing.note}</dd></>}
+            {viewing.url && <><dt>发布链接</dt><dd style={{ overflowWrap: 'anywhere' }}>{viewing.url}</dd></>}
+          </dl>
+        </div>
+      </div>}
+
+      {canOperate && form && (
         <div className="overlay" onClick={close}>
           <div className="modal" style={{ width: 440, maxWidth: '100%' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>

@@ -1,24 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { runInNewContext } from 'node:vm';
+import { componentModule } from './agentMessagesHarness.mjs';
 import { test } from 'node:test';
 
 const require = createRequire(new URL('../../web/frontend/package.json', import.meta.url));
-const ts = require('typescript');
-const source = readFileSync(new URL('../../web/frontend/src/components/QuestionCards.tsx', import.meta.url), 'utf8');
-const { outputText } = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-    jsx: ts.JsxEmit.ReactJSX,
-  },
-});
-const component = { exports: {} };
-runInNewContext(outputText, {
-  exports: component.exports,
-  require: name => name === '../lib/api' ? {} : require(name),
-});
+const component = { exports: componentModule('components/QuestionCards.tsx') };
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 
@@ -82,9 +69,12 @@ test('expired timestamp prevents submission without inventing a hook deadline', 
   assert.match(rendered, /disabled="">提交<\/button>/);
 });
 
-test('answered historical questions do not reappear', () => {
+test('answered historical questions retain their accepted answer without reopening the form', () => {
   const rendered = renderToStaticMarkup(React.createElement(component.exports.default, {
-    questions: [{ id: 'old-question', status: 'answered', questions: [{ question: '已回答问题' }] }],
+    questions: [{ id: 'old-question', status: 'answered', resolvedBy: 'human', answers: { choice: ['已选答案'] },
+      questions: [{ questionId: 'choice', question: '已回答问题' }] }],
   }));
-  assert.equal(rendered, '');
+  assert.match(rendered, /已回答问题/);
+  assert.match(rendered, /已选答案/);
+  assert.doesNotMatch(rendered, /question-card__submit/);
 });

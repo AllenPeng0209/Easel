@@ -20,6 +20,10 @@ assert.ok(declaration);
 const { outputText } = ts.transpileModule(`const ${declaration.getText(parsed)}; handlePersonaChange;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 });
+const sync = {};
+runInNewContext(ts.transpileModule(readFileSync(new URL('../../web/frontend/src/lib/sessionSync.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: sync, Date });
 
 function setup(sessions, activeSessionId) {
   const state = { sessions, activeSessionId, selectedPersona: undefined, saved: undefined };
@@ -27,6 +31,7 @@ function setup(sessions, activeSessionId) {
     activeSessionId,
     sessionsRef: { current: sessions },
     useCallback: callback => callback,
+    nextSessionRevision: sync.nextSessionRevision,
     setSelectedPersona: persona => { state.selectedPersona = persona; },
     setCurrentPage: page => { state.page = page; },
     setSessions: update => { state.sessions = update(state.sessions); },

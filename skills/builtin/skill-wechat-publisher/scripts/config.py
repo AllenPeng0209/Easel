@@ -57,7 +57,7 @@ UNIFIED_CONFIG_NAME = "wechat-publisher.yaml"
 
 
 def _config_path() -> Path:
-    return Path(__file__).parent.parent / UNIFIED_CONFIG_NAME
+    return Path(os.environ.get("EASEL_WECHAT_CONFIG") or Path(__file__).parent.parent / UNIFIED_CONFIG_NAME)
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:

@@ -9,6 +9,20 @@ from pathlib import Path
 from .base import HarnessError
 
 
+def codex_override(environment: dict[str, str]) -> list[str] | None:
+    """Select Easel's explicit native CLI without changing the user's global PATH."""
+    configured = environment.get('EASEL_CODEX_EXECUTABLE', '').strip()
+    if not configured:
+        return None
+    if any(ord(character) < 32 for character in configured):
+        raise HarnessError('EASEL_CODEX_EXECUTABLE 必须是本机可执行程序的绝对路径')
+    executable = Path(configured).expanduser()
+    if (not executable.is_absolute() or executable.suffix.lower() in ('.cmd', '.bat')
+            or not executable.is_file() or not os.access(executable, os.X_OK)):
+        raise HarnessError('EASEL_CODEX_EXECUTABLE 指定的 Codex 不存在或不可执行，请重新选择本机程序')
+    return [str(executable)]
+
+
 def _windows_opencode_entry(launcher: Path) -> Path:
     failure = HarnessError("opencode 的 Windows npm 启动入口无法识别，请用 "
                            "npm install -g @opencode/cli 重新安装 CLI 并检查 PATH")

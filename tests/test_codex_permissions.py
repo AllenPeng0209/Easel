@@ -73,3 +73,38 @@ def test_saved_approval_switch_defaults_off_and_rejects_non_boolean(tmp_path):
     store.write_json(tmp_path / "_harness" / "config.json", {"codex_auto_approve": "false"})
     with pytest.raises(HarnessError, match="开关"):
         store.settings(tmp_path, {})
+
+
+@pytest.mark.parametrize("command", [
+    "cat /etc/passwd", "cat ../private.txt", "head -n 2 ~/.ssh/id_rsa",
+    "cat .env", "cat .env.local", "tail config/credentials.json", "cat auth.json",
+    "cat .codex/auth.json", "wc cookies.json", "stat .aws/credentials",
+    "grep secret .env", "grep -f .env README.md", "rg -n secret ../outside",
+    "rg --hidden secret .", "rg --no-ignore secret .", "rg -uuu secret .",
+    "git diff --no-index /etc/passwd README.md", "git show HEAD:.env",
+    "git fetch ../private-repository", "cat /dev/stdin",
+])
+def test_auto_approval_never_reads_credentials_or_outside_workspace(tmp_path, command):
+    request = RunRequest("", tmp_path, {}, codex_auto_approve=True)
+    assert not can_auto_approve(COMMAND, {"command": command, "cwd": str(tmp_path)}, request)
+
+
+def test_read_path_resolution_uses_actual_cwd_and_rejects_symlink_escapes(tmp_path):
+    root = tmp_path / "project"
+    (root / "sub").mkdir(parents=True)
+    (root / "README.md").write_text("public")
+    (root / "link").symlink_to(tmp_path / "outside")
+    request = RunRequest("", root, {}, codex_auto_approve=True)
+    assert can_auto_approve(COMMAND, {"command": "cat ../README.md", "cwd": str(root / "sub")}, request)
+    assert not can_auto_approve(COMMAND, {"command": "cat ../../private.txt", "cwd": str(root / "sub")}, request)
+    assert not can_auto_approve(COMMAND, {"command": "cat link/private.txt", "cwd": str(root)}, request)
+
+
+@pytest.mark.parametrize("command", [
+    "head -n 5 README.md", "tail -n 10 notes.txt", "grep -n keyword README.md",
+    "grep -e keyword README.md", "rg -n -e keyword web", "rg --files web",
+    "git show HEAD:web/app.py", "git log -3 --oneline", "git diff -- web/app.py",
+])
+def test_safe_read_arguments_remain_automatic(tmp_path, command):
+    request = RunRequest("", tmp_path, {}, codex_auto_approve=True)
+    assert can_auto_approve(COMMAND, {"command": command, "cwd": str(tmp_path)}, request)

@@ -1,6 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatQuestion, ChatQuestionItem } from '../lib/api';
 import { answerQuestion, questionStatus } from '../lib/api';
+import { createQuestionDraftStore } from '../vendor/deepseek-harness/message/question-drafts';
+import { QuestionReplyBubble } from '../vendor/deepseek-harness/message/QuestionReplyBubble';
+import type { QuestionReplyData } from '../vendor/deepseek-harness/message/question-reply';
+import '../styles/agent-chat.css';
+
+type QuestionDetails = ChatQuestion & {
+  kind?: 'preference' | 'approval';
+  defaultAnswers?: Record<string, string[]>;
+  autoResolveAtMs?: number | null;
+  resolvedBy?: string;
+  answers?: Record<string, string[]>;
+  resolvedAtMs?: number;
+};
+const settledStatuses = new Set(['answered', 'resolved', 'defaulted', 'declined', 'blocked']);
+const replyLabels: Record<string, string> = {
+  'reply.label': '已接受的问答', 'reply.skipped': '未提供答案', 'reply.answerLabel': '答复：', copied: '已复制', copy: '复制',
+};
+
+function QuestionResolution({ question }: { question: QuestionDetails }) {
+  const data: QuestionReplyData = {
+    callId: question.id, outcome: 'answered', time: question.resolvedAtMs || 0, text: '',
+    questions: question.questions.map(item => ({ id: item.questionId, question: item.question, header: item.header })),
+    answers: Object.entries(question.answers || {}).map(([id, selected]) => ({ id, selected })),
+  };
+  return <div className="question-resolution">
+    <div className="question-resolution__status">{question.status === 'blocked' ? '等待确认超时，任务在需要授权的步骤受阻'
+      : question.status === 'declined' ? '未获授权，操作未执行'
+      : question.resolvedBy === 'default' || question.status === 'defaulted' ? '已按默认答案继续' : '已答复'}</div>
+    {question.answers ? <QuestionReplyBubble data={data} t={key => replyLabels[key] || key} />
+      : <p className="agent-event__note">答复已被服务端接受，正在同步记录。</p>}
+  </div>;
+}
 
 /**
  * ask_user 问答题卡片。
@@ -14,38 +46,62 @@ import { answerQuestion, questionStatus } from '../lib/api';
  * （gateway 对 multiSelect=false 的多值直接报 "does not allow multiple answers"，
  * 前端只按数据渲染，不绕过校验）。
  */
-function QuestionCard({ question, onAnswered, onClosed }: { question: ChatQuestion; onAnswered: () => void;
-  onClosed?: (status: string) => void }) {
+function QuestionCard({ question: original, sessionId, onAnswered, onClosed }: { question: QuestionDetails; sessionId: string;
+  onAnswered: (resolved: QuestionDetails) => void; onClosed?: (status: string) => void }) {
+  const [resolution, setResolution] = useState<Partial<QuestionDetails>>({});
+  const question = { ...original, ...resolution };
+  const draftStore = useMemo(() => createQuestionDraftStore(sessionId), [sessionId]);
+  const [draft] = useState(() => draftStore.get(question.id));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [selected, setSelected] = useState<Record<string, string[]>>({});
-  const [custom, setCustom] = useState<Record<string, string>>({});
-  const [customVals, setCustomVals] = useState<Record<string, string[]>>({});
+  const [selected, setSelected] = useState<Record<string, string[]>>(() => Object.fromEntries(question.questions
+    .map((item, index) => [item.questionId, draft?.drafts[index]?.selected || []])));
+  const [custom, setCustom] = useState<Record<string, string>>(() => Object.fromEntries(question.questions
+    .map((item, index) => [item.questionId, draft?.drafts[index]?.custom || ''])));
+  const [customVals, setCustomVals] = useState<Record<string, string[]>>(() => Object.fromEntries(question.questions
+    .map((item, index) => [item.questionId, (draft?.drafts[index]?.selected || [])
+      .filter(value => !(item.options || []).some(option => option.label === value))])));
   const [showCustom, setShowCustom] = useState<Record<string, boolean>>({});
   const [now, setNow] = useState(Date.now());
   const [closed, setClosed] = useState('');
-  const deadlineReached = typeof question.expiresAtMs === 'number' && now >= question.expiresAtMs;
+  const requiresApproval = question.kind === 'approval' || question.requiresHuman === true;
+  const defaultScheduled = !requiresApproval && typeof question.autoResolveAtMs === 'number'
+    && !!question.defaultAnswers && Object.keys(question.defaultAnswers).length > 0;
+  const deadlineReached = !defaultScheduled && typeof question.expiresAtMs === 'number' && now >= question.expiresAtMs;
   const status = closed || question.status || 'pending';
+  const settled = settledStatuses.has(status);
   const expired = deadlineReached || (status !== 'pending' && status !== 'unknown');
   const locked = busy || expired;
   const closedCallback = useRef(onClosed);
   closedCallback.current = onClosed;
 
   useEffect(() => {
+    if (settled || expired) { draftStore.clear(question.id); return; }
+    draftStore.replace(question.id, { index: 0, drafts: question.questions.map(item => ({
+      selected: selected[item.questionId] || [], custom: custom[item.questionId] || '', skipped: false,
+    })) });
+  }, [draftStore, question.id, question.questions, selected, custom, settled, expired]);
+
+  useEffect(() => {
     if (status !== 'pending' || deadlineReached) return;
     let active = true;
+    let lastPoll = 0;
     const tick = () => {
       setNow(Date.now());
+      if (Date.now() - lastPoll < 4500) return;
+      lastPoll = Date.now();
       void questionStatus([question.id]).then(states => {
-        const next = states[question.id]?.status;
+        const details = states[question.id] as Partial<QuestionDetails> | undefined;
+        const next = details?.status;
         if (active && next && next !== 'pending' && next !== 'unknown') {
+          setResolution(details || {});
           setClosed(next);
           closedCallback.current?.(next);
         }
       });
     };
     tick();
-    const timer = setInterval(tick, 5000);
+    const timer = setInterval(tick, 1000);
     return () => { active = false; clearInterval(timer); };
   }, [question.id, status, deadlineReached]);
 
@@ -81,11 +137,15 @@ function QuestionCard({ question, onAnswered, onClosed }: { question: ChatQuesti
     setCustomVals((c) => ({ ...c, [it.questionId]: (c[it.questionId] || []).filter((x) => x !== v) }));
   };
 
-  const submit = async () => {
-    if (locked || !allAnswered) return;
-    setBusy(true); setError('');
+  const submit = async (override?: Record<string, string[]>) => {
+    if (locked || !items.length) return;
     const answers: Record<string, string[]> = {};
-    for (const it of items) answers[it.questionId] = valsOf(it);
+    for (const it of items) {
+      const values = override ? override[it.questionId] : valsOf(it);
+      if (!Array.isArray(values) || !values.length || values.some(value => typeof value !== 'string' || !value.trim())) return;
+      answers[it.questionId] = values;
+    }
+    setBusy(true); setError('');
     try {
       const res = await answerQuestion({ questionId: question.id, answers });
       if (!res.ok && (res.expired || (res.status && res.status !== 'pending'))) {
@@ -93,7 +153,13 @@ function QuestionCard({ question, onAnswered, onClosed }: { question: ChatQuesti
         onClosed?.(res.status || 'expired');
         setError('该问题已过期或关闭。若仍需补充，请在聊天输入框发送答复。');
       } else if (!res.ok) setError(res.error || '提交失败');
-      else onAnswered();
+      else {
+        const accepted = { ...question, status: 'answered', answers, resolvedBy: 'human' };
+        setResolution(accepted);
+        setClosed('answered');
+        draftStore.clear(question.id);
+        onAnswered(accepted);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -101,13 +167,26 @@ function QuestionCard({ question, onAnswered, onClosed }: { question: ChatQuesti
     }
   };
 
+  if (settled) return <QuestionResolution question={{ ...question, status }} />;
+  const seconds = Math.max(0, Math.ceil(((question.autoResolveAtMs || 0) - now) / 1000));
   return (
     <div className="message-row assistant">
-      <div className="msg-col assistant" style={{ maxWidth: '80%' }}>
+      <div className="msg-col assistant question-card-column">
         <div className="question-card">
+          <div className="question-card__mode">{requiresApproval ? '需要你确认' : '补充信息'}</div>
+          {requiresApproval && <div className="question-card__hint">未答复不会自动授权。</div>}
+          {defaultScheduled && !expired && <div className="question-card__default" role="status">
+            {seconds > 0 ? `${seconds} 秒后将按默认答案继续，你可以在此前修改。` : '正在等待服务端按默认答案继续…'}
+            <div className="question-card__actions">
+              <button type="button" className="question-card__default-continue btn btn-secondary"
+                disabled={locked || !items.every(item => Array.isArray(question.defaultAnswers?.[item.questionId])
+                  && !!question.defaultAnswers[item.questionId].length)}
+                onClick={() => void submit(question.defaultAnswers)}>按默认答案继续</button>
+            </div>
+          </div>}
           {expired ? <div className="question-card__hint">该问题已过期或关闭，无法再提交。请在聊天输入框发送补充答复。</div>
-            : typeof question.expiresAtMs === 'number' && <div className="question-card__hint">
-              网关截止时间：{new Date(question.expiresAtMs).toLocaleString()} · 剩余约 {Math.max(0, Math.ceil((question.expiresAtMs - now) / 60000))} 分钟（可能提前关闭）
+            : !defaultScheduled && typeof question.expiresAtMs === 'number' && <div className="question-card__hint">
+              本次输入截止时间：{new Date(question.expiresAtMs).toLocaleString()} · 剩余约 {Math.max(0, Math.ceil((question.expiresAtMs - now) / 60000))} 分钟（可能提前关闭）
             </div>}
           {items.map((it, idx) => {
             const options: { label: string; description?: string }[] = it.options || [];
@@ -122,6 +201,8 @@ function QuestionCard({ question, onAnswered, onClosed }: { question: ChatQuesti
                   {it.question || '请选择'}
                   {it.multiSelect && <span className="question-card__multi">可多选</span>}
                 </div>
+                {defaultScheduled && question.defaultAnswers?.[it.questionId]?.length
+                  ? <div className="question-card__hint">默认：{question.defaultAnswers[it.questionId].join('、')}</div> : null}
                 <div className="question-card__options">
                   {options.map((opt) => (
                     <button key={opt.label}
@@ -155,6 +236,11 @@ function QuestionCard({ question, onAnswered, onClosed }: { question: ChatQuesti
                       value={custom[it.questionId] || ''}
                       placeholder="输入你的答案"
                       onChange={(e) => setCustom((c) => ({ ...c, [it.questionId]: e.target.value }))}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                          event.preventDefault(); fillCustom(it);
+                        }
+                      }}
                     />
                     <button disabled={locked || !(custom[it.questionId] || '').trim()}
                       onClick={() => fillCustom(it)}>
@@ -192,19 +278,16 @@ function QuestionCard({ question, onAnswered, onClosed }: { question: ChatQuesti
 }
 
 /** 流式中的 ask_user 问答题列表（一次性卡片，答完即从当前流移除）。 */
-export default function QuestionCards({ questions, onDone, onClosed }: { questions: ChatQuestion[];
-  onDone?: (questionId: string) => void; onClosed?: (id: string, status: string) => void }) {
-  const [answered, setAnswered] = useState<Record<string, boolean>>({});
-  const visible = useMemo(
-    () => questions.filter((q) => !answered[q.id] && q.status !== 'answered' && q.status !== 'resolved'),
-    [questions, answered],
-  );
+export default function QuestionCards({ questions, sessionId = 'legacy', onDone, onClosed }: { questions: ChatQuestion[];
+  sessionId?: string; onDone?: (questionId: string) => void; onClosed?: (id: string, status: string) => void }) {
+  const [answered, setAnswered] = useState<Record<string, QuestionDetails>>({});
+  const visible = useMemo(() => questions.map(question => ({ ...question, ...answered[question.id] })), [questions, answered]);
   if (!visible.length) return null;
   return (
     <>
       {visible.map((q) => (
-        <QuestionCard key={q.id} question={q} onClosed={status => onClosed?.(q.id, status)} onAnswered={() => {
-          setAnswered((a) => ({ ...a, [q.id]: true }));
+        <QuestionCard key={q.id} question={q} sessionId={sessionId} onClosed={status => onClosed?.(q.id, status)} onAnswered={resolved => {
+          setAnswered((a) => ({ ...a, [q.id]: resolved }));
           onDone?.(q.id);   // 通知 App：此题已答，重放/恢复不再出现
         }} />
       ))}

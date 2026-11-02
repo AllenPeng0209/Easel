@@ -2,14 +2,102 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from easel import __version__
+from easel.agent_policy import requests_secret
 
 from .base import Descriptor, HarnessError, RunRequest
-from .commands import base_command
+from .commands import base_command, codex_override
+from .diagnostics import codex_failure_message
+from .events import EventProjector
 from .permissions import can_auto_approve
 from .rpc import connection
 from .workspace import harness_instructions
+
+
+# thread/start is the only native API that accepts dynamicTools. This tool is
+# deliberately eager and independent of request_user_input's collaboration-mode
+# gate. Old native threads are resumed unchanged, never silently replaced.
+EASEL_ASK_USER_TOOL = {
+    "type": "function", "name": "easel_ask_user", "deferLoading": False,
+    "description": (
+        "Ask one to three necessary questions through Easel's visible input cards, then continue the task using "
+        "the returned answers. Use this tool instead of request_user_input, which may be unavailable in the "
+        "current mode. For ordinary reversible preferences supply reasonable defaultAnswers and mark a recommended "
+        "option: Easel may use defaults after its server-side waiting period. Do not ask unnecessary preferences; "
+        "complete the work autonomously when sufficient information is known. Permissions, public publishing, "
+        "deletion and payments still require real human authorization; this tool never grants execution permission. "
+        "Never request passwords, API keys, login codes or other secret credentials."
+    ),
+    "inputSchema": {
+        "type": "object", "additionalProperties": False, "required": ["questions"],
+        "properties": {"questions": {"type": "array", "minItems": 1, "maxItems": 3, "items": {
+            "type": "object", "additionalProperties": False, "required": ["id", "question"],
+            "properties": {
+                "id": {"type": "string", "minLength": 1, "maxLength": 120},
+                "header": {"type": "string", "maxLength": 100},
+                "question": {"type": "string", "minLength": 1, "maxLength": 3000},
+                "multiSelect": {"type": "boolean"}, "requiresHuman": {"type": "boolean"},
+                "isSecret": {"type": "boolean"},
+                "defaultAnswers": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 1000}},
+                "options": {"type": "array", "maxItems": 12, "items": {
+                    "type": "object", "additionalProperties": False, "required": ["label"], "properties": {
+                        "label": {"type": "string", "minLength": 1, "maxLength": 240},
+                        "description": {"type": "string", "maxLength": 1000},
+                        "recommended": {"type": "boolean"},
+                    }}},
+            },
+        }}},
+    },
+}
+
+
+def _dynamic_questions(arguments) -> list[dict]:
+    schema = EASEL_ASK_USER_TOOL["inputSchema"]["properties"]["questions"]["items"]
+    if not isinstance(arguments, dict) or set(arguments) != {"questions"}:
+        raise ValueError("invalid questions")
+    questions = arguments["questions"]
+    if not isinstance(questions, list) or not 1 <= len(questions) <= 3:
+        raise ValueError("invalid questions")
+    identifiers = set()
+    normalized = []
+    for question in questions:
+        if not isinstance(question, dict) or set(question) - set(schema["properties"]):
+            raise ValueError("invalid question")
+        identifier, text = question.get("id"), question.get("question")
+        if (not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 120
+                or identifier in identifiers or identifier in {"__proto__", "constructor", "prototype"}
+                or any(ord(character) < 32 for character in identifier)
+                or not isinstance(text, str) or not text.strip() or len(text) > 3000):
+            raise ValueError("invalid question")
+        identifiers.add(identifier)
+        if "header" in question and (not isinstance(question["header"], str) or len(question["header"]) > 100):
+            raise ValueError("invalid header")
+        for flag in ("multiSelect", "requiresHuman", "isSecret"):
+            if flag in question and not isinstance(question[flag], bool):
+                raise ValueError("invalid question flag")
+        options = question.get("options", [])
+        if not isinstance(options, list) or len(options) > 12:
+            raise ValueError("invalid options")
+        labels = set()
+        for option in options:
+            if (not isinstance(option, dict) or set(option) - {"label", "description", "recommended"}
+                    or not isinstance(option.get("label"), str) or not option["label"].strip()
+                    or len(option["label"]) > 240 or option["label"] in labels
+                    or ("description" in option and (not isinstance(option["description"], str) or len(option["description"]) > 1000))
+                    or ("recommended" in option and not isinstance(option["recommended"], bool))):
+                raise ValueError("invalid option")
+            labels.add(option["label"])
+        defaults = question.get("defaultAnswers", [])
+        if (not isinstance(defaults, list) or len(defaults) > 12
+                or any(not isinstance(value, str) or not value.strip() or len(value) > 1000
+                       or (labels and value not in labels) for value in defaults)):
+            raise ValueError("invalid defaults")
+        normalized.append({"questionId": identifier, **{key: value for key, value in question.items() if key != "id"}})
+    if requests_secret(normalized):
+        raise ValueError("secret input is not supported")
+    return normalized
 
 
 class CodexAdapter:
@@ -22,6 +110,7 @@ class CodexAdapter:
         thread_id = request.native_id
         turn_id = ""
         streamed: set[str] = set()
+        events = EventProjector(emit, request.env)
 
         def notify(method, params):
             def _thread_scoped() -> bool:
@@ -38,11 +127,12 @@ class CodexAdapter:
                 if params.get("willRetry", False) or not _thread_scoped():
                     return
                 if not completion.done():
-                    completion.set_exception(HarnessError("Codex 执行失败，请检查原生登录与模型配置"))
+                    completion.set_exception(HarnessError(codex_failure_message(params.get("error"))))
                 return
 
             if not turn_id or params.get("threadId") != thread_id or params.get("turnId", turn_id) != turn_id:
                 return
+            events.codex(method, params)
             if method == "item/agentMessage/delta":
                 streamed.add(params.get("itemId", ""))
                 emit("token", params.get("delta", ""))
@@ -51,7 +141,7 @@ class CodexAdapter:
             elif method == "item/started":
                 item = params.get("item") or {}
                 if item.get("type") not in ("agentMessage", "reasoning", "userMessage"):
-                    emit("activity", f"工具：{item.get('type', 'tool')}")
+                    events.activity(f"工具：{item.get('type', 'tool')}")
             elif method == "item/completed":
                 item = params.get("item") or {}
                 if item.get("type") == "agentMessage" and item.get("id") not in streamed:
@@ -63,14 +153,24 @@ class CodexAdapter:
                 if turn.get("status") == "completed":
                     completion.set_result(None)
                 else:
-                    error = turn.get("error") or {}
-                    completion.set_exception(HarnessError(
-                        str(error.get("message") or f"Codex 本轮未完成：{turn.get('status')}")))
+                    completion.set_exception(HarnessError(codex_failure_message(turn.get("error"))))
 
         async def respond(method, params):
             if params.get("threadId") != thread_id or (
                     turn_id and params.get("turnId", turn_id) != turn_id):
                 raise HarnessError("不属于当前会话的请求")
+            if method == "item/tool/call":
+                if params.get("tool") != "easel_ask_user" or params.get("namespace") not in (None, ""):
+                    raise HarnessError("不支持的 Codex 动态工具")
+                try:
+                    normalized = _dynamic_questions(params.get("arguments"))
+                except ValueError:
+                    return {"success": False, "contentItems": [{"type": "inputText", "text":
+                        "Invalid question input. Supply 1-3 uniquely identified non-secret questions using only the declared schema. "
+                        "Never request credentials; use the native terminal for authentication."}]}
+                answers = await ask(normalized)
+                return {"success": True, "contentItems": [{"type": "inputText", "text": json.dumps(
+                    {"answers": answers}, ensure_ascii=False)}]}
             if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
                 if can_auto_approve(method, params, request):
                     emit("activity", "Codex：已自动通过普通操作授权")
@@ -92,7 +192,8 @@ class CodexAdapter:
                 return {"answers": {key: {"answers": value} for key, value in answers.items()}}
             raise HarnessError("不支持的 Codex 客户端请求")
 
-        command = list(request.command) if request.command else base_command("codex") + ["app-server"]
+        command = list(request.command) if request.command else (
+            codex_override(request.env) or base_command("codex")) + ["app-server"]
         async with connection(request, command, notify, respond) as rpc:
             if rpc.initialized is None:
                 rpc.initialized = await rpc.call("initialize", {
@@ -109,7 +210,7 @@ class CodexAdapter:
             elif thread_id:
                 result = await rpc.call("thread/resume", {**options, "threadId": thread_id})
             else:
-                result = await rpc.call("thread/start", options)
+                result = await rpc.call("thread/start", {**options, "dynamicTools": [EASEL_ASK_USER_TOOL]})
             resumed_id = (result.get("thread") or {}).get("id", "")
             if request.native_id and resumed_id != request.native_id:
                 raise HarnessError("Codex 返回了不同的原生会话 ID，不会替换已有历史")

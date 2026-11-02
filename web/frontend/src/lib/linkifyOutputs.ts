@@ -132,7 +132,7 @@ export function linkifyOutputs(md: string): string {
 /** 渲染后的 HTML 里，把指向 /api/media 的链接改为新标签打开（点文件不离开工作台）。 */
 export function externalizeMediaLinks(html: string): string {
   return html.replace(
-    /<a href="([^"]*\/api\/media\/[^"]*)"/g,
+    /<a href="([^"]*\/api\/(?:projects\/[^/]+\/)?media\/[^"]*)"/g,
     '<a href="$1" target="_blank" rel="noreferrer"',
   );
 }

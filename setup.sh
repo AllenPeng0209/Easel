@@ -282,7 +282,7 @@ PY
     while IFS='=' read -r key value; do
         [ -n "$key" ] || continue
         if ! oc_try "$key" "$value" --json; then
-            warn_collect '技能目录预算' "当前 OpenClaw 不接受 $key；保留该项现状（可能版本不支持）" 'easel doctor'
+            warn_collect '技能目录预算' "当前 OpenClaw 不接受 ${key}；保留该项现状（可能版本不支持）" 'easel doctor'
         fi
     done <<< "$plan"
 }

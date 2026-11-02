@@ -1,3 +1,4 @@
+import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -12,7 +13,7 @@ function load(name, imports = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   });
   const exports = {};
-  runInNewContext(outputText, { exports, require: id => imports[id], window: { location: { pathname: '/' } } });
+  runWithProjectScope(outputText, { exports, require: id => id === './projectScope' ? projectScope : imports[id], window: { location: { pathname: '/' } } });
   return exports;
 }
 const api = load('api');

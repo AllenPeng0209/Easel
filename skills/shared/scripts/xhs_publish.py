@@ -138,7 +138,7 @@ def _abspaths(csv: str | None) -> list[str]:
 
 
 def _profile_dir(base: str | None) -> Path:
-    root = Path(base).expanduser() if base else Path.home() / ".easel-browser-profiles"
+    root = Path(base or os.environ.get("EASEL_BROWSER_PROFILES", "")).expanduser() if (base or os.environ.get("EASEL_BROWSER_PROFILES")) else Path.home() / ".easel-browser-profiles"
     return root / PROFILE_NAME
 
 

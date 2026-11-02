@@ -1,13 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { ChatMessage } from '../lib/store';
+import type { AgentEvent } from '../lib/agentEvents';
 import { renderMarkdown } from '../lib/sanitize';
 import { linkifyOutputs, externalizeMediaLinks } from '../lib/linkifyOutputs';
 import { IconCopy, IconCheck, IconRetry } from './icons';
 import { extractArtifacts } from '../lib/artifacts';
 import ArtifactGallery from './ArtifactGallery';
+import UserAttachments from './UserAttachments';
+import AgentEventPanel from './AgentEventPanel';
+import { UserMessageBubble } from '../vendor/deepseek-harness/message/UserMessageBubble';
+import { useClipboardCopy } from '../vendor/deepseek-harness/message/use-clipboard-copy';
+import '../styles/agent-chat.css';
 
 export interface BubbleActions {
-  onCopy: () => void;
+  onCopy: () => void | Promise<void>;
   onRetry?: () => void;    // 仅最后一轮可用（append-only：不改写历史）
   canModify: boolean;      // 流式中禁用 retry
 }
@@ -18,19 +24,17 @@ interface MessageBubbleProps {
   thinking?: string;
   activity?: string;
   stillWorking?: string;   // 防呆心跳提示（未卡住）；仅流式时的独立提示，不替代思考/活动
+  events?: AgentEvent[];
   actions?: BubbleActions;
 }
 
-function ActionBar({ actions }: { actions: BubbleActions }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    actions.onCopy();
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  };
+function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) {
+  // Harness's shared hook waits for an accepted clipboard write, including its
+  // fallback, before success feedback. The legacy callback was copy-only.
+  const { copied, onCopy } = useClipboardCopy(text);
   return (
     <div className="msg-actions">
-      <button className="msg-action" onClick={copy} title="复制">
+      <button className="msg-action" onClick={onCopy} title="复制">
         {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}<span>{copied ? '已复制' : '复制'}</span>
       </button>
       {actions.onRetry && actions.canModify && (
@@ -40,7 +44,7 @@ function ActionBar({ actions }: { actions: BubbleActions }) {
   );
 }
 
-export default function MessageBubble({ message, isStreaming, thinking, activity, stillWorking, actions }: MessageBubbleProps) {
+export default function MessageBubble({ message, isStreaming, thinking, activity, stillWorking, events, actions }: MessageBubbleProps) {
   const rendered = useMemo(() => {
     if (message.role === 'user') return { html: '', artifacts: [], archives: [] };
     // 助手正文里裸露的产物路径先转成前端可用链接（文件直开、图片内联、目录跳内容库）。
@@ -54,14 +58,13 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
 
   // ---- 用户消息 ----
   if (message.role === 'user') {
-    // Attachment-only turns are intentionally invisible; the structured refs
-    // remain in session state for retry but never leak paths into the chat UI.
-    if (!message.content.trim()) return null;
+    if (!message.content.trim() && !message.attachments?.length) return null;
     return (
       <div className="message-row user">
         <div className="msg-col user">
-          <div className="message-bubble user">{message.content}</div>
-          {actions && <ActionBar actions={actions} />}
+          {message.attachments?.length ? <UserAttachments files={message.attachments} /> : null}
+          {message.content.trim() && <UserMessageBubble className="message-bubble user">{message.content}</UserMessageBubble>}
+          {actions && message.content.trim() && <ActionBar actions={actions} text={message.content} />}
         </div>
       </div>
     );
@@ -73,6 +76,7 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
   const liveActivity = isStreaming ? (activity || '') : '';
   const liveHint = isStreaming ? (stillWorking || '') : '';   // 防呆「未卡住」提示，附着显示、不顶掉真实状态
   const doneSteps = !isStreaming ? (message.activity || '') : '';
+  const effEvents = isStreaming ? events || [] : message.events || [];
 
   const livePanel = (effThinking || liveActivity || liveHint || doneSteps) ? (
     <div className="live-panel">
@@ -84,7 +88,7 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
       ) : liveHint ? (
         <div className="live-activity"><span className="live-pulse" />{liveHint}</div>
       ) : null}
-      {doneSteps && (
+      {doneSteps && !effEvents.length && (
         <details className="thinking-block">
           <summary>🧠 执行过程（{doneSteps.split('\n').length} 步）</summary>
           <div className="thinking-text">{doneSteps}</div>
@@ -100,7 +104,7 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
   ) : null;
 
   // 等待回复中（还没有正文、思考、活动）
-  if (isStreaming && !message.content && !effThinking && !liveActivity && !liveHint) {
+  if (isStreaming && !message.content && !effThinking && !liveActivity && !liveHint && !effEvents.length) {
     return (
       <div className="message-row assistant">
         <div className="message-bubble assistant">
@@ -119,13 +123,14 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
       <div className="msg-col assistant">
         <div className="message-bubble assistant">
           {livePanel}
+          <AgentEventPanel events={effEvents} settled={!isStreaming} />
           {message.content && <div dangerouslySetInnerHTML={{ __html: rendered.html }} />}
           {!isStreaming && (rendered.artifacts.length > 0 || rendered.archives.length > 0) && (
             <ArtifactGallery artifacts={rendered.artifacts} archives={rendered.archives} />
           )}
           {isStreaming && <span className="streaming-cursor" />}
         </div>
-        {actions && !isStreaming && <ActionBar actions={actions} />}
+        {actions && !isStreaming && <ActionBar actions={actions} text={message.content} />}
       </div>
     </div>
   );

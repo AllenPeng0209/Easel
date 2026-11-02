@@ -291,12 +291,22 @@ def test_pooled_connections_expire_and_bound_idle_count(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_web_native_working_directory_is_easel_root():
-    import inspect
+def test_web_native_working_directory_is_easel_root(sandbox, monkeypatch):
+    captured = []
 
-    source = inspect.getsource(web._run_harness_chat)
-    assert "RunRequest(message, PROJECT_ROOT" in source
-    assert "session_key=sk" in source
+    class Adapter:
+        async def run(self, request, emit, ask, bind):
+            captured.append(request)
+            emit("token", "hello")
+
+    monkeypatch.setattr(web.harnesses, "adapter", lambda runtime: Adapter())
+    result = asyncio.run(web._run_harness_chat(
+        web.ChatRequest(message="hello"), "same", "hello", "codex",
+        web._harness_settings(), lambda *args: None, interactive=False))
+    assert result == "hello"
+    assert captured[0].cwd == web.PROJECT_ROOT
+    assert captured[0].session_key == "same"
+    assert captured[0].env["EASEL_ROOT"] == str(web.PROJECT_ROOT)
 
 
 def test_settings_blocking_probes_are_offloaded():

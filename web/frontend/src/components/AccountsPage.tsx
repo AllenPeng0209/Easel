@@ -6,6 +6,7 @@ import {
 } from '../lib/api';
 import type { AccountItem, AccountWhoami } from '../lib/api';
 import { getWhoamiCache, setWhoamiCache, verifyStale } from '../lib/whoami';
+import { useIpPermissions } from './ProjectSpace';
 
 type QRState = {
   platform: string;
@@ -40,6 +41,9 @@ function Avatar({ url, name }: { url?: string; name: string }) {
 }
 
 export default function AccountsPage() {
+  const { canManageAccounts } = useIpPermissions();
+  const accountPermission = useRef(canManageAccounts);
+  accountPermission.current = canManageAccounts;
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [err, setErr] = useState('');
   const [qr, setQr] = useState<QRState | null>(null);
@@ -118,8 +122,9 @@ export default function AccountsPage() {
             });
           }
         }
+        if (!accountPermission.current) return;
         verifyStale(targets, {
-          alive: () => aliveRef.current,
+          alive: () => aliveRef.current && accountPermission.current,
           onUpdate: (platform, r) => {
             setWhoami((w) => ({ ...w, [platform]: r }));
             setAccounts((current) => current.map((account) =>
@@ -149,6 +154,14 @@ export default function AccountsPage() {
   }, []);
 
   useEffect(() => () => stopPoll(), [stopPoll]);
+
+  useEffect(() => {
+    if (canManageAccounts) return;
+    stopPoll();
+    qrRequest.current += 1;
+    setQr(null);
+    setCred(null);
+  }, [canManageAccounts, stopPoll]);
 
   const closeQr = useCallback(() => {
     qrRequest.current += 1;
@@ -392,10 +405,10 @@ export default function AccountsPage() {
     <div className="accounts-page">
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div>
-          <h1 className="page-title">账号登录 Accounts</h1>
+          <h1 className="page-title">平台账号 Accounts</h1>
           <p className="page-subtitle">
-            用手机 App 扫码登录，登录态本地持久化，之后发布免登。<br />
-            ⚠️ 平台可能对机房/代理 IP 判风险导致二维码弹不出，需干净/家宽 IP，或在正常网络登录后拷贝登录态目录。
+            {canManageAccounts ? '连接当前 IP 的各平台账号，登录后可持续用于内容运营与发布。'
+              : '当前账号为只读访问。平台登录、退出和身份校验由此 IP 的 owner 管理。'}
           </p>
         </div>
         <button className="btn btn-sm" onClick={load}>⟳ 刷新</button>
@@ -428,17 +441,17 @@ export default function AccountsPage() {
                 <div className="account-card-note">{a.note ? a.note : `后端：${a.name}`}</div>
               )}
 
-              <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
+              {canManageAccounts ? <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
                 {logged ? (
                   <>
                     <button className="btn btn-sm" style={{ flex: 1 }}
                       disabled={busy === a.platform || busy === a.platform + ':mp' || w === 'loading'}
-                      onClick={() => runWhoami(a.platform)}>
+                      onClick={() => { if (accountPermission.current) runWhoami(a.platform); }}>
                       {w === 'loading' ? '校验中…' : '校验账号'}
                     </button>
                     <button className="btn btn-sm btn-ghost" style={{ flex: 1 }}
                       disabled={logoutBusy === a.platform}
-                      onClick={() => handleLogout(a)}>
+                      onClick={() => { if (accountPermission.current) return handleLogout(a); }}>
                       {logoutBusy === a.platform ? '退出中…' : '退出登录'}
                     </button>
                   </>
@@ -447,17 +460,17 @@ export default function AccountsPage() {
                   <button
                     className={`btn btn-block ${a.supported ? 'btn-primary' : ''}`}
                     disabled={!a.supported || busy === a.platform || busy === a.platform + ':mp'}
-                    onClick={() => (a.backend === 'wechat-oa' ? handleMpLogin(a) : handleLogin(a))}>
+                    onClick={() => { if (accountPermission.current) return a.backend === 'wechat-oa' ? handleMpLogin(a) : handleLogin(a); }}>
                     {(busy === a.platform || busy === a.platform + ':mp') ? '启动中…' : '登录'}
                   </button>
                 )}
-              </div>
+              </div> : <div className="account-card-note" style={{ marginTop: 'auto' }}>只读 · 由 owner 管理连接</div>}
             </div>
           );
         })}
       </div>
 
-      {qr && (
+      {canManageAccounts && qr && (
         <div className="overlay" onClick={closeQr}>
           <div className="modal" style={{ width: 360, maxWidth: '100%', textAlign: 'center' }}
             onClick={(e) => e.stopPropagation()}>
@@ -477,14 +490,14 @@ export default function AccountsPage() {
                 <input
                   value={smsCode}
                   onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                  onKeyDown={(e) => { if (e.key === 'Enter') submitSms(); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && accountPermission.current) void submitSms(); }}
                   placeholder="短信验证码" inputMode="numeric" autoFocus
                   style={{ width: '100%', boxSizing: 'border-box', textAlign: 'center',
                     letterSpacing: 6, fontSize: 20, padding: '10px 12px',
                     border: '1px solid var(--border)', borderRadius: 8 }} />
                 {smsErr && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>{smsErr}</div>}
                 <button className="btn btn-primary btn-block" style={{ marginTop: 12 }}
-                  disabled={smsBusy} onClick={submitSms}>
+                  disabled={smsBusy} onClick={() => { if (accountPermission.current) return submitSms(); }}>
                   {smsBusy ? '提交中…' : '提交验证码'}
                 </button>
               </div>
@@ -512,7 +525,7 @@ export default function AccountsPage() {
         </div>
       )}
 
-      {cred && (
+      {canManageAccounts && cred && (
         <div className="overlay" onClick={closeCred}>
           <div className="modal" style={{ width: 420, maxWidth: '100%' }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 4px' }}>配置 {cred.name}</h3>
@@ -538,7 +551,7 @@ export default function AccountsPage() {
                 margin: '4px 0 4px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14 }} />
             {credErr && <div style={{ color: 'var(--red)', fontSize: 12.5, marginTop: 8 }}>{credErr}</div>}
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button className="btn btn-primary" style={{ flex: 1 }} disabled={credBusy} onClick={submitCred}>
+              <button className="btn btn-primary" style={{ flex: 1 }} disabled={credBusy} onClick={() => { if (accountPermission.current) return submitCred(); }}>
                 {credBusy ? '验证中…' : '保存并验证'}
               </button>
               <button className="btn" onClick={closeCred}>关闭</button>

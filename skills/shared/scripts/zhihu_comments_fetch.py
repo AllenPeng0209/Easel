@@ -8,10 +8,11 @@
 """
 from __future__ import annotations
 import argparse, json, sys, time
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PROFILE_DIR = Path.home() / ".easel-browser-profiles" / "ZhihuProfile"
+PROFILE_DIR = Path(os.environ.get("EASEL_BROWSER_PROFILES") or Path.home() / ".easel-browser-profiles") / "ZhihuProfile"
 
 def fetch_comments(article_url: str, limit: int = 100):
     """通过访问文章页并拦截评论 API 响应来获取评论。"""

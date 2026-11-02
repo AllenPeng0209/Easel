@@ -8,7 +8,7 @@ import signal
 from easel import __version__
 
 from .base import HarnessError, RunRequest
-from .commands import base_command
+from .commands import base_command, codex_override
 from .rpc import RPC
 
 
@@ -24,7 +24,7 @@ async def available_models(runtime: str, request: RunRequest) -> list[dict]:
 
         models = []
         cursor = None
-        async with RPC(request, base_command("codex") + ["app-server"],
+        async with RPC(request, (codex_override(request.env) or base_command("codex")) + ["app-server"],
                        lambda method, params: None, reject) as rpc:
             await rpc.call("initialize", {
                 "clientInfo": {"name": "easel", "version": __version__},

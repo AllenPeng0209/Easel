@@ -1,3 +1,4 @@
+import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -25,8 +26,8 @@ async function consume(payloads, resumeOnly) {
     'event: token\ndata: "继续"\n\nevent: done\ndata: {"sessionKey":"web:test"}\n\n';
   let finish;
   const completed = new Promise(resolve => { finish = resolve; });
-  const streamChat = runInNewContext(outputText, {
-    AbortController, TextDecoder, Date, Error, setTimeout, BASE: '',
+  const streamChat = runWithProjectScope(outputText, {
+    projectUrl: projectScope.projectUrl, AbortController, TextDecoder, Date, Error, setTimeout, BASE: '',
     fetch: async url => {
       requests.push(url);
       return new Response(new ReadableStream({

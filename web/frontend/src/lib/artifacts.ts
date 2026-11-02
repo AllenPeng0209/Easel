@@ -1,3 +1,4 @@
+import { projectUrl } from './projectScope';
 export interface Artifact {
   url: string;
   name: string;
@@ -9,7 +10,9 @@ function hasUnsafeCharacters(value: string): boolean {
 }
 
 export function artifactFromUrl(url: string): Artifact | null {
-  const prefix = url.startsWith('/api/media/') ? '/api/media/'
+  const scopedPrefix = projectUrl('/api/media/');
+  const prefix = url.startsWith(scopedPrefix) ? scopedPrefix
+    : url.startsWith('/api/media/') ? '/api/media/'
     : url.startsWith('#/outputs/') ? '#/outputs/' : null;
   if (!prefix || hasUnsafeCharacters(url)) return null;
   try {
@@ -26,7 +29,7 @@ export function artifactFromUrl(url: string): Artifact | null {
       : extension === 'pdf' ? 'pdf' : null;
     const target = prefix === '#/outputs/'
       ? '/api/media/' + path.split('/').map(encodeURIComponent).join('/') : url;
-    return kind ? { url: target, name, kind } : null;
+    return kind ? { url: projectUrl(target), name, kind } : null;
   } catch {
     return null;
   }
@@ -62,7 +65,9 @@ export function extractArtifacts(html: string): { html: string; artifacts: Artif
 }
 
 export function archiveFromUrl(url: string): string | null {
-  const prefix = url.startsWith('/api/media/') ? '/api/media/'
+  const scopedPrefix = projectUrl('/api/media/');
+  const prefix = url.startsWith(scopedPrefix) ? scopedPrefix
+    : url.startsWith('/api/media/') ? '/api/media/'
     : url.startsWith('#/outputs/') ? '#/outputs/' : null;
   if (!prefix || hasUnsafeCharacters(url)) return null;
   try {

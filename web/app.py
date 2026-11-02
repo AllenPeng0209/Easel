@@ -16,6 +16,7 @@ import re
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -26,6 +27,7 @@ import urllib.request
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
+from contextvars import copy_context
 import ipaddress
 from pathlib import Path
 
@@ -34,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, StrictBool
+from typing import Literal
 from sse_starlette.sse import EventSourceResponse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -51,9 +54,12 @@ from easel.timeouts import TIMEOUT_CHAT, TIMEOUT_DIRECT, TIMEOUT_PRODUCE
 from easel.manual_publish import build_package, publishing_mode
 from easel.direct_api import (DirectAPIError, SYSTEM_PROMPT, api_config, api_mode,
                               history_path, read_settings, stream_chat)
+from easel.request_identity import current_user, actor_key, ActorMap, ActorSet
 from easel import harnesses
 from easel.harnesses import store as harness_store
 from easel.harnesses.base import HarnessError, RunRequest
+from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
+from web.chat_history import ChatHistoryStore, validated_session
 try:
     from easel.gateway_questions import (
         GatewayClient, GatewayQuestionError, GatewayQuestionClosedError, GatewayUnsupportedError,
@@ -96,7 +102,25 @@ def _gateway_question_state(question: dict | None) -> dict:
     return {"status": status, **_gateway_question_timing(question)}
 
 
-def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event) -> None:
+def _settle_gateway_question(record: dict, answers: dict, source: str, client) -> bool:
+    """The gateway receipt, not a local echo, authorizes one terminal decision."""
+    with record["lock"]:
+        if record["status"] != "pending":
+            return False
+        if record.get("secret"):
+            raise HarnessError("请在原生终端完成敏感凭证输入")
+        _require_host_tools()
+        client.resolve(record["id"], answers, source)
+        record.update(status="declined" if source == "timeout" else "resolved", answers=answers, resolvedBy=source)
+        record["emit"]("agent_event", {"id": "decision_" + record["id"], "kind": "decision",
+            "questionId": record["id"], "questions": record["questions"], "answers": answers,
+            "source": source, "resolvedBy": source, "status": record["status"], "completedAt": int(time.time() * 1000)})
+        record["emit"]("question_closed", _scrub_secrets(json.dumps({
+            "id": record["id"], "status": record["status"], "answers": answers, "resolvedBy": source}, ensure_ascii=False)))
+        return True
+
+
+def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event, mode: str | None = None) -> None:
     global _QBRIDGE_DISABLED
     if _QBRIDGE_DISABLED or GatewayClient is None:
         return
@@ -122,7 +146,7 @@ def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event) -> None:
             return
         while True:
             try:
-                items = client.list_questions(session_key=f"agent:main:{sk}", status="pending")
+                items = client.list_questions(session_key=f"agent:main:{_native_session_key(sk)}", status="pending")
             except GatewayUnsupportedError:
                 _QBRIDGE_DISABLED = True
                 _qbridge_warn_once(
@@ -152,10 +176,48 @@ def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event) -> None:
                 identifier = item.get("id")
                 if identifier and identifier not in pushed:
                     pushed.add(identifier)
-                    emit("question", json.dumps({
+                    payload = {
                         "id": identifier, "questions": item.get("questions", []),
                         "expiresAtMs": None, **_gateway_question_timing(item),
-                    }, ensure_ascii=False))
+                    }
+                    if mode is not None:
+                        questions = item.get("questions", [])
+                        policy = question_policy(questions, mode)
+                        secret = requests_secret(questions)
+                        deadline = int((time.time() + policy.wait_seconds) * 1000)
+                        payload.update(questions=public_questions(questions), kind="approval" if policy.requires_human else "preference",
+                            requiresHuman=policy.requires_human, defaultAnswers=policy.default_answers,
+                            autoResolveAtMs=None if policy.requires_human else deadline)
+                        if secret:
+                            payload["questions"] = [{"questionId": "secret", "question": "请在原生终端完成敏感凭证输入", "options": []}]
+                        _GATEWAY_QUESTION_POLICIES[identifier] = {
+                            **payload, "status": "pending", "policy": policy, "deadline": time.monotonic() + policy.wait_seconds,
+                            "lock": threading.Lock(), "emit": emit, "secret": secret}
+                    emit("question", json.dumps(payload, ensure_ascii=False))
+                if mode is not None and identifier:
+                    record = _GATEWAY_QUESTION_POLICIES.get(identifier)
+                    if record and record["status"] == "pending" and time.monotonic() >= record["deadline"]:
+                        policy = record["policy"]
+                        fallback = policy.timeout_answers if policy.requires_human else policy.default_answers
+                        if fallback and not record.get("secret"):
+                            try:
+                                _settle_gateway_question(record, fallback, "timeout" if policy.requires_human else "default", client)
+                            except GatewayQuestionClosedError:
+                                record["status"] = "closed"
+                            except Exception:
+                                # Keep the card pending on transient RPC failure;
+                                # a local timeout is not a successful answer.
+                                pass
+                        else:
+                            with record["lock"]:
+                                if record["status"] == "pending":
+                                    record.update(status="blocked", answers={}, resolvedBy="timeout")
+                                    emit("agent_event", {"id": "decision_" + identifier, "kind": "decision", "questionId": identifier,
+                                        "status": "blocked", "source": "timeout", "answers": {}, "completedAt": int(time.time() * 1000)})
+                                    emit("question_closed", json.dumps({"id": identifier, "status": "blocked", "answers": {}, "resolvedBy": "timeout"}))
+                                    proc.terminate()
+                    if record and record["status"] != "pending":
+                        current.discard(identifier)
             pending = current
             if proc.poll() is not None or stop.is_set():
                 if pending and not final_check:
@@ -170,6 +232,117 @@ def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event) -> None:
 PROFILES_DIR = PROJECT_ROOT / "profiles"
 SKILLS_DIR = PROJECT_ROOT / "skills"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
+
+
+from easel.projects import (project_id, workspace as project_workspace, space_path, scoped_key,
+                            ProjectMap, ProjectSet, ProjectScopeMiddleware,
+                            create_router as project_router, context_thread)
+
+def _outputs_dir() -> Path:
+    return space_path(PROJECT_ROOT, OUTPUTS_DIR, 'outputs')
+
+def _profiles_dir() -> Path:
+    return space_path(PROJECT_ROOT, PROFILES_DIR, 'profiles')
+
+def _browser_profiles() -> Path:
+    return space_path(PROJECT_ROOT, BROWSER_PROFILES, 'browser')
+
+def _login_dir() -> Path:
+    return space_path(PROJECT_ROOT, LOGIN_DIR, 'outputs/_login')
+
+def _publish_dir() -> Path:
+    return space_path(PROJECT_ROOT, PUBLISH_DIR, 'outputs/_publish')
+
+def _profile_build_dir() -> Path:
+    return space_path(PROJECT_ROOT, PROFILE_BUILD_DIR, 'outputs/_profile_build')
+
+def _debug_dir() -> Path:
+    return space_path(PROJECT_ROOT, DEBUG_DIR, 'outputs/_debug')
+
+def _legacy_chat_owner() -> bool:
+    user = current_user()
+    if not user:
+        return True
+    if not user.get('is_admin'):
+        return False
+    from easel.access import AccessStore
+    users = AccessStore(PROJECT_ROOT).users()
+    return bool(users and users[0]['id'] == user['id'])
+
+def _chat_identity(key: str) -> str:
+    return key if _legacy_chat_owner() else actor_key(key)
+
+def _sessions_dir() -> Path:
+    directory = space_path(PROJECT_ROOT, SESSIONS_DIR, 'outputs/_sessions')
+    user = current_user()
+    # Preserve the original local administrator's history during migration.
+    return directory / 'users' / user['id'] if user and not _legacy_chat_owner() else directory
+
+def _wechat_config_yaml() -> Path:
+    return space_path(PROJECT_ROOT, WECHAT_CONFIG_YAML, 'wechat-publisher.yaml')
+
+def _schedule_file() -> Path:
+    return space_path(PROJECT_ROOT, SCHEDULE_FILE, 'outputs/_schedule.json')
+
+def _ideas_file() -> Path:
+    return space_path(PROJECT_ROOT, IDEAS_FILE, 'outputs/_ideas.json')
+
+def _workspace_root() -> Path:
+    return project_workspace(PROJECT_ROOT)
+
+def _cookie_path() -> Path:
+    return _workspace_root() / "cookies.json"
+
+def _openclaw_sessions_dir() -> Path:
+    return space_path(PROJECT_ROOT, OPENCLAW_SESSIONS_DIR, '_openclaw/agents/main/sessions')
+
+def _native_session_key(key: str) -> str:
+    key = _chat_identity(key)
+    return key if project_id() == 'default' else f'{project_id()}:{key}'
+
+def _project_agent_command(command: list[str], env: dict) -> tuple[list[str], dict]:
+    """Run each creator's embedded agent against its own config and state directory."""
+    if project_id() == 'default':
+        return command, env
+    try:
+        source = json.loads(_oc_config_path().read_text(encoding='utf-8-sig'))
+    except (OSError, ValueError):
+        raise HTTPException(409, '请先在设置中配置 OpenClaw 模型，或选择已配置的其他执行引擎') from None
+    root = _workspace_root()
+    state = root / '_openclaw'
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Reuse model configuration only. Messaging channels, shared memory, bindings and
+    # browser configuration must not enter another creator's embedded agent.
+    config = {key: source[key] for key in ('models', 'auth', 'env') if key in source}
+    defaults = dict(source.get('agents', {}).get('defaults', {}))
+    for key in ('workspace', 'memorySearch', 'heartbeat', 'subagents'):
+        defaults.pop(key, None)
+    defaults['workspace'] = str(root)
+    config['agents'] = {'defaults': defaults}
+    target = state / 'openclaw.json'
+    temporary = state / f'config-{uuid.uuid4().hex}.tmp'
+    temporary.write_text(json.dumps(config, ensure_ascii=False), encoding='utf-8')
+    temporary.chmod(0o600)
+    temporary.replace(target)
+    # Provider OAuth credentials are installation settings, shared like model API keys.
+    auth_source = _oc_state_dir() / 'agents' / 'main' / 'agent' / 'auth-profiles.json'
+    auth_target = state / 'agents' / 'main' / 'agent' / 'auth-profiles.json'
+    if auth_source.is_file() and not auth_target.exists():
+        auth_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        auth_target.symlink_to(auth_source)
+    result = []
+    skip = False
+    for part in command:
+        if skip:
+            skip = False
+            continue
+        if part in ('--profile', '--session-key'):
+            skip = True
+            continue
+        result.append(part)
+    result.append('--local')
+    return result, {**env, 'OPENCLAW_STATE_DIR': str(state), 'OPENCLAW_CONFIG_PATH': str(target),
+                    'EASEL_ASKUSER_CARDS': '0', 'OPENCLAW_RAW_STREAM': '0'}
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 REACT_DIR = Path(__file__).resolve().parent / "frontend" / "dist"
@@ -280,7 +453,7 @@ def _heal_openclaw_session(sk: str) -> None:
     """
     try:
         import session_heal  # scripts/session_heal.py（已加入 sys.path）
-        p = OPENCLAW_SESSIONS_DIR / f"{_openclaw_session_id(sk)}.jsonl"
+        p = _openclaw_sessions_dir() / f"{_openclaw_session_id(sk)}.jsonl"
         if p.is_file():
             st = session_heal.sanitize_history_file(p)
             if st.get("changed"):
@@ -307,14 +480,14 @@ SESSIONS_DIR = OUTPUTS_DIR / "_sessions"   # 每会话最近一轮的完整结�
 # 非 _ 前缀的历史系统目录（归因层数据），内容库不展示（真产物一律在项目目录内）
 SYSTEM_TOPLEVEL_DIRS = {"analytics"}
 LOGIN_TIMEOUT = 240
-LOGIN_PROCESSES: dict[str, subprocess.Popen] = {}
+LOGIN_PROCESSES: dict[str, subprocess.Popen] = ProjectMap()
 
 # whoami 真校验（起 headless 浏览器，数秒）的进程内缓存：避免账号页 + 工作台重复起浏览器。
 WHOAMI_TTL = 600  # 秒
-_WHOAMI_CACHE: dict[str, tuple[float, dict]] = {}
+_WHOAMI_CACHE: dict[str, tuple[float, dict]] = ProjectMap()
 _WHOAMI_LOCK = threading.Lock()
-_WHOAMI_TASKS: dict[str, asyncio.Task] = {}
-_LOGIN_START_LOCKS: dict[str, asyncio.Lock] = {}
+_WHOAMI_TASKS: dict[str, asyncio.Task] = ProjectMap()
+_LOGIN_START_LOCKS: dict[str, asyncio.Lock] = ProjectMap()
 
 LOGIN_RUNNERS: dict[str, dict] = {
     "xiaohongshu": {"name": "小红书", "backend": "xhs", "profile": "XiaohongshuProfile"},
@@ -339,11 +512,11 @@ WECHAT_WEB_ACCOUNT = "web"   # web 端配置写入/读取的账号 key
 
 def _wechat_load_yaml() -> dict:
     """读 wechat-publisher.yaml（不存在或损坏则返回空 dict）。"""
-    if not WECHAT_CONFIG_YAML.is_file():
+    if not _wechat_config_yaml().is_file():
         return {}
     try:
         import yaml
-        data = yaml.safe_load(WECHAT_CONFIG_YAML.read_text(encoding="utf-8"))
+        data = yaml.safe_load(_wechat_config_yaml().read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
@@ -380,10 +553,10 @@ def _wechat_save_credentials(app_id: str, app_secret: str, name: str = "", autho
     cfg["accounts"][WECHAT_WEB_ACCOUNT] = acc
     # web 账号存在即设为默认，方便 CLI 直接用
     cfg.setdefault("default", WECHAT_WEB_ACCOUNT)
-    WECHAT_CONFIG_YAML.parent.mkdir(parents=True, exist_ok=True)
-    tmp = WECHAT_CONFIG_YAML.with_suffix(".yaml.tmp")
+    _wechat_config_yaml().parent.mkdir(parents=True, exist_ok=True)
+    tmp = _wechat_config_yaml().with_suffix(".yaml.tmp")
     tmp.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    os.replace(tmp, WECHAT_CONFIG_YAML)
+    os.replace(tmp, _wechat_config_yaml())
 
 
 def _wechat_clear_credentials() -> None:
@@ -396,13 +569,14 @@ def _wechat_clear_credentials() -> None:
         if cfg.get("default") == WECHAT_WEB_ACCOUNT:
             cfg["default"] = next(iter(accts), "") if accts else ""
         try:
-            tmp = WECHAT_CONFIG_YAML.with_suffix(".yaml.tmp")
+            tmp = _wechat_config_yaml().with_suffix(".yaml.tmp")
             tmp.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
-            os.replace(tmp, WECHAT_CONFIG_YAML)
+            os.replace(tmp, _wechat_config_yaml())
         except Exception:
             pass
-    for cache in (WECHAT_SKILL_SCRIPTS / f".token_cache_{WECHAT_WEB_ACCOUNT}.json",
-                  WECHAT_SKILL_SCRIPTS / ".token_cache.json"):
+    cache_root = WECHAT_SKILL_SCRIPTS if project_id() == 'default' else _workspace_root()
+    for cache in (cache_root / f".token_cache_{WECHAT_WEB_ACCOUNT}.json",
+                  cache_root / ".token_cache.json"):
         try:
             cache.unlink()
         except OSError:
@@ -502,7 +676,7 @@ SKILL_API_REQUIREMENTS: dict[str, dict] = {
     },
 }
 
-_ENV_ALLOWLIST: set[str] = {
+_ENV_ALLOWLIST: set[str] = {'EASEL_CODEX_EXECUTABLE',
     "EASEL_DIRECT_API_BASE_URL", "EASEL_DIRECT_API_KEY", "EASEL_DIRECT_API_MODEL",
 }
 for _spec in SKILL_API_REQUIREMENTS.values():
@@ -528,7 +702,12 @@ async def _lifespan(_app: FastAPI):
     """应用生命周期：关机时回收公众号扫码进程（替代已弃用的 on_event）。"""
     global _HARNESS_LOOP
     _HARNESS_LOOP = asyncio.get_running_loop()
+    from easel.interaction_worker import InteractionWorker
+    interaction_worker = InteractionWorker(_interaction_tick)
+    _app.state.interaction_worker = interaction_worker
+    interaction_worker.start()
     yield
+    await interaction_worker.stop()
     tasks = list(_HARNESS_TASKS)
     for task in tasks:
         task.cancel()
@@ -537,10 +716,62 @@ async def _lifespan(_app: FastAPI):
     from easel.harnesses.rpc import close_sessions
     await close_sessions()
     _HARNESS_LOOP = None
-    _stop_mp_login_on_shutdown()
+    from easel.projects import _registry, project_context
+    for entry in _registry(PROJECT_ROOT):
+        with project_context(entry['id'], PROJECT_ROOT):
+            _stop_mp_login_on_shutdown()
 
 
 app = FastAPI(title="Easel", docs_url=None, redoc_url=None, lifespan=_lifespan)
+app.include_router(project_router(lambda: PROJECT_ROOT))
+app.add_middleware(ProjectScopeMiddleware, get_root=lambda: PROJECT_ROOT)
+from web.access_routes import create_router as _access_router
+from easel.projects import _registry as _project_registry
+from web.access_control import AccessControlMiddleware
+app.include_router(_access_router(lambda: PROJECT_ROOT, lambda: _project_registry(PROJECT_ROOT)))
+app.add_middleware(AccessControlMiddleware, get_root=lambda: PROJECT_ROOT)
+
+from web.workshop_routes import create_router as _workshop_router
+from easel.beeftv_bridge import (runtime_status as _beeftv_status,
+                               create_canvas as _beeftv_canvas,
+                               canvas_state as _beeftv_canvas_state,
+                               render_start as _beeftv_render_start,
+                               render_status as _beeftv_render_status,
+                               render_collect as _beeftv_render_collect)
+
+app.include_router(_workshop_router(lambda: _outputs_dir(), _beeftv_status, _beeftv_canvas,
+                                   _beeftv_canvas_state, render_start=_beeftv_render_start,
+                                   render_status=_beeftv_render_status,
+                                   render_collect=lambda project, receipt: _beeftv_render_collect(
+                                       project, receipt, _outputs_dir())))
+
+from web.interaction_routes import create_router as _interaction_router
+from easel.interaction_center import InteractionStore as _InteractionStore
+from easel.interaction_channels import (channel_capabilities as _interaction_capabilities,
+                                       sync_channel as _interaction_sync,
+                                       send_reply as _interaction_send)
+
+app.include_router(_interaction_router(lambda: _outputs_dir(), send_adapter=_interaction_send,
+                                      sync_adapter=_interaction_sync,
+                                      capabilities=_interaction_capabilities))
+
+
+def _interaction_tick():
+    from easel.access import AccessStore
+    if not AccessStore(PROJECT_ROOT).configured():
+        # No IP has an authenticated owner until initial setup is complete.
+        return
+    # The periodic owner has no HTTP context. Restore each registered project's
+    # context before selecting data and account profiles, including identical
+    # customer IDs in two distinct creator spaces.
+    from easel.projects import _registry, project_context
+    for entry in _registry(PROJECT_ROOT):
+        with project_context(entry['id'], PROJECT_ROOT):
+            outputs = _outputs_dir()
+            if entry['id'] != 'default' and not (outputs / '_interactions' / 'center.sqlite3').is_file():
+                continue
+            _InteractionStore(outputs).tick(send_adapter=_interaction_send,
+                                            capabilities=_interaction_capabilities)
 
 def _local_ports(env_port: str) -> set[str]:
     """本机写守卫放行的端口集合：固定的 7860/7870/5173，加上 `--port`/EASEL_PORT
@@ -621,17 +852,19 @@ async def local_write_guard(request: Request, call_next):
         response.headers.update(headers)
         return response
     if request.method not in ('GET', 'HEAD', 'OPTIONS'):
-        allowed = origin in _LOCAL_ORIGINS if origin else _loopback_peer(request)
+        same_origin = origin == f'{request.url.scheme}://{request.url.netloc}'
+        authenticated_cookie = bool(request.cookies.get('easel_session'))
+        allowed = (origin in _LOCAL_ORIGINS or (same_origin and authenticated_cookie)) if origin else (_loopback_peer(request) or authenticated_cookie)
         if not allowed:
             return JSONResponse({'detail': '仅允许从本机工作台操作。'}, status_code=403)
     return await call_next(request)
 
 
 def list_personas() -> list[dict]:
-    if not PROFILES_DIR.is_dir():
+    if not _profiles_dir().is_dir():
         return []
     result = []
-    for d in sorted(PROFILES_DIR.iterdir()):
+    for d in sorted(_profiles_dir().iterdir()):
         if not d.is_dir() or not valid_persona_name(d.name):
             continue
         desc = ''
@@ -736,7 +969,14 @@ def clean_agent_output(raw: str) -> str:
 def _proxy_env() -> dict[str, str]:
     """返回带外网代理的环境变量（保护内网直连）。"""
     env = os.environ.copy()
-    env.setdefault('EASEL_ROOT', str(PROJECT_ROOT))
+    native = read_settings(ENV_FILE).get('EASEL_CODEX_EXECUTABLE', '').strip()
+    if native:
+        env['EASEL_CODEX_EXECUTABLE'] = native
+    env['EASEL_ROOT'] = str(_workspace_root())
+    env['EASEL_BROWSER_PROFILES'] = str(_browser_profiles())
+    env['EASEL_WECHAT_CONFIG'] = str(_wechat_config_yaml())
+    if project_id() != 'default':
+        env['EASEL_WECHAT_TOKEN_DIR'] = str(_workspace_root())
     env.setdefault('http_proxy', os.environ.get('EASEL_PROXY', ''))
     env.setdefault('https_proxy', os.environ.get('EASEL_PROXY', ''))
     env.setdefault('no_proxy', 'localhost,127.0.0.1,10.*,*.xiaohongshu.com,*.devops.xiaohongshu.com,*.douyin.com,*.kuaishou.com,*.zhihu.com,*.bilibili.com,*.weixin.qq.com,*.qq.com')
@@ -747,6 +987,7 @@ def _publish_env() -> dict[str, str]:
     """发布子进程 env：在 _proxy_env 基础上禁用脚本侧日历自动记录——
     发布页由 web 自己回流 _schedule.json，脚本再记一次会重复。对话页 Agent 直跑
     脚本时不经过这里，flag 未设 → 脚本自动记录（见 calendar_ops.record_publish）。"""
+    _require_operation()
     env = _proxy_env()
     env['EASEL_CALENDAR_AUTORECORD'] = '0'
     return env
@@ -922,8 +1163,68 @@ def _ssrf_safe(u: str) -> bool:
     return True
 
 
+def _team_member() -> bool:
+    user = current_user()
+    return bool(user and not user.get('is_admin'))
+
+
+def _require_operation(roles=('owner', 'operator')) -> None:
+    user = current_user()
+    if user:
+        from easel.access import AccessStore
+        store = AccessStore(PROJECT_ROOT)
+        fresh = store.user(user['id'])
+        if not fresh or not fresh['active']:
+            raise HTTPException(401, '登录已失效')
+        store.require_role(user['id'], project_id(), set(roles))
+
+
+def _require_host_tools() -> None:
+    user = current_user()
+    if user:
+        from easel.access import AccessStore
+        fresh = AccessStore(PROJECT_ROOT).user(user['id'])
+        if not fresh or not fresh['active'] or not fresh['is_admin']:
+            raise HTTPException(403, '本机工具权限已失效，请使用团队 AI 对话')
+        _require_operation()
+
+
+def _chat_api_settings() -> dict:
+    settings = read_settings(ENV_FILE)
+    if not _team_member():
+        return settings
+    try:
+        api_config(settings)
+        return settings
+    except DirectAPIError:
+        pass
+    # Team members use the configured model without any host tools. A compatible
+    # model configured for OpenClaw can also provide this bounded text/image API.
+    try:
+        oc = json.loads(_oc_config_path().read_text(encoding='utf-8-sig'))
+        primary = oc.get('agents', {}).get('defaults', {}).get('model', {})
+        primary = primary.get('primary', '') if isinstance(primary, dict) else primary
+        provider_id, model = primary.split('/', 1)
+        provider = oc['models']['providers'][provider_id]
+        if provider.get('api', 'openai-completions') != 'openai-completions':
+            raise ValueError('unsupported API')
+        settings.update(EASEL_DIRECT_API_BASE_URL=provider['baseUrl'],
+                        EASEL_DIRECT_API_MODEL=model, EASEL_DIRECT_API_KEY=provider.get('apiKey', '') if isinstance(provider.get('apiKey', ''), str) else '')
+        api_config(settings)
+        return settings
+    except (OSError, ValueError, KeyError, TypeError):
+        raise HTTPException(409, '请让平台管理员配置兼容的模型直连，以启用团队 AI 对话') from None
+
+
+def _describe_harness(runtime: str) -> dict:
+    native = read_settings(ENV_FILE).get('EASEL_CODEX_EXECUTABLE', '').strip()
+    if runtime == 'codex' and native:
+        return harnesses.describe(runtime, {'EASEL_CODEX_EXECUTABLE': native})
+    return harnesses.describe(runtime)
+
+
 def _direct_api_enabled() -> bool:
-    return _harness_settings()["runtime"] == "api"
+    return _team_member() or _harness_settings()["runtime"] == "api"
 
 
 def _harness_settings() -> dict:
@@ -938,15 +1239,15 @@ def _chat_backend(session_id: str | None) -> str:
     if not session_id:
         return selected
     try:
-        record = harness_store.binding(SESSIONS_DIR, session_id)
+        record = harness_store.binding(_sessions_dir(), session_id)
     except HarnessError as error:
         raise HTTPException(409, str(error)) from error
     owner = record.get("runtime")
     if not owner:
-        if history_path(SESSIONS_DIR, session_id).is_file():
+        if history_path(_sessions_dir(), session_id).is_file():
             owner = "api"
-        elif ((OPENCLAW_SESSIONS_DIR / f"{_openclaw_session_id(session_id)}.jsonl").is_file()
-              or (OPENCLAW_SESSIONS_DIR / f"{_openclaw_session_id(f'web:{session_id}')}.jsonl").is_file()
+        elif ((_openclaw_sessions_dir() / f"{_openclaw_session_id(session_id)}.jsonl").is_file()
+              or (_openclaw_sessions_dir() / f"{_openclaw_session_id(f'web:{session_id}')}.jsonl").is_file()
               or _transport_pin_file(session_id).is_file()
               or (selected != "api" and _turn_file(f"web:{session_id}").is_file())):
             owner = "openclaw"
@@ -1066,6 +1367,10 @@ def _publishing_message(message: str) -> str:
 def run_agent_sync(msg: str, timeout: int = TIMEOUT_DIRECT, session_id: str | None = None) -> str:
     if _direct_api_enabled():
         raise HTTPException(409, "API 直连模式支持聊天；此操作需要具备文件和技能执行工具的 Agent 运行时")
+    if _team_member():
+        raise HTTPException(403, '当前账号仅可使用不含本机工具的 AI 对话')
+    _require_operation()
+    _require_host_tools()
     msg = _publishing_message(msg)
     sk = session_id or f'web-{int(time.time() * 1000)}'
     runtime = _chat_backend(session_id)
@@ -1086,7 +1391,7 @@ def run_agent_sync(msg: str, timeout: int = TIMEOUT_DIRECT, session_id: str | No
         return asyncio.run(execute())
     # 钉死 --session-id 让 OpenClaw 每轮续同一 transcript（防跨天空闲后新起空会话丢历史，见 _openclaw_session_id）
     cmd = openclaw_base_cmd() + ['--profile', OPENCLAW_PROFILE, 'agent', '--agent', 'main',
-           '--session-key', f'agent:main:{sk}', '--session-id', _openclaw_session_id(sk),
+           '--session-key', f'agent:main:{_native_session_key(sk)}', '--session-id', _openclaw_session_id(sk),
            '--thinking', _agent_thinking_level(),
            '--timeout', str(timeout), '--message', msg]
     # 跨进程锁：同一会话同时刻只跑一个 openclaw，防并发 takeover 崩溃（rc=1）
@@ -1096,7 +1401,8 @@ def run_agent_sync(msg: str, timeout: int = TIMEOUT_DIRECT, session_id: str | No
     # 同 supervisor：先拿到锁再 heal，避免与正在追加 transcript 的进程并发重写丢行
     _heal_openclaw_session(sk)
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=timeout + 30, env=_proxy_env())
+        cmd, agent_env = _project_agent_command(cmd, _proxy_env())
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(_workspace_root()), timeout=timeout + 30, env=agent_env)
         out = clean_agent_output(r.stdout or '')
         if out:
             return out
@@ -1159,7 +1465,7 @@ def _build_output_node(path: Path, rel: str) -> dict:
     if path.is_dir():
         children = []
         for c in sorted(path.iterdir()):
-            if c.name.startswith('.'):   # 嵌套层只跳隐藏文件；_base.mp4 等以 _ 开头的产物要保留
+            if c.is_symlink() or c.name.startswith('.'):   # 不跟随其他空间或递归链接
                 continue
             children.append(_build_output_node(c, f'{rel}/{c.name}'))
         mtime = max((x['mtime'] for x in children), default=int(path.stat().st_mtime))
@@ -1178,7 +1484,7 @@ def _read_project_meta(proj: Path) -> dict:
     展示头声明的 cover → 首个成品媒体 → 目录内首张图/视频（兜底）。
     """
     mf = proj / ".easel.json"
-    if not mf.is_file():
+    if mf.is_symlink() or not mf.is_file():
         return {}
     try:
         data = json.loads(mf.read_text(encoding="utf-8"))
@@ -1212,13 +1518,13 @@ def _read_project_meta(proj: Path) -> dict:
 
 
 def get_output_tree() -> list[dict]:
-    if not OUTPUTS_DIR.is_dir():
+    if not _outputs_dir().is_dir():
         return []
     items = []
-    for e in sorted(OUTPUTS_DIR.iterdir()):
+    for e in sorted(_outputs_dir().iterdir()):
         # 内容库只展示「项目目录」：跳过系统目录(_login/_publish/...)、隐藏项、
         # 以及根目录散文件（按新规约产物必在项目目录内，根散文件=系统状态/残渣）。
-        if e.name.startswith('.') or e.name.startswith('_'):
+        if e.is_symlink() or e.name.startswith('.') or e.name.startswith('_'):
             continue
         if not e.is_dir() or e.name in SYSTEM_TOPLEVEL_DIRS:
             continue
@@ -1233,10 +1539,28 @@ def get_output_tree() -> list[dict]:
 
 def _safe_output_path(rel: str) -> Path:
     '把相对路径解析到 outputs/ 内，防路径穿越。'
-    full = (OUTPUTS_DIR / rel).resolve()
-    root = OUTPUTS_DIR.resolve()
+    full = (_outputs_dir() / rel).resolve()
+    root = _outputs_dir().resolve()
     if root != full and root not in full.parents:
         raise HTTPException(403, '非法路径')
+    relative = full.relative_to(root)
+    if current_user() and relative.parts:
+        top = relative.parts[0]
+        from easel.access import AccessStore
+        role = AccessStore(PROJECT_ROOT).role(current_user()['id'], project_id())
+        if role is None:
+            raise HTTPException(403, '你不是该 IP 的成员')
+        if top in {'_sessions', '_debug', '_harness', '_access'} or any(part.startswith('.') for part in relative.parts):
+            raise HTTPException(403, '该文件不能通过内容预览读取')
+        if top.startswith('_') and top != '_inbox':
+            owner_file = role == 'owner' and top in {'_login', '_publish', '_analytics', '_profile_build'}
+            operator_package = role == 'operator' and top == '_publish' and full.suffix.lower() == '.zip'
+            if not owner_file and not operator_package:
+                raise HTTPException(403, '该文件仅供当前 IP 负责人读取')
+        if top == '_inbox' and _team_member() and (len(relative.parts) < 2 or not relative.parts[1].startswith(current_user()['id'] + '-')):
+            raise HTTPException(403, '附件不属于当前用户')
+    if root != full and full.relative_to(root).parts[0] == '_interactions':
+        raise HTTPException(403, '互动中心数据仅能通过受控的工作区接口读取')
     if not full.is_file():
         raise HTTPException(404, '文件不存在')
     return full
@@ -1283,18 +1607,18 @@ async def static_file(path: str):
 @app.get("/api/status")
 async def api_status():
     direct = _direct_api_enabled()
-    runtime = _harness_settings()["runtime"]
+    runtime = "api" if direct else _harness_settings()["runtime"]
     ready = False
     if direct:
         try:
-            api_config(read_settings(ENV_FILE))
+            api_config(_chat_api_settings())
             ready = True
-        except DirectAPIError:
+        except (DirectAPIError, HTTPException):
             pass
     elif runtime == "openclaw":
         ready = await asyncio.to_thread(check_gateway)
     else:
-        ready = harnesses.describe(runtime)["installed"]
+        ready = _describe_harness(runtime)["installed"]
     return {"gateway": ready, "transport": "api" if direct else (
                 CHAT_TRANSPORT if runtime == "openclaw" else runtime), "runtime": runtime,
             "skills": get_skills(), "personas": list_personas()}
@@ -1314,7 +1638,7 @@ async def api_settings_bootstrap():
     direct = _direct_api_enabled()
     runtime = _harness_settings()["runtime"]
     if runtime not in ("api", "openclaw"):
-        installed = harnesses.describe(runtime)["installed"]
+        installed = _describe_harness(runtime)["installed"]
         return {"modelConfigured": installed, "envKeyOk": installed, "routeOk": installed,
                 "routeDetail": "CLI 已安装；请在终端完成原生登录，并发送消息验证模型可用性",
                 "gatewayUp": installed, "openclawConfigExists": False, "installWarnings": [],
@@ -1415,9 +1739,9 @@ def _persona_file_path(name: str, filename: str) -> Path:
         raise HTTPException(400, "画像名非法")
     if not filename.endswith(".md") or "/" in filename or "\\" in filename or filename.startswith("."):
         raise HTTPException(400, "文件名非法")
-    pd = (PROFILES_DIR / name).resolve()
+    pd = (_profiles_dir() / name).resolve()
     fp = (pd / filename).resolve()
-    if pd != fp.parent or PROFILES_DIR.resolve() not in pd.parents:
+    if pd != fp.parent or _profiles_dir().resolve() not in pd.parents:
         raise HTTPException(403, "非法路径")
     return fp
 
@@ -1427,7 +1751,7 @@ async def api_persona_files(name: str):
     """返回画像六维文件原文（按固定顺序 + 其余 .md），供在线编辑。"""
     if not profile_exists(name):
         raise HTTPException(404, "画像不存在")
-    pd = PROFILES_DIR / name
+    pd = _profiles_dir() / name
     ordered = list(_FILE_ORDER) + sorted(f.name for f in pd.glob("*.md") if f.name not in _FILE_ORDER)
     files = []
     for fn in ordered:
@@ -1458,8 +1782,8 @@ async def api_persona_delete(name: str):
     """删除整个画像目录。"""
     if not _valid_persona_name(name):
         raise HTTPException(400, "画像名非法")
-    pd = (PROFILES_DIR / name).resolve()
-    if PROFILES_DIR.resolve() not in pd.parents or not pd.is_dir():
+    pd = (_profiles_dir() / name).resolve()
+    if _profiles_dir().resolve() not in pd.parents or not pd.is_dir():
         raise HTTPException(404, "画像不存在")
     import shutil
     shutil.rmtree(pd)
@@ -1592,7 +1916,7 @@ async def api_env_install(req: EnvInstallRequest):
             # stdout 必须**并发**抽干：串行地先读完 stderr 再读 stdout，子进程一旦往 stdout
             # 写满管道缓冲（64K）就会阻塞，而我们还堵在 stderr 上——双向死锁。
             _out: list[str] = []
-            t_out = threading.Thread(target=lambda: _out.append(proc.stdout.read() or ""), daemon=True)
+            t_out = context_thread(target=lambda: _out.append(proc.stdout.read() or ""), daemon=True)
             t_out.start()
             for line in proc.stderr:            # 引擎进度日志走 stderr
                 line = line.rstrip()
@@ -1616,7 +1940,7 @@ async def api_env_install(req: EnvInstallRequest):
             job["ended"] = int(time.time())
             _ENV_TOOLS_CACHE["ts"] = 0.0        # 装完让下一次体检不吃旧缓存
 
-    threading.Thread(target=_run, daemon=True).start()
+    context_thread(target=_run, daemon=True).start()
     return {"jobId": job_id, "id": tid, "state": "running"}
 
 
@@ -1823,7 +2147,7 @@ class HarnessSettingsRequest(BaseModel):
 @app.get("/api/settings/harness")
 async def api_harness_settings():
     config = _harness_settings()
-    agents = await asyncio.to_thread(lambda: [harnesses.describe(runtime) for runtime in harness_store.IDS])
+    agents = await asyncio.to_thread(lambda: [_describe_harness(runtime) for runtime in harness_store.IDS])
     return {**config, "agents": agents,
             "locked": "EASEL_AGENT_RUNTIME" in read_settings(ENV_FILE)}
 
@@ -1840,7 +2164,7 @@ async def api_harness_settings_save(req: HarnessSettingsRequest):
         raise HTTPException(409, "启动环境固定了底座，请修改 EASEL_AGENT_RUNTIME 后重启")
     if _RUNNING_CHAT or _BG_TASKS or _DIRECT_CHAT_TASKS or _HARNESS_TASKS:
         raise HTTPException(409, "请等待当前任务完成或停止后切换底座")
-    if req.runtime not in ("api", "openclaw") and not harnesses.describe(req.runtime)["installed"]:
+    if req.runtime not in ("api", "openclaw") and not _describe_harness(req.runtime)["installed"]:
         raise HTTPException(409, "请先在终端安装并配置对应 Agent CLI，再切换")
     config = _harness_settings()
     if req.runtime == "openclaw" and api_mode(read_settings(ENV_FILE)):
@@ -2673,6 +2997,7 @@ class ChatRequest(BaseModel):
     sessionId: str | None = None
     turnId: str | None = None
     attachments: list[AttachmentRef] = Field(default_factory=list)
+    autonomyMode: Literal["autonomous", "interactive"] = "autonomous"
 
 
 def _attachment_scope(session_id: str) -> str:
@@ -2680,14 +3005,16 @@ def _attachment_scope(session_id: str) -> str:
     value = session_id.strip()
     if not value or len(value) > 256:
         raise HTTPException(400, "无效的会话标识")
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
+    scope = hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
+    user = current_user()
+    return f"{user['id']}-{scope}" if user and not _legacy_chat_owner() else scope
 
 
 def _attachment_id(scope: str, path: str) -> str:
     return hashlib.sha256(f"{scope}\0{path}".encode("utf-8")).hexdigest()[:24]
 
 
-def _attachment_context(req: ChatRequest) -> str:
+def _attachment_context(req: ChatRequest, *, must_exist: bool = True) -> str:
     """Validate attachment ownership and build an Agent-only attachment manifest."""
     if not req.attachments:
         return ""
@@ -2706,8 +3033,8 @@ def _attachment_context(req: ChatRequest) -> str:
         normalized = rel.as_posix()
         if attachment.id != _attachment_id(scope, normalized):
             raise HTTPException(403, "附件标识校验失败")
-        full = _safe_output_target(normalized)
-        if not full.is_file():
+        full = _safe_output_target(normalized, must_exist=must_exist)
+        if must_exist and not full.is_file():
             raise HTTPException(404, f"附件不存在：{attachment.name}")
         if normalized in seen:
             continue
@@ -2730,7 +3057,13 @@ def _chat_message(req: ChatRequest) -> str:
         message = f"{message}\n\n{context}" if message else context
     if not message:
         raise HTTPException(400, "消息不能为空")
-    return _publishing_message(chat_turn_message(message, req.persona))
+    message = _publishing_message(chat_turn_message(message, req.persona)) + autonomy_instructions(req.autonomyMode)
+    if project_id() != 'default':
+        root = _workspace_root()
+        message = (f"〔当前项目空间〕工作目录：{root}。只使用此项目的账号、profiles、outputs 与记忆。"
+                   f"运行技能前先 cd 到该目录，使用 EASEL_ROOT={root}；"
+                   f"浏览器登录根为 {root / 'browser'}。不得读取或写入其他项目的数据。\n\n" + message)
+    return message
 
 
 def _direct_chat_content(req: ChatRequest) -> tuple[str | list, str]:
@@ -2769,7 +3102,7 @@ def _direct_chat_content(req: ChatRequest) -> tuple[str | list, str]:
 # 并发跑同一 session 文件会触发 openclaw 的 EmbeddedAttemptSessionTakeoverError（进程 rc=1、
 # 表现为「答一半停在冒号」），以及会话串味（一个会话读到另一个的 session 文件内容）。
 # 不同会话 key 不同锁 → 不同对话仍可并行；只序列化「同一会话」的重叠请求。
-_session_locks: dict[str, asyncio.Lock] = {}
+_session_locks: dict[str, asyncio.Lock] = ActorMap()
 
 
 def _session_lock(sk: str) -> asyncio.Lock:
@@ -2790,17 +3123,17 @@ _EASEL_SESSION_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # 固定�
 
 def _openclaw_session_id(sk: str) -> str:
     """web sessionId → 稳定的 OpenClaw session-id（transcript）。同 sk 永远同 id，无需落盘映射。"""
-    return str(uuid.uuid5(_EASEL_SESSION_NS, sk))
+    return str(uuid.uuid5(_EASEL_SESSION_NS, str(scoped_key(_chat_identity(sk)))))
 
 
 def _session_flock_path(sk: str) -> Path:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", sk)[:120]
-    return SESSIONS_DIR / f"{safe}.lock"
+    return _sessions_dir() / f"{safe}.lock"
 
 
 def _transport_pin_file(sk: str) -> Path:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", sk)[:120]
-    return SESSIONS_DIR / f"{safe}.transport"
+    return _sessions_dir() / f"{safe}.transport"
 
 
 def _resolve_transport(sk: str) -> str:
@@ -2817,7 +3150,9 @@ def _resolve_transport(sk: str) -> str:
       2) 有 http 钉子文件 → 继续 http；
       3) 两者都没有 → 新会话，按总开关 + 真探针决定。
     """
-    if (OPENCLAW_SESSIONS_DIR / f"{_openclaw_session_id(sk)}.jsonl").is_file():
+    if project_id() != "default":
+        return "cli"
+    if (_openclaw_sessions_dir() / f"{_openclaw_session_id(sk)}.jsonl").is_file():
         return "cli"
     try:
         if _transport_pin_file(sk).read_text(encoding="utf-8").strip() == "http":
@@ -2855,7 +3190,7 @@ def _pin_transport(sk: str, kind: str) -> None:
     if kind != "http":
         return
     try:
-        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        _sessions_dir().mkdir(parents=True, exist_ok=True)
         _transport_pin_file(sk).write_text("http", encoding="utf-8")
     except OSError:
         pass
@@ -2876,7 +3211,7 @@ class _CrossProcLock:
 
     def acquire(self, timeout: float = 300.0, poll: float = 0.5) -> bool:
         try:
-            SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+            _sessions_dir().mkdir(parents=True, exist_ok=True)
             self._fh = open(self._path, "a+b")
             if os.name == "nt":
                 self._fh.seek(0, os.SEEK_END)
@@ -2922,13 +3257,13 @@ class _CrossProcLock:
 def _turn_file(sk: str) -> Path:
     """每会话最近一轮结果的落盘路径（sk 做文件名安全化）。"""
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", sk)[:120]
-    return SESSIONS_DIR / f"{safe}.json"
+    return _sessions_dir() / f"{safe}.json"
 
 
 def _job_event_file(turn_id: str) -> Path:
     """Per-turn append-only event log used to resume SSE without restarting the agent."""
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", turn_id)[:160]
-    return SESSIONS_DIR / "jobs" / f"{safe}.jsonl"
+    return _sessions_dir() / "jobs" / f"{safe}.jsonl"
 
 
 def _read_job_events(turn_id: str, after: int = 0) -> list[dict]:
@@ -2992,7 +3327,7 @@ def _save_turn(sk: str, status: str, text: str, extra: dict | None = None) -> No
     结果写这里，前端断线后轮询即可拿到完整回答（否则"运行完也不说一声"）。
     """
     try:
-        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        _sessions_dir().mkdir(parents=True, exist_ok=True)
         payload = {"status": status, "text": text, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
         if extra:
             payload.update(extra)
@@ -3009,11 +3344,14 @@ _BG_TASKS: set = set()
 _DIRECT_CHAT_TASKS: set = set()
 
 # 正在跑的对话 openclaw 进程（sk→proc），供用户**显式「停止」**终止；断线**不**经此路径（断线不杀）。
-_RUNNING_CHAT: dict = {}
+_RUNNING_CHAT: dict = ActorMap()
 # 被用户显式停止的会话 key：supervisor 据此把本轮当作正常「已停止」收尾（不报「被中断」、释放会话锁）。
-_STOPPED_CHAT: set = set()
+_STOPPED_CHAT: set = ActorSet()
 _HARNESS_TASKS: set = set()
-_HARNESS_QUESTIONS: dict = {}
+_HARNESS_QUESTIONS: dict = ActorMap()
+_HARNESS_QUESTION_RESULTS: dict = ActorMap()
+_GATEWAY_QUESTION_POLICIES: dict = ActorMap()
+_ACTIVE_TURN_IDS = ActorSet()
 
 
 class _HarnessProc(_GatewayHttpProc):
@@ -3032,16 +3370,58 @@ class _HarnessProc(_GatewayHttpProc):
             task.get_loop().call_soon_threadsafe(cancel_once)
 
 
-async def _harness_ask(sk: str, questions: list[dict], emit) -> dict:
+async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "autonomous") -> dict:
+    _require_host_tools()
+    if requests_secret(questions):
+        raise HarnessError("请在原生终端完成敏感凭证输入，不要将密码或密钥写入聊天记录")
     identifier = "harness_" + uuid.uuid4().hex
     future = asyncio.get_running_loop().create_future()
-    record = {"session": sk, "future": future, "status": "pending", "questions": questions}
+    policy = question_policy(questions, mode)
+    deadline = int((time.time() + policy.wait_seconds) * 1000)
+    visible_questions = public_questions(questions)
+    record = {"session": sk, "future": future, "status": "pending", "questions": visible_questions,
+              "kind": "approval" if policy.requires_human else "preference",
+              "requiresHuman": policy.requires_human,
+              "defaultAnswers": policy.default_answers,
+              "autoResolveAtMs": None if policy.requires_human else deadline,
+              "expiresAtMs": deadline, "resolvedBy": "human"}
     _HARNESS_QUESTIONS[identifier] = record
     try:
-        emit("question", _scrub_secrets(json.dumps(
-            {"id": identifier, "questions": questions}, ensure_ascii=False)))
-        answers = await asyncio.wait_for(future, TIMEOUT_CHAT)
-        record["status"] = "resolved"
+        public = {key: value for key, value in record.items() if key not in ("future", "session", "resolvedBy")}
+        emit("question", _scrub_secrets(json.dumps({"id": identifier, **public}, ensure_ascii=False)))
+        try:
+            answers = await asyncio.wait_for(asyncio.shield(future), policy.wait_seconds)
+        except asyncio.TimeoutError:
+            # Human responses and this timer run on the same loop. The future is
+            # the single settlement point; shielding it avoids timeout cancelling
+            # a concurrently submitted answer.
+            if not future.done():
+                _require_host_tools()
+                fallback = policy.timeout_answers if policy.requires_human else policy.default_answers
+                if not fallback:
+                    record.update(status="blocked", resolvedBy="timeout")
+                    closed = {"id": identifier, "status": "blocked", "resolvedBy": "timeout", "answers": {}}
+                    _HARNESS_QUESTION_RESULTS[identifier] = closed
+                    emit("agent_event", {"id": "decision_" + identifier, "kind": "decision", "questionId": identifier,
+                        "status": "blocked", "source": "timeout", "resolvedBy": "timeout", "answers": {},
+                        "questions": visible_questions, "completedAt": int(time.time() * 1000)})
+                    emit("question_closed", json.dumps(closed, ensure_ascii=False))
+                    raise HarnessError("等待人工确认超时，任务在需要授权的步骤受阻，未执行该操作")
+                record["resolvedBy"] = "timeout" if policy.requires_human else "default"
+                future.set_result(fallback)
+            answers = future.result()
+        _require_host_tools()
+        status = "declined" if record["resolvedBy"] == "timeout" else "resolved"
+        record.update(status=status, answers=answers)
+        closed = {"id": identifier, "status": status, "answers": answers, "resolvedBy": record["resolvedBy"]}
+        _HARNESS_QUESTION_RESULTS[identifier] = closed
+        # Bounded terminal cache supports status refresh without keeping futures.
+        while len(_HARNESS_QUESTION_RESULTS) > 256:
+            _HARNESS_QUESTION_RESULTS.pop(next(iter(_HARNESS_QUESTION_RESULTS)), None)
+        emit("agent_event", {"id": "decision_" + identifier, "kind": "decision", "questionId": identifier,
+            "status": status, "source": record["resolvedBy"], "resolvedBy": record["resolvedBy"],
+            "questions": visible_questions, "answers": answers, "completedAt": int(time.time() * 1000)})
+        emit("question_closed", _scrub_secrets(json.dumps(closed, ensure_ascii=False)))
         return answers
     finally:
         _HARNESS_QUESTIONS.pop(identifier, None)
@@ -3052,6 +3432,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     pk = f"web:{sk}"
     turn_id = req.turnId or uuid.uuid4().hex
     full_text: list[str] = []
+    agent_events: list[dict] = []
     clean_end = False
     reason = "error"
     error_message = ""
@@ -3063,19 +3444,39 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     proc = _HarnessProc()
     task = asyncio.current_task()
     _HARNESS_TASKS.add(task)
+    privilege_watch = None
+    permission_revoked = False
 
     def receive(kind, text):
-        safe = _scrub_secrets(text)
+        # Preserve a structured event as an object through live SSE, replay and
+        # final snapshot. Scrub known secrets without converting it to a string.
+        safe = json.loads(_scrub_secrets(json.dumps(text, ensure_ascii=False))) if isinstance(text, dict) else _scrub_secrets(text)
         if kind == "token":
             full_text.append(safe)
+        elif kind == "agent_event" and isinstance(safe, dict):
+            agent_events.append(safe)
         emit(kind, safe)
 
     async def ask(questions):
         if not interactive:
             raise HarnessError("此操作需要权限确认，请在流式对话中执行并确认权限")
-        return await _harness_ask(sk, questions, receive)
+        return await _harness_ask(sk, questions, receive, mode=req.autonomyMode)
+
+    async def watch_privileges():
+        nonlocal permission_revoked
+        while True:
+            await asyncio.sleep(0.25)
+            try:
+                _require_host_tools()
+            except HTTPException:
+                permission_revoked = True
+                # One cancellation lets the native adapter interrupt the turn,
+                # terminate its process group, and finish releasing both locks.
+                proc.terminate()
+                return
 
     try:
+        _require_host_tools()
         if lock.locked():
             emit("activity", "这个会话上一条还在运行，等待完成…")
         await lock.acquire()
@@ -3090,27 +3491,31 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             raise HarnessError("此会话正在另一个窗口运行，请稍后再试")
         if _chat_backend(sk) != runtime:
             raise HarnessError("底座已切换，请使用新对话重试")
-        record = harness_store.binding(SESSIONS_DIR, sk)
+        _require_host_tools()
+        record = harness_store.binding(_sessions_dir(), sk)
         native_id = record.get("native_id", "")
-        harness_store.bind(SESSIONS_DIR, sk, runtime, native_id)
+        harness_store.bind(_sessions_dir(), sk, runtime, native_id)
         _STOPPED_CHAT.discard(sk)
         proc._task = task
         _RUNNING_CHAT[sk] = proc
         _save_turn(pk, "running", "", {"turn_id": turn_id, "runtime": runtime})
         claimed = True
+        if current_user():
+            privilege_watch = asyncio.create_task(watch_privileges())
         env = {**read_settings(ENV_FILE), **_proxy_env(), "EASEL_AGENT_RUNTIME": runtime,
-               "EASEL_ROOT": str(PROJECT_ROOT)}
-        request = RunRequest(message, PROJECT_ROOT, env, native_id,
+               "EASEL_ROOT": str(_workspace_root())}
+        request = RunRequest(message, _workspace_root(), env, native_id,
                              config["models"].get(runtime, ""), config["sandbox"], timeout,
-                             session_key=sk, codex_auto_approve=config.get("codex_auto_approve", False))
+                             session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
+                             autonomy_mode=req.autonomyMode)
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
-            lambda identifier: harness_store.bind(SESSIONS_DIR, sk, runtime, identifier)), timeout)
+            lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
         clean_end = True
         reason = "completed"
     except asyncio.CancelledError:
-        reason = "stopped" if sk in _STOPPED_CHAT else "shutdown"
-        emit("activity", "已停止" if reason == "stopped" else "服务关闭，本轮已取消")
+        reason = "permission_revoked" if permission_revoked else "stopped" if sk in _STOPPED_CHAT else "shutdown"
+        emit("activity", "权限已变更，本轮已停止" if permission_revoked else "已停止" if reason == "stopped" else "服务关闭，本轮已取消")
     except asyncio.TimeoutError:
         reason = "timeout"
         error_message = "Agent 执行超时，已终止本轮进程"
@@ -3122,11 +3527,14 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         error_message = "Agent 执行失败，请检查本机 CLI、登录和模型配置"
         emit("error", error_message)
     finally:
+        if privilege_watch is not None:
+            privilege_watch.cancel()
+            await asyncio.gather(privilege_watch, return_exceptions=True)
         if claimed:
             snapshot = "".join(full_text) + (f"\n\n❌ {error_message}" if error_message else "")
             _save_turn(pk, "done", snapshot, {
                 "turn_id": turn_id, "runtime": runtime,
-                "clean_end": clean_end, "stop_reason": reason})
+                "clean_end": clean_end, "stop_reason": reason, "events": agent_events})
         # 注意：claim 失败（锁被占/底座已切换）时刻意**不**落盘——保留上一轮的
         # 结果快照不被失败轮覆盖（见 test_failed_ownership_check_does_not_overwrite_
         # previous_result）；错误经 SSE 事件流（job log）回放可见。
@@ -3156,7 +3564,7 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
     acquired = False
     claimed = False
     locked = False
-    settings = read_settings(ENV_FILE)
+    settings = _chat_api_settings()
     task = asyncio.current_task()
     _DIRECT_CHAT_TASKS.add(task)
     if lock.locked():
@@ -3178,8 +3586,8 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
         # Existing OpenClaw conversations have different histories. Require a new
         # session rather than silently discard their context when switching modes.
         if (_transport_pin_file(sk).is_file()
-                or (OPENCLAW_SESSIONS_DIR / f"{_openclaw_session_id(sk)}.jsonl").is_file()
-                or (OPENCLAW_SESSIONS_DIR / f"{_openclaw_session_id(pk)}.jsonl").is_file()):
+                or (_openclaw_sessions_dir() / f"{_openclaw_session_id(sk)}.jsonl").is_file()
+                or (_openclaw_sessions_dir() / f"{_openclaw_session_id(pk)}.jsonl").is_file()):
             raise DirectAPIError("此会话属于 OpenClaw，请新建会话使用 API 直连")
         _save_turn(pk, "running", "", {"turn_id": turn_id})
         claimed = True
@@ -3191,7 +3599,7 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
             nonlocal clean_end, reason
             async for kind, text in stream_chat(
                     settings, content, system=system,
-                    history_file=history_path(SESSIONS_DIR, sk), timeout=TIMEOUT_CHAT):
+                    history_file=history_path(_sessions_dir(), sk), timeout=TIMEOUT_CHAT):
                 if kind == "finish":
                     clean_end, reason = True, text
                 else:
@@ -3228,6 +3636,45 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
                 lock.release()
             _DIRECT_CHAT_TASKS.discard(task)
     return "".join(full_text)
+
+
+class ChatSessionsRequest(BaseModel):
+    sessions: list[dict] = Field(default_factory=list)
+
+
+@app.get("/api/chat/sessions")
+async def api_chat_sessions():
+    _require_operation()
+    store = ChatHistoryStore(_sessions_dir())
+    return {"sessions": await asyncio.to_thread(store.sessions), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
+
+
+@app.put("/api/chat/sessions")
+async def api_chat_sessions_merge(req: ChatSessionsRequest):
+    _require_operation()
+    try:
+        sessions = [validated_session(session) for session in req.sessions]
+        # Imported browser attachment references must retain exactly the same
+        # server-verified ownership check as a fresh chat submission.
+        for session in sessions:
+            for message in [*session["messages"], *session.get("queued", [])]:
+                if message.get("attachments"):
+                    attachments = [AttachmentRef.model_validate(value) for value in message["attachments"]]
+                    _attachment_context(ChatRequest(message="catalog", sessionId=session["id"], attachments=attachments), must_exist=False)
+        store = ChatHistoryStore(_sessions_dir())
+        return {"sessions": await asyncio.to_thread(store.merge, sessions), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
+    except (ValueError, TypeError):
+        raise HTTPException(400, "会话数据或附件引用无效") from None
+
+
+@app.delete("/api/chat/sessions/{session_id}")
+async def api_chat_session_delete(session_id: str):
+    _require_operation()
+    try:
+        await asyncio.to_thread(ChatHistoryStore(_sessions_dir()).delete, session_id)
+    except ValueError:
+        raise HTTPException(400, "无效的会话标识") from None
+    return {"ok": True, "nativeHistoryDeleted": False}
 
 
 @app.get("/api/chat/last/{session_id}")
@@ -3293,6 +3740,27 @@ async def api_chat_job_stream(turn_id: str, after: int = 0):
     })
 
 
+async def _replay_claimed_turn(claim: dict, session_id: str, payload_hash: str, turn_id: str):
+    if claim["sessionId"] != session_id or claim["payloadHash"] != payload_hash:
+        raise HTTPException(409, "同一任务标识已绑定不同的会话或请求，请新建任务")
+    if not _job_event_file(turn_id).is_file():
+        raise HTTPException(409, "已接收的任务记录不完整，未重新执行；请先核对原任务结果")
+    terminal = any(event["event"] in ("done", "error") for event in _read_job_events(turn_id))
+    owner_pid = claim.get("ownerPid", 0)
+    alive = False
+    if owner_pid == os.getpid():
+        alive = turn_id in _ACTIVE_TURN_IDS
+    elif isinstance(owner_pid, int) and owner_pid > 0:
+        try:
+            os.kill(owner_pid, 0)
+            alive = True
+        except OSError:
+            pass
+    if not terminal and not alive:
+        raise HTTPException(409, "原任务执行状态未确认，未重新执行；请先核对已有产物和发布回执")
+    return await api_chat_job_stream(turn_id)
+
+
 @app.post("/api/chat/stream")
 async def api_chat_stream(req: ChatRequest):
     """SSE 真流式对话。
@@ -3304,17 +3772,35 @@ async def api_chat_stream(req: ChatRequest):
     token delta 转成 SSE `token`、thinking delta 转成 `thinking`。stdout 仅留作错误/兜底。
     """
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
+    if req.turnId and not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", req.turnId):
+        raise HTTPException(400, "无效的任务标识")
+    req = req.model_copy(update={"turnId": req.turnId or uuid.uuid4().hex,
+                                 "sessionId": req.sessionId or "web-" + uuid.uuid4().hex})
     runtime = _chat_backend(req.sessionId)
     config = _harness_settings()
     direct = runtime == "api"
     alternate = runtime not in ("api", "openclaw")
+    payload_hash = hashlib.sha256(json.dumps({"request": req.model_dump(), "runtime": runtime},
+        sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+    catalog = ChatHistoryStore(_sessions_dir())
+    existing = catalog.turn_claim(req.turnId)
+    if existing is not None:
+        return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId)
     if direct:
         content, system = _direct_chat_content(req)
         message = ""
     else:
-        if req.sessionId and history_path(SESSIONS_DIR, req.sessionId).is_file():
+        if req.sessionId and history_path(_sessions_dir(), req.sessionId).is_file():
             raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
         message = _chat_message(req)
+
+    try:
+        admitted, claim = catalog.claim_turn(req.turnId, req.sessionId, payload_hash, _job_event_file(req.turnId))
+    except (OSError, sqlite3.Error):
+        raise HTTPException(409, "任务准入记录不可用，未启动执行；请检查已有任务与本地存储") from None
+    if not admitted:
+        return await _replay_claimed_turn(claim, req.sessionId, payload_hash, req.turnId)
+    _ACTIVE_TURN_IDS.add(req.turnId)
 
     # supervisor（跑 openclaw run）与 forward（转发 SSE 给浏览器）之间的事件通道。
     # 关键：run 跑在独立后台任务里，客户端断开只结束 forward，不取消 supervisor →
@@ -3329,20 +3815,18 @@ async def api_chat_stream(req: ChatRequest):
         turn_id = req.turnId or uuid.uuid4().hex
         event_seq = 0
         full_text: list[str] = []        # 累积完整回答，供断线取回
+        structured_events: list[dict] = []
         timed_out = False                # 只有真·超时才 terminate 进程；断线绝不杀
 
         event_path = _job_event_file(turn_id)
-        try:
-            event_path.parent.mkdir(parents=True, exist_ok=True)
-            event_path.write_text("", encoding="utf-8")
-        except OSError:
-            pass
 
         def to_client(kind, text=None, **extra):
             nonlocal event_seq
             event_seq += 1
             data = ({"sessionKey": extra.get("sessionKey")} if kind == "done" else text)
             event = {"id": event_seq, "event": kind, "data": data}
+            if kind == "agent_event" and isinstance(text, dict):
+                structured_events.append(text)
             try:
                 with event_path.open("a", encoding="utf-8") as ef:
                     ef.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -3387,7 +3871,7 @@ async def api_chat_stream(req: ChatRequest):
             # session-id 必须跟 CLI 路径钉死同一个（见 _openclaw_session_id）：只带 session-key
             # 的话网关会自己另起一个 transcript —— 跨天空闲后丢历史，且万一本轮回退 CLI，
             # 两条路径会写进不同的会话文件，对话历史直接劈叉。
-            headers = {"x-openclaw-session-key": f"agent:main:{sk}",
+            headers = {"x-openclaw-session-key": f"agent:main:{_native_session_key(sk)}",
                        "x-openclaw-session-id": _openclaw_session_id(sk)}
             tool_noted = False
             saw_done = False
@@ -3456,7 +3940,7 @@ async def api_chat_stream(req: ChatRequest):
 
         cmd = openclaw_base_cmd() + [
             "--profile", OPENCLAW_PROFILE, "agent", "--agent", "main",
-            "--session-key", f"agent:main:{sk}", "--session-id", _openclaw_session_id(sk),
+            "--session-key", f"agent:main:{_native_session_key(sk)}", "--session-id", _openclaw_session_id(sk),
             "--thinking", _agent_thinking_level(),
             "--timeout", str(TIMEOUT_CHAT), "--message", message,
         ]
@@ -3467,7 +3951,7 @@ async def api_chat_stream(req: ChatRequest):
         # question.* RPC（仅 2026.9.x 有），2026.6.11 上桥接不可用 → skill 改用
         # 「文字问答跨轮等待」拿短信验证码，而不是空等卡片超时。
         _cards_ok = question_bridge_supported is not None and question_bridge_supported()
-        env["EASEL_ASKUSER_CARDS"] = "1" if _cards_ok else "0"
+        env["EASEL_ASKUSER_CARDS"] = "1" if _cards_ok and project_id() == "default" else "0"
 
         # 会话级串行：同一会话若已有请求在跑，先提示排队，等它结束再开
         # （否则两个 openclaw 进程并发写同一 session 文件 → 崩溃 rc=1 / 会话串味）。
@@ -3518,9 +4002,10 @@ async def api_chat_stream(req: ChatRequest):
                 # HTTP 直连常驻网关：无进程冷启动（agent 在 gateway 进程里跑）
                 proc = _GatewayHttpProc()
             else:
+                cmd, env = _project_agent_command(cmd, env)
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    cwd=str(PROJECT_ROOT), text=True, bufsize=1, env=env,
+                    cwd=str(_workspace_root()), text=True, bufsize=1, env=env,
                 )
             started = True
         except asyncio.CancelledError:
@@ -3592,13 +4077,14 @@ async def api_chat_stream(req: ChatRequest):
         question_poll_fut = None
         question_events_open = True
 
-        def emit_question(kind: str, payload: str):
+        def emit_question(kind: str, payload):
             if question_events_open:
-                _emit(kind, _scrub_secrets(payload))
+                safe = json.loads(_scrub_secrets(json.dumps(payload, ensure_ascii=False))) if isinstance(payload, dict) else _scrub_secrets(payload)
+                _emit(kind, safe)
 
-        if GatewayClient is not None and not _QBRIDGE_DISABLED:
+        if GatewayClient is not None and not _QBRIDGE_DISABLED and project_id() == "default":
             question_poll_fut = loop.run_in_executor(
-                None, _poll_gateway_questions, sk, proc, emit_question, question_stop)
+                None, copy_context().run, _poll_gateway_questions, sk, proc, emit_question, question_stop, req.autonomyMode)
 
         def _handle(line: str):
             o = _raw_event_for_run(line, run_info["run_id"])
@@ -3686,10 +4172,10 @@ async def api_chat_stream(req: ChatRequest):
             # 写的那份共享 raw 流里（它按 gateway 自己的 env 写，与谁触发无关）。所以这条路径
             # 照样 tail 它——_handle 里 text_delta 在 is_http 下直接丢弃，只取 thinking_delta，
             # 正文不会进两次。不 tail 的话「💭 思考过程」在 HTTP 模式下永远是空的。
-            loop.run_in_executor(None, _tail)
+            loop.run_in_executor(None, copy_context().run, _tail)
         else:
-            stdout_fut = loop.run_in_executor(None, _drain_stdout)
-            loop.run_in_executor(None, _tail)
+            stdout_fut = loop.run_in_executor(None, copy_context().run, _drain_stdout)
+            loop.run_in_executor(None, copy_context().run, _tail)
 
         deadline = time.monotonic() + TIMEOUT_CHAT + 30
         emitted = False
@@ -3724,7 +4210,7 @@ async def api_chat_stream(req: ChatRequest):
                     to_client("thinking", item["text"])
                 elif item["t"] == "activity":
                     to_client("activity", item["text"])
-                elif item["t"] in ("question", "question_closed"):
+                elif item["t"] in ("question", "question_closed", "agent_event"):
                     to_client(item["t"], item["text"])
             question_stop.set()
             if question_poll_fut is not None:
@@ -3804,13 +4290,13 @@ async def api_chat_stream(req: ChatRequest):
             question_events_open = False
             while not q.empty():
                 queued = q.get_nowait()
-                if queued is not SENTINEL and queued["t"] in ("question", "question_closed"):
+                if queued is not SENTINEL and queued["t"] in ("question", "question_closed", "agent_event"):
                     to_client(queued["t"], queued["text"])
             # 诊断日志：每次对话流收尾都记一行，供事后定位「莫名停下」到底是哪种情况。
             try:
-                DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+                _debug_dir().mkdir(parents=True, exist_ok=True)
                 tail = clean_agent_output("".join(stdout_lines))[-800:]
-                with (DEBUG_DIR / "chat-stream.jsonl").open("a", encoding="utf-8") as lf:
+                with (_debug_dir() / "chat-stream.jsonl").open("a", encoding="utf-8") as lf:
                     lf.write(json.dumps({
                         "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                         "session": sk,
@@ -3834,6 +4320,7 @@ async def api_chat_stream(req: ChatRequest):
                 "turn_id": turn_id,
                 "clean_end": run_info.get("last_ev") == "assistant_message_end",
                 "stop_reason": "user_stopped" if user_stopped else run_info.get("stop_reason"),
+                "events": structured_events,
             })
             xlock.release()
             lock.release()
@@ -3846,6 +4333,7 @@ async def api_chat_stream(req: ChatRequest):
     _BG_TASKS.add(task)
 
     def _bg_done(t):
+        _ACTIVE_TURN_IDS.discard(req.turnId)
         _BG_TASKS.discard(t)
         if t.cancelled():
             client_q.put_nowait(CLIENT_DONE)
@@ -3894,6 +4382,8 @@ async def api_chat_stream(req: ChatRequest):
                 yield {"id": str(item["id"]), "event": "activity", "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t in ("question", "question_closed"):
                 yield {"id": str(item["id"]), "event": t, "data": item["text"]}
+            elif t == "agent_event":
+                yield {"id": str(item["id"]), "event": t, "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t == "error":
                 yield {"id": str(item["id"]), "event": "error", "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t == "done":
@@ -3913,6 +4403,7 @@ class QuestionAnswerRequest(BaseModel):
 async def api_question_answer(req: QuestionAnswerRequest):
     """前端点击 ask_user 选项后调用：转发 gateway question.resolve，让等待的 agent 拿到答案。"""
     if req.questionId.startswith("harness_"):
+        _require_host_tools()
         record = _HARNESS_QUESTIONS.get(req.questionId)
         if record is None:
             return {"ok": False, "expired": True, "status": "expired",
@@ -3922,8 +4413,14 @@ async def api_question_answer(req: QuestionAnswerRequest):
             raise HTTPException(400, "回答与当前问题不匹配")
         if record["future"].done():
             return {"ok": False, "expired": True, "status": "resolved", "error": "请求已回答"}
+        for values in req.answers.values():
+            if not isinstance(values, list) or not values or any(not isinstance(value, str) or not value.strip() for value in values):
+                raise HTTPException(400, "回答格式无效")
+        record["resolvedBy"] = "human"
         record["future"].set_result(req.answers)
         return {"ok": True}
+    if project_id() != "default":
+        raise HTTPException(409, "当前项目使用独立执行空间，请在对话中用文字继续")
     if _direct_api_enabled():
         raise HTTPException(409, "API 直连模式使用文字问答，请新建对话")
     if _harness_settings()["runtime"] != "openclaw":
@@ -3933,6 +4430,10 @@ async def api_question_answer(req: QuestionAnswerRequest):
     client = GatewayClient()
     try:
         client.connect()
+        record = _GATEWAY_QUESTION_POLICIES.get(req.questionId)
+        if record is not None:
+            accepted = _settle_gateway_question(record, req.answers or {}, "human", client)
+            return {"ok": accepted, "status": record["status"], "expired": not accepted}
         result = client.resolve(req.questionId, req.answers or {}, req.resolvedBy)
         return {"ok": True, "result": result}
     except GatewayQuestionClosedError as error:
@@ -3953,9 +4454,11 @@ async def api_question_status(req: QuestionStatusRequest):
     """批量查 question 状态（重放旧事件时过滤已解决的题）。"""
     if req.questionIds and all(identifier.startswith("harness_") for identifier in req.questionIds):
         return {"ok": True, "questions": {
-            identifier: {"status": _HARNESS_QUESTIONS.get(identifier, {}).get("status", "not_found")}
+            identifier: ({key: value for key, value in _HARNESS_QUESTIONS[identifier].items()
+                          if key not in ("future", "session", "questions")}
+                         if identifier in _HARNESS_QUESTIONS else _HARNESS_QUESTION_RESULTS.get(identifier, {"status": "not_found"}))
             for identifier in req.questionIds}}
-    if _direct_api_enabled():
+    if project_id() != "default" or _direct_api_enabled():
         return {"ok": True, "questions": {qid: {"status": "not_found"} for qid in req.questionIds}}
     if _harness_settings()["runtime"] != "openclaw":
         return {"ok": False, "questions": {}}
@@ -3967,6 +4470,10 @@ async def api_question_status(req: QuestionStatusRequest):
         out = {}
         for qid in req.questionIds:
             try:
+                record = _GATEWAY_QUESTION_POLICIES.get(qid)
+                if record is not None and record["status"] != "pending":
+                    out[qid] = {key: record[key] for key in ("status", "answers", "resolvedBy") if key in record}
+                    continue
                 q = client.get_question(qid)
                 out[qid] = _gateway_question_state(q)
             except GatewayQuestionClosedError as error:
@@ -3988,6 +4495,9 @@ class StopRequest(BaseModel):
     sessionId: str | None = None
 
 
+_CHAT_STOP_CONFIRM_SECONDS = 5
+
+
 @app.post("/api/chat/stop")
 async def api_chat_stop(req: StopRequest):
     """用户显式停止当前会话正在跑的对话 agent：终止进程 → supervisor 收尾释放会话锁 →
@@ -4007,13 +4517,21 @@ async def api_chat_stop(req: StopRequest):
                 proc.kill()
             except OSError:
                 pass
+            try:
+                await asyncio.to_thread(proc.wait, timeout=1)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
         # supervisor removes the running marker only after persisting the final
         # snapshot and releasing both session locks.
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + _CHAT_STOP_CONFIRM_SECONDS
         while _RUNNING_CHAT.get(sk) is proc and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
-        return {"stopped": True}
-    return {"stopped": False}          # 没有在跑（可能已结束）→ 前端照常清理即可
+        confirmed = proc.poll() is not None and _RUNNING_CHAT.get(sk) is not proc
+        return {"stopped": confirmed, "status": "stopped" if confirmed else "stopping"}
+    if proc is not None:
+        # A process can end before its supervisor flushes the snapshot/unlocks.
+        return {"stopped": False, "status": "stopping"}
+    return {"stopped": False, "status": "already_finished"}
 
 
 @app.post("/api/chat")
@@ -4043,13 +4561,13 @@ async def api_chat(req: ChatRequest):
         if errors:
             raise HTTPException(502, errors[0])
         return {"response": result, "sessionKey": sk}
-    if req.sessionId and history_path(SESSIONS_DIR, req.sessionId).is_file():
+    if req.sessionId and history_path(_sessions_dir(), req.sessionId).is_file():
         raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
     message = _chat_message(req)
     loop = asyncio.get_event_loop()
     # chat 可能中途触发制作层长任务 → 用 TIMEOUT_CHAT，与流式 /api/chat/stream 一致（勿用 300s）
-    result = await loop.run_in_executor(None, run_agent_sync, message, TIMEOUT_CHAT, req.sessionId)
+    result = await asyncio.to_thread(run_agent_sync, message, TIMEOUT_CHAT, req.sessionId)
     return {"response": result}
 
 
@@ -4070,7 +4588,7 @@ async def api_skill(req: SkillRequest):
     # 统一给足超时：制作类 SKILL（生视频/多镜合成）可能跑很久，取安全上界
     timeout = TIMEOUT_PRODUCE
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, run_agent_sync, message, timeout)
+    result = await asyncio.to_thread(run_agent_sync, message, timeout)
     return {"response": result}
 
 
@@ -4105,7 +4623,7 @@ def api_artifact_archive(path: str):
                         or any(ord(character) < 32 for character in name)
                         or Path(name).suffix.lower() not in extensions):
                     continue
-                relative = (full.parent / name).relative_to(OUTPUTS_DIR.resolve()).as_posix()
+                relative = (full.parent / name).relative_to(_outputs_dir().resolve()).as_posix()
                 try:
                     original = _safe_output_path(relative)
                 except HTTPException:
@@ -4142,6 +4660,9 @@ async def api_media(path: str):
     # 否则浏览器/代理按启发式缓存旧版 → 内容库 iframe 打开的是过期预览（复制粘贴带旧图 URL）。
     headers = ({"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
                if full.suffix.lower() in {".html", ".htm"} else {})
+    headers['X-Content-Type-Options'] = 'nosniff'
+    if full.suffix.lower() in {'.html', '.htm', '.svg', '.xml', '.xhtml'}:
+        headers['Content-Security-Policy'] = "sandbox allow-scripts; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'"
     return FileResponse(full, headers=headers)
 
 
@@ -4171,8 +4692,8 @@ def _unique_upload_path(dest: Path, filename: str) -> Path:
 def _safe_output_target(rel: str, *, must_exist: bool = True) -> Path:
     """解析到 outputs/ 内的文件或目录（防穿越）。与 _safe_output_path 不同：允许目录、
     可要求不必已存在（上传新文件时）。永远拒绝 outputs/ 根本身。"""
-    full = (OUTPUTS_DIR / rel).resolve()
-    root = OUTPUTS_DIR.resolve()
+    full = (_outputs_dir() / rel).resolve()
+    root = _outputs_dir().resolve()
     if full == root or root not in full.parents:
         raise HTTPException(403, '非法路径')
     if must_exist and not full.exists():
@@ -4183,7 +4704,7 @@ def _safe_output_target(rel: str, *, must_exist: bool = True) -> Path:
 def _is_protected(full: Path) -> bool:
     """路径的顶层段是否属于受保护的系统项。"""
     try:
-        rel = full.relative_to(OUTPUTS_DIR.resolve())
+        rel = full.relative_to(_outputs_dir().resolve())
     except ValueError:
         return True
     if not rel.parts:
@@ -4222,7 +4743,7 @@ async def api_upload(
     """Store chat attachments in a session-scoped inbox and return opaque refs."""
     scope = _attachment_scope(sessionId)
     batch = time.strftime('%Y%m%d-') + uuid.uuid4().hex[:6]
-    dest = OUTPUTS_DIR / "_inbox" / scope / batch
+    dest = _outputs_dir() / "_inbox" / scope / batch
     dest.mkdir(parents=True, exist_ok=True)
     saved = []
     for f in files:
@@ -4273,7 +4794,7 @@ async def api_upload_local(
     产出与 /api/upload 同构的附件引用（id/name/path），附件校验与清单链路零改动。"""
     scope = _attachment_scope(sessionId)
     batch = time.strftime('%Y%m%d-') + uuid.uuid4().hex[:6]
-    dest = OUTPUTS_DIR / "_inbox" / scope / batch
+    dest = _outputs_dir() / "_inbox" / scope / batch
     dest.mkdir(parents=True, exist_ok=True)
     saved = []
     for f in files:
@@ -4298,9 +4819,9 @@ async def api_upload_local(
 def _write_login_marker(platform: str, state: str, message: str = '') -> None:
     """回写登录标记 outputs/_login/<平台>.json（与 login_state.write_status 同格式，原子写）。
     whoami 真校验确认已登录后调用 → _account_logged_in 的快速路径此后自愈并持久。"""
-    LOGIN_DIR.mkdir(parents=True, exist_ok=True)
+    _login_dir().mkdir(parents=True, exist_ok=True)
     data = {"state": state, "message": message, "qr": "", "ts": int(time.time())}
-    st = LOGIN_DIR / f'{platform}.json'
+    st = _login_dir() / f'{platform}.json'
     tmp = st.with_suffix('.json.tmp')
     try:
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
@@ -4321,7 +4842,7 @@ def _account_logged_in(platform: str, cfg: dict) -> bool:
     if backend == 'unsupported':
         return False
     if backend == 'biliup':
-        return (PROJECT_ROOT / 'cookies.json').is_file()
+        return (_cookie_path()).is_file()
     if backend == 'wechat-oa':
         # 发布+数据都走「后台会话」→ 以 mp 后台登录成功为准；AppID 凭证作为兜底（旧配置）
         try:
@@ -4330,7 +4851,7 @@ def _account_logged_in(platform: str, cfg: dict) -> bool:
         except Exception:
             pass
         return _wechat_has_credentials()
-    st = LOGIN_DIR / f'{platform}.json'
+    st = _login_dir() / f'{platform}.json'
     if st.is_file():
         try:
             return json.loads(st.read_text(encoding="utf-8")).get('state') == 'success'
@@ -4341,7 +4862,7 @@ def _account_logged_in(platform: str, cfg: dict) -> bool:
 
 def _login_status(platform: str) -> dict:
     """读登录状态文件 + 二维码是否就绪。"""
-    st = LOGIN_DIR / f'{platform}.json'
+    st = _login_dir() / f'{platform}.json'
     data = {'state': 'unknown', 'message': ''}
     if st.is_file():
         try:
@@ -4356,7 +4877,7 @@ def _login_status(platform: str) -> dict:
         code = proc.poll()
         if code is not None:
             data = {'state': 'error', 'message': f'登录程序异常退出（退出码 {code}），请查看 outputs/_login/{platform}.log'}
-    qr = LOGIN_DIR / f'{platform}.png'
+    qr = _login_dir() / f'{platform}.png'
     if data['state'] in ('qr_ready', 'window_login') and qr.is_file():
         data['qr'] = f'_login/{platform}.png'
         try:
@@ -4411,9 +4932,9 @@ async def _start_login(platform: str, restart: bool = False):
         except subprocess.TimeoutExpired:
             raise HTTPException(409, '上一次登录仍在退出，请稍后重试') from None
         LOGIN_PROCESSES.pop(platform, None)
-    LOGIN_DIR.mkdir(parents=True, exist_ok=True)
-    qr = LOGIN_DIR / f'{platform}.png'
-    status = LOGIN_DIR / f'{platform}.json'
+    _login_dir().mkdir(parents=True, exist_ok=True)
+    qr = _login_dir() / f'{platform}.png'
+    status = _login_dir() / f'{platform}.json'
     for f in (qr, status):
         try:
             f.unlink()
@@ -4426,9 +4947,9 @@ async def _start_login(platform: str, restart: bool = False):
         # B站：TV 端扫码登录 API 生成二维码 + 写 biliup cookie（biliup login 需真终端，前端用不了）
         cmd = [sys.executable, str(SHARED_SCRIPTS / 'bili_login.py'), 'login',
                '--qr-out', str(qr), '--status-file', str(status),
-               '--cookie', str(PROJECT_ROOT / 'cookies.json'), '--timeout', str(LOGIN_TIMEOUT)]
+               '--cookie', str(_cookie_path()), '--timeout', str(LOGIN_TIMEOUT)]
     elif backend == 'douyin':
-        code_file = LOGIN_DIR / f'{platform}.code'
+        code_file = _login_dir() / f'{platform}.code'
         try:
             code_file.unlink()
         except OSError:
@@ -4444,7 +4965,7 @@ async def _start_login(platform: str, restart: bool = False):
     # 新登录开始 → 清掉旧的 whoami 缓存（登录前可能缓存了「未登录」），避免登录成功后仍读到旧结果
     with _WHOAMI_LOCK:
         _WHOAMI_CACHE.pop(platform, None)
-    log_path = LOGIN_DIR / f'{platform}.log'
+    log_path = _login_dir() / f'{platform}.log'
     log_file = log_path.open('a', encoding='utf-8')
     login_env = _proxy_env()
     login_env['PYTHONIOENCODING'] = 'utf-8'
@@ -4491,8 +5012,8 @@ async def api_login_sms(platform: str, req: SmsCodeRequest):
     code = ''.join(ch for ch in (req.code or '') if ch.isdigit())
     if not (4 <= len(code) <= 8):
         raise HTTPException(400, '验证码应为 4-8 位数字')
-    LOGIN_DIR.mkdir(parents=True, exist_ok=True)
-    (LOGIN_DIR / f'{platform}.code').write_text(code, encoding='utf-8')
+    _login_dir().mkdir(parents=True, exist_ok=True)
+    (_login_dir() / f'{platform}.code').write_text(code, encoding='utf-8')
     return {'ok': True}
 
 
@@ -4543,7 +5064,7 @@ async def api_save_credentials(platform: str, req: WechatCredentials):
 
 def _mp_login_status() -> dict:
     """读公众号后台(mp)登录状态 + 二维码（文件由 weixin_mp_stats.py login 写）。"""
-    st = LOGIN_DIR / "wechat-oa-mp.json"
+    st = _login_dir() / "wechat-oa-mp.json"
     data = {"state": "unknown", "message": ""}
     if st.is_file():
         try:
@@ -4554,7 +5075,7 @@ def _mp_login_status() -> dict:
     proc = LOGIN_PROCESSES.get("wechat-oa-mp")
     if data["state"] not in ("success", "expired", "error") and proc is not None and proc.poll() is not None:
         data = {"state": "error", "message": f"登录程序退出（码 {proc.poll()}），见 outputs/_login/wechat-oa-mp.log"}
-    qr = LOGIN_DIR / "wechat-oa-mp.png"
+    qr = _login_dir() / "wechat-oa-mp.png"
     if data["state"] in ("qr_ready", "window_login") and qr.is_file():
         data["qr"] = "_login/wechat-oa-mp.png"
         try:
@@ -4591,17 +5112,17 @@ async def api_mp_login_start(platform: str):
     proc = LOGIN_PROCESSES.get("wechat-oa-mp")
     if proc is not None and proc.poll() is None:
         return {"mode": "qr", **_mp_login_status()}
-    LOGIN_DIR.mkdir(parents=True, exist_ok=True)
-    for f in (LOGIN_DIR / "wechat-oa-mp.png", LOGIN_DIR / "wechat-oa-mp.json"):
+    _login_dir().mkdir(parents=True, exist_ok=True)
+    for f in (_login_dir() / "wechat-oa-mp.png", _login_dir() / "wechat-oa-mp.json"):
         try:
             f.unlink()
         except OSError:
             pass
     wx_proxy = os.environ.get("EASEL_PROXY") or os.environ.get("https_proxy") or ""
     cmd = [sys.executable, str(SHARED_SCRIPTS / "weixin_mp_stats.py"), "login",
-           "--proxy", wx_proxy, "--qr-out", str(LOGIN_DIR / "wechat-oa-mp.png"),
-           "--status-file", str(LOGIN_DIR / "wechat-oa-mp.json"), "--timeout", "240"]
-    log_file = (LOGIN_DIR / "wechat-oa-mp.log").open("a", encoding="utf-8")
+           "--proxy", wx_proxy, "--qr-out", str(_login_dir() / "wechat-oa-mp.png"),
+           "--status-file", str(_login_dir() / "wechat-oa-mp.json"), "--timeout", "240"]
+    log_file = (_login_dir() / "wechat-oa-mp.log").open("a", encoding="utf-8")
     env = _proxy_env()
     env.update(PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
     proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=env,
@@ -4668,7 +5189,7 @@ async def _check_account_whoami(platform: str, force: bool = False):
             return previous[1] if previous else {
                 'loggedIn': _account_logged_in(platform, cfg), 'name': '', 'avatar': '',
             }
-    marker_path = LOGIN_DIR / f'{process_key}.json'
+    marker_path = _login_dir() / f'{process_key}.json'
     def marker_version():
         try:
             return marker_path.read_bytes()
@@ -4685,7 +5206,7 @@ async def _check_account_whoami(platform: str, force: bool = False):
         return hit[1]
     if backend == 'biliup':
         cmd = [sys.executable, str(SHARED_SCRIPTS / 'bili_login.py'), 'whoami',
-               '--cookie', str(PROJECT_ROOT / 'cookies.json')]
+               '--cookie', str(_cookie_path())]
     elif backend == 'xhs':
         cmd = [sys.executable, str(SHARED_SCRIPTS / 'xhs_publish.py'), 'whoami', '--no-proxy']
     elif backend == 'wechat-oa':
@@ -4760,7 +5281,7 @@ async def api_logout(platform: str):
         # 3) 删 AppID 标记 + mp 后台会话标记/二维码/日志（登录态判定看的就是 wechat-oa-mp.json）
         for name in (f'{platform}.json', f'{platform}.png',
                      'wechat-oa-mp.json', 'wechat-oa-mp.png', 'wechat-oa-mp.log'):
-            f = LOGIN_DIR / name
+            f = _login_dir() / name
             try:
                 if f.is_file():
                     f.unlink()
@@ -4768,8 +5289,8 @@ async def api_logout(platform: str):
             except OSError:
                 pass
         # 4) 删 mp 后台浏览器持久化会话（真正退出登录）
-        mpdir = (BROWSER_PROFILES / 'WeixinMpProfile').resolve()
-        if BROWSER_PROFILES.resolve() in mpdir.parents and mpdir.is_dir():
+        mpdir = (_browser_profiles() / 'WeixinMpProfile').resolve()
+        if _browser_profiles().resolve() in mpdir.parents and mpdir.is_dir():
             shutil.rmtree(mpdir, ignore_errors=True)
             deleted.append('WeixinMpProfile')
         with _WHOAMI_LOCK:
@@ -4786,17 +5307,17 @@ async def api_logout(platform: str):
             pass
     prof_name = cfg.get('profile')
     if prof_name:
-        pdir = (BROWSER_PROFILES / prof_name).resolve()
-        if BROWSER_PROFILES.resolve() in pdir.parents and pdir.is_dir():
+        pdir = (_browser_profiles() / prof_name).resolve()
+        if _browser_profiles().resolve() in pdir.parents and pdir.is_dir():
             shutil.rmtree(pdir, ignore_errors=True)
             deleted.append(prof_name)
     if cfg['backend'] == 'biliup':
-        ck = PROJECT_ROOT / 'cookies.json'
+        ck = _cookie_path()
         if ck.is_file():
             ck.unlink()
             deleted.append('cookies.json')
     for suffix in ('.json', '.png', '-me.png', '.code'):
-        f = LOGIN_DIR / f'{platform}{suffix}'
+        f = _login_dir() / f'{platform}{suffix}'
         try:
             if f.is_file():
                 f.unlink()
@@ -4811,7 +5332,7 @@ async def api_logout(platform: str):
 # 归因层：可抓创作数据的平台（多数走 Playwright 登录态；bilibili 用 biliup cookies 不起浏览器、
 # wechat-oa 走 mp 后台会话 Playwright 拦截数据 XHR）
 ANALYTICS_PLATFORMS = {"xiaohongshu", "douyin", "kuaishou", "zhihu", "weixin-channels", "bilibili", "wechat-oa"}
-_analytics_inflight: dict[str, asyncio.Task] = {}
+_analytics_inflight: dict[str, asyncio.Task] = ProjectMap()
 
 
 def _run_analytics_command(cmd: list[str], env: dict[str, str], timeout: int):
@@ -4877,7 +5398,7 @@ async def _fetch_analytics(platform: str):
     # B站用 cookie 调 API（无浏览器 profile）、公众号走 mp 后台会话（Playwright 拦截数据 XHR，见下），单独分支；其余走 account_stats（Playwright）
     if platform == "bilibili":
         cmd = [sys.executable, str(SHARED_SCRIPTS / "bili_login.py"), "stats",
-               "--cookie", str(PROJECT_ROOT / "cookies.json")]
+               "--cookie", str(_cookie_path())]
     elif platform == "wechat-oa":
         # 公众号数据走「后台网页端」(mp.weixin.qq.com 管理员会话 + Playwright 拦截数据 XHR)：
         # 开发者 datacube 接口需认证+群发+接口权限，多数号取不到；后台端有登录态即可看到发表记录/数据。
@@ -4950,11 +5471,11 @@ def _require_automated_publishing() -> None:
 def api_manual_publish_export(platform: str, req: ManualPublishRequest):
     """Build a local handoff package; never contact a platform or mark it published."""
     try:
-        package = build_package(OUTPUTS_DIR, platform, req.title, req.body,
+        package = build_package(_outputs_dir(), platform, req.title, req.body,
                                 req.tags, req.media, req.reviewed)
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
-    return {"path": package.relative_to(OUTPUTS_DIR.resolve()).as_posix(),
+    return {"path": package.relative_to(_outputs_dir().resolve()).as_posix(),
             "filename": package.name, "published": False}
 
 
@@ -4971,7 +5492,7 @@ def _write_publish_status(status_file: Path, state: str, message: str = '') -> N
 
 
 def _read_publish_status(platform: str) -> dict:
-    st = PUBLISH_DIR / f'{platform}.json'
+    st = _publish_dir() / f'{platform}.json'
     if st.is_file():
         try:
             d = json.loads(st.read_text(encoding='utf-8'))
@@ -4992,7 +5513,7 @@ def _record_successful_publish(title: str, body: str, cfg: dict, profile: str = 
             calendar_ops.record_publish(cfg['name'], title, note=body[:200],
                                         tags=tags, ptype=ptype,
                                         source='publish-page', profile=profile,
-                                        data_path=SCHEDULE_FILE, forward_log=True)
+                                        data_path=_schedule_file(), forward_log=True)
     except Exception:
         pass
 
@@ -5014,7 +5535,7 @@ def _run_publish_bg(platform: str, cmd: list, title: str, body: str, cfg: dict,
     except Exception as e:  # noqa: BLE001
         err = f'发布进程异常：{e}'
     try:
-        with (OUTPUTS_DIR / '_publish.log').open('a', encoding='utf-8') as lf:
+        with (_outputs_dir() / '_publish.log').open('a', encoding='utf-8') as lf:
             lf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {platform}(async) ok={ok} =====\n")
             lf.write('CMD: ' + ' '.join(cmd) + '\nSTDOUT:\n' + out[-2000:] + '\nSTDERR:\n' + err[-2000:] + '\n')
     except Exception:
@@ -5041,7 +5562,7 @@ def _start_async_publish(platform: str, cmd: list, title: str, body: str, cfg: d
     except OSError:
         pass
     _write_publish_status(status_file, 'starting', '发布中…（若触发风控会要求短信验证）')
-    threading.Thread(target=_run_publish_bg,
+    context_thread(target=_run_publish_bg,
                      args=(platform, cmd, title, body, cfg, status_file, code_file, profile, tags, ptype),
                      daemon=True).start()
     # 关键：**不返回 ok:true**——这只是「已启动」的应答，真正结果要靠轮询 /status。
@@ -5066,8 +5587,8 @@ async def api_publish_sms(platform: str, req: SmsCodeRequest):
     code = ''.join(ch for ch in (req.code or '') if ch.isdigit())
     if not (4 <= len(code) <= 8):
         raise HTTPException(400, '验证码应为 4-8 位数字')
-    PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
-    (PUBLISH_DIR / f'{platform}.code').write_text(code, encoding='utf-8')
+    _publish_dir().mkdir(parents=True, exist_ok=True)
+    (_publish_dir() / f'{platform}.code').write_text(code, encoding='utf-8')
     return {'ok': True}
 
 
@@ -5112,7 +5633,7 @@ async def api_publish(platform: str, req: PublishRequest):
         # B站投稿：直接调 biliup CLI（需 cookies.json，PATH 上有 biliup）。必须视频；
         # tid=36「知识」；B站投稿必须≥1 标签，无则兜底「日常」。
         bili_tag = tags.replace('#', '').replace('，', ',').strip().strip(',') or '日常'
-        cmd = ['biliup', '-u', str(PROJECT_ROOT / 'cookies.json'), 'upload', vids[0],
+        cmd = ['biliup', '-u', str(_cookie_path()), 'upload', vids[0],
                '--title', title[:80], '--tid', '36', '--copyright', '1', '--tag', bili_tag]
         if req.body.strip():
             cmd += ['--desc', req.body[:2000]]
@@ -5121,9 +5642,9 @@ async def api_publish(platform: str, req: PublishRequest):
         cmd = base + ['publish-video', '--no-proxy', '--video', vids[0]] if vids else base + ['publish', '--no-proxy', '--images', ','.join(imgs)]
         cmd += ['--title', title, '--content', req.body, '--tags', tags, '--exec']
         # 抖音发布可能触发风控短信墙——异步跑 + 状态/验证码文件，前端轮询到 sms_required 时弹输入框
-        PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
-        status_file = PUBLISH_DIR / 'douyin.json'
-        code_file = PUBLISH_DIR / 'douyin.code'
+        _publish_dir().mkdir(parents=True, exist_ok=True)
+        status_file = _publish_dir() / 'douyin.json'
+        code_file = _publish_dir() / 'douyin.code'
         cmd += ['--status-file', str(status_file), '--sms-code-file', str(code_file)]
         return _start_async_publish(platform, cmd, title, req.body, cfg, status_file, code_file,
                                     profile, tags, publish_type)
@@ -5137,10 +5658,10 @@ async def api_publish(platform: str, req: PublishRequest):
         if vids:
             raise HTTPException(400, '公众号发图文文章，请附带封面/正文图片而非视频')
         cover = imgs[0]
-        PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
+        _publish_dir().mkdir(parents=True, exist_ok=True)
         stamp = uuid.uuid4().hex[:12]
-        md_path = PUBLISH_DIR / f'wechat-oa-{stamp}.md'
-        html_path = PUBLISH_DIR / f'wechat-oa-{stamp}.html'
+        md_path = _publish_dir() / f'wechat-oa-{stamp}.md'
+        html_path = _publish_dir() / f'wechat-oa-{stamp}.html'
         body_md = req.body or ''
         extra_imgs = imgs[1:]
         if extra_imgs:
@@ -5175,7 +5696,7 @@ async def api_publish(platform: str, req: PublishRequest):
     tail = (proc.stderr or proc.stdout or '').strip().splitlines()
     detail = '\n'.join(tail[-8:])
     try:
-        with (OUTPUTS_DIR / '_publish.log').open('a', encoding='utf-8') as lf:
+        with (_outputs_dir() / '_publish.log').open('a', encoding='utf-8') as lf:
             lf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {platform} rc={proc.returncode} ok={ok} =====\n")
             lf.write('CMD: ' + ' '.join(cmd) + '\n')
             lf.write('STDOUT:\n' + (proc.stdout or '')[-2000:] + '\n')
@@ -5206,10 +5727,13 @@ async def api_profile_build(req: ProfileBuildRequest):
         raise HTTPException(400, '画像名不能包含 / 或 \\ 字符，请改掉后重试')
     if name.startswith(('.', '_')):
         raise HTTPException(400, '画像名不能以 . 或 _ 开头，请换个开头')
-    pd = PROFILES_DIR / name
+    pd = _profiles_dir() / name
     if pd.exists():
         raise HTTPException(409, f'画像「{name}」已存在，请换一个名字')
     _write_baseline_profile(name, req.form or {})
+    if _team_member():
+        _write_profile_status(name, 'done', '基线画像已保存，可直接使用。')
+        return {'created': True, 'name': name, 'async': False, 'status': 'done'}
     instruction = _form_to_instruction(name, req.form or {})
     msg = (f"请执行 /skill-profile-builder 完善已存在的画像「{name}」。用户已通过表单提供以下信息，我已按此写好 profiles/{name}"
            f"/ 的基线六维文件。请：①尽力抓取用户给的社媒链接分析已发内容/风格/受众（抓不到就降级，标注[待补充]，勿臆造）②据分析结果润色/补全各维度文件 ③给出一句话完成度摘要。表单信息如下：\n\n{instruction}")
@@ -5223,19 +5747,19 @@ async def api_profile_build(req: ProfileBuildRequest):
         except Exception as e:  # noqa: BLE001
             _write_profile_status(name, 'failed', f'AI 增强失败（基线画像已可用）：{e}')
 
-    threading.Thread(target=_enhance, daemon=True).start()
+    context_thread(target=_enhance, daemon=True).start()
     # 基线已写、画像立即可用；增强在后台，前端轮询状态
     return {'created': pd.is_dir(), 'name': name, 'async': True, 'status': 'running'}
 
 
 def _profile_status_file(name: str) -> Path:
-    return PROFILE_BUILD_DIR / f'{name}.json'
+    return _profile_build_dir() / f'{name}.json'
 
 
 def _write_profile_status(name: str, state: str, log: str = '') -> None:
     """原子写画像增强状态。"""
     try:
-        PROFILE_BUILD_DIR.mkdir(parents=True, exist_ok=True)
+        _profile_build_dir().mkdir(parents=True, exist_ok=True)
         f = _profile_status_file(name)
         tmp = f.with_suffix('.tmp')
         tmp.write_text(json.dumps({'state': state, 'log': log, 'ts': int(time.time())},
@@ -5275,7 +5799,7 @@ def _form_to_instruction(name: str, form: dict) -> str:
 
 def _write_baseline_profile(name: str, form: dict) -> None:
     """从表单确定性生成六维基线文件。链接派生字段标 [待 AI 分析]。"""
-    pd = PROFILES_DIR / name
+    pd = _profiles_dir() / name
     pd.mkdir(parents=True, exist_ok=True)
 
     def g(k: str, default: str = '') -> str:
@@ -5323,14 +5847,14 @@ async def api_delete_session(session_key: str):
     """删除 OpenClaw 本地的 session 记录。"""
     if session_key in _RUNNING_CHAT or _session_lock(session_key).locked():
         raise HTTPException(409, "请先停止当前对话再删除")
-    record = harness_store.binding(SESSIONS_DIR, session_key)
+    record = harness_store.binding(_sessions_dir(), session_key)
     if record and record.get("runtime") != "openclaw":
         from easel.harnesses.rpc import close_sessions
-        await close_sessions(session_key)
-        harness_store.binding_path(SESSIONS_DIR, session_key).unlink(missing_ok=True)
+        await close_sessions(_native_session_key(session_key))
+        harness_store.binding_path(_sessions_dir(), session_key).unlink(missing_ok=True)
         _turn_file(f"web:{session_key}").unlink(missing_ok=True)
         return {"deleted": True, "nativeHistoryDeleted": False}
-    direct_history = history_path(SESSIONS_DIR, session_key)
+    direct_history = history_path(_sessions_dir(), session_key)
     if direct_history.is_file():
         if session_key in _RUNNING_CHAT:
             raise HTTPException(409, "请先停止当前对话再删除")
@@ -5339,11 +5863,11 @@ async def api_delete_session(session_key: str):
         return {"deleted": True}
     if _direct_api_enabled():
         return {"deleted": False, "reason": "session not found"}
-    sessions_file = _oc_state_dir() / 'agents' / 'main' / 'sessions' / 'sessions.json'
+    sessions_file = _openclaw_sessions_dir() / 'sessions.json'
     if not sessions_file.is_file():
         return {'deleted': False, 'reason': 'sessions file not found'}
     data = json.loads(sessions_file.read_text(encoding="utf-8"))
-    full_key = f'agent:main:{session_key}' if not session_key.startswith('agent:') else session_key
+    full_key = f'agent:main:{_native_session_key(session_key)}' if not session_key.startswith('agent:') else session_key
     for key in (full_key, session_key):
         if key in data:
             del data[key]
@@ -5478,20 +6002,20 @@ def _schedule_lock() -> threading.Lock:
 
 
 def _read_schedule() -> list[dict]:
-    if not SCHEDULE_FILE.is_file():
+    if not _schedule_file().is_file():
         return []
     try:
-        d = json.loads(SCHEDULE_FILE.read_text(encoding="utf-8"))
+        d = json.loads(_schedule_file().read_text(encoding="utf-8"))
         return d if isinstance(d, list) else []
     except Exception:
         return []
 
 
 def _write_schedule(items: list[dict]) -> None:
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SCHEDULE_FILE.with_suffix(".json.tmp")
+    _outputs_dir().mkdir(parents=True, exist_ok=True)
+    tmp = _schedule_file().with_suffix(".json.tmp")
     tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(SCHEDULE_FILE)
+    tmp.replace(_schedule_file())
 
 
 class ScheduleItem(BaseModel):
@@ -5578,7 +6102,7 @@ async def api_schedule_context(days: int = 14):
     """规划摘要（发布节奏/断更缺口 + 待发排期 + 临近节点 + 建议）——薄封装 calendar_ops，
     前端页头「近期节点/建议」与 Agent 读回共用同一逻辑。失败返回空摘要不抛错。"""
     cmd = [sys.executable, str(SHARED_SCRIPTS / "calendar_ops.py"),
-           "--data", str(SCHEDULE_FILE), "context", "--days", str(max(1, min(days, 90)))]
+           "--data", str(_schedule_file()), "context", "--days", str(max(1, min(days, 90)))]
     try:
         # 冷启动要起一个 Python 子进程（最长 20s）：丢线程池，避免卡住事件循环
         proc = await asyncio.to_thread(
@@ -5594,20 +6118,20 @@ IDEA_STATUSES = {"pending", "doing", "done"}
 
 
 def _read_ideas() -> list[dict]:
-    if not IDEAS_FILE.is_file():
+    if not _ideas_file().is_file():
         return []
     try:
-        d = json.loads(IDEAS_FILE.read_text(encoding="utf-8"))
+        d = json.loads(_ideas_file().read_text(encoding="utf-8"))
         return d if isinstance(d, list) else []
     except Exception:
         return []
 
 
 def _write_ideas(items: list[dict]) -> None:
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = IDEAS_FILE.with_suffix(".json.tmp")
+    _outputs_dir().mkdir(parents=True, exist_ok=True)
+    tmp = _ideas_file().with_suffix(".json.tmp")
     tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(IDEAS_FILE)
+    tmp.replace(_ideas_file())
 
 
 class IdeaItem(BaseModel):

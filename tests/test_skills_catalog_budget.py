@@ -33,7 +33,8 @@ def isolated(tmp_path, monkeypatch):
 def test_defaults_fit_all_builtin_descriptions(isolated):
     count, chars = doctor._builtin_skills_estimate({})
     updates = doctor._skills_budget_updates({}, {})
-    assert count == 115
+    expected_count = len(list((PROJECT_ROOT / "skills" / "builtin").glob("*/SKILL.md")))
+    assert count == expected_count
     assert updates["maxSkillsInPrompt"] >= count
     assert updates["maxSkillsPromptChars"] >= chars + 8192
     assert updates["maxSkillsInPrompt"] == 200
@@ -87,7 +88,8 @@ def test_invalid_config_is_not_replaced_by_defaults(isolated, config):
 def test_long_unicode_workspace_expands_default_budget(isolated, monkeypatch):
     monkeypatch.setenv("EASEL_OPENCLAW_WORKSPACE", "/" + "路径😀&" * 150)
     count, chars = doctor._builtin_skills_estimate({})
-    assert count == 115 and chars > 80000
+    expected_count = len(list((PROJECT_ROOT / "skills" / "builtin").glob("*/SKILL.md")))
+    assert count == expected_count and chars > 80000
     assert doctor._skills_budget_updates({}, {})["maxSkillsPromptChars"] >= chars + 8192
 
 
@@ -98,7 +100,8 @@ def test_doctor_distinguishes_estimates_from_runtime_visibility(isolated):
     config.write_bytes(source)
     before = config.stat().st_mtime_ns
     output = "\n".join(doctor._context_budget_policy())
-    assert "115 个" in output and "离线上界估算" in output
+    expected_count = len(list((PROJECT_ROOT / "skills" / "builtin").glob("*/SKILL.md")))
+    assert f"{expected_count} 个" in output and "离线上界估算" in output
     assert "不含第三方技能" in output and "风险" in output
     assert "实际遗漏不能由此推定" in output
     assert "运行时可见性未知" in output and "Eligible 数不等于" in output
@@ -118,7 +121,7 @@ def test_doctor_reports_zero_and_agent_overrides(isolated):
 
 def test_doctor_large_budget_does_not_claim_runtime_success(isolated):
     output = "\n".join(doctor._skills_catalog_policy({"skills": {"limits": {
-        "maxSkillsInPrompt": 200, "maxSkillsPromptChars": 80000}}}))
+        "maxSkillsInPrompt": 2000, "maxSkillsPromptChars": 2000000}}}))
     assert "覆盖此离线估算" in output and "不保证运行时" in output
 
 

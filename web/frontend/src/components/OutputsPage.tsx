@@ -4,6 +4,7 @@ import { fetchOutputs, fetchOutputContent, mediaUrl, deleteOutput } from '../lib
 import type { OutputNode, OutputMeta } from '../lib/api';
 import { renderMarkdown } from '../lib/sanitize';
 import { IconOutputs, IconImage, IconVideo, IconMusic, IconFile, IconFolder, IconRefresh, IconChevron, IconTrash } from './icons';
+import { useIpPermissions } from './ProjectSpace';
 
 const FILTERS: { key: string; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -82,6 +83,7 @@ interface OutputsPageProps {
 }
 
 export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProps) {
+  const { canOperate } = useIpPermissions();
   const [roots, setRoots] = useState<OutputNode[]>([]);
   const [treeError, setTreeError] = useState('');
   const [stack, setStack] = useState<string[]>([]);   // 当前所在的文件夹名称路径
@@ -128,6 +130,7 @@ export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProp
 
   const remove = useCallback(async (node: OutputNode, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!canOperate) return;
     const isDir = node.type === 'dir';
     const label = isDir ? `项目/文件夹「${node.meta?.title || node.name}」及其全部内容` : `文件「${node.name}」`;
     if (!window.confirm(`确定删除${label}？\n此操作不可恢复。`)) return;
@@ -138,7 +141,7 @@ export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProp
     } catch (err) {
       alert((err as Error).message || '删除失败');
     }
-  }, [load]);
+  }, [load, canOperate]);
 
   const open = useCallback(async (f: OutputNode) => {
     const seq = ++reqSeq.current;
@@ -181,10 +184,8 @@ export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProp
     if (selected.kind === 'audio') return <audio src={url} controls style={{ width: '100%' }} />;
     if (selected.kind === 'text' && isHtml(selected.name)) return (
       <>
-        {/* allow-scripts：让预览页自带的「复制到公众号」按钮(execCommand('copy'))能运行；
-            allow="clipboard-write"：授予剪贴板写权限。不给 allow-same-origin —— iframe 保持
-            opaque origin，脚本跑得起来但访问不到本站，安全。(修复：内嵌预览里复制按钮点了没反应) */}
-        <iframe src={`${url}?v=${selected.mtime ?? 0}`} title={selected.name} sandbox="allow-scripts" allow="clipboard-write"
+        {/* Viewer previews never execute scripts or receive clipboard-write permission. */}
+        <iframe src={`${url}?v=${selected.mtime ?? 0}`} title={selected.name} sandbox={canOperate ? 'allow-scripts' : ''} allow={canOperate ? 'clipboard-write' : undefined}
           style={{ width: '100%', height: '68vh', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: '#fff' }} />
         <div style={{ marginTop: 8 }}><a href={url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-start)', fontSize: 13 }}>在新标签打开 ↗</a></div>
       </>
@@ -204,7 +205,7 @@ export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProp
       <div key={d.path} className="card card-hover gcard" onClick={() => enterDir(d.name)}>
         <div className="gcard-thumb">
           <span className="gcard-kind">{m?.kind ? (KIND_LABEL[m.kind] || m.kind) : '文件夹'}</span>
-          <button className="gcard-del" title="删除" onClick={(e) => remove(d, e)}><IconTrash size={14} /></button>
+          {canOperate && <button className="gcard-del" title="删除" onClick={(e) => remove(d, e)}><IconTrash size={14} /></button>}
           {cover ? <Thumb f={cover} big /> : <div className="gcard-ph"><IconFolder size={38} /></div>}
         </div>
         <div className="gcard-meta">
@@ -225,9 +226,10 @@ export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProp
     <div key={f.path} className="card card-hover gcard" onClick={() => open(f)}>
       <div className="gcard-thumb">
         <span className="gcard-kind">{kindLabel(f)}</span>
-        <button className="gcard-del" title="删除" onClick={(e) => remove(f, e)}><IconTrash size={14} /></button>
+        {canOperate && <button className="gcard-del" title="删除" onClick={(e) => remove(f, e)}><IconTrash size={14} /></button>}
         <Thumb f={f} />
       </div>
+
       <div className="gcard-meta">
         <div className="gcard-name" title={f.name}>{f.name}</div>
       </div>
@@ -261,6 +263,8 @@ export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProp
         <button className="btn btn-sm" onClick={load}><IconRefresh size={14} /> 刷新</button>
       </div>
 
+      {!canOperate && <p className="page-subtitle" role="status" style={{ margin: '0 0 18px' }}>当前为查看者权限，可以浏览和下载成品。</p>}
+
       {treeError && <div className="notice-error">{treeError}</div>}
 
       {/* 项目主题标签（进入项目根时展示） */}
@@ -285,7 +289,7 @@ export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProp
       {empty && !treeError ? (
         <div className="empty-state" style={{ height: 300 }}>
           <div className="empty-icon"><IconOutputs size={44} /></div>
-          <p>{atTop ? '还没有产物——去对话或技能库生成第一条内容吧' : '这个文件夹是空的'}</p>
+          <p>{atTop ? canOperate ? '还没有产物——去对话或技能库生成第一条内容吧' : '这个 IP 还没有可查看的内容' : '这个文件夹是空的'}</p>
         </div>
       ) : hasSplit ? (
         <>
@@ -329,9 +333,9 @@ export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProp
               <button className="icon-btn" onClick={() => setSelected(null)}>×</button>
             </div>
             <div className="drawer-body">{preview()}</div>
-            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+            {canOperate && <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
               <button className="btn btn-sm btn-danger" onClick={(e) => remove(selected, e)}><IconTrash size={13} /> 删除此文件</button>
-            </div>
+            </div>}
           </div>
         </div>
       )}

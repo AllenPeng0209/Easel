@@ -10,6 +10,7 @@ from .base import Descriptor, HarnessError, RunRequest
 from .workspace import harness_instructions
 from .commands import acp_command, base_command
 from .rpc import connection
+from .events import EventProjector
 
 
 class ACPAdapter:
@@ -18,18 +19,20 @@ class ACPAdapter:
     async def run(self, request: RunRequest, emit, ask, bind):
         session_id = request.native_id
         active = False
+        events = EventProjector(emit, request.env)
 
         def notify(method, params):
             if not active or method != "session/update" or params.get("sessionId") != session_id:
                 return
             update = params.get("update") or {}
+            events.acp(update)
             kind = update.get("sessionUpdate")
             if kind in ("agent_message_chunk", "agent_thought_chunk"):
                 content = update.get("content") or {}
                 if content.get("type") == "text":
                     emit("token" if kind == "agent_message_chunk" else "thinking", content.get("text", ""))
             elif kind in ("tool_call", "tool_call_update"):
-                emit("activity", f"工具：{update.get('title') or update.get('toolCallId', '')} "
+                events.activity(f"工具：{update.get('title') or update.get('toolCallId', '')} "
                      f"{update.get('status', '')}")
 
         async def respond(method, params):

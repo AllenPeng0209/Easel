@@ -797,6 +797,7 @@ def web_functions():
     env = {"json": json, "subprocess": subprocess, "sys": sys, "asyncio": asyncio,
            "_LOGIN_START_LOCKS": {}}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "web/app.py", "exec"), env)
+    env["_login_dir"] = lambda: env["LOGIN_DIR"]
     return env
 
 

@@ -7,11 +7,13 @@
 * 带 Origin → 必须在 `_LOCAL_ORIGINS` 里；
 * 不带 Origin → 对端必须来自回环地址。
 
-用不存在的路径 `/api/__guard_probe__` 做探针：中间件在路由之前执行，
-因此 403 与 404 的差别恰好等价于「守卫拦没拦」，且完全不产生副作用。
+把真实 local_write_guard 挂到独立的空应用，并用不存在的路径
+`/api/__guard_probe__` 做探针：403 与 404 恰好表示本守卫是否拦截。
+完整应用的身份和权限边界由 access_control 集成测试覆盖。
 """
 from __future__ import annotations
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from web import app as web
@@ -24,10 +26,15 @@ REMOTE = ('192.168.1.9', 51234)
 
 
 def _client(peer: tuple[str, int] = LOOPBACK) -> TestClient:
-    # TrustedHostMiddleware 只放行 localhost / 127.0.0.1，测试统一用回环 base_url；
-    # peer 必须显式指定——TestClient 默认对端是字面量 'testclient'，不是 IP，
-    # 因此默认值会走「不是回环 → 拒绝」分支，拿它测放行路径会得出错误结论。
-    return TestClient(web.app, base_url='http://127.0.0.1:7860', client=peer)
+    # Isolate this guard: the application's RBAC layer deliberately rejects
+    # unknown API routes before routing, so 404 is no longer a useful probe there.
+    application = FastAPI()
+    application.middleware('http')(web.local_write_guard)
+    client = TestClient(application, base_url='http://127.0.0.1:7860', client=peer)
+    # These cases exercise unauthenticated request origins, not the separate
+    # authenticated-cookie branch or the legacy owner-session fixture.
+    client.cookies.clear()
+    return client
 
 
 # ---------------------------------------------------------------- 无 Origin

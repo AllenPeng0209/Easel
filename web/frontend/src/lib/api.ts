@@ -1,3 +1,6 @@
+import { projectUrl, projectFetch } from './projectScope';
+import type { AgentEvent } from './agentEvents';
+import type { ChatSession } from './store';
 function getBasePath(): string {
   const path = window.location.pathname;
   const cleaned = path.replace(/\/index\.html$/, '').replace(/\/$/, '');
@@ -9,7 +12,7 @@ const BASE = getBasePath();
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   // 全部是动态应用接口（登录态/数据等），禁止浏览器 HTTP 缓存——否则 /api/accounts 等可能被启发式
   // 缓存住旧响应（曾表现为“扫码登录后卡片仍显示未登录”）。调用方可用 options.cache 覆盖。
-  const res = await fetch(`${BASE}${url}`, { cache: 'no-store', ...options });
+  const res = await projectFetch(projectUrl(`${BASE}${url}`), { cache: 'no-store', ...options });
   if (!res.ok) {
     // 优先显示后端返回的实质错误信息（FastAPI 的 {detail}），而不是无意义的 "API error: 400"
     let detail = '';
@@ -324,7 +327,7 @@ export function fetchOutputContent(path: string): Promise<OutputContent> {
 
 /** 媒体文件（图片/视频/音频/HTML/PDF）的原样 URL，用于 <img>/<video>/iframe/下载。 */
 export function mediaUrl(path: string): string {
-  return `${BASE}/api/media/${path.split('/').map(encodeURIComponent).join('/')}`;
+  return projectUrl(`${BASE}/api/media/${path.split('/').map(encodeURIComponent).join('/')}`);
 }
 
 /** 删除内容库里的文件或整个项目目录（系统数据受保护，后端会拒）。 */
@@ -332,7 +335,7 @@ export function deleteOutput(path: string): Promise<{ ok: boolean; deleted: stri
   return request(`/api/output/${path.split('/').map(encodeURIComponent).join('/')}`, { method: 'DELETE' });
 }
 
-export interface UploadedFile { id: string; name: string; path: string; }
+export interface UploadedFile { id: string; name: string; path: string; size?: number; mime?: string; }
 
 /** OpenClaw ask_user 问答题（SSE question 事件 payload）。 */
 export interface ChatQuestionOption { label: string; description?: string; }
@@ -342,18 +345,27 @@ export interface ChatQuestionItem {
   question: string;
   options?: ChatQuestionOption[];
   multiSelect?: boolean;
+  defaultAnswer?: string[];
 }
 export interface ChatQuestion {
   id: string;              // gateway question record id (ask_...)
   questions: ChatQuestionItem[];
   expiresAtMs?: number;
   status?: string;
+  kind?: 'preference' | 'approval';
+  requiresHuman?: boolean;
+  defaultAnswers?: Record<string, string[]>;
+  autoResolveAtMs?: number | null;
+  answers?: Record<string, string[]>;
+  resolvedBy?: string;
 }
-export interface ChatQuestionClosed { id: string; status: string; }
+export interface ChatQuestionClosed {
+  id: string; status: string; answers?: Record<string, string[]>; resolvedBy?: string;
+}
 export async function answerQuestion(
   payload: { questionId: string; answers: Record<string, string[]>; resolvedBy?: string },
 ): Promise<{ ok: boolean; error?: string; status?: string; expired?: boolean }> {
-  const res = await fetch(`${BASE}/api/chat/question/answer`, {
+  const res = await projectFetch(projectUrl(`${BASE}/api/chat/question/answer`), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
@@ -364,35 +376,35 @@ export async function answerQuestion(
 /** 批量查 question 状态：过滤重放中已解决/已过期的旧题。 */
 export async function questionStatus(
   questionIds: string[],
-): Promise<Record<string, { status: string }>> {
+): Promise<Record<string, { status: string; answers?: Record<string, string[]>; resolvedBy?: string }>> {
   if (!questionIds.length) return {};
   try {
-    const res = await fetch(`${BASE}/api/chat/question/status`, {
+    const res = await projectFetch(projectUrl(`${BASE}/api/chat/question/status`), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ questionIds }),
     });
-    const data = await res.json().catch(() => ({})) as { ok?: boolean; questions?: Record<string, { status: string }> };
+    const data = await res.json().catch(() => ({})) as { ok?: boolean; questions?: Record<string, { status: string; answers?: Record<string, string[]>; resolvedBy?: string }> };
     return data.questions || {};
   } catch {
     return {};
   }
 }
 /** 上传素材到当前会话的隔离 inbox，返回后端可校验的附件引用。 */
-export async function uploadFiles(files: File[], sessionId: string): Promise<UploadedFile[]> {
+export async function uploadFiles(files: File[], sessionId: string, signal?: AbortSignal): Promise<UploadedFile[]> {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   fd.append('sessionId', sessionId);
-  const r = await request<{ ok: boolean; files: UploadedFile[] }>('/api/upload', { method: 'POST', body: fd });
+  const r = await request<{ ok: boolean; files: UploadedFile[] }>('/api/upload', { method: 'POST', body: fd, signal });
   return r.files;
 }
 
 /** 超限文件复制通道：返回与 uploadFiles 同构的附件引用。 */
 export interface AdoptedFile { id: string; name: string; path: string; }
-export async function adoptOversize(files: File[], sessionId: string): Promise<AdoptedFile[]> {
+export async function adoptOversize(files: File[], sessionId: string, signal?: AbortSignal): Promise<AdoptedFile[]> {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   fd.append('sessionId', sessionId);
-  const r = await request<{ ok: boolean; files: AdoptedFile[] }>('/api/upload/local', { method: 'POST', body: fd });
+  const r = await request<{ ok: boolean; files: AdoptedFile[] }>('/api/upload/local', { method: 'POST', body: fd, signal });
   return r.files;
 }
 
@@ -598,7 +610,7 @@ export function submitLoginSms(platform: string, code: string): Promise<{ ok: bo
 }
 
 /** 用户显式停止：终止后端正在跑的对话 agent，释放会话锁，令下一句能立刻发。 */
-export function stopChat(sessionId: string): Promise<{ stopped: boolean }> {
+export function stopChat(sessionId: string): Promise<{ stopped: boolean; status?: string }> {
   return request('/api/chat/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -623,6 +635,7 @@ export function streamChat(
   onQuestion?: (q: ChatQuestion) => void,
   onHeartbeat?: (note: string) => void,
   onQuestionClosed?: (q: ChatQuestionClosed) => void,
+  onAgentEvent?: (event: AgentEvent) => void,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -657,6 +670,11 @@ export function streamChat(
           try { onThinking(JSON.parse(data) as string); } catch { onThinking(data); }
         } else if (currentEvent === 'activity' && onActivity) {
           try { onActivity(JSON.parse(data) as string); } catch { onActivity(data); }
+        } else if (currentEvent === 'agent_event' && onAgentEvent) {
+          try {
+            const event = JSON.parse(data) as AgentEvent;
+            if (event && typeof event === 'object' && typeof event.id === 'string' && typeof event.kind === 'string') onAgentEvent(event);
+          } catch { /* malformed event is not executable UI */ }
         } else if (currentEvent === 'question' && onQuestion) {
           // 防御：question 事件负载必须是对象且带 questions 数组。旧后端重放流曾把
           // question 双层序列化（JSON.parse 后得到字符串），透传会渲染出无法作答的
@@ -719,12 +737,12 @@ export function streamChat(
     while (!controller.signal.aborted) {
       try {
         const res = first
-          ? await fetch(`${BASE}/api/chat/stream`, {
+          ? await projectFetch(projectUrl(`${BASE}/api/chat/stream`), {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments }),
               signal: controller.signal,
             })
-          : await fetch(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`, {
+          : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {
               signal: controller.signal,
             });
         // jobs 流 404 = 任务记录不存在（后端重启丢日志 / 首发请求 5xx 没起 supervisor）。
@@ -760,9 +778,19 @@ export function streamChat(
 }
 
 /** 取某会话最近一轮的完整结果（SSE 断线后据此取回）。 */
-export function fetchLastTurn(sessionId: string, turnId?: string): Promise<{ status: string; text: string; turn_id?: string }> {
+export function fetchLastTurn(sessionId: string, turnId?: string): Promise<{ status: string; text: string; turn_id?: string; events?: AgentEvent[]; questions?: ChatQuestion[] }> {
   const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
   return request(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`);
+}
+
+export function fetchChatSessions(): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
+  return request('/api/chat/sessions');
+}
+export function syncChatSessions(sessions: ChatSession[]): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
+  return request('/api/chat/sessions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions }) });
+}
+export function deleteChatSession(id: string): Promise<{ ok: boolean }> {
+  return request(`/api/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 // ═══ 设置面板 · 环境安装（install_tool 引擎桥） ═══

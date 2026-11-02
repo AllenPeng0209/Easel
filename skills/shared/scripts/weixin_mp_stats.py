@@ -30,7 +30,7 @@ else:
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import login_state  # noqa: E402
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(os.environ.get("EASEL_ROOT") or Path(__file__).resolve().parents[3])
 LOGIN_DIR = PROJECT_ROOT / "outputs" / "_login"
 PROFILE_NAME = "WeixinMpProfile"
 MP_HOME = "https://mp.weixin.qq.com/"
@@ -56,7 +56,7 @@ def _die(msg, code=1):
 
 
 def _profile_dir(base):
-    root = Path(base).expanduser() if base else Path.home() / ".easel-browser-profiles"
+    root = Path(base or os.environ.get("EASEL_BROWSER_PROFILES", "")).expanduser() if (base or os.environ.get("EASEL_BROWSER_PROFILES")) else Path.home() / ".easel-browser-profiles"
     return root / PROFILE_NAME
 
 

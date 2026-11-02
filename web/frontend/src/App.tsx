@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { projectStorageKey, projectUrl, projectFetch, ACTIVE_PROJECT_ID, ACTIVE_USER_ID } from './lib/projectScope';
+import { ProjectBreadcrumb, useIpPermissions } from './components/ProjectSpace';
+import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import type { Page } from './components/Sidebar';
 import ChatPage from './components/ChatPage';
@@ -15,8 +17,12 @@ import BreakdownPage from './components/BreakdownPage';
 import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
 import SettingsPanel from './components/SettingsPanel';
-import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat } from './lib/api';
-import type { PersonaItem, UploadedFile, ChatQuestion } from './lib/api';
+import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, fetchChatSessions, syncChatSessions, deleteChatSession } from './lib/api';
+import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed } from './lib/api';
+import { reduceAgentEvents } from './lib/agentEvents';
+import type { AgentEvent } from './lib/agentEvents';
+import { mergeSessionCatalog, nextSessionRevision } from './lib/sessionSync';
+import { confirmChatStop, enqueueMessage, nextQueuedMessage } from './lib/chatControl';
 import { questionStatus } from './lib/api';
 import { deleteSession as deleteRemoteSession } from './lib/api';
 import {
@@ -29,11 +35,21 @@ import {
 } from './lib/store';
 import type { ChatSession, ChatMessage, StreamState } from './lib/store';
 
-const ONBOARDING_SEEN_KEY = 'easel_onboarding_seen';
+const TAB_SESSION_KEY = projectStorageKey('easel_tab_session');
+const ONBOARDING_SEEN_KEY = projectStorageKey('easel_onboarding_seen');
+const VideoWorkshopPage = lazy(() => import('./components/VideoWorkshopPage'));
+const InteractionCenterPage = lazy(() => import('./components/InteractionCenterPage'));
+
+interface LiveTurnAccumulator {
+  content: string; thinking: string; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[];
+  stopRequested?: boolean;
+  stopConfirmed?: boolean;
+}
 
 function onboardingSeen(): boolean {
   const current = localStorage.getItem(ONBOARDING_SEEN_KEY);
   if (current) return true;
+  if (ACTIVE_PROJECT_ID !== 'default' || ACTIVE_USER_ID) return false;
   const previousKey = `${['post', 'craft'].join('')}_onboarding_seen`;
   const previous = localStorage.getItem(previousKey);
   if (previous) {
@@ -45,7 +61,10 @@ function onboardingSeen(): boolean {
 }
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
+  const { canOperate, isPlatformAdmin } = useIpPermissions();
+  const [currentPage, setCurrentPage] = useState<Page>(() => canOperate ? 'chat' : 'dashboard');
+  const [workshopEntry, setWorkshopEntry] = useState(0);
+  const [interactionEntry, setInteractionEntry] = useState(0);
   const [personas, setPersonas] = useState<PersonaItem[]>([]);
   const [selectedPersona, setSelectedPersona] = useState('');
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
@@ -56,6 +75,11 @@ export default function App() {
   const [showRecommend, setShowRecommend] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyReady, setHistoryReady] = useState(false);
+  const [navigationReady, setNavigationReady] = useState(false);
+  const [historyNotice, setHistoryNotice] = useState('');
+  const [unreadSessions, setUnreadSessions] = useState<Record<string, boolean>>({});
+  const [historyRetry, setHistoryRetry] = useState(0);
   // 装完还没配模型时，首开要把用户直接带到模型设置页（安装脚本不再在终端问 Key）
   const [needModelSetup, setNeedModelSetup] = useState(false);
 
@@ -84,11 +108,10 @@ export default function App() {
   //  - 新开标签/窗口 → 若「上次活跃会话」正被另一个存活标签占用（跨标签 BroadcastChannel 探测），
   //    则开一个新会话，避免两个窗口撞同一会话 → openclaw 并发 takeover 崩溃（后端还有 flock 兜底）。
   //  - 否则续上上次会话（保留「关页重开续接」的体验）。
-  const TAB_SESSION_KEY = 'easel_tab_session';
   useEffect(() => {
     const existing = loadSessions();
     let ch: BroadcastChannel | null = null;
-    try { ch = new BroadcastChannel('easel-session'); } catch { ch = null; }
+    try { ch = new BroadcastChannel(projectStorageKey('easel-session')); } catch { ch = null; }
 
     const settle = (id: string, sess: ChatSession[]) => {
       setSessions(sess);
@@ -97,6 +120,7 @@ export default function App() {
       if (s) setSelectedPersona(s.persona || '');
       try { sessionStorage.setItem(TAB_SESSION_KEY, id); } catch { /* ignore */ }
       ch?.postMessage({ type: 'claim', sessionId: id });
+      setNavigationReady(true);
     };
     const openNew = (sess: ChatSession[]) => {
       const ns = createSession();
@@ -166,9 +190,9 @@ export default function App() {
   useEffect(() => {
     // 先问 bootstrap：模型没配好时，画像推荐弹窗要让位 —— 一次只问用户一件事，
     // 而且画像配得再好，没有模型也对话不了。
-    const bootstrap = fetch('./api/settings/bootstrap')
+    const bootstrap = isPlatformAdmin ? projectFetch(projectUrl('./api/settings/bootstrap'))
       .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null);
+      .catch(() => null) : Promise.resolve(null);
 
     Promise.all([fetchStatus(), bootstrap])
       .then(([data, boot]) => {
@@ -177,21 +201,21 @@ export default function App() {
         setApiDirect(data.transport === 'api');
         setAgentRuntime(data.runtime || 'openclaw');
         const unconfigured = !!boot && boot.modelConfigured === false;
-        if (unconfigured) {
+        if (unconfigured && isPlatformAdmin) {
           // 直接打开设置面板（它默认就停在「模型配置 · 对话」页）
           setNeedModelSetup(true);
           setSettingsOpen(true);
           return;
         }
         // 首次使用：没有任何个性化画像 且 未看过引导 → 推荐配置
-        if ((data.personas || []).length === 0 && !onboardingSeen()) {
+        if (canOperate && (data.personas || []).length === 0 && !onboardingSeen()) {
           setShowRecommend(true);
         }
       })
       .catch(() => {
         setGatewayStatus('disconnected');
       });
-  }, []);
+  }, [canOperate, isPlatformAdmin]);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
 
@@ -203,10 +227,63 @@ export default function App() {
   const activeIdRef = useRef<string | null>(activeSessionId);
   useEffect(() => { activeIdRef.current = activeSessionId; }, [activeSessionId]);
 
+  useEffect(() => {
+    if (!canOperate || !navigationReady) return;
+    let cancelled = false;
+    void fetchChatSessions().then(result => {
+      if (cancelled) return;
+      const remote = Array.isArray(result.sessions) ? result.sessions : [];
+      setSessions(previous => {
+        const merged = mergeSessionCatalog(previous, remote, result.deletedIds);
+        saveSessions(merged);
+        return merged;
+      });
+      if (!sessionsRef.current.some(session => session.messages.length) && remote.some(session => session.messages.length)) {
+        const restored = remote.find(session => session.messages.length && !session.archived);
+        if (restored) { setActiveSessionId(restored.id); setSelectedPersona(restored.persona || ''); }
+      }
+      setHistoryNotice('');
+    }).catch(() => {
+      if (!cancelled) setHistoryNotice('服务器历史暂不可用，当前内容仍保存在此浏览器。');
+    }).finally(() => { if (!cancelled) setHistoryReady(true); });
+    return () => { cancelled = true; };
+  }, [canOperate, navigationReady]);
+
+  useEffect(() => {
+    if (!historyReady || !canOperate) return;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void syncChatSessions(sessions).then(result => {
+        if (cancelled) return;
+        setHistoryNotice('');
+        setSessions(previous => {
+          const merged = mergeSessionCatalog(previous, result.sessions || [], result.deletedIds);
+          if (merged.length === previous.length && merged.every((item, index) => item === previous[index])) return previous;
+          saveSessions(merged);
+          return merged;
+        });
+      }).catch(() => {
+        if (cancelled) return;
+        setHistoryNotice('历史尚未同步到服务器，请保留此浏览器；稍后会重新尝试。');
+        retryTimer = setTimeout(() => setHistoryRetry(value => value + 1), 5000);
+      });
+    }, 500);
+    return () => { cancelled = true; clearTimeout(timer); if (retryTimer) clearTimeout(retryTimer); };
+  }, [sessions, historyReady, canOperate, historyRetry]);
+
+  useEffect(() => {
+    const storageFailure = () => setHistoryNotice('浏览器存储已满，内容暂保留在本页内存，正在尝试服务器同步；请勿关闭页面。');
+    const retry = () => setHistoryRetry(value => value + 1);
+    window.addEventListener('easel:history-storage-error', storageFailure);
+    window.addEventListener('online', retry);
+    return () => { window.removeEventListener('easel:history-storage-error', storageFailure); window.removeEventListener('online', retry); };
+  }, []);
+
   // ---- 流式对话：状态与生命周期都放在 App（永不卸载），切页/切 ChatPage 都不中断/丢失 ----
   const [streams, setStreams] = useState<Record<string, StreamState>>({});
   const streamCtl = useRef<Record<string, AbortController>>({});
-  const streamAcc = useRef<Record<string, { content: string; thinking: string; steps: string[]; questions: ChatQuestion[] }>>({});
+  const streamAcc = useRef<Record<string, LiveTurnAccumulator>>({});
   const finalizers = useRef(new Map<string, { owner: object; finish: () => void; timer?: ReturnType<typeof setTimeout> }>());
   const answeredRef = useRef<Set<string>>(new Set());   // 已提交答案的 question id：重放/恢复不再重现
   // ---- 打字机：分批到达的 token 按节奏吐给界面 ----
@@ -251,11 +328,12 @@ export default function App() {
     setSessions((prev) => {
       const next = prev.map((s) =>
         s.id === sessionId
-          ? { ...s, messages: [...s.messages, msg], sessionKey: sessionKey || s.sessionKey, pendingTurnId: undefined }
+          ? { ...s, updated: nextSessionRevision(s), messages: [...s.messages, { ...msg, created: Date.now() }], sessionKey: sessionKey || s.sessionKey, pendingTurnId: undefined }
           : s);
       saveSessions(next);
       return next;
     });
+    if (activeIdRef.current !== sessionId) setUnreadSessions(previous => ({ ...previous, [sessionId]: true }));
   }, []);
 
   const clearStream = useCallback((sessionId: string) => {
@@ -280,22 +358,27 @@ export default function App() {
       owner,
       finish: () => {
         if (finalizers.current.get(sessionId) !== pending || streamAcc.current[sessionId] !== owner) return;
+        if (owner.stopRequested && !owner.stopConfirmed) return;
         finalizers.current.delete(sessionId);
         if (pending.timer) clearTimeout(pending.timer);
         flushTyping(sessionId);
         appendAssistant(sessionId, {
-          role: 'assistant', content: owner.content + (error ? `\n\nError: ${error.message}` : ''),
+          role: 'assistant', content: owner.content + (owner.stopConfirmed ? '\n\n_（已停止）_' : error ? `\n\nError: ${error.message}` : ''),
           thinking: owner.thinking || undefined, activity: owner.steps.join('\n') || undefined,
           questions: owner.questions.length ? [...owner.questions] : undefined,
+          events: owner.events.length ? [...owner.events] : undefined,
+          status: owner.stopConfirmed ? 'stopped' : error ? 'failed' : 'completed',
         }, sessionKey);
+        if (error) setSessions(previous => previous.map(session => session.id === sessionId
+          ? { ...session, queuePaused: true, updated: nextSessionRevision(session) } : session));
         clearStream(sessionId);
-        try { sessionStorage.removeItem(`easel_pending_turn:${sessionId}`); } catch {}
+        try { sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${sessionId}`)); } catch {}
       },
     };
     finalizers.current.set(sessionId, pending);
     const poll = () => {
       if (finalizers.current.get(sessionId) !== pending || streamAcc.current[sessionId] !== owner) return;
-      if (typingBuf.current[sessionId] && document.visibilityState !== 'hidden') {
+      if ((owner.stopRequested && !owner.stopConfirmed) || (typingBuf.current[sessionId] && document.visibilityState !== 'hidden')) {
         pending.timer = setTimeout(poll, 60);
       } else pending.finish();
     };
@@ -312,18 +395,20 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
 
-  const closeQuestion = useCallback((sessionId: string, closed: { id: string; status: string }) => {
+  const closeQuestion = useCallback((sessionId: string, closed: ChatQuestionClosed) => {
     const owner = streamAcc.current[sessionId];
-    if (owner) {
+    if (owner && owner.questions.some(question => question.id === closed.id)) {
       owner.questions = owner.questions.map(question => question.id === closed.id
-        ? { ...question, status: closed.status } : question);
+        ? { ...question, ...closed } : question);
       setStreams(previous => previous[sessionId] ? { ...previous,
-        [sessionId]: { ...previous[sessionId], questions: [...owner.questions] } } : previous);
+        [sessionId]: { ...previous[sessionId], questions: [...owner.questions],
+          lifecycle: previous[sessionId].lifecycle === 'stopping' || previous[sessionId].lifecycle === 'stop_failed'
+            ? previous[sessionId].lifecycle : owner.questions.some(question => !question.status || question.status === 'pending') ? 'waiting_input' : 'running' } } : previous);
     }
     setSessions(previous => {
-      const updated = previous.map(session => session.id === sessionId ? { ...session,
+      const updated = previous.map(session => session.id === sessionId ? { ...session, updated: nextSessionRevision(session),
         messages: session.messages.map(message => ({ ...message, questions: message.questions?.map(question =>
-          question.id === closed.id ? { ...question, status: closed.status } : question) })) } : session);
+          question.id === closed.id ? { ...question, ...closed } : question) })) } : session);
       saveSessions(updated);
       return updated;
     });
@@ -333,10 +418,21 @@ export default function App() {
     if (streamAcc.current[sessionId] !== owner || answeredRef.current.has(q.id) || owner.questions.some(question => question.id === q.id)) return;
     owner.questions.push({ ...q, status: q.status || 'pending' });
     setStreams(previous => previous[sessionId] ? { ...previous,
-      [sessionId]: { ...previous[sessionId], questions: [...owner.questions] } } : previous);
+      [sessionId]: { ...previous[sessionId], questions: [...owner.questions], lifecycle: 'waiting_input' } } : previous);
     void questionStatus([q.id]).then(states => {
       const status = states[q.id]?.status;
-      if (status && status !== 'pending' && status !== 'unknown') closeQuestion(sessionId, { id: q.id, status });
+      if (status && status !== 'pending' && status !== 'unknown') closeQuestion(sessionId, { id: q.id, ...states[q.id] });
+    });
+  }, [closeQuestion]);
+
+  const receiveAgentEvent = useCallback((sessionId: string, owner: typeof streamAcc.current[string], event: AgentEvent) => {
+    if (streamAcc.current[sessionId] !== owner) return;
+    owner.events = reduceAgentEvents(owner.events, event);
+    setStreams(previous => previous[sessionId] ? { ...previous,
+      [sessionId]: { ...previous[sessionId], events: [...owner.events], stillWorking: undefined } } : previous);
+    if (event.kind === 'decision' && event.questionId) closeQuestion(sessionId, {
+      id: event.questionId, status: event.status || 'answered', answers: event.answers,
+      resolvedBy: event.source || 'human',
     });
   }, [closeQuestion]);
 
@@ -346,16 +442,17 @@ export default function App() {
     text: string,
     persona: string | undefined,
     attachments: UploadedFile[] = [],
+    requestedTurnId?: string,
   ) => {
-    const turnId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    try { sessionStorage.setItem(`easel_pending_turn:${sessionId}`, turnId); } catch { /* ignore */ }
+    const turnId = requestedTurnId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try { sessionStorage.setItem(projectStorageKey(`easel_pending_turn:${sessionId}`), turnId); } catch { /* ignore */ }
     setSessions((prev) => {
-      const next = prev.map((s) => (s.id === sessionId ? { ...s, pendingTurnId: turnId } : s));
+      const next = prev.map((s) => (s.id === sessionId ? { ...s, pendingTurnId: turnId, updated: nextSessionRevision(s) } : s));
       saveSessions(next); return next;
     });
-    const owner = { content: '', thinking: '', steps: [] as string[], questions: [] as ChatQuestion[] };
+    const owner = { content: '', thinking: '', steps: [] as string[], questions: [] as ChatQuestion[], events: [] as AgentEvent[] };
     streamAcc.current[sessionId] = owner;
-    setStreams((prev) => ({ ...prev, [sessionId]: { content: '', thinking: '', activity: '', questions: [] } }));
+    setStreams((prev) => ({ ...prev, [sessionId]: { content: '', thinking: '', activity: '', questions: [], events: [], lifecycle: 'running' } }));
     // 打字机队列：流式事件按批到达（OpenClaw 攒批），前端按字符节奏显示，体验逐字浮现。
     typingBuf.current[sessionId] = '';
     startTypingPump(sessionId);
@@ -406,8 +503,9 @@ export default function App() {
       // onHeartbeat：防呆心跳（30s 静默）。只设独立的「未卡住」提示，绝不写 activity/thinking → 不顶掉真实状态。
       (note) => { if (streamAcc.current[sessionId] === owner) setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)); },
       (closed) => closeQuestion(sessionId, closed),
+      (event) => receiveAgentEvent(sessionId, owner, event),
     );
-  }, [finalizeStream, closeQuestion, receiveQuestion]);
+  }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent]);
 
   // 刷新/重开页面后按 eventId=0 重放当前 job，再继续实时 tail；旧任务无事件日志时退回最终快照。
   const resumePendingTurn = useCallback((sessionId: string) => {
@@ -416,8 +514,8 @@ export default function App() {
     const last = s?.messages[s.messages.length - 1];
     if (!last || last.role !== 'user') return;   // 没有悬空的用户消息 = 无需恢复
     let turnId = s.pendingTurnId;
-    try { turnId = sessionStorage.getItem(`easel_pending_turn:${sessionId}`) || turnId; } catch { /* use persisted id */ }
-    const owner = { content: '', thinking: '', steps: [] as string[], questions: [] as ChatQuestion[] };
+    try { turnId = sessionStorage.getItem(projectStorageKey(`easel_pending_turn:${sessionId}`)) || turnId; } catch { /* use persisted id */ }
+    const owner = { content: '', thinking: '', steps: [] as string[], questions: [] as ChatQuestion[], events: [] as AgentEvent[] };
     streamAcc.current[sessionId] = owner;
     setStreams((p) => ({ ...p, [sessionId]: { content: '', thinking: '', activity: '⏳ 正在接回上一轮结果…', questions: [] } }));
     typingBuf.current[sessionId] = '';
@@ -425,7 +523,7 @@ export default function App() {
     if (!turnId) {
       void fetchLastTurn(sessionId).then((r) => {
         if (streamAcc.current[sessionId] !== owner) return;
-        if (r.status === 'done') appendAssistant(sessionId, { role: 'assistant', content: r.text || '（无输出）' });
+        if (r.status === 'done') appendAssistant(sessionId, { role: 'assistant', content: r.text || '（无输出）', events: r.events, questions: r.questions });
         clearStream(sessionId);
       }).catch(() => { if (streamAcc.current[sessionId] === owner) clearStream(sessionId); });
       return;
@@ -459,7 +557,7 @@ export default function App() {
         void fetchLastTurn(sessionId, turnId).then((r) => {
           if (streamAcc.current[sessionId] !== owner) return;
           if (r.status === 'done') {
-            appendAssistant(sessionId, { role: 'assistant', content: r.text || '（无输出）' });
+            appendAssistant(sessionId, { role: 'assistant', content: r.text || '（无输出）', events: r.events, questions: r.questions });
           } else {
             appendAssistant(sessionId, {
               role: 'assistant',
@@ -467,7 +565,7 @@ export default function App() {
             });
           }
           clearStream(sessionId);
-          try { sessionStorage.removeItem(`easel_pending_turn:${sessionId}`); } catch { /* ignore */ }
+          try { sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${sessionId}`)); } catch { /* ignore */ }
         }).catch(() => {
           if (streamAcc.current[sessionId] !== owner) return;
           appendAssistant(sessionId, {
@@ -483,13 +581,14 @@ export default function App() {
       // onHeartbeat：同上，独立的「未卡住」提示，不覆盖 activity/thinking。
       (note) => { if (streamAcc.current[sessionId] === owner) setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)); },
       (closed) => closeQuestion(sessionId, closed),
+      (event) => receiveAgentEvent(sessionId, owner, event),
     );
-  }, [appendAssistant, clearStream, finalizeStream, closeQuestion, receiveQuestion]);
+  }, [appendAssistant, clearStream, finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent]);
 
   // 活跃会话确定后（含挂载首刷）尝试恢复它悬空的一轮
   useEffect(() => {
     if (activeSessionId) resumePendingTurn(activeSessionId);
-  }, [activeSessionId, resumePendingTurn]);
+  }, [activeSessionId, activeSession?.pendingTurnId, activeSession?.updated, historyReady, resumePendingTurn]);
 
   // 落用户消息（可选先把 messages 截断到 truncateAt）→ 启动流。retry/edit 都走这里。
   const sendUserAndStream = useCallback((
@@ -498,21 +597,24 @@ export default function App() {
     attachments: UploadedFile[] = [],
     legacyAgentText?: string,
     truncateAt?: number,
+    requestedTurnId?: string,
   ) => {
     const visible = displayText.trim();
     const agentMessage = (legacyAgentText || displayText).trim();
-    if ((!agentMessage && attachments.length === 0) || streamCtl.current[sessionId] || streamAcc.current[sessionId]) return;
+    if ((!agentMessage && attachments.length === 0) || streamCtl.current[sessionId] || streamAcc.current[sessionId]) return false;
     const cur = sessionsRef.current.find((s) => s.id === sessionId);
-    const persona = cur?.persona || selectedPersona || undefined;
+    const persona = cur ? cur.persona : selectedPersona || undefined;
     setSessions((prev) => {
       const next = prev.map((s) => {
         if (s.id !== sessionId) return s;
         const base = truncateAt != null ? s.messages.slice(0, truncateAt) : s.messages;
         const updated = {
           ...s,
+          updated: nextSessionRevision(s),
           messages: [...base, {
             role: 'user',
             content: visible,
+            created: Date.now(),
             ...(attachments.length ? { attachments } : {}),
             ...(legacyAgentText && legacyAgentText !== visible ? { agentContent: legacyAgentText } : {}),
           } as ChatMessage],
@@ -523,12 +625,56 @@ export default function App() {
       saveSessions(next);
       return next;
     });
-    startStream(sessionId, agentMessage, persona, attachments);
+    startStream(sessionId, agentMessage, persona, attachments, requestedTurnId);
+    return true;
   }, [selectedPersona, startStream]);
 
   const handleSendMessage = useCallback((sessionId: string, displayText: string, attachments?: UploadedFile[]) => {
-    sendUserAndStream(sessionId, displayText, attachments);
+    const session = sessionsRef.current.find(item => item.id === sessionId);
+    if (!session || (!displayText.trim() && !attachments?.length)) return false;
+    if (streamCtl.current[sessionId] || streamAcc.current[sessionId] || session.queued?.length) {
+      const queued = { id: crypto.randomUUID(), text: displayText, attachments, created: Date.now() };
+      setSessions(previous => {
+        const next = previous.map(item => item.id === sessionId ? { ...enqueueMessage(item, queued), queuePaused: false } : item);
+        saveSessions(next);
+        return next;
+      });
+      return true;
+    }
+    return sendUserAndStream(sessionId, displayText, attachments);
   }, [sendUserAndStream]);
+
+  // Queue entries survive navigation/reload. A stopped or failed queue needs an explicit resume.
+  useEffect(() => {
+    if (!historyReady || !canOperate) return;
+    for (const session of sessions) {
+      if (session.pendingTurnId && session.queued?.length) resumePendingTurn(session.id);
+      const next = nextQueuedMessage(session, Boolean(streamAcc.current[session.id] || streamCtl.current[session.id] || session.pendingTurnId));
+      if (!next) continue;
+      setSessions(previous => {
+        const updated = previous.map(item => item.id === session.id
+          ? { ...item, queued: item.queued?.filter(entry => entry.id !== next.id), updated: nextSessionRevision(item) } : item);
+        saveSessions(updated);
+        return updated;
+      });
+      sendUserAndStream(session.id, next.text, next.attachments || [], undefined, undefined, `queue-${next.id}`);
+    }
+  }, [sessions, streams, historyReady, canOperate, resumePendingTurn, sendUserAndStream]);
+
+  const removeQueued = useCallback((sessionId: string, messageId: string) => {
+    setSessions(previous => {
+      const next = previous.map(session => session.id === sessionId
+        ? { ...session, queued: session.queued?.filter(message => message.id !== messageId), updated: nextSessionRevision(session) } : session);
+      saveSessions(next); return next;
+    });
+  }, []);
+
+  const resumeQueue = useCallback((sessionId: string) => {
+    setSessions(previous => {
+      const next = previous.map(session => session.id === sessionId ? { ...session, queuePaused: false, updated: nextSessionRevision(session) } : session);
+      saveSessions(next); return next;
+    });
+  }, []);
 
   // 重试/编辑重发：从该用户消息处截断（丢弃它及其之后），用 text 重新发起。
   const handleResend = useCallback((
@@ -551,38 +697,61 @@ export default function App() {
     sendUserAndStream(ns.id, prompt);
   }, [selectedPersona, sendUserAndStream]);
 
-  const handleStopStream = useCallback((sessionId: string) => {
+  const handleStopStream = useCallback(async (sessionId: string) => {
+    setSessions(previous => {
+      const next = previous.map(session => session.id === sessionId ? { ...session, queuePaused: true, updated: nextSessionRevision(session) } : session);
+      saveSessions(next); return next;
+    });
     const pending = finalizers.current.get(sessionId);
     if (pending) { pending.finish(); return; }
+    const owner = streamAcc.current[sessionId];
+    if (!owner) return;
+    owner.stopRequested = true;
+    setStreams(previous => previous[sessionId] ? { ...previous,
+      [sessionId]: { ...previous[sessionId], lifecycle: 'stopping', activity: '正在停止，等待执行引擎确认…' } } : previous);
+    let receipt: 'stopped' | 'already_finished';
+    try { receipt = await confirmChatStop(() => stopChat(sessionId)); }
+    catch (error) {
+      owner.stopRequested = false;
+      finalizers.current.get(sessionId)?.finish();
+      if (streamAcc.current[sessionId] === owner) setStreams(previous => previous[sessionId] ? { ...previous,
+        [sessionId]: { ...previous[sessionId], lifecycle: 'stop_failed', activity: error instanceof Error ? error.message : '停止失败，可再次尝试。' } } : previous);
+      return;
+    }
+    if (streamAcc.current[sessionId] !== owner) return;
+    owner.stopConfirmed = receipt === 'stopped';
+    owner.stopRequested = false;
+    const completed = finalizers.current.get(sessionId);
+    if (completed) { completed.finish(); return; }
     streamCtl.current[sessionId]?.abort();
-    // 告诉后端**真正终止**这一轮 agent 并释放会话锁——否则后端进程还在跑、占着锁，下一句会被拦
-    void stopChat(sessionId).catch(() => { /* 后端可能已结束，忽略 */ });
     flushTyping(sessionId);   // 停止时立刻把队列余字吐完，保证已到内容不丢
     const a = streamAcc.current[sessionId];
-    if (a && (a.content || a.thinking || a.steps.length)) {
+    if (a) {
       appendAssistant(sessionId, {
         role: 'assistant',
-        content: (a.content || '') + '\n\n_（已停止）_',
+        content: (a.content || '') + (receipt === 'stopped' ? '\n\n_（已停止）_' : ''),
         thinking: a.thinking || undefined,
         activity: a.steps.join('\n') || undefined,
         questions: a.questions.length ? [...a.questions] : undefined,
+        events: a.events.length ? [...a.events] : undefined,
+        status: receipt === 'stopped' ? 'stopped' : 'completed',
       });
     }
     clearStream(sessionId);
     // 关键：清掉「本轮进行中」标记，否则下一句被判为「上一条还没跑完」拦下
     setSessions((prev) => {
-      const next = prev.map((s) => (s.id === sessionId ? { ...s, pendingTurnId: undefined } : s));
+      const next = prev.map((s) => (s.id === sessionId ? { ...s, pendingTurnId: undefined, updated: nextSessionRevision(s) } : s));
       saveSessions(next);
       return next;
     });
-    try { sessionStorage.removeItem(`easel_pending_turn:${sessionId}`); } catch { /* ignore */ }
+    try { sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${sessionId}`)); } catch { /* ignore */ }
   }, [appendAssistant, clearStream]);
 
   const handleSessionRename = useCallback((id: string, title: string) => {
     const t = title.trim();
     if (!t) return;
     setSessions((prev) => {
-      const next = prev.map((s) => (s.id === id ? { ...s, title: t } : s));
+      const next = prev.map((s) => (s.id === id ? { ...s, title: t, updated: nextSessionRevision(s) } : s));
       saveSessions(next);
       return next;
     });
@@ -590,7 +759,7 @@ export default function App() {
 
   const handleSessionArchive = useCallback((id: string, archived: boolean) => {
     setSessions((prev) => {
-      const next = prev.map((s) => (s.id === id ? { ...s, archived } : s));
+      const next = prev.map((s) => (s.id === id ? { ...s, archived, updated: nextSessionRevision(s) } : s));
       saveSessions(next);
       return next;
     });
@@ -621,6 +790,7 @@ export default function App() {
 
   const handleSessionSelect = useCallback((id: string) => {
     setActiveSessionId(id);
+    setUnreadSessions(previous => ({ ...previous, [id]: false }));
     const target = sessions.find(s => s.id === id);
     if (target) {
       setSelectedPersona(target.persona || '');
@@ -629,7 +799,8 @@ export default function App() {
   }, [sessions]);
 
   const handleSessionDelete = useCallback((id: string) => {
-    if (!window.confirm('确定删除这条对话？')) return;
+    if (!window.confirm('删除 Easel 中的这条对话？引擎原生历史可能仍保留。')) return;
+    void deleteChatSession(id).catch(() => setHistoryNotice('服务器删除尚未确认，请稍后重试。'));
 
     const target = sessionsRef.current.find((s) => s.id === id);
     const wasRunning = Boolean(streamCtl.current[id]);
@@ -638,7 +809,7 @@ export default function App() {
       : Promise.resolve({ stopped: false });
     streamCtl.current[id]?.abort();   // 删除正在流式的会话时中止其流
     clearStream(id);
-    try { sessionStorage.removeItem(`easel_pending_turn:${id}`); } catch { /* ignore */ }
+    try { sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${id}`)); } catch { /* ignore */ }
 
     if (target?.sessionKey) {
       // Do not delete OpenClaw's session record while its agent is still
@@ -663,6 +834,13 @@ export default function App() {
       return updated;
     });
   }, [activeSessionId, clearStream]);
+
+  const handleSessionPin = useCallback((id: string, pinned: boolean) => {
+    setSessions(previous => {
+      const next = previous.map(session => session.id === id ? { ...session, pinned, updated: nextSessionRevision(session) } : session);
+      saveSessions(next); return next;
+    });
+  }, []);
 
   // 首次引导：跳过（用通用模式）
   const dismissRecommend = useCallback(() => {
@@ -705,6 +883,10 @@ export default function App() {
 
   // 流式生命周期在 App，页面切换随意——ChatPage 可自由卸载/重挂，回来从 props 读流式态即可。
   const renderPage = () => {
+    if ((!canOperate && ['chat', 'publish', 'breakdown', 'skills'].includes(currentPage))
+        || (!isPlatformAdmin && currentPage === 'skills')) {
+      return <div className="dash-empty">{canOperate ? '此工具需要平台管理员权限。' : '当前 IP 的查看者可浏览内容，运营操作需要 operator 或 owner 角色。'}<button className="btn" onClick={() => setCurrentPage('dashboard')}>返回工作台</button></div>;
+    }
     switch (currentPage) {
       case 'dashboard':
         return (
@@ -724,6 +906,11 @@ export default function App() {
             key={activeSession.id}
             session={activeSession}
             stream={streams[activeSession.id]}
+            queue={activeSession.queued || []}
+            queuePaused={activeSession.queuePaused}
+            onRemoveQueued={id => removeQueued(activeSession.id, id)}
+            onResumeQueue={() => resumeQueue(activeSession.id)}
+            historyNotice={historyNotice}
             onSend={(displayText, attachments) => handleSendMessage(activeSession.id, displayText, attachments)}
             onStop={() => handleStopStream(activeSession.id)}
             onResend={(userIndex, displayText, attachments, legacyAgentText) => handleResend(
@@ -732,20 +919,9 @@ export default function App() {
             onQuestionAnswered={(qid) => {
               answeredRef.current.add(qid);
               closeQuestion(activeSession.id, { id: qid, status: 'answered' });
-              // 已答题从流式状态中移除——切走/切回会话都不再重现（组件内部 state 会在重挂时清零，只藏不移除没用）
-              const a = streamAcc.current[activeSession.id];
-              if (a) {
-                const before = a.questions.length;
-                const kept = a.questions.filter((q) => q.id !== qid);
-                if (kept.length !== before) {
-                  a.questions = kept;
-                  setStreams((p) => {
-                    const cur = p[activeSession.id];
-                    if (!cur) return p;
-                    return { ...p, [activeSession.id]: { ...cur, questions: [...kept] } };
-                  });
-                }
-              }
+              void questionStatus([qid]).then(states => {
+                if (states[qid]) closeQuestion(activeSession.id, { id: qid, ...states[qid] });
+              });
             }}
             onQuestionClosed={(id, status) => closeQuestion(activeSession.id, { id, status })}
           />
@@ -762,6 +938,10 @@ export default function App() {
         return <BreakdownPage persona={selectedPersona} />;
       case 'skills':
         return <SkillPage persona={selectedPersona} />;
+      case 'workshop':
+        return <Suspense fallback={<div className="dash-empty">正在打开视频工坊…</div>}><VideoWorkshopPage key={workshopEntry} /></Suspense>;
+      case 'interactions':
+        return <Suspense fallback={<div className="dash-empty">正在打开互动中心…</div>}><InteractionCenterPage key={interactionEntry} /></Suspense>;
       case 'outputs':
         return <OutputsPage jumpPath={outputsJump} onJumpHandled={clearOutputsJump} />;
       case 'accounts':
@@ -780,7 +960,7 @@ export default function App() {
     if (cur && cur.messages.length === 0) {
       setSessions((prev) => {
         const updated = prev.map((s) =>
-          s.id === activeSessionId ? { ...s, persona: persona || undefined } : s);
+          s.id === activeSessionId ? { ...s, persona: persona || undefined, updated: nextSessionRevision(s) } : s);
         saveSessions(updated);
         return updated;
       });
@@ -799,7 +979,11 @@ export default function App() {
     <div className="app-layout">
       <Sidebar
         currentPage={currentPage}
-        onPageChange={setCurrentPage}
+        onPageChange={page => {
+          if (page === 'workshop') setWorkshopEntry(entry => entry + 1);
+          if (page === 'interactions') setInteractionEntry(entry => entry + 1);
+          setCurrentPage(page);
+        }}
         personas={personas}
         selectedPersona={selectedPersona}
         onPersonaChange={handlePersonaChange}
@@ -810,6 +994,13 @@ export default function App() {
         onSessionDelete={handleSessionDelete}
         onSessionRename={handleSessionRename}
         onSessionArchive={handleSessionArchive}
+        onSessionPin={handleSessionPin}
+        sessionStates={Object.fromEntries(sessions.map(session => {
+          const stream = streams[session.id];
+          const state = stream ? stream.lifecycle === 'waiting_input' ? 'waiting' : stream.lifecycle === 'stopping' ? 'stopping' : 'running'
+            : unreadSessions[session.id] ? 'completed-unread' : session.messages.at(-1)?.status === 'failed' ? 'failed' : '';
+          return [session.id, state];
+        }))}
         onNewChat={handleNewChat}
         gatewayStatus={gatewayStatus}
         apiDirect={apiDirect}
@@ -817,7 +1008,8 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
       <main className="main-content">
-        {(['trends', 'ideas', 'calendar', 'publish', 'breakdown'] as Page[]).includes(currentPage) && (
+        <ProjectBreadcrumb />
+        {(['trends', 'ideas', 'breakdown'] as Page[]).includes(currentPage) && (
           <SubNav current={currentPage} onNavigate={setCurrentPage} />
         )}
         <div className="page-host">
@@ -849,7 +1041,7 @@ export default function App() {
       )}
 
       {/* 设置（统一入口：模型配置 · 环境安装 · 更多设置） */}
-      {settingsOpen && (
+      {settingsOpen && isPlatformAdmin && (
         <SettingsPanel
           banner={needModelSetup
             ? '还没有配置模型 —— 填一个 API Key 才能开始对话。保存后会自动同步配置并重启网关。'

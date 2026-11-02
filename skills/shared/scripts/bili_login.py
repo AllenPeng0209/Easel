@@ -18,6 +18,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -33,7 +34,7 @@ POLL_URL = "https://passport.bilibili.com/x/passport-tv-login/qrcode/poll"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_QR_OUT = PROJECT_ROOT / "outputs" / "_login" / "bilibili.png"
-DEFAULT_COOKIE = PROJECT_ROOT / "cookies.json"
+DEFAULT_COOKIE = Path(os.environ.get("EASEL_ROOT") or PROJECT_ROOT) / "cookies.json"
 
 
 def _die(msg: str, code: int = 1) -> None:

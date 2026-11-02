@@ -556,7 +556,7 @@ def test_chat_stop_waits_for_process_and_supervisor_cleanup():
         return result, proc
 
     result, proc = asyncio.run(scenario())
-    assert result == {"stopped": True}
+    assert result == {"stopped": True, "status": "stopped"}
     assert proc.terminated and proc.poll() == -15
 
 

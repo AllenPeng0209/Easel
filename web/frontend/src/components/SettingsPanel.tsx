@@ -64,6 +64,11 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
   const [chan, setChan] = useState<Chan>('chat');
   const [harness, setHarness] = useState('');
   const [selectedHarness, setSelectedHarness] = useState('');
+  const nativeHarness = ['codex', 'opencode', 'acp'].includes(selectedHarness);
+  const nativeLabel = selectedHarness === 'codex' ? 'Codex' : selectedHarness === 'opencode' ? 'OpenCode' : '通用 ACP';
+  const connectionBanner = nativeHarness
+    ? `对话引擎 ${nativeLabel}${selectedHarness === harness ? ' 已保存' : ' 当前为配置预览，尚未切换'}。使用本机原生登录，无需在此填写 API Key。${selectedHarness === harness ? '请新建对话并确认收到真实回复，以验证连接可用。' : '请先「保存底座」，再新建对话验证真实回复。'}`
+    : banner;
 
   // ── 环境安装（引擎真实数据） ──────────────────────────────
   const [tools, setTools] = useState<EnvTool[]>([]);
@@ -699,16 +704,17 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
           </div>
         </div>
 
-        {banner && (
+        {connectionBanner && (
           <div
             role="status"
             style={{
               margin: '0 16px 12px', padding: '10px 12px', borderRadius: 8,
-              background: 'var(--warn-bg, #fff7ed)', color: 'var(--warn-fg, #9a3412)',
-              border: '1px solid var(--warn-border, #fed7aa)', fontSize: 13, lineHeight: 1.5,
+              background: nativeHarness ? 'var(--accent-soft)' : 'var(--warn-bg, #fff7ed)',
+              color: nativeHarness ? 'var(--text)' : 'var(--warn-fg, #9a3412)',
+              border: `1px solid ${nativeHarness ? 'var(--border)' : 'var(--warn-border, #fed7aa)'}`, fontSize: 13, lineHeight: 1.5,
             }}
           >
-            {banner}
+            {connectionBanner}
           </div>
         )}
 

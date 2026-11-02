@@ -1,3 +1,4 @@
+import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -24,7 +25,7 @@ function load(initial) {
   const localStorage = storage(initial);
   const sessionStorage = storage({ easel_tab_session: 'original', 'easel_pending_turn:original': 'pending' });
   const exports = {};
-  runInNewContext(outputText, { exports, localStorage, sessionStorage, Date, Math });
+  runWithProjectScope(outputText, { exports, localStorage, sessionStorage, Date, Math, require: () => projectScope });
   return { exports, localStorage, sessionStorage };
 }
 

@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(os.environ.get("EASEL_ROOT") or Path(__file__).resolve().parents[3])
 ANALYTICS_DIR = PROJECT_ROOT / "outputs" / "_analytics"
 # 分层保留：近 KEEP_FULL_DAYS 天全部变化一条不丢；90~DAILY_DAYS 天每天≤1条；更老每周≤1条。
 # 既留住 日/周/月/年 对比所需的老基线，又让总量恒定在几百条(几十KB)、用多年不膨胀。
@@ -340,7 +340,7 @@ def record_snapshot(platform: str, snap: dict) -> None:
 # 浏览器
 # --------------------------------------------------------------------------- #
 def _profile_dir(platform: str, base: str | None) -> Path:
-    root = Path(base).expanduser() if base else Path.home() / ".easel-browser-profiles"
+    root = Path(base or os.environ.get("EASEL_BROWSER_PROFILES", "")).expanduser() if (base or os.environ.get("EASEL_BROWSER_PROFILES")) else Path.home() / ".easel-browser-profiles"
     return root / PLATFORMS[platform]["profile"]
 
 

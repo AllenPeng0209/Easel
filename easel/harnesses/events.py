@@ -1,0 +1,241 @@
+"""Native protocol -> durable, bounded conversation events.
+
+The stable call identity, paired lifecycle and parent edge follow the DeepSeek
+Harness conversation contract (MIT, Copyright (c) 2026 DeepSeek):
+  packages/client/ui-chat/src/client/model/tool-call-tree.ts
+  packages/client/ui-tool/src/client/tool/models/tool-call-model.ts
+at ce7073d51254c26cd63b22a60835b8f948deb447.  Native Codex/ACP field
+translation and credential filtering are Easel's host boundary adaptation.
+The upstream notice is retained in integrations/deepseek-harness/LICENSE.
+"""
+from __future__ import annotations
+
+import re
+import time
+import uuid
+from collections.abc import Callable
+
+
+_SECRET_KEY = re.compile(
+    r"(?:api[_-]?key|(?:id|access|refresh|session|auth)[_-]?token|secret|password|passwd|"
+    r"authorization|cookie|credential|private[_-]?key|session[_-]?token|^token$|^auth$)", re.I)
+_ASSIGNMENT = re.compile(
+    r"(\b(?:[\w-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|passwd|"
+    r"cookie|authorization|private[_-]?key)[\w-]*|token)\b[\"']?\s*[:=]\s*)"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)", re.I)
+_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]+=*", re.I)
+_API_TOKEN = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}")
+_URL_PASSWORD = re.compile(r"(https?://)[^\s/@:]+:[^\s/@]+@", re.I)
+_PRIVATE_KEY = re.compile(
+    r"-----BEGIN (?P<label>[A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?(?:-----END (?P=label)-----|$)")
+_PRIVATE_KEY_START = re.compile(r"-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----")
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
+MAX_TEXT = 32000
+_TRUNCATED = "\n[truncated: remaining content omitted]"
+
+
+def _now() -> int:
+    return int(time.time() * 1000)
+
+
+class EventProjector:
+    """Fold partial native updates, then emit complete safe call snapshots."""
+
+    def __init__(self, emit: Callable, env: dict[str, str]):
+        self.emit = emit
+        self.calls: dict[str, dict] = {}
+        self.private_streams: dict[str, str] = {}
+        self.secrets = sorted({value for key, value in env.items()
+                               if re.search(r"KEY|TOKEN|SECRET|PASSWORD|COOKIE|CREDENTIAL", key, re.I) and isinstance(value, str)
+                               and 8 <= len(value) <= 65536}, key=len, reverse=True)
+
+    def _safe(self, value):
+        truncated = False
+        remaining = 1000
+
+        def clean(item, depth=0):
+            nonlocal truncated, remaining
+            remaining -= 1
+            if remaining < 0 or depth > 10:
+                truncated = True
+                return "[truncated]"
+            if isinstance(item, str):
+                text = item
+                for secret in self.secrets:
+                    text = text.replace(secret, "[REDACTED]")
+                text = _BEARER.sub("Bearer [REDACTED]", text)
+                text = _API_TOKEN.sub("[REDACTED]", text)
+                text = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", text)
+                text = _JWT.sub("[REDACTED TOKEN]", text)
+                text = _URL_PASSWORD.sub(r"\1[REDACTED]@", text)
+                text = _ASSIGNMENT.sub(r"\1[REDACTED]", text)
+                if len(text) > MAX_TEXT:
+                    truncated = True
+                    return text[:MAX_TEXT] + _TRUNCATED
+                return text
+            if item is None or isinstance(item, (bool, int, float)):
+                return item
+            if isinstance(item, dict):
+                result = {}
+                for index, (key, val) in enumerate(item.items()):
+                    if index >= 100 or remaining < 0:
+                        truncated = True
+                        result["_truncated"] = True
+                        break
+                    label = str(key)[:240]
+                    result[label] = "[REDACTED]" if _SECRET_KEY.search(label) else clean(val, depth + 1)
+                return result
+            if isinstance(item, (list, tuple)):
+                result = [clean(value, depth + 1) for value in item[:100]]
+                if len(item) > 100:
+                    truncated = True
+                    result.append("[truncated]")
+                return result
+            # Native JSON should never reach this branch. A bounded name keeps
+            # malformed values inspectable without invoking arbitrary __str__.
+            return f"[unsupported {type(item).__name__}]"
+
+        return clean(value), truncated
+
+    def event(self, kind: str, **fields):
+        payload, truncated = self._safe({"id": uuid.uuid4().hex, "kind": kind, **fields})
+        if truncated:
+            payload["truncated"] = True
+        self.emit("agent_event", payload)
+
+    def activity(self, text: str):
+        """Keep the legacy textual summary on the same credential boundary."""
+        safe, _ = self._safe(text)
+        self.emit("activity", safe)
+
+    def tool(self, call_id, **fields):
+        if not isinstance(call_id, str) or not call_id or len(call_id) > 240:
+            return
+        previous = self.calls.get(call_id, {})
+        merged = {**previous, "callId": call_id, **{key: value for key, value in fields.items() if value is not None}}
+        if merged.get("status") == "running" and "startedAt" not in merged:
+            merged["startedAt"] = _now()
+        if merged.get("status") in ("completed", "failed", "interrupted") and "completedAt" not in merged:
+            merged["completedAt"] = _now()
+        # Store only the safe, bounded state too: an unlimited stream cannot
+        # retain secrets or accumulate unbounded output between notifications.
+        safe, truncated = self._safe(merged)
+        if truncated or previous.get("truncated"):
+            safe["truncated"] = True
+        self.calls[call_id] = safe
+        self.event("tool", **safe)
+
+    @staticmethod
+    def _status(value, completed=False):
+        status = str(value or "").lower().replace("_", "")
+        if status in ("failed", "error", "declined", "rejected"):
+            return "failed"
+        if status in ("interrupted", "cancelled", "canceled", "stopped"):
+            return "interrupted"
+        if status in ("completed", "success", "succeeded"):
+            return "completed"
+        if status in ("pending", "preparing", "queued"):
+            return "preparing"
+        return "completed" if completed else "running"
+
+    def codex(self, method: str, params: dict):
+        if method == "turn/plan/updated":
+            self.event("plan", steps=params.get("plan") or [], explanation=params.get("explanation"))
+            return
+        if method == "thread/tokenUsage/updated":
+            usage = params.get("tokenUsage") or {}
+            self.event("usage", usage=usage, capacity=usage.get("modelContextWindow"))
+            return
+        if method in ("item/commandExecution/outputDelta", "item/fileChange/outputDelta"):
+            identifier = params.get("itemId")
+            prior = self.calls.get(identifier, {})
+            delta = params.get("delta")
+            if isinstance(delta, str):
+                existing = prior.get("output") if isinstance(prior.get("output"), str) else ""
+                private_label = self.private_streams.get(identifier)
+                if private_label:
+                    end = f"-----END {private_label}-----"
+                    if end in delta:
+                        delta = delta.split(end, 1)[1]
+                        self.private_streams.pop(identifier, None)
+                    else:
+                        delta = ""
+                pending = _PRIVATE_KEY_START.search(existing + delta)
+                if pending and f"-----END {pending[1]}-----" not in (existing + delta)[pending.end():]:
+                    self.private_streams[identifier] = pending[1]
+                self.tool(identifier, name=prior.get("name", "bash" if "commandExecution" in method else "apply_patch"),
+                          status=prior.get("status", "running"), output=existing + delta)
+            return
+        if method == "item/mcpToolCall/progress":
+            identifier = params.get("itemId")
+            prior = self.calls.get(identifier, {})
+            self.tool(identifier, name=prior.get("name", "mcp"), status=prior.get("status", "running"),
+                      progress=params.get("message"))
+            return
+        if method not in ("item/started", "item/completed"):
+            return
+        item = params.get("item") or {}
+        if not isinstance(item, dict):
+            return
+        kind = item.get("type")
+        completed = method == "item/completed"
+        if kind in ("agentMessage", "userMessage", "reasoning", "hookPrompt", "enteredReviewMode", "exitedReviewMode"):
+            return
+        if kind == "plan":
+            self.event("plan", callId=item.get("id"), text=item.get("text", ""),
+                       status="completed" if completed else "running")
+            return
+        if kind == "contextCompaction":
+            self.event("context", callId=item.get("id"), status="completed" if completed else "running",
+                       summary="上下文已整理" if completed else "正在整理上下文")
+            return
+        identifier = item.get("id")
+        status = self._status(item.get("status"), completed)
+        fields = {"name": item.get("tool") or kind or "tool", "status": status,
+                  "parentCallId": item.get("parentCallId") or params.get("parentCallId"),
+                  "startedAt": params.get("startedAtMs"), "completedAt": params.get("completedAtMs"),
+                  "durationMs": item.get("durationMs")}
+        if kind == "commandExecution":
+            fields.update(name="bash", input={"command": item.get("command", ""), "cwd": item.get("cwd")},
+                          output=item.get("aggregatedOutput"), exitCode=item.get("exitCode"))
+            if completed and status != "interrupted" and item.get("exitCode") not in (None, 0):
+                fields["status"] = "failed"
+        elif kind == "fileChange":
+            fields.update(name="apply_patch", input={"changes": item.get("changes") or []})
+        elif kind in ("mcpToolCall", "dynamicToolCall"):
+            fields.update(input=item.get("arguments"),
+                          output=item.get("result") if kind == "mcpToolCall" else item.get("contentItems"))
+            if item.get("error"):
+                fields.update(status="failed", error=item["error"])
+            if isinstance(item.get("result"), dict) and item["result"].get("isError") is True:
+                fields["status"] = "failed"
+            if item.get("success") is False:
+                fields["status"] = "failed"
+        elif kind == "webSearch":
+            fields.update(name="web_search", input={"query": item.get("query"), "action": item.get("action")},
+                          output=item.get("results"))
+        elif kind == "imageView":
+            fields.update(name="read_image", input={"path": item.get("path")})
+        elif kind == "collabAgentToolCall":
+            fields.update(input={"prompt": item.get("prompt"), "model": item.get("model")},
+                          output={"agents": item.get("agentsStates"), "threadIds": item.get("receiverThreadIds")})
+        else:
+            fields.update(input={key: value for key, value in item.items()
+                                 if key not in ("id", "type", "status", "result", "output", "parentCallId")},
+                          output=item.get("result", item.get("output")))
+        self.tool(identifier, **fields)
+
+    def acp(self, update: dict):
+        kind = update.get("sessionUpdate")
+        if kind == "plan":
+            self.event("plan", steps=update.get("entries") or [])
+            return
+        if kind not in ("tool_call", "tool_call_update"):
+            return
+        identifier = update.get("toolCallId")
+        prior = self.calls.get(identifier, {})
+        self.tool(identifier, name=update.get("kind") or prior.get("name") or update.get("title") or "tool",
+                  title=update.get("title"),
+                  status=self._status(update.get("status")) if update.get("status") is not None else prior.get("status", "preparing"),
+                  input=update.get("rawInput"), output=update.get("rawOutput", update.get("content")),
+                  locations=update.get("locations"), parentCallId=update.get("parentCallId"))

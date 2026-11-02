@@ -1,8 +1,9 @@
+import { projectStorageKey } from './projectScope';
 // whoami 登录态：缓存 + 开页后台自愈校验。账号页与工作台「创作数据」卡片共用，
 // 避免对同一平台在 TTL 内重复起 headless 浏览器。缓存落 localStorage，条目带 ts。
 import { accountWhoami, type AccountWhoami } from './api';
 
-const KEY = 'easel_whoami_v4';
+const KEY = projectStorageKey('easel_whoami_v4');
 export const WHOAMI_TTL_MS = 600_000; // 10 分钟，与后端 WHOAMI_TTL 对齐
 
 export type WhoamiEntry = AccountWhoami & { ts: number };

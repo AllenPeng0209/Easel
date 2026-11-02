@@ -15,22 +15,28 @@ function visit(node) {
 }
 visit(parsed);
 
-function setup() {
-  const owner = { content: 'shown', thinking: 'thinking', steps: ['step'], questions: [{ id: 'question' }] };
+function setup(stopReceipt) {
+  const owner = { content: 'shown', thinking: 'thinking', steps: ['step'], questions: [{ id: 'question' }], events: [] };
   const streamAcc = { current: { session: owner } };
   const finalizers = { current: new Map() };
   const typingBuf = { current: { session: ' buffered' } };
   const callbacks = [];
   const messages = [];
   const stops = [];
+  let aborted = 0;
+  const control = {};
+  runInNewContext(ts.transpileModule(readFileSync(new URL('../../web/frontend/src/lib/chatControl.ts', import.meta.url), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText, { exports: control, Date, Error });
   const context = {
     useCallback: callback => callback, finalizers, streamAcc, typingBuf,
-    streamCtl: { current: { session: { abort() {} } } },
+    streamCtl: { current: { session: { abort() { aborted += 1; } } } },
     document: { visibilityState: 'visible' },
     setTimeout: callback => { callbacks.push(callback); return callbacks.length; },
     clearTimeout() {}, sessionStorage: { removeItem() {} },
     setSessions: update => update([]), saveSessions() {},
-    stopChat: session => { stops.push(session); return Promise.resolve({ stopped: true }); },
+    setStreams() {}, confirmChatStop: control.confirmChatStop,
+    stopChat: session => { stops.push(session); return stopReceipt || Promise.resolve({ stopped: true, status: 'stopped' }); },
     flushTyping: session => {
       const current = streamAcc.current[session];
       if (current) current.content += typingBuf.current[session] || '';
@@ -44,7 +50,7 @@ function setup() {
     { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
   ).outputText;
   return { ...runInNewContext(output, context), owner, streamAcc, typingBuf, finalizers,
-    callbacks, messages, stops, document: context.document };
+    callbacks, messages, stops, get aborted() { return aborted; }, document: context.document };
 }
 
 test('done then stop finalizes complete reply exactly once, without backend cancellation', () => {
@@ -91,4 +97,33 @@ test('error completion preserves buffered text and activity only once', () => {
   assert.equal(state.messages.length, 1);
   assert.equal(state.messages[0].message.content, 'shown buffered\n\nError: failed');
   assert.equal(state.messages[0].message.activity, 'step');
+});
+
+test('a failed stop keeps the live stream and does not fabricate a stopped message', async () => {
+  const state = setup(Promise.resolve({ stopped: false, status: 'stopping' }));
+  await state.handleStopStream('session');
+  assert.equal(state.aborted, 0);
+  assert.equal(state.messages.length, 0);
+  assert.equal(state.streamAcc.current.session, state.owner);
+});
+
+test('done racing with a confirmed stop records exactly one stopped outcome', async () => {
+  let confirm;
+  const state = setup(new Promise(resolve => { confirm = resolve; }));
+  state.document.visibilityState = 'hidden';
+  const pending = state.handleStopStream('session');
+  state.finalizeStream('session', state.owner);
+  confirm({ stopped: true, status: 'stopped' });
+  await pending;
+  assert.equal(state.messages.length, 1);
+  assert.equal(state.messages[0].message.status, 'stopped');
+});
+test('stopping a tools-only turn persists its execution evidence without requiring text', async () => {
+  const state = setup();
+  Object.assign(state.owner, { content: '', thinking: '', steps: [], questions: [],
+    events: [{ id: 'event', kind: 'tool', callId: 'call', status: 'running' }] });
+  state.typingBuf.current.session = '';
+  await state.handleStopStream('session');
+  assert.equal(state.messages.length, 1);
+  assert.equal(state.messages[0].message.events[0].callId, 'call');
 });

@@ -1,8 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import type { ComponentType } from 'react';
 import { fetchPersonas, fetchPersonaFiles, savePersonaFile, deletePersona, fetchAccountAnalytics } from '../lib/api';
 import type { PersonaItem, PersonaFile, AccountAnalytics } from '../lib/api';
 import { renderMarkdown } from '../lib/sanitize';
-import { IconProfile, IconPlus } from './icons';
+import { IconProfile, IconPlus, IconSkills, IconInteractions, IconLayout, IconBookmark, IconIdea, IconEdit, IconTrash, IconChevron, IconCheck, IconChat, IconFile } from './icons';
+import { useIpPermissions } from './ProjectSpace';
+import '../styles/profile.css';
 
 // 粉丝量级：把粉丝数映射成人话档位（画像里“粉丝量级”一栏要的是量级而非精确值）
 function fanTier(n: number): string {
@@ -57,16 +60,42 @@ interface ProfilePageProps {
   onDeleted: (name: string) => void;
 }
 
-const DIM_META: Record<string, { label: string; icon: string }> = {
-  'identity.md': { label: '身份定位', icon: '🪪' },
-  'style.md': { label: '内容风格', icon: '🎨' },
-  'audience.md': { label: '目标受众', icon: '👥' },
-  'platforms.md': { label: '平台运营', icon: '📱' },
-  'preferences.md': { label: '偏好与红线', icon: '⚖️' },
-  'memory.md': { label: '经验沉淀', icon: '🧠' },
+const DIM_META: Record<string, { label: string; Icon: ComponentType<{ size?: number }>; description: string }> = {
+  'identity.md': { label: '身份定位', Icon: IconProfile, description: '账号定位、个人特色与创作方向' },
+  'style.md': { label: '内容风格', Icon: IconSkills, description: '语气、表达方式与视觉偏好' },
+  'audience.md': { label: '目标受众', Icon: IconInteractions, description: '为谁创作，回应哪些需求' },
+  'platforms.md': { label: '平台运营', Icon: IconLayout, description: '各个平台的账号与内容侧重' },
+  'preferences.md': { label: '偏好与红线', Icon: IconBookmark, description: '喜欢的内容，以及需要避开的边界' },
+  'memory.md': { label: '经验沉淀', Icon: IconIdea, description: '积累复盘结论与有效的创作经验' },
 };
 
+function ProfileIllustration() {
+  return <div className="profile-illustration" aria-hidden="true">
+    <div className="profile-preview-sheet profile-preview-sheet-back" />
+    <div className="profile-preview-sheet profile-preview-sheet-front">
+      <div className="profile-preview-top"><span className="profile-preview-avatar"><IconProfile size={22} /></span>
+        <span><strong>创作画像</strong><small>让表达更有自己的风格</small></span><IconCheck size={16} /></div>
+      <div className="profile-preview-lines"><i /><i /><i /></div>
+      <div className="profile-preview-tags"><span>定位</span><span>风格</span><span>受众</span></div>
+      <div className="profile-preview-note"><IconSkills size={13} /><span>为每次创作提供方向</span></div>
+    </div>
+    <span className="profile-illustration-caption">你的风格，值得被记住</span>
+  </div>;
+}
+
+function ProfileDimensionsGuide() {
+  return <section className="profile-guide" aria-labelledby="profile-guide-title">
+    <div className="profile-section-heading"><h2 id="profile-guide-title">画像里可以记录什么</h2><span>六个维度，逐步完善</span></div>
+    <div className="profile-guide-grid">{Object.entries(DIM_META).map(([filename, meta]) => <article key={filename} aria-label={meta.label} className="profile-guide-item">
+      <span className="profile-guide-icon"><meta.Icon size={17} /></span><div><h3>{meta.label}</h3><p>{meta.description}</p></div>
+    </article>)}</div>
+  </section>;
+}
+
 export default function ProfilePage(props: ProfilePageProps) {
+  const { canOperate } = useIpPermissions();
+  const operationPermission = useRef(canOperate);
+  operationPermission.current = canOperate;
   const [viewedPersona, setViewedPersona] = useState(props.persona);
   const [personas, setPersonas] = useState<PersonaItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,43 +128,37 @@ export default function ProfilePage(props: ProfilePageProps) {
   }
 
   return (
-    <div className="profile-page">
-      <div className="profile-head">
-        <div>
-          <h1 className="page-title">用户画像 <span className="profile-title-en">Profile</span></h1>
-          <p className="page-subtitle">管理你的定位、风格与受众，为每一种创作找到合适的身份。</p>
-        </div>
-        <button className="btn btn-primary" onClick={props.onNewProfile}><IconPlus size={15} /> 新建画像</button>
-      </div>
-      <div className="profile-mode-note">
-        <IconProfile size={18} />
-        <span>{props.persona ? `当前对话使用「${props.persona}」` : '当前对话为通用模式'}<small>查看和编辑画像不会切换对话身份。</small></span>
-      </div>
-      {loading ? <div className="loading"><div className="spinner" />加载画像…</div>
-        : error ? <div className="empty-state"><p role="alert">{error}</p><button className="btn" onClick={() => setRevision((n) => n + 1)}>重新加载</button></div>
-        : personas.length === 0 ? <div className="empty-state profile-empty">
-          <div className="profile-avatar"><IconProfile size={28} /></div>
-          <h3>创建你的第一个画像</h3>
-          <p>记录账号定位、内容风格和偏好，让每次创作都更贴合你。</p>
-          <button className="btn btn-primary" onClick={props.onNewProfile}><IconPlus size={15} /> 新建画像</button>
-        </div> : <>
-          <div className="section-title">我的画像 · {personas.length}</div>
+    <div className="profile-page"><div className="profile-shell">
+      <header className="profile-page-header">
+        <div><span className="profile-eyebrow">内容生产</span><h1 className="profile-page-title">创作画像</h1>
+          <p className="profile-page-description">{canOperate ? '把定位、风格和受众记下来，让 AI 更懂你的创作。' : '查看当前 IP 的定位、风格与受众资料。'}</p></div>
+        {canOperate && !loading && !error && personas.length > 0 && <button className="btn profile-primary" onClick={() => { if (operationPermission.current) props.onNewProfile(); }}><IconPlus size={16} />新建画像</button>}
+      </header>
+      <div className="profile-conversation-meta"><span>当前对话</span><span className="profile-context-chip"><IconChat size={13} />{props.persona || '通用模式'}</span>
+        <span className="profile-context-help">{canOperate ? '在 AI 对话中使用你的创作画像' : '当前权限：只读'}</span></div>
+      {loading ? <div className="profile-feedback" role="status"><div className="spinner" />加载画像…</div>
+        : error ? <div className="profile-feedback"><IconProfile size={24} /><p role="alert">{error}</p><button className="btn" onClick={() => setRevision((n) => n + 1)}>重新加载</button></div>
+        : personas.length === 0 ? <>
+          <section className="profile-zero" aria-labelledby="profile-zero-title">
+            <div className="profile-zero-copy"><span className="profile-zero-kicker">{canOperate ? '从认识你开始' : '创作资料库'}</span>
+              <h2 id="profile-zero-title">{canOperate ? '让 AI 更懂你的创作' : '此 IP 尚未创建画像'}</h2>
+              <p>{canOperate ? '你是谁、为谁创作、喜欢怎样表达。把这些记成画像，为选题、脚本和文案提供一致的创作方向。' : '运营成员创建画像后，你可以在这里查看定位、风格和受众信息。'}</p>
+              {canOperate && <div className="profile-zero-actions"><button className="btn profile-primary" onClick={() => { if (operationPermission.current) props.onNewProfile(); }}><IconPlus size={16} />新建画像</button><span>创建后可随时补充和调整</span></div>}
+            </div><ProfileIllustration />
+          </section><ProfileDimensionsGuide />
+        </> : <section className="profile-library" aria-labelledby="profile-library-title">
+          <div className="profile-section-heading"><h2 id="profile-library-title">全部画像 <span className="profile-count">{personas.length}</span></h2><span>{canOperate ? '选择适合这次创作的表达方式' : '当前 IP 的已保存画像'}</span></div>
           <div className="profile-grid">
-            {personas.map((p) => <article className="card profile-summary" key={p.name}>
-              <div className="profile-summary-head">
-                <div className="profile-avatar"><IconProfile size={22} /></div>
-                {p.name === props.persona && <span className="badge badge-accent">当前使用</span>}
-              </div>
-              <h2>{p.name}</h2>
-              <p className="profile-summary-description">{p.description || '还没有定位简介，打开画像完善你的创作方向。'}</p>
-              <div className="profile-summary-actions">
-                <button className="btn" onClick={() => setViewedPersona(p.name)}>查看 / 编辑</button>
-                <button className="btn btn-primary" onClick={() => props.onUsePersona(p.name)}>切换画像</button>
-              </div>
+            {personas.map((p) => <article className={`profile-summary ${p.name === props.persona ? 'is-current' : ''}`} key={p.name}>
+              <div className="profile-summary-head"><span className="profile-avatar">{p.name.slice(0, 1)}</span>
+                {p.name === props.persona && <span className="profile-current-badge"><IconCheck size={12} />当前使用</span>}</div>
+              <h2>{p.name}</h2><p className="profile-summary-description">{p.description || '添加你的定位与内容方向，逐步建立自己的创作风格。'}</p>
+              <div className="profile-summary-actions"><button className="btn profile-secondary" onClick={() => setViewedPersona(p.name)}>{canOperate ? '查看 / 编辑' : '查看'}<IconChevron size={13} /></button>
+                {canOperate && <button className="btn profile-soft-action" disabled={p.name === props.persona} onClick={() => { if (operationPermission.current) props.onUsePersona(p.name); }}>{p.name === props.persona ? '正在使用' : '切换画像'}</button>}</div>
             </article>)}
           </div>
-        </>}
-    </div>
+        </section>}
+    </div></div>
   );
 }
 
@@ -143,6 +166,9 @@ function ProfileDetail({ persona, onDeleted, onBack, onUsePersona, inUse }: Prof
   onBack: () => void;
   inUse: boolean;
 }) {
+  const { canOperate } = useIpPermissions();
+  const operationPermission = useRef(canOperate);
+  operationPermission.current = canOperate;
   const [files, setFiles] = useState<PersonaFile[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState(false);
@@ -173,6 +199,7 @@ function ProfileDetail({ persona, onDeleted, onBack, onUsePersona, inUse }: Prof
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500); };
 
   const handleSave = async (filename: string) => {
+    if (!operationPermission.current) return;
     setSavingFile(filename);
     try {
       await savePersonaFile(persona, filename, drafts[filename] ?? '');
@@ -188,9 +215,11 @@ function ProfileDetail({ persona, onDeleted, onBack, onUsePersona, inUse }: Prof
   // 「平台运营」一键抓取公众号数据：复用数据中心同一个 mp 后台会话接口，把粉丝量级/内容形式
   // 抓完“直接落盘”并刷新视图——不进编辑态、不用用户点保存（否则会露出原始 markdown 破坏观感）。
   const handleFetchWechat = async (filename: string) => {
+    if (!operationPermission.current) return;
     setFetchingWx(true);
     try {
       const a = await fetchAccountAnalytics('wechat-oa');
+      if (!operationPermission.current) return;
       if (!a.loggedIn) {
         showToast('公众号后台未登录：请先到「账号」页扫码登录后再抓取');
         return;
@@ -210,6 +239,7 @@ function ProfileDetail({ persona, onDeleted, onBack, onUsePersona, inUse }: Prof
   };
 
   const handleDelete = async () => {
+    if (!operationPermission.current) return;
     if (!window.confirm(`确定删除画像「${persona}」吗？\n此操作不可恢复，将删除该画像的全部六维文件。`)) return;
     setDeleting(true);
     try {
@@ -225,7 +255,7 @@ function ProfileDetail({ persona, onDeleted, onBack, onUsePersona, inUse }: Prof
 
 
   return (
-    <div className="profile-page">
+    <div className="profile-page profile-detail-page"><div className="profile-shell">
       <div className="profile-detail-nav">
         <button className="btn btn-sm" disabled={!!savingFile || fetchingWx || deleting} onClick={() => {
           if (files.some((f) => (drafts[f.filename] ?? '') !== f.content)
@@ -233,22 +263,22 @@ function ProfileDetail({ persona, onDeleted, onBack, onUsePersona, inUse }: Prof
           onBack();
         }}>← 全部画像</button>
         {inUse ? <span className="badge badge-accent">当前对话使用中</span>
-          : <button className="btn btn-sm" onClick={() => onUsePersona(persona)}>切换画像</button>}
+          : canOperate && <button className="btn btn-sm" onClick={() => { if (operationPermission.current) onUsePersona(persona); }}>切换画像</button>}
       </div>
-      <div className="profile-head">
+      <div className="profile-page-header">
         <div>
-          <h1 className="page-title">{persona}</h1>
-          <p className="page-subtitle">六个维度构成一个完整人设，可随时编辑保存。</p>
+          <span className="profile-eyebrow">创作画像</span><h1 className="profile-page-title">{persona}</h1>
+          <p className="profile-page-description">{canOperate ? '六个维度构成一个完整人设，可随时编辑保存。' : '只读查看已保存的六维画像资料。'}</p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className={`btn ${editing ? 'btn-primary' : ''}`} onClick={() => setEditing((v) => !v)}>
-            {editing ? '完成编辑' : '✏️ 编辑资料'}
+        {canOperate && <div className="profile-detail-actions">
+          <button className={`btn ${editing ? 'profile-primary' : 'profile-secondary'}`} onClick={() => { if (operationPermission.current) setEditing((v) => !v); }}>
+            <IconEdit size={15} />{editing ? '完成编辑' : '编辑资料'}
           </button>
-          <button className="btn" style={{ color: 'var(--red)', borderColor: 'var(--red)' }}
+          <button className="btn profile-delete-action"
             disabled={deleting} onClick={handleDelete}>
-            {deleting ? '删除中…' : '🗑 删除画像'}
+            <IconTrash size={14} />{deleting ? '删除中…' : '删除画像'}
           </button>
-        </div>
+        </div>}
       </div>
 
       {error && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 12 }}>{error}</div>}
@@ -257,47 +287,47 @@ function ProfileDetail({ persona, onDeleted, onBack, onUsePersona, inUse }: Prof
         <div className="loading"><div className="spinner" />加载中…</div>
       ) : (
         files.map((f) => {
-          const meta = DIM_META[f.filename] || { label: f.filename, icon: '📄' };
+          const meta = DIM_META[f.filename] || { label: f.filename, Icon: IconFile, description: '补充创作资料' };
           const dirty = editing && (drafts[f.filename] ?? '') !== f.content;
           return (
-            <div key={f.filename} className="profile-dim">
+            <section key={f.filename} className="profile-dim" aria-label={meta.label}>
               <div className="profile-dim-head">
-                <div className="profile-dim-title">{meta.icon} {meta.label}</div>
+                <div className="profile-dim-title"><span className="profile-dim-icon"><meta.Icon size={18} /></span><span>{meta.label}<small>{meta.description}</small></span></div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  {f.filename === 'platforms.md' && (
+                  {canOperate && f.filename === 'platforms.md' && (
                     <button className="btn btn-sm" disabled={fetchingWx}
                       title="用已登录的公众号后台会话抓取粉丝/内容数据，写入本栏（与数据中心同源）"
                       onClick={() => handleFetchWechat(f.filename)}>
-                      {fetchingWx ? '抓取中…' : '📊 抓取公众号数据'}
+                      {fetchingWx ? '抓取中…' : '抓取公众号数据'}
                     </button>
                   )}
-                  {editing && (
-                    <button className="btn btn-sm btn-primary" disabled={!dirty || savingFile === f.filename}
+                  {canOperate && editing && (
+                    <button className="btn btn-sm profile-primary" disabled={!dirty || savingFile === f.filename}
                       onClick={() => handleSave(f.filename)}>
                       {savingFile === f.filename ? '保存中…' : dirty ? '保存' : '已保存'}
                     </button>
                   )}
                 </div>
               </div>
-              {editing ? (
+              {canOperate && editing ? (
                 <textarea
-                  className="field"
-                  style={{ minHeight: 150, fontFamily: "'SF Mono','Consolas',monospace", fontSize: 13 }}
+                  className="field profile-dimension-editor"
+                  aria-label={`编辑${meta.label}`}
                   value={drafts[f.filename] ?? ''}
                   onChange={(e) => setDrafts((p) => ({ ...p, [f.filename]: e.target.value }))}
                 />
               ) : (
-                <div className="card" style={{ padding: '14px 18px' }}>
+                <div className="profile-dim-body">
                   <div className="profile-content"
                     dangerouslySetInnerHTML={{ __html: renderMarkdown(f.content || '_（空）_') }} />
                 </div>
               )}
-            </div>
+            </section>
           );
         })
       )}
 
       {toast && <div className="toast ok"><span className="toast-icon">✓</span>{toast}</div>}
-    </div>
+    </div></div>
   );
 }

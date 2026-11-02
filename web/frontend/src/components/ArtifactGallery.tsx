@@ -1,3 +1,4 @@
+import { projectFetch } from '../lib/projectScope';
 import { useEffect, useRef, useState } from 'react';
 import { artifactFromUrl, fitArtifact, mergeArtifacts } from '../lib/artifacts';
 import { fetchArtifactArchive, mediaUrl } from '../lib/api';
@@ -14,7 +15,7 @@ function HtmlArtifact({ artifact }: { artifact: Artifact }) {
   const token = useRef(crypto.randomUUID());
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(artifact.url, { signal: controller.signal }).then(async response => {
+    void projectFetch(artifact.url, { signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error('preview');
       const html = await response.text();
       const base = new URL('.', new URL(artifact.url, window.location.origin)).href;

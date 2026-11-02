@@ -13,6 +13,12 @@ export const IconChat = ({ size, className, strokeWidth }: P) => (
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
   </svg>
 );
+export const IconInteractions = ({ size, className, strokeWidth }: P) => (
+  <svg {...svg(size, strokeWidth)} className={className}>
+    <path d="M14 3H5a2 2 0 0 0-2 2v10l4-3h7a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z" />
+    <path d="M8 16v1a2 2 0 0 0 2 2h7l4 3V11a2 2 0 0 0-2-2" />
+  </svg>
+);
 export const IconSkills = ({ size, className, strokeWidth }: P) => (
   <svg {...svg(size, strokeWidth)} className={className}>
     <path d="m12 3-1.6 4.9a2 2 0 0 1-1.3 1.3L4.2 10.8l4.9 1.6a2 2 0 0 1 1.3 1.3L12 18.6l1.6-4.9a2 2 0 0 1 1.3-1.3l4.9-1.6-4.9-1.6a2 2 0 0 1-1.3-1.3z" />

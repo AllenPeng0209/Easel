@@ -34,7 +34,7 @@ import content_guard  # noqa: E402  出站内容安全闸门
 # ⚠️ 本脚本会被 sync.sh 拍平复制到 workspace/shared/scripts/，那里 parents[3] 会算错根，
 # 相对 content-file 会解析到错误目录——故 env 兜底不可省（与 manifest.py 同款）。
 PROJECT_ROOT = Path(os.environ.get("EASEL_ROOT") or Path(__file__).resolve().parents[3])
-PROFILE_DIR = Path.home() / ".easel-browser-profiles" / "ZhihuProfile"
+PROFILE_DIR = Path(os.environ.get("EASEL_BROWSER_PROFILES") or Path.home() / ".easel-browser-profiles") / "ZhihuProfile"
 
 LAUNCH_ARGS = [
     "--disable-blink-features=AutomationControlled",

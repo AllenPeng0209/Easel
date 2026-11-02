@@ -11,6 +11,8 @@ export const SKILL_DISPLAY_NAMES: Record<string, string> = {
   'audio-mix': '混音（BGM闪避）',
   'audio-visualizer': '音频可视化',
   'auto-short-video': '一句话出片',
+  'video-workshop': '视频工坊制作',
+  'interaction-center': '互动中心接待',
   'auto-subtitle': '自动字幕',
   'batch-process': '批量处理',
   'beat-sync-video': '卡点视频',
