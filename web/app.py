@@ -64,6 +64,7 @@ from easel.harnesses import store as harness_store
 from easel.harnesses.base import HarnessError, RunRequest
 from easel.chat_artifacts import ArtifactError, ChatArtifactStore
 from easel.artifact_archives import ArchiveSnapshotReader
+from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
 from web.chat_history import ChatHistoryStore, validated_session
 try:
@@ -3380,7 +3381,7 @@ class _HarnessProc(_GatewayHttpProc):
             task.get_loop().call_soon_threadsafe(cancel_once)
 
 
-async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "autonomous") -> dict:
+async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "autonomous", publication=None) -> dict:
     _require_host_tools()
     if requests_secret(questions):
         raise HarnessError("请在原生终端完成敏感凭证输入，不要将密码或密钥写入聊天记录")
@@ -3395,6 +3396,8 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
               "defaultAnswers": policy.default_answers,
               "autoResolveAtMs": None if policy.requires_human else deadline,
               "expiresAtMs": deadline, "resolvedBy": "human"}
+    if publication is not None:
+        record['publication'] = publication
     _HARNESS_QUESTIONS[identifier] = record
     try:
         public = {key: value for key, value in record.items() if key not in ("future", "session", "resolvedBy")}
@@ -3430,7 +3433,8 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
             _HARNESS_QUESTION_RESULTS.pop(next(iter(_HARNESS_QUESTION_RESULTS)), None)
         emit("agent_event", {"id": "decision_" + identifier, "kind": "decision", "questionId": identifier,
             "status": status, "source": record["resolvedBy"], "resolvedBy": record["resolvedBy"],
-            "questions": visible_questions, "answers": answers, "completedAt": int(time.time() * 1000)})
+            "questions": visible_questions, "answers": answers, "completedAt": int(time.time() * 1000),
+            **({'publication': publication} if publication is not None else {})})
         emit("question_closed", _scrub_secrets(json.dumps(closed, ensure_ascii=False)))
         return answers
     finally:
@@ -3519,6 +3523,39 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 'artifacts': artifacts, 'status': 'available', 'completedAt': int(time.time() * 1000)})
         return artifacts
 
+    async def publish(payload: dict, call_id: str) -> dict:
+        _require_host_tools()
+        if not interactive:
+            raise HarnessError('发布批准需在流式对话中核对具体对象')
+        workflow = _publication_workflow()
+        try:
+            record = await workflow.prepare(payload['platform'], payload,
+                idempotency_key=f'{sk}:{turn_id}:{call_id}')
+            if record.get('operationId'):
+                return record
+            if record['state'] == 'pending':
+                allow = '批准此版本并创建草稿' if record['subject']['mode'] == 'create_draft' else '批准此版本并发布'
+                answers = await _harness_ask(sk, [{'questionId': 'publication', 'kind': 'approval',
+                    'header': '发布批准', 'question': '请核对下方的具体账号、文案及媒体版本。是否批准本次操作？',
+                    'options': [{'label': allow}, {'label': '暂不执行'}]}], receive,
+                    mode=req.autonomyMode, publication=record)
+                record = workflow.decide(record['id'], answers.get('publication') == [allow], record['payloadHash'])
+            if record['state'] != 'approved':
+                return {**record, 'message': '此版本未获发布批准；保留草稿并继续其它可完成工作，未公开发布。'}
+            subject = record['subject']
+            record = await workflow.start(subject['platform']['id'], {**{key: subject[key]
+                for key in ('title', 'body', 'tags', 'persona')}, 'media': [],
+                'artifactIds': [item['artifactId'] for item in subject['media']],
+                'approvalId': record['id'], 'payloadHash': record['payloadHash']})
+            receive('activity', '正在执行已批准的具体版本；断线不会重发该操作')
+            while (record.get('result') or {}).get('status') == 'executing':
+                await asyncio.sleep(.5)
+                _require_host_tools()
+                record = workflow.get(record['id'])
+            return record
+        except HTTPException as error:
+            raise HarnessError(_scrub_secrets(str(error.detail))) from None
+
     async def watch_privileges():
         nonlocal permission_revoked
         while True:
@@ -3564,7 +3601,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         request = RunRequest(message, _workspace_root(), env, native_id,
                              config["models"].get(runtime, ""), config["sandbox"], timeout,
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
-                             autonomy_mode=req.autonomyMode, present=present)
+                             autonomy_mode=req.autonomyMode, present=present, publish=publish)
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
             lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
@@ -5252,6 +5289,7 @@ async def api_login_start(platform: str, restart: bool = False):
 
 async def _start_login(platform: str, restart: bool = False):
     """启动后台登录并立即返回，二维码由前端状态轮询获取。"""
+    _require_publication_profile_idle(platform)
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg:
         raise HTTPException(404, '未知平台')
@@ -5342,6 +5380,7 @@ class SmsCodeRequest(BaseModel):
 
 @app.post("/api/login/{platform}/sms")
 async def api_login_sms(platform: str, req: SmsCodeRequest):
+    _require_publication_profile_idle(platform)
     """回填短信验证码：写入 runner 轮询的一次性验证码文件（见 login_state.read_sms_code）。
 
     登录 runner 检测到风控短信墙时把状态置 sms_required，前端弹输入框，用户把手机
@@ -5386,6 +5425,7 @@ async def api_save_credentials(platform: str, req: WechatCredentials):
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg or cfg.get('backend') != 'wechat-oa':
         raise HTTPException(404, '该平台不使用凭证登录')
+    _require_publication_profile_idle(platform)
     app_id = (req.appId or '').strip()
     app_secret = (req.appSecret or '').strip()
     if not app_id or not app_secret:
@@ -5448,6 +5488,7 @@ async def api_mp_login_start(platform: str):
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg or cfg.get("backend") != "wechat-oa":
         raise HTTPException(404, "该平台不使用公众号后台登录")
+    _require_publication_profile_idle(platform)
     # 重复点击复用正在进行的登录，不能删除其二维码或启动第二个 Chromium。
     proc = LOGIN_PROCESSES.get("wechat-oa-mp")
     if proc is not None and proc.poll() is None:
@@ -5499,7 +5540,7 @@ async def api_account_whoami(platform: str, force: bool = False):
     return await asyncio.shield(task)
 
 
-async def _check_account_whoami(platform: str, force: bool = False):
+async def _check_account_whoami(platform: str, force: bool = False, *, strict: bool = False):
     """真校验登录态 + 读昵称/头像（起 headless 浏览器，数秒）。前端开页后台调用以自愈假阳性。
     带 TTL 进程内缓存（避免账号页+工作台重复起浏览器）；确认已登录则回写标记，令快速路径自愈。"""
     cfg = LOGIN_RUNNERS.get(platform)
@@ -5516,6 +5557,8 @@ async def _check_account_whoami(platform: str, force: bool = False):
     process_key = 'wechat-oa-mp' if backend == 'wechat-oa' else platform
     login_process = LOGIN_PROCESSES.get(process_key)
     if login_process is not None and login_process.poll() is None:
+        if strict:
+            raise HTTPException(409, '账号仍在登录或保存，请完成后再准备发布')
         if (_mp_login_status() if backend == 'wechat-oa' else _login_status(platform))['state'] == 'success':
             try:
                 await asyncio.to_thread(login_process.wait, timeout=8)
@@ -5569,7 +5612,14 @@ async def _check_account_whoami(platform: str, force: bool = False):
         if line.startswith('{'):
             try:
                 d = json.loads(line)
-                data = {'loggedIn': bool(d.get('loggedIn')), 'name': d.get('name') or '', 'avatar': d.get('avatar') or ''}
+                identity = d.get('accountId')
+                kind = d.get('accountIdKind')
+                verified = (d.get('accountIdentityStatus') == 'verified'
+                    and isinstance(identity, str) and bool(identity.strip())
+                    and isinstance(kind, str) and bool(kind.strip()))
+                data = {'loggedIn': bool(d.get('loggedIn')), 'name': d.get('name') or '', 'avatar': d.get('avatar') or '',
+                    'accountId': identity if verified else '', 'accountIdKind': kind if verified else '',
+                    'accountIdentityStatus': 'verified' if verified else 'unknown'}
                 # 有 error 字段 = 校验本身失败（浏览器起不来/网络抖动/崩溃），不是可信的「未登录」结论
                 confident = proc.returncode == 0 and isinstance(d.get('loggedIn'), bool) and not d.get('error')
                 break
@@ -5578,6 +5628,8 @@ async def _check_account_whoami(platform: str, force: bool = False):
     current_process = LOGIN_PROCESSES.get(process_key)
     if (marker_version() != initial_marker
             or (current_process is not None and current_process.poll() is None)):
+        if strict:
+            raise HTTPException(409, '账号在校验期间发生变化，请重新核验')
         return {'loggedIn': _account_logged_in(platform, cfg), 'name': '', 'avatar': ''}
     if not confident:
         raise HTTPException(502, '未能确认当前账号身份，请稍后重试校验；原登录状态和账号资料保持不变')
@@ -5606,6 +5658,7 @@ async def api_logout(platform: str):
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg:
         raise HTTPException(404, '未知平台')
+    _require_publication_profile_idle(platform)
     deleted = []
     if cfg['backend'] == 'wechat-oa':
         # 1) 清 AppID 凭证（旧配置兜底）
@@ -5781,11 +5834,88 @@ VIDEO_ONLY_PUBLISH = {"douyin", "weixin-channels", "bilibili"}   # 只能发视�
 
 
 class PublishRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
     title: str = ''
     body: str = ''
-    media: list[str] = []
+    media: list[str] = Field(default_factory=list)
+    artifactIds: list[str] = Field(default_factory=list)
     tags: str = ''
     persona: str = ''
+    approvalId: str = ''
+    payloadHash: str = ''
+
+
+class PublicationDecisionRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
+    approved: StrictBool
+    payloadHash: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
+def _publication_workflow():
+    return PublicationWorkflow(sys.modules[__name__])
+
+
+def _publication_dir():
+    from easel.host_state import publication_state_directory
+    return publication_state_directory(PROJECT_ROOT, project_id())
+
+
+def _require_publication_profile_idle(platform):
+    _require_operation()
+    # Login/logout before the first publication should not create publication
+    # state. Once it exists, every account mutation respects the same profile.
+    if not (_publication_dir() / 'approvals' / 'publication_approvals.sqlite3').exists():
+        return
+    if _publication_workflow().store().profile_busy(platform, project_id=project_id()):
+        raise HTTPException(409, '该 IP 的平台账号正在执行已批准操作，暂不能切换登录账号')
+
+
+async def _publication_account(platform):
+    # Do not use the account-page TTL or coalesced in-flight display request.
+    identity = await _check_account_whoami(platform, force=True, strict=True)
+    _require_operation()
+    if (identity.get('loggedIn') is not True or identity.get('accountIdentityStatus') != 'verified'
+            or not identity.get('accountId') or not identity.get('accountIdKind')):
+        raise HTTPException(409, '尚未核验当前登录账号的稳定 ID；请重新登录校验，或先导出到官方平台手动提交')
+    return {'id': identity['accountIdKind'] + ':' + identity['accountId'],
+            'name': identity.get('name') or identity['accountId']}
+
+
+def _load_publication_article_renderer():
+    # Load trusted application code once at service initialization, before any
+    # agent requests. Approval preparation must not execute workspace Python.
+    import runpy
+    converter = runpy.run_path(str(WECHAT_SKILL_SCRIPTS / 'html_converter.py'))
+    theme = converter['load_theme']()
+    return converter['convert_markdown_to_wechat_html'], theme
+
+
+_PUBLICATION_ARTICLE_RENDERER, _PUBLICATION_ARTICLE_THEME = _load_publication_article_renderer()
+
+
+def _publication_article_converter(markdown):
+    from copy import deepcopy
+    return _PUBLICATION_ARTICLE_RENDERER(markdown, *deepcopy(_PUBLICATION_ARTICLE_THEME))
+
+
+@app.post('/api/publish/{platform}/prepare')
+async def api_prepare_publication(platform: str, req: PublishRequest):
+    return await _publication_workflow().prepare(platform, req.model_dump())
+
+
+@app.get('/api/publication-approvals/{identifier}')
+async def api_publication_approval(identifier: str):
+    return _publication_workflow().get(identifier)
+
+
+@app.post('/api/publication-approvals/{identifier}/decision')
+async def api_publication_decision(identifier: str, req: PublicationDecisionRequest):
+    return _publication_workflow().decide(identifier, req.approved, req.payloadHash)
+
+
+@app.post('/api/publish/{platform}')
+async def api_publish(platform: str, req: PublishRequest):
+    return await _publication_workflow().start(platform, req.model_dump())
 
 
 class ManualPublishRequest(BaseModel):
@@ -5911,30 +6041,34 @@ def _start_async_publish(platform: str, cmd: list, title: str, body: str, cfg: d
 
 
 @app.get("/api/publish/{platform}/status")
-async def api_publish_status(platform: str):
+async def api_publish_status(platform: str, approvalId: str = ''):
     """轮询异步发布状态：starting/sms_required/verifying/success/error。"""
     if platform not in LOGIN_RUNNERS:
         raise HTTPException(404, '未知平台')
-    return {'mode': 'publish', **_read_publish_status(platform)}
+    if not approvalId:
+        raise HTTPException(428, '状态查询必须关联具体发布操作')
+    record = _publication_workflow().get(approvalId)
+    if record['subject']['platform']['id'] != platform:
+        raise HTTPException(409, '发布对象不匹配')
+    return {'mode': 'publish', **record}
 
 
 @app.post("/api/publish/{platform}/sms")
-async def api_publish_sms(platform: str, req: SmsCodeRequest):
+async def api_publish_sms(platform: str, req: SmsCodeRequest, approvalId: str = ''):
     """发布触发短信墙时回填验证码（写发布 runner 轮询的一次性验证码文件）。"""
     _require_automated_publishing()
     if platform not in LOGIN_RUNNERS:
         raise HTTPException(404, '未知平台')
-    code = ''.join(ch for ch in (req.code or '') if ch.isdigit())
-    if not (4 <= len(code) <= 8):
-        raise HTTPException(400, '验证码应为 4-8 位数字')
-    _publish_dir().mkdir(parents=True, exist_ok=True)
-    (_publish_dir() / f'{platform}.code').write_text(code, encoding='utf-8')
-    return {'ok': True}
+    return _publication_workflow().sms(platform, approvalId, req.code or '')
 
 
-@app.post("/api/publish/{platform}")
-async def api_publish(platform: str, req: PublishRequest):
-    """一键发布：分发到对应 publisher 脚本真发（--exec）。二次确认在前端。"""
+async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=None, operation_id=None,
+                            expected_account=None, approved_article=None, approved_media=None):
+    """Internal runner: only the claimed exact-subject workflow dispatches here."""
+    if (not isinstance(operation_id, str) or not re.fullmatch(r'[a-f0-9]{32}', operation_id)
+            or not isinstance(expected_account, dict)):
+        raise HTTPException(428, '平台执行必须关联已批准的具体操作和账号')
+    _require_operation()
     _require_automated_publishing()
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg:
@@ -5948,8 +6082,8 @@ async def api_publish(platform: str, req: PublishRequest):
     if not req.title.strip() and not req.body.strip():
         raise HTTPException(400, '标题/正文不能为空')
     imgs, vids = [], []
-    for rel in req.media or []:
-        full = _safe_output_path(rel)
+    for rel in (media_paths if media_paths is not None else req.media or []):
+        full = Path(rel) if media_paths is not None else _safe_output_path(rel)
         ext = full.suffix.lower()
         if ext in VIDEO_EXTS:
             vids.append(str(full))
@@ -5983,11 +6117,15 @@ async def api_publish(platform: str, req: PublishRequest):
         cmd += ['--title', title, '--content', req.body, '--tags', tags, '--exec']
         # 抖音发布可能触发风控短信墙——异步跑 + 状态/验证码文件，前端轮询到 sms_required 时弹输入框
         _publish_dir().mkdir(parents=True, exist_ok=True)
-        status_file = _publish_dir() / 'douyin.json'
-        code_file = _publish_dir() / 'douyin.code'
+        operation_dir = (_publication_dir() / 'operations' / current_user()['id'] / operation_id
+            if operation_id else _publish_dir())
+        operation_dir.mkdir(parents=True, exist_ok=True)
+        status_file = operation_dir / ('runner.json' if operation_id else 'douyin.json')
+        code_file = operation_dir / ('runner.code' if operation_id else 'douyin.code')
         cmd += ['--status-file', str(status_file), '--sms-code-file', str(code_file)]
-        return _start_async_publish(platform, cmd, title, req.body, cfg, status_file, code_file,
-                                    profile, tags, publish_type)
+        if not operation_id:
+            return _start_async_publish(platform, cmd, title, req.body, cfg, status_file, code_file,
+                                        profile, tags, publish_type)
     elif platform == 'wechat-oa':
         # 微信公众号：走「后台会话」发布（免 AppID/AppSecret、免 IP 白名单）。
         # 正文 MD → 公众号 HTML（skill 排版器）→ 会话建草稿（weixin_mp_stats.py publish，内嵌图传 mp CDN）。
@@ -6000,20 +6138,18 @@ async def api_publish(platform: str, req: PublishRequest):
         cover = imgs[0]
         _publish_dir().mkdir(parents=True, exist_ok=True)
         stamp = uuid.uuid4().hex[:12]
-        md_path = _publish_dir() / f'wechat-oa-{stamp}.md'
-        html_path = _publish_dir() / f'wechat-oa-{stamp}.html'
-        body_md = req.body or ''
-        extra_imgs = imgs[1:]
-        if extra_imgs:
-            body_md += "\n\n" + "\n\n".join(f'![]({p})' for p in extra_imgs)
-        md_path.write_text(f"# {title}\n\n{body_md}\n", encoding='utf-8')
-        conv = await asyncio.to_thread(
-            subprocess.run, [py, str(WECHAT_SKILL_SCRIPTS / 'html_converter.py'),
-                             str(md_path), '-o', str(html_path)],
-            cwd=str(PROJECT_ROOT), env=_proxy_env(),
-            capture_output=True, text=True, timeout=60)
-        if conv.returncode != 0 or not html_path.is_file():
-            raise HTTPException(500, f"排版失败：{(conv.stderr or conv.stdout or '')[-200:]}")
+        article_dir = _publication_dir() / 'operations' / current_user()['id'] / operation_id
+        article_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        html_path = article_dir / f'wechat-oa-{stamp}.html'
+        if not isinstance(approved_article, dict) or not isinstance(approved_media, list):
+            raise HTTPException(428, '公众号排版和正文图片须先纳入具体版本批准')
+        from easel.publication_article import materialize_publication_article
+        try:
+            html = await asyncio.to_thread(materialize_publication_article,
+                approved_article, approved_media, media_paths or [])
+        except ValueError as error:
+            raise HTTPException(getattr(error, 'status_code', 400), str(error)) from None
+        html_path.write_text(html, encoding='utf-8')
         wx_proxy = os.environ.get('EASEL_PROXY') or os.environ.get('https_proxy') or ''
         cmd = [py, str(SHARED_SCRIPTS / 'weixin_mp_stats.py'), 'publish', '--proxy', wx_proxy,
                '--html', str(html_path), '--cover', cover, '--title', title,
@@ -6026,10 +6162,21 @@ async def api_publish(platform: str, req: PublishRequest):
         if media:
             cmd += ['--media', media]
     # 公众号走后台会话（Playwright，脚本自带 --proxy，默认直连）；其余平台走 _publish_env
+    _require_operation()
+    _require_automated_publishing()
+    if await _publication_account(platform) != expected_account:
+        raise HTTPException(409, '登录账号已变化，未执行旧批准')
+    _require_operation()
     pub_env = _proxy_env() if platform == 'wechat-oa' else _publish_env()
+    def run_checked_publish():
+        # A conversion/probe await may outlive membership. Recheck inside the
+        # worker immediately before launching the external runner.
+        _require_operation()
+        _require_automated_publishing()
+        return subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=pub_env,
+            capture_output=True, text=True, timeout=600)
     try:
-        proc = await asyncio.to_thread(subprocess.run, cmd, cwd=str(PROJECT_ROOT), env=pub_env,
-                                       capture_output=True, text=True, timeout=600)
+        proc = await asyncio.to_thread(run_checked_publish)
     except subprocess.TimeoutExpired:
         raise HTTPException(504, '发布超时（媒体处理慢或流程卡住）')
     ok = proc.returncode == 0
@@ -6043,9 +6190,12 @@ async def api_publish(platform: str, req: PublishRequest):
             lf.write('STDERR:\n' + (proc.stderr or '')[-2000:] + '\n')
     except Exception:
         pass
-    if ok:
-        _record_successful_publish(title, req.body, cfg, profile, tags, publish_type)
-    return {'ok': ok, 'message': '发布成功' if ok else '发布失败（见 detail）', 'detail': detail}
+    # Runner exit zero is not evidence that a post is publicly visible. The MP
+    # runner only creates a draft; neither outcome enters the published calendar.
+    status = ('draft_created' if platform == 'wechat-oa' else 'submitted') if ok else 'unknown'
+    return {'status': status, 'message': ('已创建公众号草稿，尚未公开发布' if platform == 'wechat-oa'
+        else '平台流程已提交，公开发布状态尚未核实') if ok else '执行结果待核实，请核对平台，勿重复提交',
+        'detail': _scrub_secrets(detail), 'runnerExitCode': proc.returncode}
 
 
 class ProfileBuildRequest(BaseModel):

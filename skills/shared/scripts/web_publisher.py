@@ -1529,6 +1529,17 @@ def cmd_publish(a) -> int:
     return rc
 
 
+def _account_binding(account: dict | None, platform: str) -> dict:
+    """IDs are admitted only from the platform-specific authenticated-self reader."""
+    unknown = {'accountId': '', 'accountIdKind': '', 'accountIdentityStatus': 'unknown'}
+    kind = {'zhihu': 'id', 'weixin-channels': 'finderUsername'}.get(platform)
+    identifier = account.get('id') if isinstance(account, dict) else None
+    if (kind is None or not isinstance(identifier, str) or not identifier.strip() or len(identifier.strip()) > 256
+            or any(ord(char) < 33 or ord(char) == 127 for char in identifier.strip())):
+        return unknown
+    return {'accountId': identifier.strip(), 'accountIdKind': kind, 'accountIdentityStatus': 'verified'}
+
+
 def cmd_whoami(a) -> int:
     """真校验登录态 + 读昵称/头像，输出单行 JSON（供 Web 后端解析）。
     走发布页判定（比 avatar 选择器可靠）：URL 落登录页 / 登出浮层可见 → 未登录。
@@ -1542,7 +1553,7 @@ def cmd_whoami(a) -> int:
     if not cfg:
         print(json.dumps({"loggedIn": False, "name": "", "avatar": "", "error": "unknown platform"}))
         return 0
-    result = {"loggedIn": False, "name": "", "avatar": ""}
+    result = {"loggedIn": False, "name": "", "avatar": "", **_account_binding(None, a.platform)}
     try:
         with sync_playwright() as p:
             profile = _profile_dir(a.platform, a.profile_base)
@@ -1557,6 +1568,7 @@ def cmd_whoami(a) -> int:
                 account = _authenticated_account(browser, cfg)
                 if account is not None:
                     result.update(loggedIn=True, **_account_identity(account))
+                    result.update(_account_binding(account, a.platform))
                     print(json.dumps(result, ensure_ascii=False))
                     return 0
                 _navigate_login(page, cfg.get("whoami_url") or cfg.get("login_probe_url") or cfg["publish_url"])
@@ -1576,6 +1588,7 @@ def cmd_whoami(a) -> int:
                 result["loggedIn"] = logged
                 if logged:
                     result.update(_account_identity(account) if account else _visible_account_identity(page, cfg))
+                    result.update(_account_binding(account, a.platform))
                 elif cfg.get("profile") == "ChannelsProfile":
                     login_url = any(marker in (page.url or "").lower() for marker in _LOGIN_MARKERS)
                     login_visible = any(element.is_visible() for selector in cfg["logged_out_selector"].split(",")

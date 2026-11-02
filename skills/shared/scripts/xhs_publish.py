@@ -1364,6 +1364,15 @@ def cmd_publish_video(a) -> int:
     return _publish(a, "video")
 
 
+def _account_binding(account: dict | None) -> dict:
+    """Project the authenticated self-account's native ID, never its nickname."""
+    unknown = {'accountId': '', 'accountIdKind': '', 'accountIdentityStatus': 'unknown'}
+    identifier = account.get('userId') if isinstance(account, dict) else None
+    if not isinstance(identifier, str) or identifier == '0' or not re.fullmatch(r'[A-Za-z0-9_-]{1,256}', identifier):
+        return unknown
+    return {'accountId': identifier, 'accountIdKind': 'userId', 'accountIdentityStatus': 'verified'}
+
+
 def cmd_whoami(a) -> int:
     """真校验登录态 + 读账号昵称/头像，输出单行 JSON（供 Web 后端解析）。
     xhs 须直连（--no-proxy），走代理会被判风险。抽不到昵称时 name 空但 loggedIn 仍准。"""
@@ -1372,7 +1381,7 @@ def cmd_whoami(a) -> int:
     except Exception as e:
         print(json.dumps({"loggedIn": False, "name": "", "avatar": "", "error": f"playwright:{e}"}))
         return 0
-    result = {"loggedIn": False, "name": "", "avatar": ""}
+    result = {"loggedIn": False, "name": "", "avatar": "", **_account_binding(None)}
     lock = _ProfileLock(_profile_dir(a.profile_base))
     try:
         lock.acquire(4)
@@ -1388,6 +1397,7 @@ def cmd_whoami(a) -> int:
                 account = _authenticated_account(ctx)
                 if account is not None:
                     result["loggedIn"] = True
+                    result.update(_account_binding(account))
                     if not all(_account_identity(account).values()):
                         account = _self_profile_account(ctx, account)
                     result.update(_account_identity(account))

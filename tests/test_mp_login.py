@@ -17,7 +17,7 @@ def load_web_functions():
     nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names]
     for node in nodes:
         node.decorator_list = []
-    env = {'subprocess': subprocess}
+    env = {'subprocess': subprocess, '_require_publication_profile_idle': Mock()}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), 'web/app.py', 'exec'), env)
     return env
 

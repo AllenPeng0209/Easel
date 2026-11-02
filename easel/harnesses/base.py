@@ -15,6 +15,8 @@ Ask = Callable[[list[dict]], Awaitable[dict[str, list[str]]]]
 Bind = Callable[[str], None]
 # The host owns authorization, filesystem validation and durable receipts.
 Present = Callable[[list[dict], str], Awaitable[list[dict] | None]]
+# Publication authority, exact-payload approval and receipts remain host-owned.
+Publish = Callable[[dict, str], Awaitable[dict]]
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,7 @@ class RunRequest:
     codex_auto_approve: bool = False
     autonomy_mode: str = "autonomous"
     present: Present | None = None
+    publish: Publish | None = None
 
 
 class Adapter(Protocol):

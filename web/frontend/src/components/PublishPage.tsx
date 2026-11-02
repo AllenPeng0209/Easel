@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   createSchedule, executeSkill, runAgent, streamChat,
-  fetchAccounts, publishNow, publishStatus, submitPublishSms, fetchOutputs, mediaUrl,
+  fetchAccounts, publishNow, preparePublication, fetchPublicationApproval, decidePublication, submitPublishSms, fetchOutputs, mediaUrl,
 } from '../lib/api';
 import type { AccountItem, OutputFile } from '../lib/api';
+import type { PublicationApprovalRecord } from '../lib/publicationApproval';
+import PublicationApprovalDialog from './PublicationApprovalDialog';
 import { loadPublishDraft, savePublishDraft } from '../lib/store';
 import { renderMarkdown } from '../lib/sanitize';
 import { IconPublish, IconCopy, IconCheck, IconCalendar, IconSkills, IconEdit, IconStop, IconTrash } from './icons';
@@ -39,7 +41,7 @@ function parseSections(text: string): Record<string, string> {
   return map;
 }
 
-type PubState = { status: 'publishing' | 'ok' | 'fail'; msg: string };
+type PubState = { status: 'publishing' | 'ok' | 'fail' | 'pending'; msg: string };
 
 export default function PublishPage({ persona }: PublishPageProps) {
   const draft0 = loadPublishDraft();
@@ -66,8 +68,15 @@ export default function PublishPage({ persona }: PublishPageProps) {
   const [showPicker, setShowPicker] = useState(false);
   const [pub, setPub] = useState<Record<string, PubState>>({});
   const [publishing, setPublishing] = useState(false);
+  const [approvals, setApprovals] = useState<PublicationApprovalRecord[]>([]);
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const [approvalError, setApprovalError] = useState('');
+  const draftKey = JSON.stringify({ title, body, platforms, overrides, tags, persona, selectedMedia });
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
+  useEffect(() => { setApprovals([]); setApprovalError(''); }, [draftKey]);
   // 发布时的短信验证窗口（抖音风控条件触发；没触发就不弹）
-  const [pubSms, setPubSms] = useState<{ platform: string; name: string; state: string; message: string } | null>(null);
+  const [pubSms, setPubSms] = useState<{ platform: string; name: string; state: string; message: string; approvalId: string } | null>(null);
   const [pubSmsCode, setPubSmsCode] = useState('');
   const [pubSmsBusy, setPubSmsBusy] = useState(false);
 
@@ -187,93 +196,124 @@ export default function PublishPage({ persona }: PublishPageProps) {
     } finally { setChecking(false); }
   };
 
-  // D. 一键发布（真发布，二次确认）
+  // Review Host-captured immutable subjects before any external dispatch.
   const publishAll = async () => {
-    if (empty || publishing || checking) return;
-    const targets = PLATFORMS.filter((p) => platforms.includes(p.key) && PUBLISHABLE.has(p.key));
-    if (targets.length === 0) {
-      showToast('所选平台暂不支持一键发布（B站请用「复制」或终端 biliup）');
-      return;
-    }
-    setChecking(true);
-    try {
-      setCheckResult(await performPrecheck());
-    } catch (e) {
-      setCheckResult(`预检失败：${e instanceof Error ? e.message : '未知错误'}\n\n预检仅用于提醒，不会阻止你继续发布。`);
-    } finally {
-      setChecking(false);
-    }
-    const okToSend = window.confirm(
-      `发布前预检已执行，结果已显示在页面中。人设评分只做提醒，不会阻止发布。\n\n` +
-      `即将【真实发布】到：${targets.map((t) => t.label).join('、')}。\n` +
-      `这会公开发布到你的账号，确定继续？`);
-    if (!okToSend) return;
-
-    setPublishing(true);
-    for (const t of targets) {
-      if (!loginOf(t.key)) {
-        setPub((r) => ({ ...r, [t.key]: { status: 'fail', msg: '未登录 · 去账号页登录' } }));
-        continue;
-      }
-      if (MEDIA_REQUIRED.has(t.key) && selectedMedia.length === 0) {
-        setPub((r) => ({ ...r, [t.key]: { status: 'fail', msg: '需附带图片/视频' } }));
-        continue;
-      }
-      if (VIDEO_ONLY.has(t.key) && !selectedMedia.some((p) => VIDEO_RE.test(p))) {
-        setPub((r) => ({ ...r, [t.key]: { status: 'fail', msg: `${t.label}只能发视频，请从内容库选一个视频` } }));
-        continue;
-      }
-      setPub((r) => ({ ...r, [t.key]: { status: 'publishing', msg: '发布中…可能需 1-2 分钟' } }));
+    if (empty || publishing || checking || approvalBusy) return;
+    const targets = PLATFORMS.filter(p => platforms.includes(p.key) && PUBLISHABLE.has(p.key));
+    if (!targets.length) { showToast('请选择支持发布的平台'); return; }
+    const key = draftKeyRef.current;
+    setApprovalBusy(true); setApprovalError('');
+    const prepared: PublicationApprovalRecord[] = [];
+    for (const target of targets) {
       try {
-        const res = await publishNow(t.key, { title, body: effective(t.key), media: selectedMedia, tags, persona });
-        if (res.async) {
-          // 抖音：异步发布，轮询状态；风控触发短信墙时弹输入框（条件触发，没触发就直接跑完）
-          await pollAsyncPublish(t.key, t.label);
-        } else {
-          setPub((r) => ({
-            ...r,
-            [t.key]: res.ok
-              ? { status: 'ok', msg: '已发布 ✅' }
-              : { status: 'fail', msg: res.detail || res.message || '发布失败' },
-          }));
-        }
-      } catch (e) {
-        setPub((r) => ({ ...r, [t.key]: { status: 'fail', msg: e instanceof Error ? e.message : '发布失败' } }));
+        if (!loginOf(target.key)) throw new Error('未登录，请先在账号页登录并校验');
+        if (MEDIA_REQUIRED.has(target.key) && !selectedMedia.length) throw new Error('需附带图片或视频');
+        if (VIDEO_ONLY.has(target.key) && !selectedMedia.some(path => VIDEO_RE.test(path))) throw new Error('此平台需要一个视频');
+        const record = await preparePublication(target.key, { title, body: effective(target.key), media: selectedMedia, tags, persona });
+        if (!aliveRef.current || draftKeyRef.current !== key) break;
+        prepared.push(record);
+      } catch (error) {
+        if (aliveRef.current && draftKeyRef.current === key) setPub(previous => ({ ...previous,
+          [target.key]: { status: 'fail', msg: error instanceof Error ? error.message : '准备确认失败' } }));
       }
     }
-    setPublishing(false);
-    showToast('发布流程结束，见各平台卡片状态');
+    if (aliveRef.current) {
+      if (draftKeyRef.current === key) setApprovals(prepared);
+      setApprovalBusy(false);
+    }
   };
 
-  // 异步发布轮询（抖音）：直到 success/error；遇 sms_required/verifying 弹短信窗口
-  const pollAsyncPublish = (key: string, label: string) => new Promise<void>((resolve) => {
+  const showPublicationResult = (record: PublicationApprovalRecord) => {
+    const key = record.subject.platform.id;
+    const result = record.result;
+    const message = ({
+      submitted: '已提交，等待核对平台回执', confirmed: '平台回执已确认', unknown: '执行结果待核实，勿重复提交',
+      failed: '执行失败', draft_created: '草稿已创建，尚未公开发布', exported: '已导出，尚未发布', scheduled: '定时任务已安排',
+    } as Record<string, string>)[result?.status || ''] || '等待执行结果';
+    setPub(previous => ({ ...previous, [key]: { status: result?.status === 'confirmed' ? 'ok'
+      : result?.status === 'failed' ? 'fail' : 'pending', msg: message } }));
+  };
+
+  const pollApprovedPublication = (record: PublicationApprovalRecord) => new Promise<void>(resolve => {
     const started = Date.now();
+    let polling = false;
     const iv = setInterval(async () => {
       if (!aliveRef.current) { clearInterval(iv); pollTimers.current.delete(iv); resolve(); return; }
-      if (Date.now() - started > 15 * 60 * 1000) {   // 15min 兜底
+      if (Date.now() - started > 16 * 60 * 1000) {
         clearInterval(iv); pollTimers.current.delete(iv); setPubSms(null);
-        setPub((r) => ({ ...r, [key]: { status: 'fail', msg: '发布超时' } }));
+        setPub(previous => ({ ...previous, [record.subject.platform.id]: { status: 'pending', msg: '执行结果待核实，请核对平台，勿重复提交' } }));
         resolve(); return;
       }
-      let s;
-      try { s = await publishStatus(key); } catch { return; }  // 单次失败忽略
-      if (s.state === 'sms_required' || s.state === 'verifying') {
-        setPubSms({ platform: key, name: label, state: s.state, message: s.message });
-        setPub((r) => ({ ...r, [key]: { status: 'publishing', msg: s.message || '需短信验证' } }));
-      } else if (s.state === 'success') {
-        clearInterval(iv); pollTimers.current.delete(iv); setPubSms(null);
-        setPub((r) => ({ ...r, [key]: { status: 'ok', msg: '已发布 ✅' } }));
-        resolve();
-      } else if (s.state === 'error') {
-        clearInterval(iv); pollTimers.current.delete(iv); setPubSms(null);
-        setPub((r) => ({ ...r, [key]: { status: 'fail', msg: s.message || '发布失败' } }));
-        resolve();
-      } else {
-        setPub((r) => ({ ...r, [key]: { status: 'publishing', msg: s.message || '发布中…' } }));
-      }
+      if (polling) return;
+      polling = true;
+      try {
+        const current = await fetchPublicationApproval(record.id);
+        if (!aliveRef.current) return;
+        setApprovals(previous => previous.map(item => item.id === current.id ? current : item));
+        if (current.runnerStatus?.state === 'sms_required' || current.runnerStatus?.state === 'verifying') {
+          setPubSms({ platform: current.subject.platform.id, name: current.subject.platform.name,
+            state: current.runnerStatus.state, message: current.runnerStatus.message, approvalId: current.id });
+        }
+        if (current.result && current.result.status !== 'executing') {
+          clearInterval(iv); pollTimers.current.delete(iv); setPubSms(null); showPublicationResult(current); resolve();
+        }
+      } catch { /* Keep the operation ID; a polling failure never retries dispatch. */ }
+      finally { polling = false; }
     }, 2500);
     pollTimers.current.add(iv);
   });
+
+  const startApproved = async (record: PublicationApprovalRecord) => {
+    setPublishing(true);
+      const subject = record.subject;
+      const started = await publishNow(subject.platform.id, { title: subject.title, body: subject.body,
+        tags: subject.tags, persona: subject.persona, media: [], artifactIds: subject.media.map(item => item.artifactId),
+        approvalId: record.id, payloadHash: record.payloadHash });
+      if (!aliveRef.current) return;
+      setApprovals(previous => previous.map(item => item.id === record.id ? started : item));
+      if (started.result?.status === 'executing') {
+        setPub(previous => ({ ...previous, [subject.platform.id]: { status: 'publishing', msg: '正在执行此批准版本…' } }));
+        void pollApprovedPublication(started).finally(() => { if (aliveRef.current) setPublishing(false); });
+      } else { showPublicationResult(started); setPublishing(false); }
+  };
+
+  const decide = async (id: string, hash: string, approved: boolean) => {
+    const record = approvals.find(item => item.id === id && item.payloadHash === hash);
+    if (!record || approvalBusy) return;
+    const key = draftKeyRef.current;
+    setApprovalBusy(true); setApprovalError('');
+    try {
+      const decision = await decidePublication(id, approved, hash);
+      if (!aliveRef.current || draftKeyRef.current !== key) return;
+      setApprovals(previous => previous.map(item => item.id === id ? decision : item));
+      if (!approved) return;
+      await startApproved(record);
+    } catch (error) {
+      if (aliveRef.current) { setApprovalError(error instanceof Error ? error.message : '批准或执行未被接受'); setPublishing(false); }
+      throw error;
+    } finally { if (aliveRef.current) setApprovalBusy(false); }
+  };
+
+  const resumeApproved = async (id: string, hash: string) => {
+    if (approvalBusy) return;
+    const key = draftKeyRef.current;
+    setApprovalBusy(true); setApprovalError('');
+    try {
+      const current = await fetchPublicationApproval(id);
+      if (!aliveRef.current || key !== draftKeyRef.current) return;
+      if (current.id !== id || current.payloadHash !== hash || current.state !== 'approved') throw new Error('批准状态已变化，请重新核对');
+      setApprovals(previous => previous.map(item => item.id === id ? current : item));
+      if (current.operationId) {
+        if (current.result?.status === 'executing') {
+          setPublishing(true);
+          void pollApprovedPublication(current).finally(() => { if (aliveRef.current) setPublishing(false); });
+        } else showPublicationResult(current);
+      } else await startApproved(current);
+    } catch (error) {
+      if (aliveRef.current) { setApprovalError(error instanceof Error ? error.message : '未能核对此操作'); setPublishing(false); }
+      throw error;
+    } finally { if (aliveRef.current) setApprovalBusy(false); }
+  };
 
   const submitPubSms = async () => {
     if (!pubSms) return;
@@ -281,7 +321,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
     if (code.length < 4) { showToast('验证码应为 4-6 位数字'); return; }
     setPubSmsBusy(true);
     try {
-      await submitPublishSms(pubSms.platform, code);
+      await submitPublishSms(pubSms.platform, code, pubSms.approvalId);
       setPubSmsCode('');
       setPubSms((p) => p && ({ ...p, state: 'verifying', message: '正在验证验证码…' }));
     } catch (e) {
@@ -314,7 +354,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
     <div className="publish-page">
       <div className="publish-editor">
         <h1 className="page-title"><IconPublish size={21} /> 发布中心</h1>
-        <p className="page-subtitle">一次编辑 → AI 一键改写成各平台版本 → 预检 → 附媒体 → 一键真发布。</p>
+        <p className="page-subtitle">编辑文案与媒体，核对实际账号和固定版本后提交；发布结果以平台回执为准。</p>
 
         <label className="field-label">标题</label>
         <input className="field" value={title} placeholder="标题（部分平台需要）"
@@ -382,10 +422,10 @@ export default function PublishPage({ persona }: PublishPageProps) {
           <button className="btn btn-sm" disabled={empty} onClick={() => addToCalendar(platforms[0] || 'xiaohongshu')}>
             <IconCalendar size={14} /> 存草稿并排期
           </button>
-          <button className="btn btn-sm btn-primary" disabled={empty || publishing || checking || !canPublish}
+          <button className="btn btn-sm btn-primary" disabled={empty || publishing || checking || approvalBusy || !canPublish}
             title={canPublish ? '真实发布到已登录平台' : '所选平台无一键发布（B站走终端 biliup）'}
             onClick={publishAll}>
-            <IconPublish size={14} /> {publishing ? '发布中…' : '一键发布'}
+            <IconPublish size={14} /> {publishing ? '执行中…' : approvalBusy ? '正在准备确认…' : '核对并发布'}
           </button>
           <button className="btn btn-sm btn-ghost" disabled={empty || adapting}
             onClick={() => { setTitle(''); setBody(''); setTags(''); setOverrides({}); setCheckResult(''); setPub({}); showToast('已清空'); }}>
@@ -456,6 +496,10 @@ export default function PublishPage({ persona }: PublishPageProps) {
       </div>
 
       {toast && <div className="toast ok"><span className="toast-icon">✓</span>{toast}</div>}
+
+      {approvals.length > 0 && !pubSms && <PublicationApprovalDialog approvals={approvals} busy={approvalBusy} error={approvalError}
+        onApprove={(id, hash) => decide(id, hash, true)} onReject={(id, hash) => decide(id, hash, false)}
+        onResume={resumeApproved} onClose={() => setApprovals([])} />}
 
       {pubSms && (
         <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) setPubSms(null); }}>

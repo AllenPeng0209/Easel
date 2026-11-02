@@ -184,6 +184,7 @@ def test_whoami_enriches_incomplete_identity_without_losing_verified_login(monke
     assert xhs_publish.cmd_whoami(args) == 0
     assert json.loads(capsys.readouterr().out) == {
         "loggedIn": True, "name": "Me", "avatar": "https://self.test/avatar",
+        "accountId": "self", "accountIdKind": "userId", "accountIdentityStatus": "verified",
     }
     assert profile.call_count == (0 if complete else 1)
     assert dom.call_count == (0 if complete else 1)

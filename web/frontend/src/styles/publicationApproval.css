@@ -1,0 +1,299 @@
+/* Copyright (c) 2026 DeepSeek. MIT License.
+ * Directly migrated: ui-approval/ApprovalPanel.module.css and ui-primitives/Modal.module.css
+ * @ ce7073d51254c26cd63b22a60835b8f948deb447.
+ * Easel adaptations: namespaced selectors, existing palette and full publication subject layout.
+ * Notice: integrations/deepseek-harness/LICENSE.
+ */
+.publication-approval-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px calc(var(--dsh-composer-side-clearance) + 16px) 12px;
+}
+
+.publication-approval-card {
+  overflow: hidden;
+  width: 100%;
+  max-width: var(--dsh-chat-content-width);
+  border: 1px solid var(--dsw-alias-state-warn-secondary);
+  border-radius: var(--dsw-radius-xl);
+  background: var(--dsw-specific-input-major);
+  box-shadow: var(--dsw-shadow-lv2);
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+.publication-approval-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.publication-approval-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  max-height: var(--dsh-composer-text-max-height);
+  overflow-y: auto;
+  padding: 12px 16px 0;
+}
+
+.publication-approval-headline {
+  color: var(--dsw-alias-label-primary);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.publication-approval-command {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  line-height: 20px;
+  word-break: break-all;
+}
+
+.publication-approval-action-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 16px;
+}
+
+@media (hover: hover) {
+  .publication-approval-reject:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover-danger);
+    color: var(--dsw-alias-state-error-primary);
+    --dsh-button-outline-color: transparent;
+  }
+}
+
+.publication-approval-subject {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 16px;
+}
+
+.publication-approval-subject img {
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.publication-approval-description {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.publication-approval-with-subject .publication-approval-body { text-align: left; }
+.publication-approval-with-subject .publication-approval-action-row { flex-wrap: wrap; }
+
+/* Full-viewport layer (figma Mask + Dialog 451:18655): mask + centered card.
+   24px of air on every side; the top/bottom widen to the frame's published
+   overlay inset so a tall card stays clear of it.
+   Cards size against this padding box: consumers cap growth with
+   `max-height: 100%`, never their own viewport calc. */
+.publication-modal-overlay {
+  pointer-events: auto;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(24px, var(--dsh-frame-overlay-top, 24px)) 24px;
+}
+
+/* Only paint excludes the native caption; the root still blocks background clicks. */
+.publication-modal-mask {
+  position: absolute;
+  inset: var(--dsh-frame-chrome-top, 0px) 0 0;
+  backdrop-filter: var(--dsw-mask-blur);
+}
+
+.publication-modal-mask::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--dsw-alias-bg-mask-1);
+  animation: publicationModalEnter var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+/* Dialogs use the prominent elevation on the secondary layer. */
+.publication-modal-dialog {
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: min(380px, 100%);
+  padding: 0 0 24px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--dsw-radius-panel);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-prominent);
+  animation: publicationModalEnter var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+@keyframes publicationModalEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .publication-modal-mask::after, .publication-modal-dialog { animation: none; }
+}
+
+.publication-modal-dialog:focus {
+  outline: none;
+}
+
+.publication-modal-content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* Header row (figma Title row): pad l24/t22/r14/b12, SPACE_BETWEEN —
+ * title left, close button right. */
+.publication-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 22px 14px 12px 24px;
+}
+
+.publication-modal-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500; /* figma wt510, rendered 500 */
+  color: var(--dsw-alias-label-primary);
+}
+
+.publication-modal-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+}
+
+@media (hover: hover) {
+  .publication-modal-close:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+
+/* Description and body share the 332px content column (24px side pads). */
+.publication-modal-description {
+  margin: 0;
+  padding: 0 24px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-primary);
+}
+
+.publication-modal-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-top: 20px;
+  padding: 0 24px;
+}
+
+.publication-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 24px;
+}
+
+.publication-modal-overlay, .publication-subject {
+  --dsh-composer-side-clearance: 0px;
+  --dsh-chat-content-width: 100%;
+  --dsh-composer-text-max-height: min(62vh, 680px);
+  --dsw-alias-state-warn-secondary: var(--border-strong);
+  --dsw-radius-xl: 14px; --dsw-radius-panel: 18px; --dsw-radius-sm: 6px;
+  --dsw-specific-input-major: var(--surface);
+  --dsw-shadow-lv2: var(--shadow-sm);
+  --dsw-alias-state-warn-tertiary: var(--amber-soft);
+  --dsw-alias-state-warn-primary: var(--amber);
+  --dsw-alias-label-primary: var(--text); --dsw-alias-label-secondary: var(--text-secondary);
+  --dsw-alias-label-tertiary: var(--text-tertiary);
+  --dsw-alias-interactive-bg-hover: var(--surface-hover);
+  --dsw-alias-interactive-bg-hover-danger: var(--red-soft);
+  --dsw-alias-state-error-primary: var(--red);
+  --dsw-alias-bg-mask-1: rgba(0,0,0,.5); --dsw-mask-blur: blur(5px);
+  --dsw-alias-bg-layer-2: var(--bg-elev); --dsw-elevation-prominent: var(--shadow-lg);
+  --ds-transition-duration: 160ms; --ds-ease-in-out: ease;
+  --ds-font-family-code: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.publication-modal-dialog { width: min(940px, 100%); max-height: 100%; padding-bottom: 14px; gap: 0; }
+.publication-modal-header { flex: none; }
+.publication-modal-header h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.publication-modal-close { font-size: 25px; line-height: 1; }
+.publication-modal-description { color: var(--text-secondary); font-size: 12px; margin-bottom: 10px; }
+.publication-modal-body { margin-top: 0; padding: 0 8px; overflow-y: auto; min-height: 0; }
+.publication-modal-dialog .publication-approval-body { max-height: none; overflow-y: visible; }
+.publication-approval-flow { width: 100%; }
+.publication-approval-strip { font-weight: 500; }
+.publication-approval-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.publication-approval-dot[data-waiting='true'] { opacity: .65; }
+.publication-approval-body { gap: 10px; padding-bottom: 12px; }
+.publication-approval-action-row { border-top: 1px solid var(--border); }
+.publication-approval-note { color: var(--text-tertiary); font-size: 12px; }
+.publication-approval-error { margin: 8px 16px; color: var(--red); font-size: 12px; line-height: 1.6; }
+.publication-subject { min-width: 0; color: var(--text); }
+.publication-subject__identity { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px 18px; margin: 0 0 14px; }
+.publication-subject__identity > div { min-width: 0; }
+.publication-subject dt { color: var(--text-tertiary); font-size: 11px; margin-bottom: 3px; }
+.publication-subject dd { margin: 0; color: var(--text); font-size: 13px; overflow-wrap: anywhere; }
+.publication-subject__identity strong { font-size: 13px; font-weight: 550; }
+.publication-subject code, .publication-approval-binding code { display: block; white-space: normal; overflow-wrap: anywhere; font: 11px/1.7 var(--ds-font-family-code); color: var(--text-secondary); }
+.publication-subject__account { padding: 9px 11px; border-radius: 8px; background: var(--accent-soft); grid-column: 1/-1; }
+.publication-subject__copy { border-top: 1px solid var(--border); padding-top: 10px; }
+.publication-subject h4 { font-size: 11px; font-weight: 500; color: var(--text-tertiary); margin: 8px 0 4px; }
+.publication-subject__copy p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; margin: 0 0 10px; }
+.publication-subject__media ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 9px; }
+.publication-subject__media li { border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; min-width: 0; }
+.publication-subject__media li > div { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.publication-subject__media li > div span { color: var(--text-secondary); flex: none; }
+.publication-subject__media li > dl { margin: 7px 0; }
+.publication-subject__media a { color: var(--accent-start); font-size: 11px; }
+.publication-subject .artifact-stage { height: min(340px,45vh); }
+.publication-approval-binding { color: var(--text-tertiary); font-size: 11px; }
+.publication-approval-binding summary { cursor: pointer; }
+.publication-approval-binding dl { padding: 9px 0; margin: 0; }
+.publication-approval-binding dt { color: var(--text-tertiary); margin-top: 6px; }
+.publication-approval-binding dd { margin: 0; }
+@media (max-width:600px) {
+  .publication-modal-overlay { padding: 12px; }
+  .publication-modal-header { padding: 16px 12px 10px 16px; }
+  .publication-modal-description { padding: 0 16px; }
+  .publication-modal-body { padding: 0; }
+  .publication-approval-flow { padding: 6px 8px 10px; }
+  .publication-subject__identity { grid-template-columns: minmax(0,1fr); }
+  .publication-approval-action-row { justify-content: stretch; }
+  .publication-approval-action-row button { flex: 1; white-space: normal; }
+}

@@ -786,7 +786,10 @@ def cmd_selftest(_a=None):
 
 def cmd_whoami(a):
     from playwright.sync_api import sync_playwright
-    out = {"loggedIn": False, "name": "", "avatar": ""}
+    # The current MP reader verifies its web session and visible label only.
+    # A session token or configured AppID is not proof of a native account UID.
+    out = {"loggedIn": False, "name": "", "avatar": "", 'accountId': '',
+           'accountIdKind': '', 'accountIdentityStatus': 'unknown'}
     try:
         with sync_playwright() as p:
             ctx = _launch(p, a.headed, a.profile_base, _proxy(a.proxy, a.no_proxy))

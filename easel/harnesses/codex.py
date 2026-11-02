@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 from easel import __version__
 from easel.agent_policy import requests_secret
@@ -85,6 +86,83 @@ EASEL_PRESENT_TOOL = {
 }
 
 
+# Reuse the native eager-tool envelope and host-callback separation migrated
+# above from DeepSeek Harness tool-present (MIT, ce7073d). The publication schema
+# itself is Easel-owned: the host applies the one-shot/fail-closed lifecycle of
+# interaction/user-approval rather than treating an ask_user answer as a grant.
+_PUBLICATION_PLATFORMS = ('xiaohongshu', 'douyin', 'kuaishou', 'weixin-channels',
+                          'zhihu', 'bilibili', 'wechat-oa')
+_PUBLICATION_TEXT_LIMITS = {'title': 1000, 'body': 100000, 'tags': 2000, 'persona': 120}
+EASEL_PUBLISH_TOOL = {
+    'type': 'function', 'name': 'easel_publish', 'deferLoading': False,
+    'description': (
+        'Request publication through Easel\'s typed host workflow. The host resolves the current IP account, '
+        'freezes the exact content and immutable artifact versions, and requires real human approval before '
+        'any external submission. Supply only the listed content fields and artifact IDs returned by present. '
+        'Do not provide paths, commands, URLs, account identities or claimed approvals. A pending, rejected or '
+        'submitted receipt is not proof that content was published. Never bypass this workflow with shell, '
+        'browser, scripts or generic ask_user approval.'
+    ),
+    'inputSchema': {
+        'type': 'object', 'additionalProperties': False, 'required': ['platform'],
+        'properties': {
+            'platform': {'type': 'string', 'enum': list(_PUBLICATION_PLATFORMS)},
+            **{name: {'type': 'string', 'maxLength': limit} for name, limit in _PUBLICATION_TEXT_LIMITS.items()},
+            'artifactIds': {'type': 'array', 'maxItems': 32, 'uniqueItems': True,
+                            'items': {'type': 'string', 'pattern': '^[a-f0-9]{32}$'}},
+        },
+        'anyOf': [{'required': [name], 'properties': {name: {'minLength': 1}}} for name in ('title', 'body')],
+    },
+}
+
+
+def _publication_payload(arguments) -> dict:
+    if not isinstance(arguments, dict) or set(arguments) - {'platform', 'artifactIds', *_PUBLICATION_TEXT_LIMITS}:
+        raise ValueError('invalid publication arguments')
+    platform = arguments.get('platform')
+    if not isinstance(platform, str) or platform not in _PUBLICATION_PLATFORMS:
+        raise ValueError('invalid publication platform')
+    payload = {'platform': platform}
+    for name, limit in _PUBLICATION_TEXT_LIMITS.items():
+        value = arguments.get(name, '')
+        if not isinstance(value, str) or len(value) > limit:
+            raise ValueError('invalid publication text')
+        payload[name] = value
+    if not payload['title'].strip() and not payload['body'].strip():
+        raise ValueError('empty publication content')
+    artifacts = arguments.get('artifactIds', [])
+    if (not isinstance(artifacts, list) or len(artifacts) > 32
+            or any(not isinstance(value, str) or not re.fullmatch(r'[a-f0-9]{32}', value) for value in artifacts)
+            or len(set(artifacts)) != len(artifacts)):
+        raise ValueError('invalid publication artifact IDs')
+    return {**payload, 'artifactIds': list(artifacts)}
+
+
+def _publication_failure(*, unsupported=False) -> dict:
+    message = (
+        'Typed publication is unsupported in this native thread. Start a new conversation with the host '
+        'publication workflow enabled. Do not substitute shell, browser or generic question approval.'
+        if unsupported else
+        'The host did not accept this publication request. Supply only a supported platform, title/body, '
+        'tags, persona and immutable artifact IDs using the declared schema. No publication was confirmed.'
+    )
+    return {'success': False, 'contentItems': [{'type': 'inputText', 'text': message}]}
+
+
+def _publication_instructions(available: bool) -> str:
+    if available:
+        return ('\n\n## Easel typed publication workflow\nPublic publication must use easel_publish. '
+                'Its host owns the exact payload and real human one-shot approval. Shell/browser/script '
+                'execution permission and easel_ask_user answers are not publication approval; do not '
+                'use either to replace or bypass this tool. Never invent a publication subject, account '
+                'identity, approval or receipt. A rejection, cancellation or unavailable host stops the '
+                'external action; finish independent preparation without claiming publication.')
+    return ('\n\n## Easel typed publication workflow\nTyped publication is unavailable in this retained '
+            'native thread. Keep its existing history; do not publish through shell, browser or scripts. '
+            'A new conversation with easel_publish enabled is required for this host workflow. '
+            'Generic ask_user answers never substitute for an exact-content publication approval.')
+
+
 def _present_files(arguments) -> list[dict]:
     if not isinstance(arguments, dict) or set(arguments) != {"files"}:
         raise ValueError("invalid present arguments")
@@ -156,6 +234,7 @@ class CodexAdapter:
         thread_id = request.native_id
         turn_id = ""
         streamed: set[str] = set()
+        publication_registered = False
         events = EventProjector(emit, request.env)
 
         def notify(method, params):
@@ -206,6 +285,28 @@ class CodexAdapter:
                     turn_id and params.get("turnId", turn_id) != turn_id):
                 raise HarnessError("不属于当前会话的请求")
             if method == "item/tool/call":
+                if params.get('tool') == 'easel_publish':
+                    if (request.publish is None or not publication_registered
+                            or params.get('namespace') not in (None, '')):
+                        return _publication_failure(unsupported=True)
+                    if not turn_id or params.get('turnId') != turn_id:
+                        raise HarnessError('发布工具请求不属于当前回合')
+                    try:
+                        payload = _publication_payload(params.get('arguments'))
+                        call_id = params.get('callId')
+                        if (not isinstance(call_id, str) or not call_id.strip()
+                                or len(call_id) > 256 or any(ord(character) < 32 for character in call_id)):
+                            raise ValueError('invalid publication call identity')
+                        receipt = await request.publish(payload, call_id)
+                        if not isinstance(receipt, dict) or not receipt:
+                            raise ValueError('invalid host publication receipt')
+                        text = json.dumps(receipt, ensure_ascii=False, allow_nan=False)
+                    except Exception:
+                        # Validation/host failures must not echo credentials or
+                        # host paths. CancelledError inherits BaseException and
+                        # deliberately propagates to the native RPC cleanup.
+                        return _publication_failure()
+                    return {'success': True, 'contentItems': [{'type': 'inputText', 'text': text}]}
                 if params.get("tool") == "present" and params.get("namespace") in (None, ""):
                     try:
                         files = _present_files(params.get("arguments"))
@@ -259,6 +360,7 @@ class CodexAdapter:
         command = list(request.command) if request.command else (
             codex_override(request.env) or base_command("codex")) + ["app-server"]
         async with connection(request, command, notify, respond) as rpc:
+            publication_registered = bool(thread_id) and getattr(rpc, '_easel_publish_thread_id', None) == thread_id
             if rpc.initialized is None:
                 rpc.initialized = await rpc.call("initialize", {
                     "clientInfo": {"name": "easel", "version": __version__},
@@ -266,7 +368,8 @@ class CodexAdapter:
                 await rpc.send({"method": "initialized"})
             options = {"cwd": str(request.cwd), "approvalPolicy": "on-request",
                        "sandbox": request.sandbox,
-                       "developerInstructions": harness_instructions(request)}
+                       "developerInstructions": harness_instructions(request) + _publication_instructions(
+                           request.publish is not None and (not thread_id or publication_registered))}
             if request.model:
                 options["model"] = request.model
             if thread_id and rpc.native_id == thread_id:
@@ -277,7 +380,10 @@ class CodexAdapter:
                 tools = [EASEL_ASK_USER_TOOL]
                 if request.present is not None:
                     tools.append(EASEL_PRESENT_TOOL)
+                if request.publish is not None:
+                    tools.append(EASEL_PUBLISH_TOOL)
                 result = await rpc.call("thread/start", {**options, "dynamicTools": tools})
+                publication_registered = request.publish is not None
             resumed_id = (result.get("thread") or {}).get("id", "")
             if request.native_id and resumed_id != request.native_id:
                 raise HarnessError("Codex 返回了不同的原生会话 ID，不会替换已有历史")
@@ -285,6 +391,8 @@ class CodexAdapter:
             if not thread_id:
                 raise HarnessError("Codex 未返回原生会话 ID")
             bind(thread_id)
+            if publication_registered:
+                rpc._easel_publish_thread_id = thread_id
             rpc.native_id = thread_id
             policy = {"type": "readOnly"} if request.sandbox == "read-only" else {
                 "type": "workspaceWrite", "writableRoots": [str(request.cwd)],

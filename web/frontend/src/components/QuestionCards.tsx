@@ -5,6 +5,7 @@ import { createQuestionDraftStore } from '../vendor/deepseek-harness/message/que
 import { QuestionReplyBubble } from '../vendor/deepseek-harness/message/QuestionReplyBubble';
 import type { QuestionReplyData } from '../vendor/deepseek-harness/message/question-reply';
 import '../styles/agent-chat.css';
+import { PublicationSubjectView } from './PublicationApprovalDialog';
 
 type QuestionDetails = ChatQuestion & {
   kind?: 'preference' | 'approval';
@@ -26,6 +27,7 @@ function QuestionResolution({ question }: { question: QuestionDetails }) {
     answers: Object.entries(question.answers || {}).map(([id, selected]) => ({ id, selected })),
   };
   return <div className="question-resolution">
+    {question.publication && <PublicationSubjectView subject={question.publication.subject} />}
     <div className="question-resolution__status">{question.status === 'blocked' ? '等待确认超时，任务在需要授权的步骤受阻'
       : question.status === 'declined' ? '未获授权，操作未执行'
       : question.resolvedBy === 'default' || question.status === 'defaulted' ? '已按默认答案继续' : '已答复'}</div>
@@ -175,6 +177,8 @@ function QuestionCard({ question: original, sessionId, onAnswered, onClosed }: {
         <div className="question-card">
           <div className="question-card__mode">{requiresApproval ? '需要你确认' : '补充信息'}</div>
           {requiresApproval && <div className="question-card__hint">未答复不会自动授权。</div>}
+          {question.publication && <><PublicationSubjectView subject={question.publication.subject} />
+            <p className="question-card__hint">本次批准摘要：{question.publication.payloadHash}</p></>}
           {defaultScheduled && !expired && <div className="question-card__default" role="status">
             {seconds > 0 ? `${seconds} 秒后将按默认答案继续，你可以在此前修改。` : '正在等待服务端按默认答案继续…'}
             <div className="question-card__actions">

@@ -348,6 +348,7 @@ export interface ChatQuestionItem {
   defaultAnswer?: string[];
 }
 export interface ChatQuestion {
+  publication?: import('./publicationApproval').PublicationApprovalRecord;
   id: string;              // gateway question record id (ask_...)
   questions: ChatQuestionItem[];
   expiresAtMs?: number;
@@ -485,6 +486,9 @@ export interface AccountWhoami {
   loggedIn: boolean;
   name: string;
   avatar: string;   // 头像 URL（http）或空
+  accountId?: string;
+  accountIdKind?: string;
+  accountIdentityStatus?: 'verified' | 'unknown';
 }
 
 /** 真校验某平台登录态 + 拉昵称/头像（后端起 headless 浏览器，数秒）。 */
@@ -523,33 +527,49 @@ export function exportManualPackage(platform: string, payload: {
   });
 }
 
-/** 一键发布到某平台（真发布，--exec）。media 为 outputs 相对路径数组。
- * 抖音返回 {async:true}，需轮询 publishStatus；其他平台同步返回结果。 */
+/** Host preparation freezes the exact account/content/media subject; it does not dispatch. */
+export interface PublicationInput {
+  title: string; body: string; media: string[]; tags?: string; persona?: string;
+  artifactIds?: string[]; approvalId?: string; payloadHash?: string;
+}
+
+export function preparePublication(platform: string, payload: PublicationInput): Promise<import('./publicationApproval').PublicationApprovalRecord> {
+  return request(`/api/publish/${encodeURIComponent(platform)}/prepare`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export function fetchPublicationApproval(id: string): Promise<import('./publicationApproval').PublicationApprovalRecord & {
+  runnerStatus?: { state: string; message: string };
+}> { return request(`/api/publication-approvals/${encodeURIComponent(id)}`); }
+
+export function decidePublication(id: string, approved: boolean, payloadHash: string): Promise<import('./publicationApproval').PublicationApprovalRecord> {
+  return request(`/api/publication-approvals/${encodeURIComponent(id)}/decision`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approved, payloadHash }),
+  });
+}
+
 export function publishNow(
   platform: string,
-  payload: { title: string; body: string; media: string[]; tags?: string; persona?: string },
-): Promise<PublishResult> {
-  return request<PublishResult>(`/api/publish/${encodeURIComponent(platform)}`, {
+  payload: PublicationInput,
+): Promise<import('./publicationApproval').PublicationApprovalRecord> {
+  return request(`/api/publish/${encodeURIComponent(platform)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 }
 
-export interface PublishStatus {
-  mode: 'publish';
-  state: string;     // starting | sms_required | verifying | success | error | unknown
-  message: string;
-}
+export type PublishStatus = import('./publicationApproval').PublicationApprovalRecord & { mode: 'publish' };
 
 /** 轮询异步发布状态（抖音）。 */
-export function publishStatus(platform: string): Promise<PublishStatus> {
-  return request<PublishStatus>(`/api/publish/${encodeURIComponent(platform)}/status`);
+export function publishStatus(platform: string, approvalId: string): Promise<PublishStatus> {
+  return request<PublishStatus>(`/api/publish/${encodeURIComponent(platform)}/status?approvalId=${encodeURIComponent(approvalId)}`);
 }
 
 /** 发布触发短信墙时回填验证码。 */
-export function submitPublishSms(platform: string, code: string): Promise<{ ok: boolean }> {
-  return request(`/api/publish/${encodeURIComponent(platform)}/sms`, {
+export function submitPublishSms(platform: string, code: string, approvalId: string): Promise<{ ok: boolean }> {
+  return request(`/api/publish/${encodeURIComponent(platform)}/sms?approvalId=${encodeURIComponent(approvalId)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code }),

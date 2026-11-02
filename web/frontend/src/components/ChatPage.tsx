@@ -85,7 +85,9 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
   const failedUploads = uploadItems.some(item => item.status === 'failed');
   const attachments = uploads.ready;
   const canSend = (!!input.trim() || attachments.length > 0) && !uploading && !failedUploads && !sending;
-  const lifecycleLabel = stream?.lifecycle === 'waiting_input' ? '等待补充信息'
+  const waitingApproval = stream?.questions?.some(question => (!question.status || question.status === 'pending')
+    && (question.requiresHuman || question.kind === 'approval' || question.publication));
+  const lifecycleLabel = stream?.lifecycle === 'waiting_input' ? (waitingApproval ? '等待你批准' : '等待补充信息')
     : stream?.lifecycle === 'stopping' ? '正在停止' : stream?.lifecycle === 'stop_failed' ? '停止未确认'
     : isStreaming ? '任务进行中' : apiDirect ? '文字与附件分析' : '自主执行';
 

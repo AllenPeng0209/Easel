@@ -1334,6 +1334,23 @@ def cmd_publish_video(a) -> int:
     return _publish(a, "video")
 
 
+def _account_binding(response) -> dict:
+    """Preserve the current-account API's native ID and its namespace."""
+    unknown = {'accountId': '', 'accountIdKind': '', 'accountIdentityStatus': 'unknown'}
+    if _account_identity(response) is None:
+        return unknown
+    body = response['body']
+    user = body.get('user_info') or body.get('user')
+    for field in ('uid', 'sec_uid', 'open_id'):
+        value = user.get(field)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            value = str(value)
+        if (isinstance(value, str) and value.strip() and value.strip() != '0' and len(value.strip()) <= 256
+                and not any(ord(char) < 33 or ord(char) == 127 for char in value.strip())):
+            return {'accountId': value.strip(), 'accountIdKind': field, 'accountIdentityStatus': 'verified'}
+    return unknown
+
+
 def cmd_whoami(a) -> int:
     """真校验登录态 + 读昵称/头像，输出单行 JSON（供 Web 后端解析）。
     复用 _logged_in（无二维码 + 有「高清发布」）。昵称/头像选择器 best-effort，登录后需校验。"""
@@ -1342,7 +1359,7 @@ def cmd_whoami(a) -> int:
     except Exception as e:
         print(json.dumps({"loggedIn": False, "name": "", "avatar": "", "error": f"playwright:{e}"}))
         return 0
-    result = {"loggedIn": False, "name": "", "avatar": ""}
+    result = {"loggedIn": False, "name": "", "avatar": "", **_account_binding(None)}
     try:
         with sync_playwright() as p:
             ctx = _launch(p, headed=False, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
@@ -1357,6 +1374,7 @@ def cmd_whoami(a) -> int:
                 account = _account_identity(response)
                 if account is not None:
                     result.update(loggedIn=True, **account)
+                    result.update(_account_binding(response))
                 elif not logged:
                     body = response.get("body") if isinstance(response, dict) else None
                     status = body.get("status_code") if isinstance(body, dict) else None

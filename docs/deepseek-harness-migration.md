@@ -2,6 +2,9 @@
 
 日期：2026-11-03。产品清单见 [agent-workbench-backlog.md](agent-workbench-backlog.md)。本文区分“上游已下载”“源代码已复用”“接口已适配”“本机已验收”，四者不能互相替代。
 
+当前逐功能阶段：B30精确发布批准基础闭环已通过候选树2438后端/440前端及真实Codex模拟联调，随本记录独立提交。D01 `3086ca8`、C19 `f5118d9`、D08固定交付 `97a2071`已提交。B30复用上游批准卡，绑定认证actor/IP、实际账号、精确文案/媒体/公众号排版及payload hash，Web与新Codex typed工具已接线；7863真实Codex仅模拟publisher联调通过。MP/快手严格本人ID、D30真实平台确认/重启恢复与其余144项/AUT仍待继续，不能把批准或本地runner结束当公开发布。详见 [B30验收记录](agent-feature-acceptance/B30.md)。
+
+
 ## 当前逐功能状态
 
 | 条目 | 当前结论 | 验收/实现边界 |

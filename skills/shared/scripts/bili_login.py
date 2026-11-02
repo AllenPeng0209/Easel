@@ -187,9 +187,23 @@ def _api(url: str, cookie: str, timeout: int = 15) -> dict:
         return json.loads(r.read())
 
 
+def _account_binding(nav: dict | None) -> dict:
+    """Use a verified nav identity, never the cookie file's last-known mid."""
+    unknown = {'accountId': '', 'accountIdKind': '', 'accountIdentityStatus': 'unknown'}
+    if not isinstance(nav, dict) or nav.get('isLogin') is not True:
+        return unknown
+    identifier = nav.get('mid')
+    if isinstance(identifier, int) and not isinstance(identifier, bool) and identifier > 0:
+        identifier = str(identifier)
+    if (not isinstance(identifier, str) or len(identifier) > 256 or not identifier.isascii()
+            or not identifier.isdigit() or int(identifier) <= 0):
+        return unknown
+    return {'accountId': str(int(identifier)), 'accountIdKind': 'mid', 'accountIdentityStatus': 'verified'}
+
+
 def cmd_whoami(a) -> int:
     """真校验登录态 + 昵称/头像（调 B站 nav API），输出单行 JSON（供 Web 后端解析）。"""
-    result = {"loggedIn": False, "name": "", "avatar": ""}
+    result = {"loggedIn": False, "name": "", "avatar": "", **_account_binding(None)}
     cookie_file = Path(a.cookie).expanduser() if a.cookie else DEFAULT_COOKIE
     cookie, _mid = _load_cookie(cookie_file)
     if cookie:
@@ -197,7 +211,7 @@ def cmd_whoami(a) -> int:
             nav = (_api("https://api.bilibili.com/x/web-interface/nav", cookie).get("data") or {})
             if nav.get("isLogin"):
                 result = {"loggedIn": True, "name": (nav.get("uname") or "")[:40],
-                          "avatar": nav.get("face") or ""}
+                          "avatar": nav.get("face") or "", **_account_binding(nav)}
         except Exception as e:  # noqa: BLE001 — whoami 永远输出 JSON
             result["error"] = str(e)
     print(json.dumps(result, ensure_ascii=False))
