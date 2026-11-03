@@ -27,6 +27,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -80,9 +81,9 @@ def resolve_tid(partition: str | None, tid: int | None) -> int:
     raise AssertionError
 
 
-def build_cmd(a) -> list[str]:
+def build_cmd(a, *, cookie_override: str | None = None) -> list[str]:
     """构造 biliup upload 命令（纯函数，供测试）。全局选项在子命令前。"""
-    cookie = a.cookie or "cookies.json"
+    cookie = cookie_override or a.cookie or "cookies.json"
     cmd = ["biliup", "-u", cookie]
     if getattr(a, "proxy", None):
         cmd += ["-p", a.proxy]
@@ -170,9 +171,8 @@ def cmd_upload(a) -> int:
 def _cmd_upload_impl(a) -> int:
     if not Path(a.video).expanduser().is_file():
         _die(f"视频不存在：{a.video}")
-    cmd = build_cmd(a)
-    printable = " ".join(f'"{c}"' if " " in c else c for c in cmd)
     if not a.exec:
+        printable = " ".join(f'"{c}"' if " " in c else c for c in build_cmd(a))
         _receipt_record(a, 'not_started', reason='dry_run')
         content_guard.guard_or_die(
             [a.title or Path(a.video).stem, a.desc, a.tag, a.source],
@@ -192,20 +192,31 @@ def _cmd_upload_impl(a) -> int:
         exec_mode=True,
         label="B站投稿内容",
     )
-    print("投稿中 ...", file=sys.stderr)
+    reporter = _publication_reporter(a)
+    if not reporter.enabled:
+        return _submit_upload(a, cookie, None)
+    # Verify and submit with the same private credential copy.
+    with tempfile.TemporaryDirectory(prefix="easel-bili-auth-") as directory:
+        with tempfile.NamedTemporaryFile(suffix=".json", dir=directory, delete=False) as pinned, Path(cookie).open("rb") as source:
+            shutil.copyfileobj(source, pinned)
+        return _submit_upload(a, pinned.name, reporter)
+
+
+def _submit_upload(a, cookie: str, reporter) -> int:
     account = None
-    if _publication_reporter(a).enabled:
+    if reporter is not None:
         observed = platform_readback.read_bilibili_account(cookie)
         uid = observed.get('uid') if isinstance(observed, dict) else None
         if (isinstance(uid, (str, int)) and not isinstance(uid, bool)
                 and str(uid).isascii() and str(uid).isdigit() and int(uid) > 0):
             account = {'id': f'mid:{int(uid)}', 'authenticated': True}
-        _receipt_record(a, 'not_started', account=account)
+        reporter.require_approved_account(account)
     # 发前快照 + 时间窗基准（读回对账用；快照失败自动退化为标题+时间窗）
     snapshot = platform_readback.capture_bilibili_snapshot(cookie)
     started_ms = int(time.time() * 1000)
     _receipt_record(a, 'submit_attempted', account=account)
-    rc = subprocess.call(cmd, env=_direct_env())
+    print("投稿中 ...", file=sys.stderr)
+    rc = subprocess.call(build_cmd(a, cookie_override=cookie), env=_direct_env())
     if rc == 0:
         _receipt_record(a, 'submit_attempted', reason='no_ack')
         # 发布读回对账（权威判定：读回对上才算成功——没有平台侧证据绝不报成功）

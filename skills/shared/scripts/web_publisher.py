@@ -475,10 +475,10 @@ def _publish_weixin_channels(page, ctx: dict, before_submit=None, before_write=N
         if not ready:
             page.wait_for_timeout(3000)
             continue
+        if desc and before_write is not None:
+            before_write()
         try:
             if desc:
-                if before_write is not None:
-                    before_write()
                 fr.evaluate("""(t) => {
                     const ed = document.querySelector('div.input-editor');
                     if (ed) {
@@ -493,14 +493,15 @@ def _publish_weixin_channels(page, ctx: dict, before_submit=None, before_write=N
             # page.keyboard 按 Enter（CDP 系统级注入的可信键盘事件，路由到聚焦元素触发真实提交）。
             # 成功标志：约 6s 后 URL 从 /post/create 跳到 /post/list。切勿在 Enter 后再点其它「确认」按钮（会打断提交）。
             print("  视频号：聚焦发表并按 Enter…", file=sys.stderr)
-            status = fr.evaluate("""() => {
+            focus_publish_button = """() => {
                 const b = [...document.querySelectorAll('button')].find(x => (x.innerText||'').trim() === '发表');
                 if (!b) return 'no-btn';
                 if (b.disabled || b.getAttribute('disabled') !== null) return 'disabled';
                 b.scrollIntoView({block: 'center'});
                 b.focus();
                 return document.activeElement === b ? 'focused' : 'not-focused';
-            }""")
+            }"""
+            status = fr.evaluate(focus_publish_button)
             print(f"  视频号：发表按钮状态={status}", file=sys.stderr)
             if status == 'disabled':
                 last_err = "发表按钮 disabled（视频可能还在处理）"
@@ -513,6 +514,8 @@ def _publish_weixin_channels(page, ctx: dict, before_submit=None, before_write=N
             if before_submit is not None:
                 attempted = True
                 before_submit()
+                if fr.evaluate(focus_publish_button) != 'focused':
+                    raise RuntimeError('核验账号后无法聚焦发表按钮，未按下提交键')
             page.keyboard.press("Enter")   # 可信提交
             # 等 URL 离开创作页 = 提交成功（真机 ~6s 跳 /post/list）
             for _ in range(12):
@@ -777,7 +780,7 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                     elif act == "waitfor":
                         page.wait_for_selector(sel, timeout=int(val or 30000))  # 逗号=CSS group
                 except Exception as e:
-                    if opt:
+                    if opt and not getattr(a, '_receipt_write_failed', False):
                         print(f"    (可选步骤跳过：{e})", file=sys.stderr)
                         continue
                     raise
@@ -956,15 +959,19 @@ def _channels_account(payload) -> dict | None:
     return {"id": identifier, "name": name, "avatar_url": account.get("headImgUrl", "")}
 
 
+def _is_channels_auth_response(response) -> bool:
+    parsed = urlparse(response.url)
+    return (parsed.scheme == "https" and parsed.netloc == "channels.weixin.qq.com"
+            and parsed.path == "/cgi-bin/mmfinderassistant-bin/auth/auth_data")
+
+
 def _observe_channels_account(browser, cfg: dict) -> None:
     if cfg.get("profile") != "ChannelsProfile":
         return
     browser._easel_channel_account = None
 
     def observe(response):
-        parsed = urlparse(response.url)
-        if (parsed.scheme != "https" or parsed.hostname != "channels.weixin.qq.com"
-                or parsed.path != "/cgi-bin/mmfinderassistant-bin/auth/auth_data"):
+        if not _is_channels_auth_response(response):
             return
         try:
             if 200 <= response.status < 300:
@@ -975,13 +982,14 @@ def _observe_channels_account(browser, cfg: dict) -> None:
     browser.on("response", observe)
 
 
-def _authenticated_account(browser, cfg: dict) -> dict | None:
+def _authenticated_account(browser, cfg: dict, *, fresh: bool = False) -> dict | None:
     if cfg.get("profile") == "ChannelsProfile":
         return getattr(browser, "_easel_channel_account", None)
     if cfg.get("profile") != "ZhihuProfile":
         return None
     try:
-        response = browser.request.get("https://www.zhihu.com/api/v4/me", timeout=3000)
+        options = {"headers": {"Cache-Control": "no-cache", "Pragma": "no-cache"}} if fresh else {}
+        response = browser.request.get("https://www.zhihu.com/api/v4/me", timeout=3000, **options)
         if response.status != 200:
             return None
         account = response.json()
@@ -1542,27 +1550,59 @@ def _receipt_record(a, phase: str, **fields) -> None:
     a._receipt_phase = phase
 
 
-def _receipt_observed_account(a, browser, cfg):
-    account = None
-    if _publication_reporter(a).enabled:
-        observed = _authenticated_account(browser, cfg)
+def _fresh_channels_publish_account(browser, cfg):
+    # Use a fresh response in an auxiliary page so the composer is untouched.
+    probe = None
+    try:
+        probe = browser.new_page()
+        # Page routing disables the browser HTTP cache for this verification tab.
+        probe.route("https://channels.weixin.qq.com/cgi-bin/mmfinderassistant-bin/auth/auth_data*",
+                    lambda route: route.continue_())
+        with probe.expect_response(_is_channels_auth_response, timeout=8000) as event:
+            probe.goto(cfg["whoami_url"], wait_until="commit", timeout=5000)
+        response = event.value
+        if response.from_service_worker or not 200 <= response.status < 300:
+            return None
+        return _channels_account(response.json())
+    except Exception:
+        return None
+    finally:
+        if probe is not None:
+            probe.close()
+
+
+def _receipt_approved_account(a, browser, cfg):
+    reporter = _publication_reporter(a)
+    if not reporter.enabled:
+        return None
+    try:
+        observed = (_fresh_channels_publish_account(browser, cfg) if cfg.get("profile") == "ChannelsProfile"
+                    else _authenticated_account(browser, cfg, fresh=True))
         binding = _account_binding(observed, a.platform)
-        if binding['accountIdentityStatus'] == 'verified':
-            account = {'id': f"{binding['accountIdKind']}:{binding['accountId']}", 'authenticated': True}
-    return account
+        account = ({'id': f"{binding['accountIdKind']}:{binding['accountId']}", 'authenticated': True}
+                   if binding['accountIdentityStatus'] == 'verified' else None)
+        reporter.require_approved_account(account)
+        return account
+    except Exception:
+        # Optional browser actions must never swallow a receipt or account guard failure.
+        a._receipt_write_failed = True
+        raise
 
 
 def _receipt_external_write(a, browser, cfg) -> None:
     """Auto-saving fill/upload is already an external write, before final publish."""
-    if (_publication_reporter(a).enabled and getattr(a, '_receipt_phase', 'not_started') == 'not_started'):
-        _receipt_record(a, 'submit_attempted', account=_receipt_observed_account(a, browser, cfg))
+    if not _publication_reporter(a).enabled:
+        return
+    account = _receipt_approved_account(a, browser, cfg)
+    if getattr(a, '_receipt_phase', 'not_started') == 'not_started':
+        _receipt_record(a, 'submit_attempted', account=account)
 
 
 def _receipt_submit(a, browser, cfg) -> None:
     reporter = _publication_reporter(a)
     if reporter.enabled and getattr(a, '_receipt_commit_attempted', False):
         raise RuntimeError('本次发布提交动作已尝试，结果未知时禁止自动重发')
-    account = _receipt_observed_account(a, browser, cfg)
+    account = _receipt_approved_account(a, browser, cfg)
     _receipt_record(a, 'submit_attempted', account=account)
     a._receipt_commit_attempted = True
 

@@ -476,6 +476,19 @@ class PublicationReceiptReporter:
         self._receipt_bytes, self._receipt_facts = _atomic_write(
             self._output_root, self._output.name, value, expected, check=self._check_context)
 
+    def require_approved_account(self, account):
+        """Authorize a pending write independently of previously recorded evidence."""
+        try:
+            with self._lock:
+                identity = _account(account)
+                if identity is None or identity['id'] != self._base['approvedAccountId']:
+                    _fail()
+                self._check_context()
+        except PublicationReceiptError:
+            raise
+        except Exception:
+            _fail()
+
     def record(self, phase, *, account=None, ack=None, readback=None, reason=None):
         try:
             with self._lock:

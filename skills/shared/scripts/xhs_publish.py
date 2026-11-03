@@ -475,7 +475,8 @@ def _check_account_login(page) -> bool:
 def _creator_account(context) -> dict | None:
     try:
         response = context.request.get(
-            CREATOR_ACCOUNT_URL, headers={"Referer": CREATOR_HOME_URL}, timeout=5000)
+            CREATOR_ACCOUNT_URL,
+            headers={"Referer": CREATOR_HOME_URL, "Cache-Control": "no-cache"}, timeout=5000)
         if response.status != 200:
             return None
         payload = response.json()
@@ -901,10 +902,50 @@ def _diag_after_publish(page) -> str:
     return ("屏幕可见元素：" + " | ".join(bits[:6]) if bits else "屏幕无可识别弹框/报错") + shot
 
 
-def _confirm_publish_dialog(page) -> None:
+def _bound_publish_confirmation(page):
+    try:
+        dialogs = page.query_selector_all(".d-modal, [role=dialog], [aria-modal=true]")
+    except Exception:
+        return None
+    generic_confirmation = None
+    for dialog in dialogs:
+        try:
+            if not dialog.is_visible():
+                continue
+            text = (dialog.inner_text() or "").strip()
+            publish_question = bool(re.search(r"(?:确认|确定|是否|继续|立即)发布[^？?]*[？?]", text))
+            for button in dialog.query_selector_all("button, .d-button, [role=button]"):
+                if not button.is_visible():
+                    continue
+                label = (button.inner_text() or "").strip()
+                if label in ("确认发布", "确定发布", "继续发布", "立即发布"):
+                    return button
+                if generic_confirmation is None and publish_question and label in ("确认", "确定"):
+                    generic_confirmation = button
+        except Exception:
+            pass  # No click was attempted; retry observation while the page settles.
+    return generic_confirmation
+
+
+def _confirm_publish_dialog(page, before_confirm=None) -> None:
     """点发布后若弹二次确认框，点其确认按钮（保守：仅当可见且文案匹配）。"""
     deadline = time.time() + 5
     while time.time() < deadline:
+        if before_confirm is not None:
+            location = urlparse(page.url)
+            expected = urlparse(PUBLISH_URL)
+            if (location.scheme, location.netloc, location.path) != (expected.scheme, expected.netloc, expected.path):
+                return
+            button = _bound_publish_confirmation(page)
+            if button is not None:
+                before_confirm()
+                # The click may already have reached the browser on exception.
+                # Never scan and click another button after this attempt.
+                button.click()
+                page.wait_for_timeout(1000)
+                return
+            page.wait_for_timeout(500)
+            continue
         for b in page.query_selector_all("button, .d-button, [role=button]"):
             try:
                 if not b.is_visible():
@@ -956,7 +997,7 @@ def _normalize_content(text: str) -> str:
     return text.strip("\n")
 
 
-def _fill_and_submit(page, title, content, tags, before_submit=None):
+def _fill_and_submit(page, title, content, tags, before_submit=None, before_confirm=None):
     """标题→正文→话题→长度校验→发布→成功校验。"""
     content = _normalize_content(content)         # 修连续空行导致的发布失败
     title_el = page.query_selector(SELECTORS["title_input"])
@@ -985,13 +1026,20 @@ def _fill_and_submit(page, title, content, tags, before_submit=None):
         # xhs-publish-btn 是宽横条(闭合 Shadow DOM)，内含[暂存离开][发布]两个按钮；
         # 点 host 中心会落在两按钮间隙→无效。发布按钮在右侧约 62% 处（实测像素为品牌红），按坐标点它。
         page.mouse.click(box["x"] + box["width"] * 0.62, box["y"] + box["height"] / 2)
+    elif before_confirm is not None:
+        # Bound submission has one primary click, even if its acknowledgement
+        # is lost. Retrying with another click can submit a second post.
+        btn.click(force=True)
     else:
         try:
             btn.click(force=True)
         except Exception:
             btn.click()
     page.wait_for_timeout(1000)
-    _confirm_publish_dialog(page)   # 若弹二次确认框，点确认
+    if before_confirm is not None:
+        _confirm_publish_dialog(page, before_confirm=before_confirm)
+    else:
+        _confirm_publish_dialog(page)
     _wait_publish_success(page, 40)
 
 
@@ -1346,28 +1394,45 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
                     page.wait_for_timeout(500)
                 if not logged and "login" in page.url.lower():
                     _die("未登录，请先 `login` 扫码")
+                def require_account():
+                    if not reporter.enabled:
+                        return
+                    # The creator endpoint owns this publishing session. A
+                    # consumer-web profile can be authenticated as another user.
+                    binding = _account_binding(_creator_account(ctx))
+                    account = None
+                    if binding["accountIdentityStatus"] == "verified":
+                        account = {"id": f"{binding['accountIdKind']}:{binding['accountId']}",
+                                   "authenticated": True}
+                    reporter.require_approved_account(account)
+                    state["account"] = account
+
                 if reporter.enabled:
-                    try:
-                        binding = _account_binding(_authenticated_account(ctx))
-                        if binding['accountIdentityStatus'] == 'verified':
-                            state['account'] = {'id': f"{binding['accountIdKind']}:{binding['accountId']}", 'authenticated': True}
-                    except Exception:
-                        state['account'] = None
-                    # Validate the observed self-account before staging media;
-                    # a wrong authenticated identity must not write externally.
+                    require_account()
                     reporter.record('not_started', account=state['account'])
-                def before_submit():
-                    state['phase'] = 'submit_attempted'
+
+                def mark_attempt():
                     reporter.record('submit_attempted', account=state['account'])
+                    state['phase'] = 'submit_attempted'
+
+                def before_submit():
+                    require_account()
+                    mark_attempt()
+
+                _click_publish_tab(page, "上传图文" if kind == "image" else "上传视频")
+                page.wait_for_timeout(1000)
+                if reporter.enabled:
+                    require_account()
+                    # Staging writes media to the provider even when no final
+                    # publish click happens. Fence it with the durable receipt.
+                    mark_attempt()
                 if kind == "image":
-                    _click_publish_tab(page, "上传图文")
-                    page.wait_for_timeout(1000)
                     _upload_images(page, media)
                 else:
-                    _click_publish_tab(page, "上传视频")
-                    page.wait_for_timeout(1000)
                     _upload_video(page, media[0])
-                _fill_and_submit(page, a.title, a.content or "", tags, before_submit=before_submit)
+                require_account()  # Upload can outlive the creator login.
+                _fill_and_submit(page, a.title, a.content or "", tags, before_submit=before_submit,
+                                 before_confirm=require_account if reporter.enabled else None)
             except PWTimeout as e:
                 _die(f"步骤超时（选择器可能已失效，检查 SELECTORS）：{e}")
             finally:

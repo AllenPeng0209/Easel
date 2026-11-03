@@ -79,12 +79,13 @@ class LoginRequiredError(RuntimeError):
 
 # 页面内 fetch：同域请求自动带 cookie；返回结构化结果而不是裸文本，便于错误诊断。
 _JS_FETCH_JSON = """
-async ([url, timeoutMs]) => {
+async ([url, timeoutMs, cacheMode = "default"]) => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const resp = await fetch(url, {
       credentials: 'include',
+      cache: cacheMode,
       signal: ctrl.signal,
       headers: { 'accept': 'application/json, text/plain, */*' },
     });

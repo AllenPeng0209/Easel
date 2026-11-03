@@ -574,3 +574,26 @@ def test_host_reopen_rejects_duplicate_context_keys_without_overwrite(files):
     with pytest.raises(api().PublicationReceiptError):
         host_files(files)
     assert target.read_text() == original
+
+
+def test_write_authority_requires_approved_account_even_after_an_attempt(files):
+    writer = reporter(files)
+    writer.record('submit_attempted')
+    before = files[1].read_bytes()
+    wrong = {'id': 'user_id:other', 'authenticated': True}
+    for account in (None, wrong, {'id': actual()['id'], 'authenticated': False}):
+        with pytest.raises(api().PublicationReceiptError):
+            writer.require_approved_account(account)
+    writer.require_approved_account(actual())
+    assert files[1].read_bytes() == before
+    # Observations of an already attempted submission still preserve provider evidence.
+    writer.record('readback', account=wrong)
+    assert load(files)['account'] == wrong
+
+
+def test_write_authority_revalidates_private_approval_context(files):
+    writer = reporter(files)
+    files[0].write_text(json.dumps({**context(), 'payloadHash': 'd' * 64}), encoding='utf-8')
+    with pytest.raises(api().PublicationReceiptError):
+        writer.require_approved_account(actual())
+    assert not files[1].exists()

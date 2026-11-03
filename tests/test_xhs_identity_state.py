@@ -160,7 +160,8 @@ def test_creator_account_request_includes_required_first_party_referer():
     context = SimpleNamespace(request=SimpleNamespace(get=request))
     assert xhs_publish._creator_account(context) == account
     request.assert_called_once_with(
-        xhs_publish.CREATOR_ACCOUNT_URL, headers={"Referer": xhs_publish.CREATOR_HOME_URL}, timeout=5000)
+        xhs_publish.CREATOR_ACCOUNT_URL,
+        headers={"Referer": xhs_publish.CREATOR_HOME_URL, "Cache-Control": "no-cache"}, timeout=5000)
 
 
 @pytest.mark.parametrize("complete", [False, True])

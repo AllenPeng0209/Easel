@@ -28,6 +28,11 @@ class Reporter:
         self.records = []
         self.events = events
 
+    def require_approved_account(self, account):
+        if not account or account.get('authenticated') is not True:
+            raise ValueError('Missing authenticated account')
+        self.events.append(('approved-account', account['id']))
+
     def record(self, phase, account=None, ack=None, readback=None, reason=None):
         if self.enabled:
             item = dict(phase=phase, account=account, ack=ack, readback=readback, reason=reason)
@@ -105,6 +110,7 @@ def xhs(h, *, account=None, upload_failure=None, click_failure=None):
     h.monkeypatch.setattr(module, '_launch', lambda *_a, **_k: fake_context(page))
     h.monkeypatch.setattr(module, '_ProfileLock', lambda _path: SimpleNamespace(acquire=lambda *_a: None, release=lambda: None))
     h.monkeypatch.setattr(module, '_authenticated_account', lambda _context: account)
+    h.monkeypatch.setattr(module, '_creator_account', lambda _context: account)
     for name in ('_click_publish_tab', '_upload_video', '_human_type', '_input_tags', '_check_overflow', '_confirm_publish_dialog', '_wait_publish_success'):
         h.monkeypatch.setattr(module, name, lambda *_a, **_k: None)
     def upload(*_a):
@@ -118,14 +124,26 @@ def xhs(h, *, account=None, upload_failure=None, click_failure=None):
     return module
 
 
-def douyin(h, result, *, response=None, click_failure=None):
+def _douyin_self(uid='observed-dy'):
+    return {'httpStatus': 200, 'body': {'status_code': 0, 'user_info': {'uid': uid}}}
+
+
+def douyin(h, result, *, response=_douyin_self(), click_failure=None, stay_in_editor=False):
     module = h.load('douyin_publish')
-    page = SimpleNamespace(url=module.HOME_URL, goto=lambda *_a, **_k: None,
+    def evaluate(_script, request):
+        h.events.append(('account-probe',))
+        h.events.append(('account-request', tuple(request)))
+        return response() if callable(response) else response
+    page = SimpleNamespace(url='https://creator.douyin.com/creator-micro/content/post/video' if stay_in_editor else module.HOME_URL,
+        goto=lambda *_a, **_k: None,
         set_default_timeout=lambda *_a: None, wait_for_timeout=lambda *_a: None,
-        evaluate=lambda *_a, **_k: response)
+        evaluate=evaluate)
     h.monkeypatch.setattr(module, '_launch', lambda *_a, **_k: fake_context(page))
-    for name in ('_wait_ready', '_go_upload', '_switch_tab', '_upload_files', '_wait_video_processed', '_select_ai_cover', '_fill_title_desc', '_wait_toast', '_dump_publish_fail'):
+    for name in ('_wait_ready', '_go_upload', '_switch_tab', '_wait_video_processed', '_wait_toast', '_dump_publish_fail'):
         h.monkeypatch.setattr(module, name, lambda *_a, **_k: None)
+    h.monkeypatch.setattr(module, '_upload_files', lambda *_a: h.events.append(('upload-media',)))
+    h.monkeypatch.setattr(module, '_select_ai_cover', lambda *_a: h.events.append(('select-cover',)))
+    h.monkeypatch.setattr(module, '_fill_title_desc', lambda *_a: h.events.append(('fill-editor',)))
     h.monkeypatch.setattr(module, '_logged_in', lambda _page: True)
     h.monkeypatch.setattr(module, '_verify_wall', lambda _page: False)
     h.monkeypatch.setattr(module.human_pace, 'pace', lambda *_a: None)
@@ -173,15 +191,17 @@ def test_xhs_ui_signal_is_attempt_only_with_observed_account_and_no_calendar(har
     assert records[-1]['phase'] == 'submit_attempted' and records[-1]['reason'] == 'ui_signal_only'
     assert records[-1]['account'] == {'id': 'userId:observed-xhs', 'authenticated': True}
     assert all(item['ack'] is None for item in records)
-    assert harness.events.index(('button-ready',)) < harness.events.index(('receipt', 'submit_attempted')) < harness.events.index(('submit-click',))
+    assert harness.events.index(('receipt', 'submit_attempted')) < harness.events.index(('upload-media',))
+    assert harness.events.index(('button-ready',)) < harness.events.index(('submit-click',))
     harness.calendar.record_publish.assert_not_called()
 
 
-def test_xhs_timeout_before_click_never_claims_submission(harness):
-    module = xhs(harness, upload_failure=PWTimeout('upload timeout'))
+def test_xhs_upload_timeout_keeps_attempt_without_click_or_ack(harness):
+    module = xhs(harness, account={'userId': 'observed-xhs'}, upload_failure=PWTimeout('upload timeout'))
     with pytest.raises(SystemExit): module.cmd_publish(harness.args())
-    assert harness.reporters[-1].records[-1]['phase'] == 'not_started'
-    assert all(item['phase'] != 'submit_attempted' for item in harness.reporters[-1].records)
+    assert harness.reporters[-1].records[-1]['phase'] == 'submit_attempted'
+    assert not any(item['ack'] for item in harness.reporters[-1].records)
+    assert ('submit-click',) not in harness.events
 
 
 def test_douyin_legacy_verified_is_full_readback_observation_not_public_success(harness):
@@ -190,11 +210,11 @@ def test_douyin_legacy_verified_is_full_readback_observation_not_public_success(
         matched=platform_readback.WorkItem('candidate-id', '安全测试标题', '审核中', 123456),
         candidates=[platform_readback.WorkItem('candidate-id', '安全测试标题', '审核中', 123456)],
         evidence={'account': {'platform_account_id': 'untyped-id', 'display_name': 'account'}})
-    module = douyin(harness, observation, response=None)
+    module = douyin(harness, observation)
     assert module.cmd_publish_video(harness.args()) == 0
     records = harness.reporters[-1].records
     assert records[-1]['phase'] == 'readback' and records[-1]['readback'] == observation.as_dict()
-    assert records[-1]['account'] is None
+    assert records[-1]['account'] == {'id': 'uid:observed-dy', 'authenticated': True}
     harness.calendar.record_publish.assert_not_called()
 
 
@@ -224,7 +244,7 @@ def test_xhs_ui_navigation_stdout_does_not_claim_publication(harness, capsys):
 
 
 def test_xhs_error_after_click_never_returns_to_not_started(harness):
-    module = xhs(harness, click_failure=PWTimeout('after click'))
+    module = xhs(harness, account={'userId': 'observed-xhs'}, click_failure=PWTimeout('after click'))
     with pytest.raises(SystemExit): module.cmd_publish(harness.args())
     phases = [item['phase'] for item in harness.reporters[-1].records]
     assert 'submit_attempted' in phases
@@ -239,7 +259,11 @@ def test_douyin_authenticated_pre_submit_identity_is_namespaced_not_borrowed_fro
     module = douyin(harness, result, response=response)
     assert module.cmd_publish_video(harness.args()) == 0
     assert harness.reporters[-1].records[-1]['account'] == {'id': 'uid:observed-uid', 'authenticated': True}
-    assert harness.events.index(('button-ready',)) < harness.events.index(('receipt', 'submit_attempted')) < harness.events.index(('submit-click',))
+    attempts = [i for i, event in enumerate(harness.events) if event == ('receipt', 'submit_attempted')]
+    assert attempts[0] < harness.events.index(('upload-media',))
+    assert harness.events.index(('button-ready',)) < attempts[1] < harness.events.index(('submit-click',))
+    probes = [event[1] for event in harness.events if event[0] == 'account-request']
+    assert probes == [(module.platform_readback.DOUYIN_PROFILE_API, 4000, 'no-store')] * 3
 
 
 def test_douyin_timeout_after_click_keeps_attempt_and_full_failed_readback(harness):
@@ -358,3 +382,109 @@ def test_mp_malformed_provider_id_cannot_be_coerced_into_a_draft_ack(harness, in
     assert module.cmd_publish(harness.args()) == 1
     assert harness.reporters[-1].records[-1]['phase'] == 'submit_attempted'
     assert not any(item['ack'] for item in harness.reporters[-1].records)
+
+
+@pytest.mark.parametrize('observed', [None, _douyin_self('other-account')])
+def test_douyin_missing_or_wrong_account_blocks_upload_and_click(harness, observed):
+    import json
+    module = douyin(harness, None, response=observed)
+    args, writer = real_writer(harness, 'douyin', 'uid:observed-dy')
+    with pytest.raises(writer.PublicationReceiptError):
+        module.cmd_publish_video(args)
+    assert ('upload-media',) not in harness.events
+    assert ('submit-click',) not in harness.events
+    assert json.loads(Path(args.receipt_file).read_text())['phase'] == 'not_started'
+
+
+def test_douyin_account_switch_after_upload_blocks_editor_writes(harness):
+    import json
+    readings = iter([_douyin_self(), _douyin_self('other-account')])
+    module = douyin(harness, None, response=lambda: next(readings))
+    args, writer = real_writer(harness, 'douyin', 'uid:observed-dy')
+    with pytest.raises(writer.PublicationReceiptError):
+        module.cmd_publish_video(args)
+    assert harness.events.count(('account-probe',)) == 2
+    assert harness.events.count(('upload-media',)) == 1
+    assert ('select-cover',) not in harness.events
+    assert ('fill-editor',) not in harness.events
+    assert ('submit-click',) not in harness.events
+    assert json.loads(Path(args.receipt_file).read_text())['phase'] == 'submit_attempted'
+
+
+def test_douyin_bound_submit_is_not_clicked_again_if_editor_does_not_navigate(harness):
+    import platform_readback
+    result = platform_readback.ReadbackResult('verified', matched=platform_readback.WorkItem('candidate', '安全测试标题', '审核中'))
+    module = douyin(harness, result, stay_in_editor=True)
+    args, _ = real_writer(harness, 'douyin', 'uid:observed-dy')
+    assert module.cmd_publish_video(args) == 0
+    assert harness.events.count(('submit-click',)) == 1
+    assert harness.events.count(('account-probe',)) == 3
+
+
+def test_douyin_bound_sms_click_failure_does_not_try_second_candidate(harness):
+    module = harness.load('douyin_publish')
+    clicks = []
+    def uncertain(**_kwargs):
+        clicks.append('first')
+        raise PWTimeout('click may have landed')
+    first = SimpleNamespace(is_visible=lambda: True, query_selector_all=lambda _sel: [], click=uncertain)
+    second = SimpleNamespace(is_visible=lambda: True, query_selector_all=lambda _sel: [], click=lambda **_kw: clicks.append('second'))
+    modal = SimpleNamespace(query_selector_all=lambda _sel: [first, second])
+    harness.monkeypatch.setattr(module, '_sms_modal', lambda _page: modal)
+    approved = Mock()
+    with pytest.raises(PWTimeout):
+        module._sms_click_submit(object(), before_verify=approved)
+    approved.assert_called_once_with()
+    assert clicks == ['first']
+
+
+def test_douyin_bound_sms_path_runs_once_when_the_wall_reappears(harness):
+    import platform_readback
+    result = platform_readback.ReadbackResult('verified', matched=platform_readback.WorkItem('candidate', '安全测试标题', '审核中'))
+    module = douyin(harness, result, stay_in_editor=True)
+    harness.monkeypatch.setattr(module, '_verify_wall', lambda _page: True)
+    verification = Mock(return_value=True)
+    harness.monkeypatch.setattr(module, '_handle_publish_sms', verification)
+    args, _ = real_writer(harness, 'douyin', 'uid:observed-dy')
+    assert module.cmd_publish_video(args) == 0
+    verification.assert_called_once()
+    assert callable(verification.call_args.kwargs['before_verify'])
+    assert harness.events.count(('submit-click',)) == 1
+
+
+def test_douyin_unbound_cli_preserves_editor_fallback(harness):
+    import platform_readback
+    result = platform_readback.ReadbackResult('verified', matched=platform_readback.WorkItem('candidate', '安全测试标题', '审核中'))
+    module = douyin(harness, result, response=None, stay_in_editor=True)
+    args = harness.args()
+    args.receipt_context = None
+    args.receipt_file = None
+    assert module.cmd_publish_video(args) == 0
+    assert harness.events.count(('submit-click',)) == 2
+    assert ('account-probe',) not in harness.events
+
+
+def test_douyin_unbound_timeout_before_submit_preserves_readback(harness):
+    module = douyin(harness, None, response=None)
+    args = harness.args()
+    args.receipt_context = None
+    args.receipt_file = None
+    upload = Mock(side_effect=PWTimeout('upload timeout'))
+    readback = Mock(return_value=None)
+    harness.monkeypatch.setattr(module, '_upload_files', upload)
+    harness.monkeypatch.setattr(module, '_readback_verify', readback)
+    with pytest.raises(SystemExit):
+        module.cmd_publish_video(args)
+    readback.assert_called_once()
+    assert ('submit-click',) not in harness.events
+
+
+def test_douyin_rechecks_again_after_editor_writes_before_publish(harness):
+    readings = iter([_douyin_self(), _douyin_self(), _douyin_self('other-account')])
+    module = douyin(harness, None, response=lambda: next(readings))
+    args, writer = real_writer(harness, 'douyin', 'uid:observed-dy')
+    with pytest.raises(writer.PublicationReceiptError):
+        module.cmd_publish_video(args)
+    assert harness.events.count(('account-probe',)) == 3
+    assert harness.events.count(('fill-editor',)) == 1
+    assert ('submit-click',) not in harness.events
