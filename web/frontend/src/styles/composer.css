@@ -117,3 +117,10 @@
 
 .chat-history-page { display: grid; justify-items: center; gap: 6px; margin-bottom: 14px; }
 .chat-history-page [role="alert"] { margin: 0; color: var(--danger); font-size: 12px; }
+
+.composer-model-control { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; margin-top: 6px; color: var(--text-secondary); font-size: 11px; }
+.composer-model-current { min-width: 0; overflow-wrap: anywhere; }
+.composer-model-current strong { color: var(--text); font-weight: 600; }
+.composer-model-choice { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.composer-model-choice select { max-width: min(220px, 52vw); border: 1px solid var(--border); border-radius: 6px; padding: 2px 5px; color: var(--text); background: var(--surface); font: inherit; }
+.composer-model-reason { overflow-wrap: anywhere; }

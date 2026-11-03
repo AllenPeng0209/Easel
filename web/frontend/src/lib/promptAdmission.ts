@@ -12,6 +12,7 @@ export interface PromptAttempt {
   state: 'sending' | 'unconfirmed' | 'accepted';
   wireText: string;
   persona?: string;
+  modelOverride?: string;
   message: ChatMessage;
   composer: boolean;
 }
@@ -68,7 +69,7 @@ function sameCommand(first?: ChatCommand, second?: ChatCommand): boolean {
 
 function promptIdentity(attempt: PromptAttempt): string {
   const { topicRef, workshopRef, attachments, planRef } = attempt.message;
-  return JSON.stringify([attempt.wireText, attempt.persona || null, attempt.message.content,
+  return JSON.stringify([attempt.wireText, attempt.persona || null, attempt.modelOverride ?? null, attempt.message.content,
     fileIdentity(attachments), attempt.message.references || [], attempt.message.sessionReferences || [],
     attempt.message.command ? [attempt.message.command.id, attempt.message.command.token] : null, topicRef ? [topicRef.id, topicRef.snapshotHash] : null,
     workshopRef ? [workshopRef.id, workshopRef.revision, workshopRef.engineRevision,

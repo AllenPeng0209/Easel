@@ -258,6 +258,17 @@ test('a background queued conversation preserves its own explicit persona', () =
   assert.equal(ui.context.sessions[0].messages[0].content, 'write lesson one');
 });
 
+test('a queued model stays frozen after the next-turn preference changes', () => {
+  const ui = appBoundary([{ id: 's', title: 'Draft', created: 1, messages: [], nextModel: 'new-selection',
+    queued: [{ id: 'q1', text: 'queued task', modelOverride: 'old-selection', created: 2 }] }]);
+  ui.effect('nextQueuedMessage')();
+  assert.equal(ui.requests[0][26], 'old-selection');
+  assert.equal(ui.requests[0][20], true);
+  ui.requests[0][19]({ sessionId: 's', turnId: 'queue-q1' });
+  assert.equal(ui.context.streams.s.requestedModel, 'old-selection');
+  assert.equal(ui.context.sessions[0].nextModel, 'new-selection');
+});
+
 test('the same persisted queue entry has one stable transport identity in two browser instances', () => {
   const initial = [{ id: 's1', title: 'Draft', created: 1, messages: [], queued: [{
     id: 'persisted-q7', text: 'next task', created: 2,

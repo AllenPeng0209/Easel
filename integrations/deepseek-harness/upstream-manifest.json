@@ -8060,12 +8060,23 @@
     "reuse_kind": "adapted",
     "changes": "适配向上载入、稳定消息定位与分页时暂停跟随，保持 Easel 阅读锚点。",
     "verification_status": "C23_bounded_turn_window_anchor_and_full_export_verified"
+  },
+  {
+    "feature_id": "C28",
+    "upstream_path": "packages/client/ui-model-selection/src/client/ModelSelect.tsx",
+    "upstream_sha256": "6b1c83fc58d5cc1ff32a4c8c552f95718d51674672366f00ebfa2b797c381eda",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/SessionModelControl.tsx",
+    "destination_sha256": "400e9951efea7842e129c3379bbefb488f529d87741eefa5962f65e48eaa36b9",
+    "reuse_kind": "adapted",
+    "changes": "适配会话级输入区模型入口、目录可用性和下一轮选项；Easel 使用原生选择控件并分开标记当前请求模型。",
+    "verification_status": "C28_scoped_next_turn_model_queue_native_reset_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 106,
+    "source_migration_files": 107,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 91,
+    "adapted_upstream_files": 92,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

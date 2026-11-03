@@ -15,6 +15,7 @@ export interface QueuedMessage {
   sessionReferences?: ChatSessionReference[];
   command?: ChatCommand;
   created: number;
+  modelOverride?: string;
   delivery?: 'sending' | 'rejected' | 'unconfirmed';
 }
 
@@ -84,6 +85,7 @@ export interface ChatSession {
   title: string;
   messages: ChatMessage[];
   historyWindow?: ChatHistoryWindow;
+  nextModel?: string;
   persona?: string;
   created: number;
   sessionKey?: string;  // OpenClaw 的 session key，用于后端删除
@@ -99,6 +101,7 @@ export interface ChatSession {
 
 /** 进行中的流式状态（存于 App，不随页面切换/ChatPage 卸载而丢失）。 */
 export interface StreamState {
+  requestedModel?: string;
   steerTurnId?: string;
   content: string;
   reasoningSummary?: ReasoningSummary;

@@ -41,7 +41,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 from starlette.responses import MalformedRangeHeader, RangeNotSatisfiable
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 from typing import Literal
 from sse_starlette.sse import EventSourceResponse
 
@@ -64,6 +64,7 @@ from easel.request_identity import current_user, actor_key, ActorMap, ActorSet
 from easel import harnesses
 from easel.harnesses import store as harness_store
 from easel.harnesses.base import HarnessError, RunRequest, Steer, SteerRejected
+from easel.harnesses.models import codex_model_profile, valid_model_id
 from easel.harnesses.diagnostics import ChatFailure, chat_failure, classify_provider_failure, normalize_chat_failure
 from easel.harnesses.codex_subagents import read_subagent
 from easel.chat_artifacts import ArtifactError, ChatArtifactStore, is_private_output_part
@@ -1362,10 +1363,9 @@ def _harness_settings() -> dict:
         raise HTTPException(409, str(error)) from error
 
 
-def _chat_backend(session_id: str | None) -> str:
-    selected = "api" if _direct_api_enabled() else _harness_settings()["runtime"]
+def _chat_session_runtime_owner(session_id: str | None, selected: str) -> tuple[str | None, bool]:
     if not session_id:
-        return selected
+        return None, False
     try:
         record = harness_store.binding(_sessions_dir(), session_id)
     except HarnessError as error:
@@ -1376,14 +1376,131 @@ def _chat_backend(session_id: str | None) -> str:
             owner = "api"
         elif ((_openclaw_sessions_dir() / f"{_openclaw_session_id(session_id)}.jsonl").is_file()
               or (_openclaw_sessions_dir() / f"{_openclaw_session_id(f'web:{session_id}')}.jsonl").is_file()
-              or _transport_pin_file(session_id).is_file()
-              or (selected != "api" and _turn_file(f"web:{session_id}").is_file())):
+              or _transport_pin_file(session_id).is_file()):
             owner = "openclaw"
+        elif selected != "api" and _turn_file(f"web:{session_id}").is_file():
+            return "openclaw", True  # Preserve legacy execution routing for untyped snapshots.
+    return owner, False
+
+
+def _chat_backend(session_id: str | None) -> str:
+    selected = "api" if _direct_api_enabled() else _harness_settings()["runtime"]
+    owner, _ = _chat_session_runtime_owner(session_id, selected)
     if selected == "api" and owner == "openclaw":
         return selected
     if owner and owner != selected:
         raise HTTPException(409, f"此会话属于 {owner}，当前选择 {selected}；请新建会话，原历史不变")
     return selected
+
+
+def _safe_chat_model(value) -> str | None:
+    return value if valid_model_id(value) and _scrub_secrets(value) == value else None
+
+
+async def _read_chat_model_catalog() -> tuple[list[dict], str | None]:
+    request = RunRequest("", _workspace_root(), {
+        **read_settings(ENV_FILE), **_proxy_env(), "EASEL_ROOT": str(_workspace_root()), "EASEL_AGENT_RUNTIME": "codex",
+    }, sandbox="read-only")
+    return await asyncio.wait_for(codex_model_profile(request), 25)
+
+
+def _safe_chat_model_catalog(models: list[dict]) -> list[dict]:
+    return [{"id": item["id"], "label": _safe_chat_model(item.get("label")) or item["id"],
+             "default": item.get("default") is True}
+            for item in models if isinstance(item, dict) and _safe_chat_model(item.get("id"))]
+
+
+def _codex_model_baseline(config: dict, catalog: list[dict], native_model: str | None) -> str | None:
+    configured = config["models"].get("codex")
+    available = {item["id"] for item in catalog}
+    if configured:
+        return configured if configured in available else None
+    if native_model in available:
+        return native_model
+    defaults = {item["id"] for item in catalog if item["default"]}
+    return next(iter(defaults)) if len(defaults) == 1 else None
+
+
+async def _prepare_chat_model(runtime: str, model_override: str | None, config: dict) -> dict:
+    if model_override is None:
+        return config
+    if runtime != "codex":
+        raise HTTPException(422, "当前底座不支持单轮模型选择，请使用已配置模型")
+    _require_host_tools()
+    try:
+        models, native_model = await _read_chat_model_catalog()
+        catalog = _safe_chat_model_catalog(models)
+    except (HarnessError, OSError, TimeoutError, UnicodeError):
+        raise HTTPException(503, "暂时无法核对本机模型，请稍后重试") from None
+    _require_host_tools()
+    if not any(item["id"] == model_override for item in catalog):
+        raise HTTPException(422, "所选模型不在当前账号可用列表，请重新选择")
+    baseline = _codex_model_baseline(config, catalog, native_model)
+    if baseline is None:
+        raise HTTPException(422, "无法核实会话默认模型，请先检查 Codex 模型设置")
+    return {**config, "session_model_baseline": baseline}
+
+
+@app.get("/api/chat/models")
+async def api_chat_models(sessionId: str):
+    _require_operation()
+    if not valid_session_reference_id(sessionId):
+        raise HTTPException(422, "无效的会话标识")
+    if ChatHistoryStore(_sessions_dir()).is_deleted(sessionId):
+        raise HTTPException(404, "会话已删除")
+    selected = "api" if _direct_api_enabled() else _harness_settings()["runtime"]
+    owner, snapshot_only = _chat_session_runtime_owner(sessionId, selected)
+    try:
+        observed = json.loads(_turn_file(f"web:{sessionId}").read_text(encoding="utf-8"))
+        if not isinstance(observed, dict):
+            observed = {}
+    except (OSError, ValueError):
+        observed = {}
+    observed_runtime = observed.get("runtime")
+    requested = _safe_chat_model(observed.get("requestedModel"))
+    if snapshot_only and observed_runtime in ("codex", "acp", "opencode"):
+        return {"runtime": observed_runtime, "model": None, "options": [], "canSelect": False,
+                "reason": "原生会话绑定不可用，请新建对话",
+                **({"lastRequestedModel": requested} if requested else {})}
+    if owner and owner != selected and not (selected == "api" and owner == "openclaw"):
+        return {"runtime": owner, "model": None, "options": [], "canSelect": False,
+                "reason": "此会话绑定其他底座，请新建对话使用当前设置"}
+    config = _harness_settings()
+    model = _safe_chat_model(config["models"].get(selected))
+    if selected == "api":
+        try:
+            _, model_id, _ = api_config(_chat_api_settings())
+            model = _safe_chat_model(model_id)
+        except (DirectAPIError, HTTPException):
+            model = None
+    elif selected == "openclaw":
+        try:
+            source = json.loads(_oc_config_path().read_text(encoding="utf-8-sig"))
+            configured = source.get("agents", {}).get("defaults", {}).get("model", {})
+            model = _safe_chat_model(configured.get("primary") if isinstance(configured, dict) else configured)
+        except (OSError, ValueError, AttributeError):
+            model = None
+    if selected != "codex":
+        return {"runtime": selected, "model": model, "options": [], "canSelect": False,
+                "reason": "此底座使用已配置模型，不支持在当前对话中单轮切换"}
+    _require_host_tools()
+    binding = harness_store.binding(_sessions_dir(), sessionId)
+    model = model or _safe_chat_model(binding.get("model_baseline"))
+    latest = {"lastRequestedModel": requested} if observed_runtime == selected and requested else {}
+    try:
+        models, native_model = await _read_chat_model_catalog()
+        catalog = _safe_chat_model_catalog(models)
+    except (HarnessError, OSError, TimeoutError, UnicodeError):
+        catalog, native_model = [], None
+    _require_host_tools()
+    baseline = _codex_model_baseline(config, catalog, native_model)
+    result = {"runtime": selected, "model": model or baseline, "canSelect": bool(baseline and catalog),
+              "options": [{"id": item["id"], "label": item["label"]} for item in catalog] if baseline else [], **latest}
+    if result["canSelect"] and native_model and not config["models"].get("codex") and native_model != baseline:
+        result["reason"] = f"本机配置的模型不在当前账号列表。切换模型后，恢复默认将使用 {baseline}。"
+    if not result["canSelect"]:
+        result["reason"] = "暂时无法核实账号可用模型及默认模型，请检查 Codex 配置"
+    return result
 
 
 def _model_target_allowed(base: str, slot: str = "") -> bool:
@@ -3152,6 +3269,14 @@ class ChatRequest(BaseModel):
     workshopRef: ChatWorkshopRef | None = None
     command: ChatCommand | None = None
     planRef: PlanReference | None = None
+    modelOverride: str | None = Field(default=None, min_length=1, max_length=240)
+
+    @field_validator("modelOverride")
+    @classmethod
+    def check_model_override(cls, value):
+        if value is not None and not valid_model_id(value):
+            raise ValueError("无效的模型标识")
+        return value
 
 
 async def _resolve_chat_topic(ref: ChatTopicRef | None) -> dict | None:
@@ -4045,6 +4170,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     agent_events = [{**event, "runId": run_id} for event in initial_events]
     reasoning_summary = None
     answer_completed = None
+    requested_model = None
     clean_end = False
     reason = "error"
     failure = None
@@ -4276,20 +4402,29 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         record = harness_store.binding(_sessions_dir(), sk)
         native_id = record.get("native_id", "")
         harness_store.bind(_sessions_dir(), sk, runtime, native_id)
+        configured_model = config["models"].get(runtime, "")
+        model = configured_model or (record.get("model_baseline", "") if runtime == "codex" else "")
+        if req.modelOverride is not None:
+            if runtime != "codex" or not valid_model_id(config.get("session_model_baseline")):
+                raise ChatFailure("model_unavailable", "startup")
+            harness_store.remember_model_baseline(_sessions_dir(), sk, config["session_model_baseline"])
+            model = req.modelOverride
+        requested_model = _safe_chat_model(model)
         _STOPPED_CHAT.discard(sk)
         proc._task = task
         proc.turn_id = turn_id
         proc.stop_turn_id = stop_turn_id
         proc.steer_emit = receive
         _RUNNING_CHAT[sk] = proc
-        _save_turn(pk, "running", "", {"turn_id": turn_id, "runtime": runtime})
+        _save_turn(pk, "running", "", {"turn_id": turn_id, "runtime": runtime,
+                                     **({"requestedModel": requested_model} if requested_model else {})})
         claimed = True
         if current_user():
             privilege_watch = asyncio.create_task(watch_privileges())
         env = {**read_settings(ENV_FILE), **_proxy_env(), "EASEL_AGENT_RUNTIME": runtime,
                "EASEL_ROOT": str(_workspace_root())}
         request = RunRequest(message, _workspace_root(), env, native_id,
-                             config["models"].get(runtime, ""), config["sandbox"], timeout,
+                             model, config["sandbox"], timeout,
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
                              autonomy_mode=req.autonomyMode, present=present, publish=publish,
                              publication_status=publication_status, publication_status_with_call=publication_status,
@@ -4330,6 +4465,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             _save_turn(pk, "done", snapshot, {
                 "turn_id": turn_id, "stop_turn_id": stop_turn_id, "runtime": runtime,
                 "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
+                **({"requestedModel": requested_model} if requested_model else {}),
                 **({"reasoning_summary": reasoning_summary} if reasoning_summary is not None else {}),
                 **({"answer_completed": answer_completed} if answer_completed is not None else {}),
                 **({"error": failure} if failure is not None else {}),
@@ -5213,6 +5349,8 @@ async def api_chat_stream(req: ChatRequest):
         request_payload.pop("command")
     if req.planRef is None:
         request_payload.pop("planRef")
+    if req.modelOverride is None:
+        request_payload.pop("modelOverride")
     payload_hash = hashlib.sha256(json.dumps({"request": request_payload, "runtime": runtime},
         sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
     existing = catalog.turn_claim(req.turnId)
@@ -5236,6 +5374,7 @@ async def api_chat_stream(req: ChatRequest):
             "按以下已批准的生产计划执行制作。计划批准仅适用于制作；公开发布仍须另行确认具体内容和版本。"
             f"\n\n【已批准方案 V{ref.revision}】\n" + record["text"]})
     try:
+        config = await _prepare_chat_model(runtime, req.modelOverride, config)
         fork_context = await asyncio.to_thread(read_fork_context, catalog, req.sessionId)
         topic, workshop = await _resolve_chat_references(req)
         captures = await asyncio.to_thread(_capture_session_references, req, catalog) if req.sessionReferences else []
@@ -6287,11 +6426,14 @@ async def api_chat(req: ChatRequest):
         raise HTTPException(410, "该会话已删除，请新建会话")
     fork_context = await asyncio.to_thread(read_fork_context, catalog, req.sessionId) if catalog is not None else None
     runtime = _chat_backend(req.sessionId)
+    if req.modelOverride is not None and runtime != "codex":
+        raise HTTPException(422, "当前底座不支持单轮模型选择，请使用已配置模型")
     topic, workshop = await _resolve_chat_references(req)
     captures = await asyncio.to_thread(_capture_session_references, req, ChatHistoryStore(_sessions_dir())) if req.sessionReferences else []
     if catalog is not None and catalog.is_deleted(req.sessionId):
         raise HTTPException(410, "该会话已删除，请新建会话")
     if runtime not in ("api", "openclaw"):
+        config = await _prepare_chat_model(runtime, req.modelOverride, _harness_settings())
         message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
         message = append_fork_context(append_session_reference_context(message, captures), fork_context)
         sk = req.sessionId or uuid.uuid4().hex
@@ -6299,7 +6441,7 @@ async def api_chat(req: ChatRequest):
         def emit(kind, text):
             if kind == "error":
                 errors.append(text)
-        result = await _run_harness_chat(req, sk, message, runtime, _harness_settings(), emit,
+        result = await _run_harness_chat(req, sk, message, runtime, config, emit,
                                          interactive=False)
         if errors:
             raise HTTPException(502, normalize_chat_failure(errors[0])["message"])

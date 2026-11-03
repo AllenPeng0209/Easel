@@ -13,6 +13,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+from easel.harnesses.models import valid_model_id
 from web.chat_history_window import (
     HISTORY_WINDOW_TURNS,
     ChatHistoryWindowConflict,
@@ -51,15 +52,18 @@ def validated_session(value: dict) -> dict:
         not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]
         or not isinstance(item.get("text"), str) or not isinstance(item.get("attachments", []), list)
         or ("delivery" in item and item["delivery"] not in ("sending", "rejected", "unconfirmed"))
+        or (item.get("modelOverride") is not None and not valid_model_id(item["modelOverride"]))
         for item in queued):
         raise ValueError("无效的排队请求")
     if "queuePaused" in value and not isinstance(value["queuePaused"], bool):
         raise ValueError("无效的队列状态")
     if "unreadCompletion" in value and not isinstance(value["unreadCompletion"], bool):
         raise ValueError("无效的未读完成状态")
+    if value.get("nextModel") is not None and not valid_model_id(value["nextModel"]):
+        raise ValueError("无效的会话模型选择")
     result = {key: item for key, item in value.items() if key in {
         "id", "title", "messages", "persona", "created", "updated", "sessionKey", "pendingTurnId",
-        "archived", "pinned", "autonomyMode", "queued", "queuePaused", "unreadCompletion"}}
+        "archived", "pinned", "autonomyMode", "queued", "queuePaused", "unreadCompletion", "nextModel"}}
     result.update(title=title, updated=updated)
     if "historyWindow" in value:
         result["historyWindow"] = validate_history_window(value["historyWindow"])

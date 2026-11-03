@@ -28,11 +28,19 @@ import { loadWorkDetailsPreferences, saveWorkDetailsPreferences, type WorkDetail
 import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
 import { fileSizeText } from '../vendor/deepseek-harness/composer/file-size';
 import { ImageLightbox } from '../vendor/deepseek-harness/composer/ImageLightbox';
+import SessionModelControl from './SessionModelControl';
+import type { SessionModelCapability } from '../lib/api';
 import '../styles/composer.css';
 
 interface ChatPageProps {
   apiDirect: boolean;
   session: ChatSession;
+  modelCapability?: SessionModelCapability;
+  nextModel?: string | null;
+  turnModel?: string;
+  onChangeModel?: (model: string | null) => void;
+  modelLoading?: boolean;
+  onReloadModels?: () => void;
   stream?: StreamState;          // 进行中的流式态（来自 App，切页也不丢）
   sessionReferenceCandidates?: readonly SessionReferenceCandidate[];
   onSend: (displayText: string, attachments?: UploadedFile[], references?: ChatReference[],
@@ -72,7 +80,7 @@ function greeting(): string {
 }
 
 export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onEditHistory, onLoadEarlier, onForkAnswer, onOpenFork, onQuestionAnswered,
-  sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
+  sessionReferenceCandidates, modelCapability, nextModel, turnModel, onChangeModel, modelLoading, onReloadModels, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
   const [forkTarget, setForkTarget] = useState<{ sessionId: string; index: number; turnId: string; answer: string }>();
   useEffect(() => setForkTarget(undefined), [session.id]);
   const [historyEdit, setHistoryEdit] = useState<{ sessionId: string; index: number; pending: boolean; error?: string }>();
@@ -477,6 +485,9 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           </button>
         </div>
       </div>
+      {(modelCapability || modelLoading || onReloadModels) && <SessionModelControl capability={modelCapability}
+        nextModel={nextModel} turnModel={turnModel} running={isStreaming} disabled={sending}
+        loading={modelLoading} onChangeModel={onChangeModel} onReload={onReloadModels} />}
       {pickingSession && sessionReferenceCandidates && <SessionReferencePicker
         candidates={sessionReferenceCandidates.filter(candidate => candidate.id !== session.id)}
         inspect={fetchSessionReference} onClose={() => setPickingSession(false)}

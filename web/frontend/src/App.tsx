@@ -19,7 +19,7 @@ import BreakdownPage from './components/BreakdownPage';
 import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
 import SettingsPanel from './components/SettingsPanel';
-import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession, forkChatSession, forkPrefixHash, fetchEarlierChatTurns, fetchCompleteChatSession } from './lib/api';
+import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession, forkChatSession, forkPrefixHash, fetchEarlierChatTurns, fetchCompleteChatSession, fetchSessionModels, type SessionModelCapability } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed, ChatTurnOutcome } from './lib/api';
 import { reduceAgentEvents } from './lib/agentEvents';
 import { observeAgentTimeline, recoverAgentTimeline, type AgentTimelineObservation } from './lib/agentTimeline';
@@ -309,6 +309,37 @@ export default function App() {
   // 最新 sessions 的 ref，供回调里读取而不必进依赖数组（避免闭包过期/频繁重建）
   const sessionsRef = useRef(sessions);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+
+  const [modelCatalog, setModelCatalog] = useState<{ sessionId: string; capability?: SessionModelCapability; loading: boolean }>();
+  const [modelReload, setModelReload] = useState(0);
+  useEffect(() => {
+    if (!canOperate || currentPage !== 'chat' || !activeSessionId) return;
+    const controller = new AbortController();
+    const sessionId = activeSessionId;
+    setModelCatalog(previous => ({
+      sessionId, capability: previous?.sessionId === sessionId ? previous.capability : undefined, loading: true,
+    }));
+    void fetchSessionModels(sessionId, controller.signal).then(capability => {
+      if (!controller.signal.aborted) setModelCatalog({ sessionId, capability, loading: false });
+    }).catch(() => {
+      if (!controller.signal.aborted) setModelCatalog(previous => ({ sessionId,
+        capability: previous?.sessionId === sessionId ? previous.capability : undefined, loading: false,
+      }));
+    });
+    return () => controller.abort();
+  }, [canOperate, currentPage, activeSessionId, activeSession?.pendingTurnId, agentRuntime, modelReload]);
+
+  const selectNextModel = (sessionId: string, model: string | null) => {
+    if (!canOperate || modelCatalog?.sessionId !== sessionId
+        || (model !== null && (!modelCatalog.capability?.canSelect
+            || !modelCatalog.capability.options.some(item => item.id === model)))) return;
+    setSessions(previous => {
+      const next = previous.map(session => session.id === sessionId && session.nextModel !== (model ?? undefined)
+        ? { ...session, nextModel: model ?? undefined, updated: nextSessionRevision(session) } : session);
+      saveSessions(next);
+      return next;
+    });
+  };
 
   // 当前活跃会话 id 的 ref：供跨标签「谁在用会话 X」查询时即时应答（见挂载 effect）
   const activeIdRef = useRef<string | null>(activeSessionId);
@@ -744,6 +775,7 @@ export default function App() {
     references = prompt?.message.references,
     sessionReferences = prompt?.message.sessionReferences,
     command = prompt?.message.command,
+    modelOverride = prompt?.modelOverride,
   ) => {
     const turnId = requestedTurnId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try { sessionStorage.setItem(projectStorageKey(`easel_pending_turn:${sessionId}`), turnId); } catch { /* ignore */ }
@@ -816,8 +848,12 @@ export default function App() {
       () => {
         confirmQueuedMessage(sessionId, owner);
         confirmPromptAdmission(sessionId, owner);
+        if (modelOverride && streamAcc.current[sessionId] === owner) {
+          setStreams(previous => previous[sessionId]
+            ? { ...previous, [sessionId]: { ...previous[sessionId], requestedModel: modelOverride } } : previous);
+        }
       },
-      !!prompt,
+      !!prompt || !!modelOverride,
       references,
       sessionReferences,
       command,
@@ -827,6 +863,7 @@ export default function App() {
         setStreams(p => p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], answerCompletion } } : p);
       },
       prompt?.message.planRef,
+      modelOverride,
     );
     return owner;
   }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage, confirmPromptAdmission, failPromptAdmission]);
@@ -1001,13 +1038,13 @@ export default function App() {
     if (queuedItem) {
       if (streamCtl.current[sessionId] || streamAcc.current[sessionId]) return false;
       startStream(sessionId, agentMessage, persona, attachments, requestedTurnId, topicRef, workshopRef,
-        queuedItem.id, queuedItem.delivery === 'unconfirmed', undefined, false, trimmed.references, toWireSessionReferences(trimmed.sessionReferences), claim ?? undefined);
+        queuedItem.id, queuedItem.delivery === 'unconfirmed', undefined, false, trimmed.references, toWireSessionReferences(trimmed.sessionReferences), claim ?? undefined, queuedItem.modelOverride);
       return true;
     }
     const previous = loadPromptAttempt(sessionId);
     let attempt: PromptAttempt = {
       turnId: requestedTurnId || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      state: 'sending', wireText: agentMessage, persona, composer,
+      state: 'sending', wireText: agentMessage, persona, composer, modelOverride: cur?.nextModel,
       message: {
         role: 'user', content: planRef ? displayText : visible, created: Date.now(),
         ...(attachments.length ? { attachments: attachments.map(item => ({ ...item })) } : {}),
@@ -1082,7 +1119,7 @@ export default function App() {
     if (streamCtl.current[sessionId] || streamAcc.current[sessionId] || session.queued?.length) {
       const trimmed = trimChatReferenceText(displayText, references, sessionReferences);
       const queued = { id: crypto.randomUUID(), text: trimmed.text, attachments, references: trimmed.references,
-        sessionReferences: toWireSessionReferences(trimmed.sessionReferences), command, created: Date.now() };
+        sessionReferences: toWireSessionReferences(trimmed.sessionReferences), command, modelOverride: session.nextModel, created: Date.now() };
       setSessions(previous => {
         const next = previous.map(item => item.id === sessionId ? enqueueMessage(item, queued) : item);
         saveSessions(next);
@@ -1721,6 +1758,14 @@ export default function App() {
             key={activeSession.id}
             session={activeSession}
             stream={streams[activeSession.id]}
+            modelCapability={modelCatalog?.sessionId === activeSession.id ? modelCatalog.capability : undefined}
+            modelLoading={modelCatalog?.sessionId !== activeSession.id || modelCatalog.loading}
+            nextModel={activeSession.nextModel}
+            turnModel={streams[activeSession.id]?.requestedModel
+              ?? (!streams[activeSession.id] && modelCatalog?.sessionId === activeSession.id
+                ? modelCatalog.capability?.lastRequestedModel : undefined)}
+            onChangeModel={model => selectNextModel(activeSession.id, model)}
+            onReloadModels={() => setModelReload(value => value + 1)}
             queue={activeSession.queued || []}
             queuePaused={activeSession.queuePaused}
             onRemoveQueued={id => removeQueued(activeSession.id, id)}
@@ -1923,6 +1968,7 @@ export default function App() {
           onClose={() => {
             setSettingsOpen(false);
             setNeedModelSetup(false);
+            setModelReload(value => value + 1);
             void fetchStatus().then((data) => {
               setApiDirect(data.transport === 'api');
               setAgentRuntime(data.runtime || 'openclaw');

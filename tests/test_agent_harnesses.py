@@ -32,6 +32,18 @@ def test_codex_model_catalog_paginates_without_creating_a_session(tmp_path, monk
     assert methods == ["initialize", "initialized", "model/list", "model/list"]
 
 
+def test_codex_session_model_profile_reads_effective_model_without_config_layers(tmp_path, monkeypatch):
+    request = request_for(tmp_path, "codex")
+    monkeypatch.setattr(native_models, "base_command", lambda runtime: [sys.executable, str(FIXTURE), "codex"])
+    models, configured = asyncio.run(native_models.codex_model_profile(request))
+    assert configured == "second-model" and models[0]["id"] == "first-model" and models[0]["default"]
+    messages = audit(tmp_path)
+    assert [message.get("method") for message in messages] == [
+        "initialize", "initialized", "config/read", "model/list", "model/list",
+    ]
+    assert messages[2]["params"] == {"cwd": str(tmp_path), "includeLayers": False}
+
+
 def test_codex_model_catalog_redacts_protocol_errors(tmp_path, monkeypatch):
     request = request_for(tmp_path, "codex", mode="models-error")
     monkeypatch.setattr(native_models, "base_command", lambda runtime: [

@@ -753,6 +753,7 @@ export function streamChat(
   command?: ChatCommand,
   onAnswerCompleted?: (receipt: AnswerCompletion) => void,
   planRef?: ChatPlanRef,
+  modelOverride?: string,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -769,6 +770,7 @@ export function streamChat(
       if (!res.ok) {
         const detail = res.status === 401 ? '平台登录状态已失效，请重新登录。'
           : res.status === 403 ? '当前账号没有发送权限。'
+          : modelOverride && res.status === 422 ? '服务端未接收这条消息，请核对所选模型、输入和附件。'
           : '服务端未接收这条消息，请核对输入和附件。';
         throw Object.assign(new Error(detail), { status: res.status });
       }
@@ -911,7 +913,8 @@ export function streamChat(
               body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef,
                 ...(references?.length ? { references } : {}),
                 ...(sessionReferences?.length ? { sessionReferences } : {}),
-                ...(command ? { command } : {}), ...(planRef ? { planRef } : {}) }),
+                ...(command ? { command } : {}), ...(planRef ? { planRef } : {}),
+                ...(modelOverride ? { modelOverride } : {}) }),
               signal: controller.signal,
             })
           : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {
@@ -984,6 +987,19 @@ export interface SessionReferencePreview {
 
 export function fetchSessionReference(sessionId: string, signal?: AbortSignal): Promise<SessionReferencePreview> {
   return request(`/api/chat/session-reference?sessionId=${encodeURIComponent(sessionId)}`, { signal });
+}
+
+export interface SessionModelCapability {
+  runtime: string;
+  model: string | null;
+  lastRequestedModel?: string;
+  options: { id: string; label: string }[];
+  canSelect: boolean;
+  reason?: string;
+}
+
+export function fetchSessionModels(sessionId: string, signal?: AbortSignal): Promise<SessionModelCapability> {
+  return request(`/api/chat/models?sessionId=${encodeURIComponent(sessionId)}`, { signal });
 }
 
 export function fetchChatCommands(signal?: AbortSignal): Promise<{ commands: ChatCommandOption[] }> {

@@ -56,6 +56,8 @@ while True:
         reply(message, {"protocolVersion": 1, "agentCapabilities": {"loadSession": mode != "no-resume"}})
     elif method == "initialized":
         pass
+    elif method == "config/read":
+        reply(message, {"config": {"model": "second-model", "other": "internal config"}, "origins": {}})
     elif method == "model/list":
         if mode == "models-error":
             send({"id": message["id"], "error": {"message": "invalid secret-test-key"}})
