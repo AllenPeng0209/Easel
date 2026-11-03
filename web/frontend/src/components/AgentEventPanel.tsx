@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
-import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey } from '../lib/agentEvents';
+import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
 import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
 import BusinessObjectCard from './BusinessObjectCard';
@@ -8,6 +8,7 @@ import { fetchBusinessObject } from '../lib/businessObjectApi';
 import PublicationReceiptCard from './PublicationReceiptCard';
 import { fetchPublicationApproval } from '../lib/api';
 import { DisclosureRow } from '../vendor/deepseek-harness/message/DisclosureRow';
+import { projectToolCallTree, type ToolCallBranch } from '../vendor/deepseek-harness/tool/tool-call-tree';
 
 const statusText: Record<string, string> = {
   preparing: '准备中', pending: '等待中', running: '执行中', in_progress: '执行中',
@@ -42,7 +43,6 @@ function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
   const result: AgentEvent[] = [];
   const indexes = new Map<string, number>();
   const seenEvents = new Set<string>();
-  const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped', 'denied']);
   for (const event of events) {
     const key = agentEventKey(event);
     const business = businessEventKey(event);
@@ -60,15 +60,16 @@ function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
       if ((event.business?.observedAt || 0) > (result[index].business?.observedAt || 0)) result[index] = event;
     } else if (receipt) {
       if ((event.completedAt || 0) >= (result[index].completedAt || 0)) result[index] = event;
-    } else if (!terminal.has(result[index].status || '') || terminal.has(event.status || '')) {
-      result[index] = { ...result[index], ...event };
+    } else {
+      result[index] = mergeToolSnapshots(result[index], event);
     }
   }
   return result;
 }
 
-function ToolEvent({ event, expanded, settled }: { event: AgentEvent; expanded: boolean; settled: boolean }) {
-  const [open, setOpen] = useState(expanded);
+function ToolEvent({ event, open, settled, children, childCount, onToggle }: {
+  event: AgentEvent; open: boolean; settled: boolean; children?: ReactNode; childCount: number; onToggle: () => void;
+}) {
   const state = event.status || 'pending';
   const active = state === 'running' || state === 'in_progress' || state === 'preparing' || state === 'pending';
   const unconfirmed = settled && active;
@@ -77,13 +78,15 @@ function ToolEvent({ event, expanded, settled }: { event: AgentEvent; expanded: 
   const duration = typeof event.startedAt === 'number' && typeof event.completedAt === 'number'
     ? Math.max(0, event.completedAt - event.startedAt) : undefined;
   return <div className="agent-tool" data-tool-call={event.callId || event.id}
-    data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={unconfirmed ? 'unconfirmed' : state} data-tool-status={state}>
+    data-chat-anchor-key={`call:${agentToolKey(event)}`} data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={unconfirmed ? 'unconfirmed' : state} data-tool-status={state}>
     <DisclosureRow icon={<span className="agent-status-dot" data-state={unconfirmed ? 'unconfirmed' : state} />}
       title={title} open={open} expandable expandOnRowClick running={running}
-      onToggle={() => setOpen(value => !value)}
+      onToggle={onToggle}
       headerAccessory={<span className="agent-tool__status">{unconfirmed ? '未收到工具终态' : statusText[state] || state}
-        {duration !== undefined && <span> · {(duration / 1000).toFixed(1)}s</span>}</span>}
+        {duration !== undefined && <span> · {(duration / 1000).toFixed(1)}s</span>}
+        {childCount > 0 && <span className="agent-tool__child-count">{childCount} 个子调用</span>}</span>}
       collapsedContent={event.parentCallId ? <span className="agent-tool__nested">子调用</span> : undefined}>
+      {children}
       <div className="agent-tool__details">
         {unconfirmed && <p className="agent-event__note">本轮已结束，此工具的最终状态仍未确认。</p>}
         {event.input !== undefined && <div><h4>输入</h4><pre>{detailText(event.input)}</pre></div>}
@@ -135,12 +138,38 @@ function OtherEvent({ event }: { event: AgentEvent }) {
   </details>;
 }
 
+/** Adapted from DeepSeek ui-tool ToolCallTree.tsx: one atomic tool card per branch. */
+function ToolBranch({ branch, settled, isOpen, onToggle }: {
+  branch: ToolCallBranch<AgentEvent>; settled: boolean;
+  isOpen: (branch: ToolCallBranch<AgentEvent>) => boolean;
+  onToggle: (key: string, open: boolean) => void;
+}) {
+  const open = isOpen(branch);
+  return <ToolEvent event={branch.value} open={open} settled={settled} childCount={branch.children.length}
+    onToggle={() => onToggle(branch.key, !open)}>
+    {branch.children.length > 0 && <div className="agent-tool__children" data-subcalls>
+      {branch.children.map(child => <ToolBranch key={child.key} branch={child} settled={settled}
+        isOpen={isOpen} onToggle={onToggle} />)}
+    </div>}
+  </ToolEvent>;
+}
+
 /** The Easel transport boundary feeds the vendored Harness disclosure surface. */
 export default function AgentEventPanel({ events, expandedCallId, expandedRunId, sessionId = '', settled = false, onOpenSubagent }: {
   events: AgentEvent[]; expandedCallId?: string; expandedRunId?: string; sessionId?: string; settled?: boolean; onOpenSubagent?: OpenSubagent;
 }) {
-  const snapshots = toolSnapshots(events);
+  const [openCalls, setOpenCalls] = useState(() => new Map<string, boolean>());
+  const snapshots = useMemo(() => toolSnapshots(events), [events]);
+  const { calls, parents } = useMemo(() => projectToolCallTree(
+    snapshots.filter(event => event.kind === 'tool').map(event => ({
+      key: agentToolKey(event), value: event,
+      parentKey: typeof event.parentCallId === 'string' && event.parentCallId
+        ? agentToolKey(event, event.parentCallId) : undefined,
+    }))), [snapshots]);
   if (!snapshots.length) return null;
+  const isToolOpen = ({ key, value, children }: ToolCallBranch<AgentEvent>) => openCalls.get(key) ??
+    (children.length > 0 || (value.callId === expandedCallId && (expandedRunId === undefined || value.runId === expandedRunId)));
+  const toggleTool = (key: string, open: boolean) => setOpenCalls(previous => new Map(previous).set(key, open));
   const plans = new Map<string, AgentEvent[]>();
   const subagents = new Map<string, { first: AgentEvent; events: AgentEvent[] }>();
   const turnKey = (event: AgentEvent) => JSON.stringify([event.runId ?? null, event.turnId ?? null]);
@@ -165,8 +194,11 @@ export default function AgentEventPanel({ events, expandedCallId, expandedRunId,
         return lineage?.first === event ? <AgentSubagentLineage key={JSON.stringify([sessionId, turnKey(event)])}
           events={lineage.events} sessionId={sessionId} settled={settled} onOpenSubagent={onOpenSubagent} /> : null;
       }
-      if (event.kind === 'tool') return <ToolEvent key={`tool:${agentToolKey(event)}`}
-        event={event} expanded={event.callId === expandedCallId && (expandedRunId === undefined || event.runId === expandedRunId)} settled={settled} />;
+      if (event.kind === 'tool') {
+        const key = agentToolKey(event);
+        return parents.has(key) ? null : <ToolBranch key={`tool:${key}`} branch={calls.get(key)!}
+          settled={settled} isOpen={isToolOpen} onToggle={toggleTool} />;
+      }
       if ((event.kind !== 'plan' || typeof event.text === 'string')) return <OtherEvent key={agentEventKey(event)} event={event} />;
       const revisions = plans.get(turnKey(event))!;
       return revisions[0] === event ? <AgentTodoChecklist key={agentEventKey(event)} events={revisions} /> : null;

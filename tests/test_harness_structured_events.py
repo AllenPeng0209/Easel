@@ -132,6 +132,53 @@ def test_acp_partial_updates_keep_tool_input_title_and_result(tmp_path):
     assert tools[-1]["output"][0]["content"]["text"] == "source facts"
 
 
+def test_claude_acp_parent_extension_survives_terminal_update_in_same_session(tmp_path):
+    foreign = acp(sessionUpdate="tool_call", toolCallId="foreign", title="Foreign",
+                  _meta={"claudeCode": {"parentToolUseId": "parent"}})
+    foreign["params"]["sessionId"] = "other-session"
+    events = run_wire(tmp_path, "acp", [
+        acp(sessionUpdate="tool_call", toolCallId="child", title="Child read", kind="read",
+            status="in_progress", _meta={"claudeCode": {"parentToolUseId": "parent", "extra": "private metadata"}}),
+        foreign,
+        acp(sessionUpdate="tool_call_update", toolCallId="child", status="failed", rawOutput="read failed"),
+    ])
+    assert [event["callId"] for event in events] == ["child", "child"]
+    assert [event["parentCallId"] for event in events] == ["parent", "parent"]
+    assert events[-1]["status"] == "failed" and events[-1]["output"] == "read failed"
+    assert "private metadata" not in json.dumps(events)
+
+
+def test_acp_prefers_valid_explicit_and_existing_edges_to_claude_fallback(tmp_path):
+    meta = {"claudeCode": {"parentToolUseId": "provider-parent"}}
+    events = run_wire(tmp_path, "acp", [
+        acp(sessionUpdate="tool_call", toolCallId="explicit-child", title="Explicit",
+            parentCallId="explicit-parent", _meta=meta),
+        acp(sessionUpdate="tool_call_update", toolCallId="explicit-child", status="completed", _meta=meta),
+        acp(sessionUpdate="tool_call", toolCallId="provider-child", title="Provider",
+            parentCallId="provider-child", _meta=meta),
+        acp(sessionUpdate="tool_call_update", toolCallId="provider-child", status="completed",
+            _meta={"claudeCode": {"parentToolUseId": "conflicting-replay-parent"}}),
+    ])
+    assert [event["parentCallId"] for event in events] == [
+        "explicit-parent", "explicit-parent", "provider-parent", "provider-parent",
+    ]
+
+
+def test_acp_does_not_synthesize_parent_or_accept_malformed_provider_edges(tmp_path):
+    events = run_wire(tmp_path, "acp", [
+        acp(sessionUpdate="tool_call", toolCallId="root", title="Root task", status="in_progress"),
+        acp(sessionUpdate="tool_call", toolCallId="ordinary", title="Unrelated call"),
+        acp(sessionUpdate="tool_call", toolCallId="self", title="Self edge",
+            _meta={"claudeCode": {"parentToolUseId": "self"}}),
+        acp(sessionUpdate="tool_call", toolCallId="control", title="Bad edge",
+            _meta={"claudeCode": {"parentToolUseId": "root\nother"}}),
+        acp(sessionUpdate="tool_call", toolCallId="invalid-explicit", title="Bad explicit",
+            parentCallId={"id": "root"}, _meta={"otherProvider": {"parentToolUseId": "root"}}),
+    ])
+    assert len(events) == 5
+    assert all("parentCallId" not in event for event in events)
+
+
 def test_tools_redact_env_secrets_and_sensitive_fields_before_emit(tmp_path):
     events = run_wire(tmp_path, "codex", [
         codex("item/completed", item={"id": "secret-1", "type": "mcpToolCall", "server": "test", "tool": "lookup",

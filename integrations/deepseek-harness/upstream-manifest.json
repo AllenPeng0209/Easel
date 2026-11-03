@@ -7297,12 +7297,50 @@
     "reuse_kind": "adapted",
     "changes": "适配上游层级缩进和会话布局，复用 Easel 主题与共享查看面板。",
     "verification_status": "B27_verified_live_codex_and_isolated_browser"
+  },
+  {
+    "feature_id": "B08",
+    "upstream_path": "packages/client/ui-chat/src/client/model/tool-call-tree.ts",
+    "upstream_sha256": "420300ea3c603db10606eaf485f8e8d51e6213d800d8e0cabb78d2dc239b85c0",
+    "source_references": [
+      "packages/client/ui-chat/src/client/conversation-nodes/tool.ts"
+    ],
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/tool-call-tree.ts",
+    "destination_sha256": "b8123c8ac40798e9c0138abda1f6a2b67444bee1bc2de47c5c8259ca8457c5ed",
+    "reuse_kind": "adapted",
+    "changes": "适配上游父边检查、深度限制与子树投影，输入来自 Easel 扁平工具事件。",
+    "verification_status": "B08_verified_isolated_browser_and_protocol_regressions"
+  },
+  {
+    "feature_id": "B08",
+    "upstream_path": "packages/client/ui-tool/src/client/tool/ToolCallTree.tsx",
+    "upstream_sha256": "fbb6a0e2b82db325a90ed1f491deb0972c50fe368ac9b0ca00c7181ede7e054f",
+    "source_references": [],
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/AgentEventPanel.tsx",
+    "destination_sha256": "e934a7193bb12364f57c170abd7e81c65147bb13371f84d581e99511538425f0",
+    "reuse_kind": "adapted",
+    "changes": "适配上游递归工具调用行与锚点，复用 Easel 工具、计划及业务卡。",
+    "verification_status": "B08_verified_isolated_browser_and_protocol_regressions"
+  },
+  {
+    "feature_id": "B08",
+    "upstream_path": "packages/client/ui-tool/src/client/tool/ToolCallTree.module.css",
+    "upstream_sha256": "7247f04ee77725aa59ed3621634fd4ac7b4ea63ae35cd5e647fdc8a6ae374dbb",
+    "source_references": [],
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/styles/agent-chat.css",
+    "destination_sha256": "e932499219284cf6a5799d506921963027d63769f89a481f8438782445927605",
+    "reuse_kind": "adapted",
+    "changes": "适配上游子调用缩进及边线，接入 Easel 主题和窄屏间距。",
+    "verification_status": "B08_verified_isolated_browser_and_protocol_regressions"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 40,
+    "source_migration_files": 43,
     "verbatim_original_bodies": 14,
-    "adapted_upstream_files": 26,
+    "adapted_upstream_files": 29,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

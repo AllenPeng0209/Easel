@@ -104,6 +104,11 @@ def _now() -> int:
     return int(time.time() * 1000)
 
 
+def _valid_tool_parent(value, child_id) -> bool:
+    return (isinstance(value, str) and 0 < len(value) <= 240 and value != child_id
+            and value.strip() == value and not re.search(r"[\x00-\x1f\x7f-\x9f]", value))
+
+
 class EventProjector:
     """Fold partial native updates, then emit complete safe call snapshots."""
 
@@ -316,8 +321,19 @@ class EventProjector:
             return
         identifier = update.get("toolCallId")
         prior = self.calls.get(identifier, {})
+        parent = update.get("parentCallId")
+        if not _valid_tool_parent(parent, identifier):
+            parent = None
+            if "parentCallId" not in prior:
+                # claude-agent-acp's stampParentToolUseId reports an explicit
+                # provider edge in this namespace. ACP v1 itself has no edge.
+                metadata = update.get("_meta")
+                claude = metadata.get("claudeCode") if isinstance(metadata, dict) else None
+                provider_parent = claude.get("parentToolUseId") if isinstance(claude, dict) else None
+                if _valid_tool_parent(provider_parent, identifier):
+                    parent = provider_parent
         self.tool(identifier, name=update.get("kind") or prior.get("name") or update.get("title") or "tool",
                   title=update.get("title"),
                   status=self._status(update.get("status")) if update.get("status") is not None else prior.get("status", "preparing"),
                   input=update.get("rawInput"), output=update.get("rawOutput", update.get("content")),
-                  locations=update.get("locations"), parentCallId=update.get("parentCallId"))
+                  locations=update.get("locations"), parentCallId=parent)

@@ -61,7 +61,7 @@ export interface AgentEvent {
 }
 
 const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business', 'steer', 'subagent']);
-const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped']);
+const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped', 'denied', 'declined']);
 
 function isSubagentHandle(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{32}$/.test(value);
@@ -109,11 +109,28 @@ export function normalizeAgentEvent(value: unknown): AgentEvent | null {
 }
 
 export function agentEventKey(event: AgentEvent): string {
-  return JSON.stringify([event.runId ?? null, event.id]);
+  return event.kind === 'tool' && !event.runId && event.turnId
+    ? JSON.stringify([null, event.turnId, event.id])
+    : JSON.stringify([event.runId ?? null, event.id]);
 }
 
-export function agentToolKey(event: AgentEvent): string {
-  return JSON.stringify([event.runId ?? null, event.callId || event.id]);
+export function agentToolKey(event: AgentEvent, callId = event.callId || event.id): string {
+  const scope = event.runId ? ['run', event.runId] : ['turn', event.turnId ?? null];
+  return JSON.stringify([...scope, callId]);
+}
+
+export function mergeToolSnapshots(previous: AgentEvent, incoming: AgentEvent): AgentEvent {
+  const parentCallId = previous.parentCallId || incoming.parentCallId;
+  if (!terminal.has(previous.status || '') || terminal.has(incoming.status || '')) {
+    return { ...previous, ...incoming, parentCallId };
+  }
+  // A result can arrive first. Recover only the earlier call's missing context.
+  const name = previous.name ?? incoming.name;
+  const input = previous.input === undefined ? incoming.input : previous.input;
+  const startedAt = previous.startedAt ?? incoming.startedAt;
+  return parentCallId !== previous.parentCallId || name !== previous.name ||
+      input !== previous.input || startedAt !== previous.startedAt
+    ? { ...previous, parentCallId, name, input, startedAt } : previous;
 }
 
 export function publicationEventKey(event: AgentEvent): string | null {
@@ -162,11 +179,11 @@ export function reduceAgentEvents(previous: AgentEvent[], input: unknown): Agent
     return next;
   }
   const index = event.kind === 'tool'
-    ? previous.findIndex(item => item.kind === 'tool' && item.runId === event.runId && item.callId === event.callId) : -1;
+    ? previous.findIndex(item => item.kind === 'tool' && agentToolKey(item) === agentToolKey(event)) : -1;
   if (index < 0) return [...previous, event];
-  const old = previous[index];
-  if (terminal.has(old.status || '') && !terminal.has(event.status || '')) return previous;
+  const merged = mergeToolSnapshots(previous[index], event);
+  if (merged === previous[index]) return previous;
   const next = [...previous];
-  next[index] = { ...old, ...event };
+  next[index] = merged;
   return next;
 }
