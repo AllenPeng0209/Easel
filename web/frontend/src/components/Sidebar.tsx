@@ -1,4 +1,4 @@
-import { AuthAccountMenu } from './AuthGate';
+import { AuthAccountMenu, useAuth } from './AuthGate';
 import { ProjectSwitcher, useIpPermissions } from './ProjectSpace';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ChatSession } from '../lib/store';
@@ -11,6 +11,8 @@ import {
 } from './icons';
 import { IconGear } from './settingsIcons';
 import ThemeToggle from './ThemeToggle';
+import SessionLogExportDialog from './SessionLogExportDialog';
+import { fetchSessionLogZip } from '../lib/api';
 import { downloadSessionMarkdown, navigationSessions, visibleHistoryCount } from '../lib/sessionNavigation';
 import type { ArchiveFilter } from '../lib/sessionNavigation';
 import { useModalLayer } from '../vendor/deepseek-harness/navigation/useModalLayer';
@@ -100,6 +102,8 @@ export default function Sidebar({
   onOpenSettings,
 }: SidebarProps) {
   const { canOperate, isPlatformAdmin } = useIpPermissions();
+  const auth = useAuth();
+  const canExportLogs = canOperate && auth?.user.is_admin === true;
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -109,6 +113,8 @@ export default function Sidebar({
   const [historyLimit, setHistoryLimit] = useState(5);
   const [archiveLimit, setArchiveLimit] = useState(5);
   const [exportError, setExportError] = useState('');
+  const [logSessionId, setLogSessionId] = useState<string>();
+  const logSession = canExportLogs ? sessions.find(session => session.id === logSessionId) : undefined;
   // Upstream ui-layout uses a 768px drawer boundary and a 56px desktop rail.
   const [drawer, setDrawer] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -167,6 +173,22 @@ export default function Sidebar({
   const exportSession = (session: ChatSession) => {
     try { downloadSessionMarkdown(session); setExportError(''); }
     catch { setExportError('导出未成功，请稍后重试。'); }
+  };
+
+  const downloadLogs = async (id: string, signal: AbortSignal) => {
+    const { blob, filename } = await fetchSessionLogZip(id, signal);
+    if (signal.aborted) return;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    try {
+      document.body.appendChild(anchor);
+      anchor.click();
+    } finally {
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
   };
 
   const renderNavigation = ({ page, Icon, label }: NavigationItem) => {
@@ -229,8 +251,12 @@ export default function Sidebar({
             onClick={(e) => { e.stopPropagation(); onSessionArchive(s.id, !isArchived); }}>
             {isArchived ? <IconUnarchive size={14} /> : <IconArchive size={14} />}
           </button>
-          <button className="session-act" title="导出 Markdown"
+          <button className="session-act" type="button" aria-label="导出 Markdown"
+            title="导出 Markdown" aria-description="可见对话，不含工具日志"
             onClick={(e) => { e.stopPropagation(); exportSession(s); }}>↓</button>
+          {canExportLogs && <button className="session-act" type="button" aria-label="导出技术日志 ZIP"
+            title="导出技术日志 ZIP（平台管理员）" data-session-log-export
+            onClick={event => { event.stopPropagation(); setLogSessionId(s.id); }}>ZIP</button>}
           <button className="session-act danger" title="删除"
             onClick={(e) => { e.stopPropagation(); onSessionDelete(s.id); }}><IconTrash size={14} /></button>
         </div>
@@ -364,5 +390,7 @@ export default function Sidebar({
       </div>
       </>}
     </div>
+    {logSession && <SessionLogExportDialog key={logSession.id} sessionId={logSession.id} sessionTitle={logSession.title}
+      onDownload={downloadLogs} onClose={() => setLogSessionId(undefined)} />}
   </>);
 }

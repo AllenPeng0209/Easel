@@ -1033,6 +1033,25 @@ export function forkChatSession(sourceId: string, body: {
   });
 }
 
+/** Read a technical export with the same project and expected-user binding as chat. */
+export async function fetchSessionLogZip(sessionId: string, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {
+  const response = await projectFetch(`${BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}/export/logs`, {
+    signal, cache: 'no-store',
+  });
+  if (!response.ok) {
+    const message = response.status === 401 || response.status === 403 ? '当前没有技术日志导出权限。'
+      : response.status === 404 ? '该对话已删除或不在当前可访问范围。' : '日志暂时无法导出，请稍后重试。';
+    throw new Error(message);
+  }
+  if (response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/zip') {
+    throw new Error('服务器没有返回 ZIP 导出文件。');
+  }
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filename = /^attachment;\s*filename="?((?:easel-session-)[a-z0-9_-]{1,128}\.zip)"?(?:;|$)/i.exec(disposition)?.[1]
+    ?? 'easel-session-logs.zip';
+  return { blob: await response.blob(), filename };
+}
+
 export interface ChatDeletionReceipt {
   ok: true;
   sessionId: string;

@@ -25,7 +25,7 @@ def role_permissions(role: str | None, is_admin: bool = False) -> dict[str, bool
     operator = role in {"owner", "operator"}
     return {"view": member, "operate": operator, "manage_accounts": role == "owner",
             "manage_members": role == "owner", "manage_ip": role == "owner",
-            "manage_platform": bool(is_admin)}
+            "manage_platform": bool(is_admin), "export_chat_logs": operator and bool(is_admin)}
 
 
 def _project_resource(path: str) -> tuple[str | None, str, str]:
@@ -126,6 +126,8 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return "view" if read else "manage_ip"
     if resource == "chat/sessions" or re.fullmatch(r"chat/sessions/[^/]+", resource):
         return "operate"
+    if re.fullmatch(r"chat/sessions/[^/]+/export/logs", resource):
+        return "export_chat_logs" if read else None
     if re.fullmatch(r"chat/sessions/[^/]+/fork", resource):
         return "operate" if method == "POST" else None
     if re.fullmatch(r"chat/plans/[^/]+", resource):
@@ -289,6 +291,8 @@ class AccessControlMiddleware:
             return True
 
         live_access = still_authorized
+        if method in {"GET", "HEAD"} and re.fullmatch(r"chat/sessions/[^/]+/export/logs", resource):
+            scope["state"]["chat_export_authorized"] = still_authorized
         if method == "POST" and re.fullmatch(r"chat/sessions/[^/]+/fork", resource):
             scope["state"]["chat_fork_authorized"] = still_authorized
         if re.fullmatch(r"chat/plans/[^/]+(?:/approve)?", resource):

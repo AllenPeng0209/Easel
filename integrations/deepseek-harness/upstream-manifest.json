@@ -8016,12 +8016,34 @@
     "reuse_kind": "adapted",
     "changes": "适配消息级分支操作和可用性判断，历史修订使用 Easel 的服务端截止点与草稿，重试只追加。",
     "verification_status": "C16_append_only_retry_and_branch_draft_verified"
+  },
+  {
+    "feature_id": "C17",
+    "upstream_path": "packages/session-query/session-log-export/src/archive.ts",
+    "upstream_sha256": "258cf53c50cfec9995fca90f98300c8f23860e3ade7774bd39bbf1c3aabc65d7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/chat_session_export.py",
+    "destination_sha256": "9213efb30d97eaf88a044aaec034453929d927ef24cb2c47f92773360502ace9",
+    "reuse_kind": "adapted",
+    "changes": "适配从持久化记录按序生成 JSONL 和有界 ZIP 下载；Easel 按 IP、用户和会话校验权限、投影安全字段并记录缺口。",
+    "verification_status": "C17_scoped_markdown_and_redacted_journal_zip_verified"
+  },
+  {
+    "feature_id": "C17",
+    "upstream_path": "packages/session-query/session-log-export/src/client/Dialog.tsx",
+    "upstream_sha256": "42c42bd202da3dad67d44831f6eb077bf20866ac2ce2c13b9d85d490f754a00c",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/SessionLogExportDialog.tsx",
+    "destination_sha256": "35d2b6d1acc223678e4b936b51cc2e1dd6e00a6d76ba817759d798b5e6dbb87e",
+    "reuse_kind": "adapted",
+    "changes": "适配下载准备、交给浏览器、失败的状态呈现，加入范围确认、取消及重试。",
+    "verification_status": "C17_scoped_markdown_and_redacted_journal_zip_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 102,
+    "source_migration_files": 104,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 87,
+    "adapted_upstream_files": 89,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

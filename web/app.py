@@ -841,6 +841,9 @@ from web.chat_session_forks import create_router as _chat_fork_router, read_fork
 app.include_router(_chat_fork_router(lambda: _sessions_dir(), scrub=lambda text: _scrub_secrets(text),
                                      require_operation=lambda: _require_operation()))
 
+from web.chat_session_export import create_router as _chat_export_router
+app.include_router(_chat_export_router(lambda: _sessions_dir(), require_admin=lambda: _require_host_tools()))
+
 from web.chat_plan_routes import create_router as _chat_plan_router, plan_scope, PlanReference
 from easel.chat_plans import ChatPlanError, ChatPlanStore
 

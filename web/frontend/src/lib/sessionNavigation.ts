@@ -58,13 +58,21 @@ function exportText(value: string): string {
     .replace(/\b((?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, '$1[已隐藏凭据]');
 }
 
+function exportAttachmentLabel(name: string): string {
+  const value = exportText(name.replace(/[\p{Cc}]/gu, ' ')).trim() || '未命名附件';
+  const longestRun = (value.match(/`+/g) || []).reduce((length, run) => Math.max(length, run.length), 0);
+  const fence = '`'.repeat(longestRun + 1);
+  const padding = longestRun ? ' ' : '';
+  return `附件：${fence}${padding}${value}${padding}${fence}`;
+}
+
 /** Export only the visible transcript. Never include injected prompts or tool/auth payloads. */
 export function sessionMarkdown(session: ChatSession): string {
   const events: SessionEvent[] = [{ type: 'session/title', data: { title: exportText(session.title) } }];
   for (const message of session.messages) {
     const text = exportText(message.content || '');
     if (message.role === 'user') {
-      const attachmentNames = (message.attachments || []).map(file => `附件：${file.name.replace(/[\r\n]/g, ' ')}`);
+      const attachmentNames = (message.attachments || []).map(file => exportAttachmentLabel(file.name));
       events.push({ type: 'turn/start' }, { type: 'user/message', surfaceOp: 'append', data: {
         source: { kind: 'user' }, content: [{ type: 'text', text: [text, ...attachmentNames].filter(Boolean).join('\n\n') }],
       } });
@@ -79,7 +87,7 @@ export function downloadSessionMarkdown(session: ChatSession): void {
   const url = URL.createObjectURL(new Blob([sessionMarkdown(session)], { type: 'text/markdown;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${(session.title || '对话').replace(/[<>:"/\\|?*\p{Cc}]/gu, '_').slice(0, 100)}.md`;
+  link.download = `${exportText(session.title || '对话').replace(/[<>:"/\\|?*\p{Cc}]/gu, '_').slice(0, 100)}.md`;
   document.body.appendChild(link);
   link.click();
   link.remove();

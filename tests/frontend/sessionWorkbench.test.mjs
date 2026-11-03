@@ -19,7 +19,7 @@ const flatten = tree => {
 const fixture = (id, title, updated, extra = {}) => ({ id, title, updated, created: 1,
   messages: [{ role: 'user', content: '用户可见问题' }, { role: 'assistant', content: '回答' }], ...extra });
 
-function mount(sessions, overrides = {}, { narrow = false } = {}) {
+function mount(sessions, overrides = {}, { narrow = false, administrator = false, canOperate = true } = {}) {
   const slots = [], events = [], downloads = [];
   let cursor = 0;
   const jsx = (type, props) => ({ type, props });
@@ -39,7 +39,8 @@ function mount(sessions, overrides = {}, { narrow = false } = {}) {
       document: { createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} } }, setTimeout: fn => fn(),
       require: name => name === 'react' ? hooks
         : name === 'react/jsx-runtime' ? { jsx, jsxs: jsx, Fragment: 'fragment' }
-          : name === './ProjectSpace' ? { ProjectSwitcher: 'IPSwitcher', useIpPermissions: () => ({ canOperate: true, isPlatformAdmin: true }) }
+          : name === './AuthGate' ? { AuthAccountMenu: 'AuthAccountMenu', useAuth: () => ({ user: { is_admin: administrator } }) }
+          : name === './ProjectSpace' ? { ProjectSwitcher: 'IPSwitcher', useIpPermissions: () => ({ canOperate, isPlatformAdmin: true }) }
             : (name.includes('sessionNavigation') || name === './promptAdmission' || name === './projectScope' || name.includes('vendor/deepseek-harness/navigation') || name.startsWith('./markdown') || name === './useModalLayer' || name === './focus' || name === './keyboard-composition')
               ? load(resolve(dirname(path), name.endsWith('.ts') ? name : `${name}.ts`))
               : new Proxy({}, { get: (_, name) => name }),
@@ -148,4 +149,22 @@ test('narrow viewport starts with a closed drawer and overlay click closes it', 
   assert.ok(nodes.some(node => node.props?.role === 'dialog' && node.props['aria-modal'] === true));
   nodes.find(node => node.props?.className === 'sidebar-drawer-mask').props.onClick();
   assert.ok(!ui.render().some(node => node.props?.['aria-modal'] === true));
+});
+
+
+test('technical ZIP is a separate action available only to an authorized platform administrator', () => {
+  const sessions = [fixture('session-a', '会话 A', 1)];
+  const operator = mount(sessions);
+  assert.equal(operator.open().some(node => node.props?.['data-session-log-export']), false);
+  const viewerAdmin = mount(sessions, {}, { administrator: true, canOperate: false });
+  assert.equal(viewerAdmin.render().some(node => node.props?.['data-session-log-export']), false);
+  const admin = mount(sessions, {}, { administrator: true });
+  const nodes = admin.open();
+  const technical = nodes.find(node => node.props?.['data-session-log-export']);
+  const markdown = nodes.find(node => node.props?.['aria-label'] === '导出 Markdown');
+  assert.ok(technical && markdown);
+  assert.match(markdown.props['aria-description'], /不含工具日志/);
+  technical.props.onClick(stop);
+  assert.deepEqual(admin.events, []);
+  assert.ok(admin.render().some(node => node.props?.sessionId === 'session-a'));
 });

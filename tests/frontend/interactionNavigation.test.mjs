@@ -16,6 +16,7 @@ test('the sidebar routes its interaction-center entry to the separate inbox page
   runInNewContext(code, { exports: mod, require: name => name === 'react'
     ? { useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}], useRef: initial => ({ current: initial }), useEffect() {}, useLayoutEffect() {} }
     : name === 'react/jsx-runtime' ? { jsx, jsxs: jsx }
+      : name === './AuthGate' ? { AuthAccountMenu: 'AuthAccountMenu', useAuth: () => null }
       : name.endsWith('/ProjectSpace') || name === './ProjectSpace' ? { ProjectSwitcher: 'IPSwitcher', useIpPermissions: () => ({ role: 'owner', canOperate: true, canManageAccounts: true, isPlatformAdmin: true }) }
         : name.endsWith('/sessionNavigation') ? sessionNavigation
           : name.endsWith('/useModalLayer') ? { useModalLayer() {} }

@@ -31,6 +31,7 @@ function sidebar({ currentPage = 'chat', role = 'owner', isPlatformAdmin = true 
   const mod = {};
   runInNewContext(compiled, { exports: mod, require: name => name === 'react' ? hooks
     : name === 'react/jsx-runtime' ? { jsx, jsxs: jsx, Fragment: 'fragment' }
+      : name === './AuthGate' ? { AuthAccountMenu: 'AuthAccountMenu', useAuth: () => null }
       : name === './ProjectSpace' ? { ProjectSwitcher: 'IPSwitcher', useIpPermissions: () => permissions }
         : name.endsWith('/sessionNavigation') ? sessionNavigation
           : name.endsWith('/useModalLayer') ? { useModalLayer() {} }

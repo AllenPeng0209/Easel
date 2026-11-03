@@ -29,6 +29,8 @@
 #sidebar-archived-history .session-item { opacity: .75; cursor: default; }
 .sidebar-chat-history .session-item:focus-within .session-actions { display: flex; }
 .sidebar-chat-history .session-actions { max-width: 112px; }
+.sidebar-chat-history .session-actions:has([data-session-log-export]) { max-width: 136px; }
+.sidebar-chat-history [data-session-log-export] { font-size: 9px; }
 .sidebar-chat-history .session-act { min-width: 21px; }
 @media (pointer: coarse) { .sidebar-chat-history .session-actions { display: flex; } .sidebar-chat-history .session-item { min-height: 40px; } }
 

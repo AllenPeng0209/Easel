@@ -248,3 +248,13 @@ def test_chat_attachment_picker_requires_operator_access(users, method, resource
     assert clients["outsider"].request(method, path).status_code == 403
     assert clients["operator"].request(method, path).status_code == 200
     assert clients["operator"].request("POST" if method == "GET" else "GET", path).status_code == 403
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_technical_chat_export_requires_platform_admin_and_ip_membership(users, method):
+    clients, _ = users
+    path = "/api/projects/aaaaaaaaaaaaaaaa/chat/sessions/item/export/logs"
+    assert clients["admin"].request(method, path).status_code == 200
+    for role in ("owner", "operator", "viewer", "outsider"):
+        assert clients[role].request(method, path).status_code == 403
+    assert clients["admin"].post(path).status_code == 403
