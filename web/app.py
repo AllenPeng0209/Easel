@@ -818,8 +818,16 @@ async def _lifespan(_app: FastAPI):
     interaction_worker = InteractionWorker(_interaction_tick)
     _app.state.interaction_worker = interaction_worker
     interaction_worker.start()
-    yield
-    await interaction_worker.stop()
+    from web.superagent_host import create_worker
+    import sys
+    superagent_worker = create_worker(sys.modules[__name__])
+    _app.state.superagent_worker = superagent_worker
+    superagent_worker.start()
+    try:
+        yield
+    finally:
+        await superagent_worker.close()
+        await interaction_worker.stop()
     tasks = list(_HARNESS_TASKS)
     for task in tasks:
         task.cancel()
@@ -842,6 +850,9 @@ from easel.projects import _registry as _project_registry
 from web.access_control import AccessControlMiddleware
 app.include_router(_access_router(lambda: PROJECT_ROOT, lambda: _project_registry(PROJECT_ROOT)))
 app.add_middleware(AccessControlMiddleware, get_root=lambda: PROJECT_ROOT)
+from web.superagent_routes import create_router as _superagent_router
+app.include_router(_superagent_router(lambda: PROJECT_ROOT, lambda: _publication_workflow()))
+
 
 from web.chat_session_forks import create_router as _chat_fork_router, read_fork_context, append_fork_context
 app.include_router(_chat_fork_router(lambda: _sessions_dir(), scrub=lambda text: _scrub_secrets(text),

@@ -103,7 +103,7 @@ def _output_allowed(role: str, resource: str, request: Request) -> bool:
         return True
     # Stored transcripts, debug logs and databases have controlled APIs; the
     # generic file routes are never another route to those protected records.
-    if top in {"_sessions", "_debug", "_interactions", "_access", "_harness"}:
+    if top in {"_superagent", "_sessions", "_debug", "_interactions", "_access", "_harness"}:
         return False
     if role == "owner":
         return top in {"_login", "_publish", "_analytics", "_profile_build"}
@@ -253,6 +253,9 @@ class AccessControlMiddleware:
                        or (path in {"/api/auth/logout"} and method == "POST"))
             if not allowed:
                 return await reject(403, "当前账号没有执行此操作的权限")
+        elif (path == "/api/superagent/tasks" and method in {"GET", "POST"}) or (
+                method == "POST" and re.fullmatch(r"/api/superagent/tasks/(?:publish|[a-f0-9]{32}/(?:answer|stop|retry))", path)):
+            pass  # The task routes enforce exact membership and task ownership.
         elif path == "/api/users" or path.startswith("/api/users/"):
             if not is_admin:
                 return await reject(403, "只有平台管理员可以管理用户")
