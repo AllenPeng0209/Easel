@@ -175,7 +175,7 @@ class PublicationWorkflow:
     def status_path(self, record):
         return self.operation_dir(record) / 'runner.json'
 
-    async def start(self, platform, data):
+    async def start(self, platform, data, *, before_claim=None, wait_for_execution=False):
         self.scope()
         self.host._require_automated_publishing()
         self.configuration(platform)
@@ -214,15 +214,20 @@ class PublicationWorkflow:
         except ValueError as error:
             raise _error(error) from None
         self.scope()
+        if before_claim is not None:
+            before_claim()
         claimed = self.call('claim', identifier, current_subject=current)
         if not claimed.get('claimed'):
+            return claimed
+        if wait_for_execution:
+            await self._execute(claimed, before_dispatch=before_claim)
             return claimed
         task = asyncio.create_task(self._execute(claimed))
         _TASKS.add(task)
         task.add_done_callback(_TASKS.discard)
         return claimed
 
-    async def _execute(self, record):
+    async def _execute(self, record, *, before_dispatch=None):
         identifier, operation = record['id'], record['operationId']
         subject = record['subject']
         dispatched = False
@@ -257,10 +262,16 @@ class PublicationWorkflow:
             if account != subject['account']:
                 raise HTTPException(409, '登录账号已变化，未执行旧批准')
             request = self.host.PublishRequest(**{key: subject[key] for key in ('title', 'body', 'tags', 'persona')})
+            if before_dispatch is not None:
+                try:
+                    before_dispatch()
+                except Exception:
+                    raise HTTPException(409, '任务发布许可已撤回，未启动平台提交') from None
             dispatched = True
             dispatch = asyncio.create_task(self.host._dispatch_publish(subject['platform']['id'], request,
                 media_paths=media, operation_id=operation, expected_account=subject['account'],
-                approved_article=subject.get('article'), approved_media=subject['media'], payload_hash=record['payloadHash']))
+                approved_article=subject.get('article'), approved_media=subject['media'], payload_hash=record['payloadHash'],
+                **({'before_process_start': before_dispatch} if before_dispatch is not None else {})))
             try:
                 result = await asyncio.shield(dispatch)
             except asyncio.CancelledError:

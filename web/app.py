@@ -7699,7 +7699,8 @@ async def api_publish_sms(platform: str, req: SmsCodeRequest, approvalId: str = 
 
 
 async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=None, operation_id=None,
-                            expected_account=None, approved_article=None, approved_media=None, payload_hash=None):
+                            expected_account=None, approved_article=None, approved_media=None, payload_hash=None,
+                            before_process_start=None):
     """Internal runner: only the claimed exact-subject workflow dispatches here."""
     if (not isinstance(operation_id, str) or not re.fullmatch(r'[a-f0-9]{32}', operation_id)
             or not isinstance(expected_account, dict)
@@ -7810,11 +7811,20 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
         raise HTTPException(409, '登录账号已变化，未执行旧批准')
     _require_operation()
     pub_env = _proxy_env() if platform == 'wechat-oa' else _publish_env()
+
+    class TaskDispatchRevoked(Exception):
+        pass
+
     def check_publish_authority():
         # Conversion/probe awaits may outlive membership. The managed runner
         # executes this final check immediately before creating its process.
         _require_operation()
         _require_automated_publishing()
+        if before_process_start is not None:
+            try:
+                before_process_start()
+            except Exception:
+                raise TaskDispatchRevoked from None
     proc = None
     process_error = None
     not_started_reason = None
@@ -7825,6 +7835,8 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
             process_error = 'timeout'
     except PublicationProcessStartError:
         not_started_reason = 'runner_unavailable'
+    except TaskDispatchRevoked:
+        not_started_reason = 'validation_failed'
     except asyncio.CancelledError:
         # The runner raises cancellation only after its owned process range has
         # stopped and the direct child has been reaped. Keep any actual receipt.
