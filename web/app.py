@@ -18,6 +18,7 @@ import shutil
 import signal
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
@@ -27,9 +28,10 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing, contextmanager
 from contextvars import copy_context
 import ipaddress
+from itertools import islice
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,7 +66,7 @@ from easel.harnesses import store as harness_store
 from easel.harnesses.base import HarnessError, RunRequest, Steer, SteerRejected
 from easel.harnesses.diagnostics import ChatFailure, chat_failure, classify_provider_failure, normalize_chat_failure
 from easel.harnesses.codex_subagents import read_subagent
-from easel.chat_artifacts import ArtifactError, ChatArtifactStore
+from easel.chat_artifacts import ArtifactError, ChatArtifactStore, is_private_output_part
 from easel.artifact_archives import ArchiveSnapshotReader
 from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
@@ -3174,6 +3176,256 @@ def api_upload_validate(req: ValidateAttachmentsRequest):
         else:
             valid.append(True)
     return {"valid": valid}
+
+
+_ATTACHMENT_SEARCH_LIMIT = 20
+_ATTACHMENT_SCAN_LIMIT = 10_000
+_ATTACHMENT_SCAN_DEPTH = 32
+
+
+def _attachment_metadata(name: str, size: int) -> dict:
+    return {"size": size, "mime": mimetypes.guess_type(name)[0] or "application/octet-stream"}
+
+
+@app.get("/api/chat/attachment-search")
+def api_chat_attachment_search(sessionId: str, query: str = ""):
+    """Complete filenames from verified receipts in this actor's active chat inbox."""
+    _require_operation()
+    if len(query) > 256 or any(ord(character) < 32 for character in query):
+        raise HTTPException(422, "文件查询无效")
+    scope = _attachment_scope(sessionId)
+    needle = query.strip().casefold()
+    files = _search_inbox_attachments(scope, needle)
+    candidates = []
+    with closing(_iter_attachment_library(needle)) as library:
+        for relative, info in islice(library, _ATTACHMENT_SEARCH_LIMIT):
+            context = relative.parent.as_posix()
+            candidates.append({"id": _attachment_candidate_id(scope, relative, info), "name": relative.name,
+                               "context": context if len(context) <= 240 else "…" + context[-239:],
+                               **_attachment_metadata(relative.name, info.st_size)})
+    _require_operation()
+    return {"files": files, "candidates": candidates}
+
+
+def _search_inbox_attachments(scope: str, needle: str) -> list[dict]:
+    outputs = _outputs_dir()
+    inbox = outputs / "_inbox"
+    directory = inbox / scope
+    if any(path.is_symlink() for path in (outputs, inbox, directory)):
+        return []
+    files = []
+    try:
+        with os.scandir(directory) as entries:
+            batches = sorted((Path(entry.path) for entry in islice(entries, _ATTACHMENT_SCAN_LIMIT // 2)), reverse=True)
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    remaining = _ATTACHMENT_SCAN_LIMIT - len(batches)
+    for batch in batches:
+        if not re.fullmatch(r"(?:[0-9]{8}-[a-f0-9]{6}|pick-[a-f0-9]{64})", batch.name) or batch.is_symlink() or not batch.is_dir():
+            continue
+        try:
+            with os.scandir(batch) as entries:
+                candidates = sorted((Path(entry.path) for entry in islice(entries, remaining)),
+                                    key=lambda path: (path.name.casefold(), path.name))
+            remaining -= len(candidates)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        for candidate in candidates:
+            name = candidate.name
+            if (needle not in name.casefold() or name.startswith('.') or candidate.suffix.lower() not in UPLOAD_EXTS
+                    or any(ord(character) < 32 or ord(character) == 127 for character in name)):
+                continue
+            relative = candidate.relative_to(outputs).as_posix()
+            receipt = AttachmentRef(id=_attachment_id(scope, relative), name=name, path=relative)
+            try:
+                _validate_attachment(scope, receipt)
+                size = candidate.lstat().st_size
+            except (HTTPException, OSError):
+                continue
+            files.append({**receipt.model_dump(), **_attachment_metadata(name, size)})
+            if len(files) == _ATTACHMENT_SEARCH_LIMIT:
+                break
+        if len(files) == _ATTACHMENT_SEARCH_LIMIT or not remaining:
+            break
+    return files
+
+
+def _attachment_source_version(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _attachment_candidate_id(scope: str, relative: Path, info) -> str:
+    # Scope-bound and opaque, with no stored candidate cache or reversible path.
+    key = [project_id(), scope, relative.as_posix(), *_attachment_source_version(info)]
+    return hashlib.sha256(json.dumps(key, separators=(',', ':')).encode()).hexdigest()
+
+
+def _attachment_library_name_safe(name: str) -> bool:
+    return (not name.startswith('_') and not is_private_output_part(name) and not any(character in name for character in ('\\', ':'))
+            and not any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in name))
+
+
+def _protected_attachment_install_supported() -> bool:
+    return (all(operation in os.supports_dir_fd for operation in (os.open, os.mkdir, os.unlink, os.link))
+            and os.scandir in os.supports_fd and hasattr(os, 'O_NOFOLLOW'))
+
+
+def _iter_attachment_library(needle: str = ""):
+    if not _protected_attachment_install_supported():
+        return
+    remaining = _ATTACHMENT_SCAN_LIMIT
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+    def scan(directory: int, relative: Path, depth: int):
+        nonlocal remaining
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if not remaining:
+                    return
+                remaining -= 1
+                name = entry.name
+                if not _attachment_library_name_safe(name):
+                    continue
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        if depth < _ATTACHMENT_SCAN_DEPTH and (depth or name.lower() not in SYSTEM_TOPLEVEL_DIRS | {'wechat'}):
+                            child = os.open(name, flags, dir_fd=directory)
+                            try:
+                                yield from scan(child, relative / name, depth + 1)
+                            finally:
+                                os.close(child)
+                        continue
+                    suffix = Path(name).suffix.lower()
+                    if (not depth or needle not in name.casefold() or suffix == '.json' or suffix not in UPLOAD_EXTS):
+                        continue
+                    info = entry.stat(follow_symlinks=False)
+                    if (stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                            and info.st_size <= MAX_UPLOAD_MB * 1024 * 1024):
+                        yield relative / name, info
+                except OSError:
+                    continue
+
+    try:
+        root = os.open(_outputs_dir(), flags)
+    except OSError:
+        return
+    try:
+        yield from scan(root, Path(), 0)
+    finally:
+        os.close(root)
+
+
+@contextmanager
+def _attachment_batch_directory(outputs: Path, scope: str, batch: str):
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(outputs, flags)
+    try:
+        for part in ("_inbox", scope, batch):
+            try:
+                os.mkdir(part, mode=0o700, dir_fd=fd)
+            except FileExistsError:
+                pass
+            following = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = following
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _attachment_chunks(source, size: int):
+    while size:
+        chunk = source.read(min(1024 * 1024, size))
+        if not chunk:
+            raise HTTPException(409, "文件已变更，请重新搜索")
+        size -= len(chunk)
+        yield chunk
+
+
+def _copy_library_attachment(scope: str, name: str, source, expected, candidate_id: str) -> AttachmentRef:
+    outputs = _outputs_dir()
+    batch = "pick-" + candidate_id
+    relative = Path("_inbox", scope, batch, name)
+    receipt = AttachmentRef(id=_attachment_id(scope, relative.as_posix()), name=name, path=relative.as_posix())
+    staging = ".copy-" + uuid.uuid4().hex
+    try:
+        with _attachment_batch_directory(outputs, scope, batch) as directory:
+            descriptor = os.open(staging, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600, dir_fd=directory)
+            installed = False
+            try:
+                digest = hashlib.sha256()
+                with os.fdopen(descriptor, 'wb') as output:
+                    for chunk in _attachment_chunks(source, expected[2]):
+                        output.write(chunk)
+                        digest.update(chunk)
+                    output.flush()
+                    os.fsync(output.fileno())
+                    staged = os.fstat(output.fileno())
+                if _attachment_source_version(os.fstat(source.fileno())) != expected:
+                    raise HTTPException(409, "文件已变更，请重新搜索")
+                _require_operation()
+                try:
+                    os.link(staging, name, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
+                    installed = True
+                    result = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                    if (result.st_dev, result.st_ino, result.st_size) != (staged.st_dev, staged.st_ino, staged.st_size):
+                        raise HTTPException(409, "素材快照已变更，请重新搜索")
+                except FileExistsError:
+                    # Concurrent or repeated picks share one immutable inbox entry.
+                    current = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                    with os.fdopen(current, 'rb') as existing:
+                        info = os.fstat(existing.fileno())
+                        if not stat.S_ISREG(info.st_mode) or info.st_size != expected[2]:
+                            raise HTTPException(409, "已选择的素材已变更，请重新搜索")
+                        existing_digest = hashlib.sha256()
+                        for chunk in _attachment_chunks(existing, expected[2]):
+                            existing_digest.update(chunk)
+                        if (existing_digest.digest() != digest.digest() or _attachment_source_version(info)
+                                != _attachment_source_version(os.fstat(existing.fileno()))):
+                            raise HTTPException(409, "已选择的素材已变更，请重新搜索") from None
+                _validate_attachment(scope, receipt)
+            except BaseException:
+                if installed:
+                    os.unlink(name, dir_fd=directory)
+                raise
+            finally:
+                os.unlink(staging, dir_fd=directory)
+    except OSError:
+        raise HTTPException(409, "无法复制素材到当前会话") from None
+    return receipt
+
+
+class AttachmentSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    sessionId: str
+    candidateId: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+@app.post("/api/chat/attachment-select")
+def api_chat_attachment_select(req: AttachmentSelectionRequest):
+    """Copy one current library candidate into an ordinary scoped upload receipt."""
+    _require_operation()
+    scope = _attachment_scope(req.sessionId)
+    if not _protected_attachment_install_supported():
+        raise HTTPException(503, "当前系统不支持安全复制素材，请直接上传")
+    with closing(_iter_attachment_library()) as library:
+        candidate = next(((path, info) for path, info in library
+                          if _attachment_candidate_id(scope, path, info) == req.candidateId), None)
+    if candidate is None:
+        raise HTTPException(404, "文件已变更或不属于当前空间，请重新搜索")
+    relative, info = candidate
+    expected = _attachment_source_version(info)
+    try:
+        store = _chat_artifact_store()
+        relative = store._relative(relative.as_posix(), None, canonical=True)
+        with store._checked_file(relative) as source:
+            if _attachment_source_version(os.fstat(source.fileno())) != expected:
+                raise HTTPException(409, "文件已变更，请重新搜索")
+            file = _copy_library_attachment(scope, relative.name, source, expected, req.candidateId)
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, "所选素材已变更或不可读取") from None
+    return {"file": {**file.model_dump(), **_attachment_metadata(relative.name, info.st_size)}}
 
 
 def _attachment_reference_manifest(

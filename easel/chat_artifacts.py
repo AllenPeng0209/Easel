@@ -47,6 +47,17 @@ _CREDENTIAL_NAMES = {
 }
 _CREDENTIAL_STEMS = {'credentials', 'secrets', 'secret', 'cookies', 'api_key', 'api-key',
                      'access_token', 'access-token', 'refresh_token', 'refresh-token', 'password', 'passwords'}
+
+
+def is_private_output_part(part: str) -> bool:
+    lower = part.lower()
+    name = Path(lower)
+    credential_text = (name.suffix in {'.js', '.json', '.yaml', '.yml', '.toml', '.ini', '.txt', '.cfg', '.conf'}
+                       and name.stem in _CREDENTIAL_STEMS)
+    return (part.startswith('.') or lower in _CREDENTIAL_NAMES or credential_text
+            or lower.endswith(('.pem', '.key', '.p12', '.pfx')))
+
+
 _RELATED_EXTENSIONS = {'.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.ico', '.svg'}
 # Same per-asset limit as upstream ui-sidebar-documentpreview/src/client/html/pack.ts.
 MAX_RELATED_BYTES = 4 * 1024 * 1024
@@ -267,13 +278,8 @@ class ChatArtifactStore:
                 raise ArtifactError('只能交付当前 IP 的 outputs 文件；相对路径以会话工作目录为准', 403) from None
         if not relative.parts:
             raise ArtifactError('只能交付普通文件，不能交付目录', 403)
-        for part in relative.parts:
-            lower = part.lower()
-            credential_text = (Path(lower).suffix in {'.js', '.json', '.yaml', '.yml', '.toml', '.ini', '.txt', '.cfg', '.conf'}
-                               and Path(lower).stem in _CREDENTIAL_STEMS)
-            if (part.startswith('.') or lower in _CREDENTIAL_NAMES or credential_text
-                    or lower.endswith(('.pem', '.key', '.p12', '.pfx'))):
-                raise ArtifactError('不能交付私有配置或凭据文件', 403)
+        if any(is_private_output_part(part) for part in relative.parts):
+            raise ArtifactError('不能交付私有配置或凭据文件', 403)
         first = relative.parts[0]
         if first.startswith('_'):
             package = first == '_publish' and relative.suffix.lower() == '.zip'

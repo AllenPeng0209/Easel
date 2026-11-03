@@ -59,6 +59,20 @@ export class AttachmentUploadQueue {
     this.pumpFileUploads();
   }
 
+  /** Adopt an existing Host-scoped receipt without uploading it or duplicating the tray row. */
+  adopt(reference: UploadedFile): boolean {
+    if (this.disposed || !reference.id || !reference.path || !reference.name) return false;
+    const existing = this.items.find(item => item.reference?.id === reference.id);
+    if (existing?.reference && (existing.reference.path !== reference.path || existing.reference.name !== reference.name)) return false;
+    if (existing?.status === 'ready') return true;
+    const item: UploadAttachment = { key: existing?.key ?? crypto.randomUUID(), name: reference.name,
+      size: reference.size ?? 0, mime: reference.mime ?? '', status: 'ready', reference };
+    if (existing) this.items = this.items.map(value => value === existing ? item : value);
+    else this.items.push(item);
+    this.publish();
+    return true;
+  }
+
   retry(key: string): void {
     const item = this.items.find(value => value.key === key);
     if (!item || item.status !== 'failed' || !this.files.has(key) || this.disposed) return;

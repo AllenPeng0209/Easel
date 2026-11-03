@@ -235,3 +235,16 @@ def test_operator_can_upload_a_video_above_the_normal_limit_using_multipart(user
                          files={"files": ("viewer.mp4", video, "video/mp4")})
     assert denied.status_code == 403
     assert not list((root / "projects" / "aaaaaaaaaaaaaaaa" / "outputs").rglob("viewer.mp4"))
+
+
+@pytest.mark.parametrize(("method", "resource"), [
+    ("GET", "attachment-search"),
+    ("POST", "attachment-select"),
+])
+def test_chat_attachment_picker_requires_operator_access(users, method, resource):
+    clients, _ = users
+    path = f"/api/projects/aaaaaaaaaaaaaaaa/chat/{resource}"
+    assert clients["viewer"].request(method, path).status_code == 403
+    assert clients["outsider"].request(method, path).status_code == 403
+    assert clients["operator"].request(method, path).status_code == 200
+    assert clients["operator"].request("POST" if method == "GET" else "GET", path).status_code == 403

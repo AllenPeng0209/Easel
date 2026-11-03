@@ -342,6 +342,23 @@ export function deleteOutput(path: string): Promise<{ ok: boolean; deleted: stri
 
 export interface UploadedFile { id: string; name: string; path: string; size?: number; mime?: string; }
 
+export interface ChatAttachmentCandidate { id: string; name: string; mime: string; size: number; context?: string; }
+
+export function searchChatAttachments(sessionId: string, query: string, signal?: AbortSignal): Promise<{
+  files: UploadedFile[]; candidates: ChatAttachmentCandidate[];
+}> {
+  const params = new URLSearchParams({ sessionId, query });
+  return request(`/api/chat/attachment-search?${params}`, { signal });
+}
+
+export function selectChatAttachment(sessionId: string, candidateId: string, signal?: AbortSignal): Promise<{ file: UploadedFile }> {
+  return request('/api/chat/attachment-select', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, candidateId }), signal,
+  });
+}
+
+
 /** OpenClaw ask_user 问答题（SSE question 事件 payload）。 */
 export interface ChatQuestionOption { label: string; description?: string; }
 export interface ChatQuestionItem {

@@ -7708,12 +7708,34 @@
     "reuse_kind": "adapted",
     "changes": "适配按 callId 检视轨迹的逻辑，增加同消息、同运行的失败定位和键盘焦点。",
     "verification_status": "B39_frozen_result_and_attempt_history_verified"
+  },
+  {
+    "feature_id": "A21",
+    "upstream_path": "packages/client/ui-reference/src/client/index.ts",
+    "upstream_sha256": "c450a2f2a3f9b6e8054c85fbb4ed3b1f575590750c570c2f7e1698aa149c9b34",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/fileReferenceTrigger.ts",
+    "destination_sha256": "e17ec5f165e62f390ac77424d865f8e662b9740777729b6859066e46b685f4ed",
+    "reuse_kind": "adapted",
+    "changes": "适配 @ 查询、引号和候选应用，以 Lexical 光标范围绑定当前选词。",
+    "verification_status": "A21_scoped_file_selection_verified_in_browser"
+  },
+  {
+    "feature_id": "A21",
+    "upstream_path": "packages/client/ui-reference/src/client/index.ts",
+    "upstream_sha256": "c450a2f2a3f9b6e8054c85fbb4ed3b1f575590750c570c2f7e1698aa149c9b34",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ComposerFileMenu.tsx",
+    "destination_sha256": "b14f388962eaedafa59a17e8487af4569b85f6b68097cf58aea5f1f063e54995",
+    "reuse_kind": "adapted",
+    "changes": "适配候选列表及明确选择逻辑，增加授权素材检索和当前会话回执接入。",
+    "verification_status": "A21_scoped_file_selection_verified_in_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 74,
+    "source_migration_files": 76,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 59,
+    "adapted_upstream_files": 61,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

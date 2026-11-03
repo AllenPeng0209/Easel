@@ -43,7 +43,7 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
       if (name.endsWith('projectScope')) return { projectStorageKey: key => `scope:${key}`, projectUrl: value => value,
         projectFetch: async (url, options) => url.endsWith('/upload/validate') && validate
           ? validate(options) : ({ json: async () => ({ max_mb: 50 }) }) };
-      if (name.endsWith('/api')) return { uploadFiles: async () => [], adoptOversize: async () => [] };
+      if (name.endsWith('/api')) return { uploadFiles: async () => [], adoptOversize: async () => [], mediaUrl: path => `/api/media/${path}` };
       if (name === './StructuredComposerEditor') return { __esModule: true, default: 'structured-editor' };
       if (name.includes('MessageBubble') || name.includes('QuestionCards') || name.includes('BrushEntry')) return { default: () => null };
       if (name === './AgentSubagentLineage') return { SubagentTranscript: () => null };
@@ -407,4 +407,30 @@ test('only a selected command reaches admission as an explicit sidecar', async (
   assert.equal(calls[1][0], value);
   assert.equal(JSON.stringify(calls[1][4]), JSON.stringify(command));
   assert.equal(JSON.stringify(editor(ui.render()).props.command), JSON.stringify(command));
+});
+
+
+test('adopting a scoped receipt makes its preview and exact file reference available without sending', async () => {
+  const calls = [];
+  const ui = view({ onSend: (...values) => { calls.push(values); return false; } });
+  let input = editor(await ui.ready());
+  input.props.onChange('@read', []);
+  input = editor(ui.render());
+  input.props.onFileSelectionPending(true);
+  const pending = control(ui.render(), '发送');
+  assert.equal(pending.props.disabled, true);
+  await pending.props.onClick();
+  assert.equal(calls.length, 0);
+  const file = { id: 'adopted', name: 'ready.png', path: '_inbox/scope/batch/ready.png' };
+  assert.equal(input.props.onAdoptFileReference(file), true);
+  assert.equal(input.props.onAdoptFileReference(file), true, 'same receipt does not duplicate tray item');
+  input.props.onChange('@ready.png ', [{ start: 0, end: 10, attachmentId: 'adopted' }]);
+  input.props.onFileSelectionPending(false);
+  const ready = ui.render();
+  assert.equal(calls.length, 0);
+  assert.equal(ready.filter(node => node.props?.['aria-label'] === '预览 ready.png').length, 1);
+  assert.equal(control(ready, '发送').props.disabled, false);
+  await control(ready, '发送').props.onClick();
+  assert.equal(calls[0][1][0].id, 'adopted');
+  assert.equal(calls[0][2][0].attachmentId, 'adopted');
 });

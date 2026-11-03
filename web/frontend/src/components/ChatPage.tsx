@@ -14,7 +14,7 @@ import {
   validateChatSessionReferences, type ChatDraftSessionReference, type ChatReference,
 } from '../lib/chatReferences';
 import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from '../lib/store';
-import { uploadFiles, adoptOversize, fetchSessionReference, mediaUrl } from '../lib/api';
+import { uploadFiles, adoptOversize, fetchSessionReference } from '../lib/api';
 import type { UploadedFile } from '../lib/api';
 import type { ChatDeliverable } from '../lib/deliverables';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
@@ -22,6 +22,7 @@ import { AttachmentUploadQueue } from '../lib/uploadQueue';
 import { validateRestoredAttachments } from '../lib/restoredAttachments';
 import { loadChatDraft, saveChatDraft, consumeChatDraft } from '../lib/chatDrafts';
 import { useChatReading } from '../lib/chatReading';
+import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
 import { fileSizeText } from '../vendor/deepseek-harness/composer/file-size';
 import { ImageLightbox } from '../vendor/deepseek-harness/composer/ImageLightbox';
 import '../styles/composer.css';
@@ -104,6 +105,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const [uploadItems, setUploadItems] = useState(initialDraft.attachments);
   const [interruptedFiles, setInterruptedFiles] = useState(initialDraft.interruptedFiles);
   const [sending, setSending] = useState(false);
+  const [selectingFile, setSelectingFile] = useState(false);
+  const selectingFileRef = useRef(false);
   const [pickingSession, setPickingSession] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [draftError, setDraftError] = useState(false);
@@ -151,7 +154,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const failedUploads = uploadItems.some(item => item.status === 'failed');
   const attachments = uploads.ready;
   const restorePending = restoreState !== 'complete' && uploadItems.some(item => restoredKeys.has(item.key));
-  const canSend = (!!input.trim() || attachments.length > 0) && !uploading && !failedUploads && !restorePending && !sending;
+  const canSend = (!!input.trim() || attachments.length > 0) && !uploading && !failedUploads && !restorePending && !sending && !selectingFile;
   const showSteer = isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0 && sessionReferences.length === 0 && !command;
   const waitingApproval = stream?.questions?.some(question => (!question.status || question.status === 'pending')
     && (question.requiresHuman || question.kind === 'approval' || question.publication));
@@ -212,7 +215,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     const { text: submittedText, references: submittedReferences,
       sessionReferences: submittedSessionReferences, command: submittedCommand } = draftContentRef.current;
     const trimmed = submittedText.trim();
-    if (sendingRef.current) return;
+    if (sendingRef.current || selectingFileRef.current) return;
     if (intent === 'steer' && (!showSteer || !trimmed || uploads.snapshot.length > 0 || submittedSessionReferences.length > 0 || submittedCommand)) return;
     if ((!trimmed && attachments.length === 0) || uploading || failedUploads || restorePending) return;
     const exactReferences = validateChatReferences(submittedText, submittedReferences, attachments);
@@ -256,22 +259,25 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         <div className="composer-upload-list" aria-label="待发送附件">
           {uploadItems.map((item) => {
             const checking = restorePending && restoredKeys.has(item.key);
-            const imageUrl = item.previewUrl || (item.mime.startsWith('image/') && item.reference
-              && item.status === 'ready' && !checking ? mediaUrl(item.reference.path) : '');
+            const receiptUrl = item.reference && item.status === 'ready' && !checking ? attachmentHref(item.reference.path) : null;
+            const image = item.mime.startsWith('image/') || /\.(?:png|jpe?g|gif|webp|bmp|avif)$/i.test(item.name);
+            const imageUrl = item.previewUrl || (image ? receiptUrl : '') || '';
             return (
             <div key={item.key} className={`composer-file composer-file--${item.status}`}>
-              {imageUrl ? <button className="composer-file-preview" type="button" title={`预览 ${item.name}`}
+              {imageUrl ? <button className="composer-file-preview" type="button" title={`预览 ${item.name}`} aria-label={`预览 ${item.name}`}
                 onClick={() => setPreviewImage({ url: imageUrl, name: item.name })}>
                 <img src={imageUrl} alt={item.name} /></button>
                 : <div className="composer-file-icon"><IconFile size={22} /></div>}
               <div className="composer-file-info"><strong title={item.name}>{item.name}</strong>
-                <span>{fileSizeText(item.size)} · {checking ? (restoreState === 'unconfirmed' ? '附件未核验' : '核验中…') : item.status === 'ready' ? '已就绪' : item.status === 'queued' ? '排队中'
+                <span>{item.reference && item.reference.size === undefined ? '大小未记录' : fileSizeText(item.size)} · {checking ? (restoreState === 'unconfirmed' ? '附件未核验' : '核验中…') : item.status === 'ready' ? '已就绪' : item.status === 'queued' ? '排队中'
                   : item.status === 'uploading' ? '上传中…' : item.reference ? '附件不可用' : '上传失败'}</span>
                 {item.status === 'uploading' && <span className="composer-upload-progress" role="progressbar" aria-label={`${item.name} 上传中`} />}
                 {item.error && <span className="composer-file-error" title={item.error}>{item.error}</span>}
               </div>
               {item.status === 'failed' && !item.reference && <button type="button" className="composer-file-retry" disabled={sending}
                 onClick={() => uploads.retry(item.key)}>重试</button>}
+              {receiptUrl && !imageUrl && <a className="composer-file-retry" href={receiptUrl} target="_blank"
+                rel="noopener noreferrer" aria-label={`打开 ${item.name}`}>打开</a>}
               {item.status === 'ready' && item.reference && !checking && <button type="button" className="composer-file-retry"
                 disabled={sending} aria-label={`插入正文 ${item.name}`} onMouseDown={event => event.preventDefault()}
                 onClick={() => {
@@ -312,7 +318,14 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           }} />}
         <StructuredComposerEditor ref={editorRef} value={input} references={references}
           sessionReferences={sessionReferences} command={command} disabled={sending}
-          placeholder={dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（可拖入图片/文档当素材）' : '发消息…（Enter 发送，Shift+Enter 换行，可拖入/粘贴素材）'}
+          fileReferenceSessionId={session.id}
+          onAdoptFileReference={file => !sendingRef.current &&
+            draftContentRef.current.references.length < MAX_CHAT_REFERENCES && uploads.adopt(file)}
+          onFileSelectionPending={pending => {
+            selectingFileRef.current = pending;
+            setSelectingFile(pending);
+          }}
+          placeholder={dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（输入 @ 引用文件，也可拖入素材）' : '发消息…（Enter 发送，Shift+Enter 换行，@ 引用文件）'}
           onChange={(text, nextReferences, nextSessions, nextCommand) => {
             if (sendingRef.current) return;
             const receipts = uploads.ready;
@@ -342,7 +355,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
             editorRef.current?.rememberSelection();
             setPickingSession(true);
           }}>引用历史对话</button>}
-        <span className="composer-hint">{uploading ? '附件全部就绪后可发送' : sending ? '正在接收…'
+        <span className="composer-hint">{uploading ? '附件全部就绪后可发送' : selectingFile ? '正在准备所选文件…' : sending ? '正在接收…'
           : isStreaming ? '继续输入，下一条会加入队列' : 'Enter 发送 · Shift+Enter 换行'}</span>
         <div className="composer-send-controls">
           {isStreaming && <button className="composer-stop-btn" onClick={onStop} title="停止当前任务"

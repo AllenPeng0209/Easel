@@ -96,6 +96,77 @@ def test_reference_does_not_escape_actor_ip_or_session(artifact_http_environment
     assert not prompts
 
 
+def test_attachment_search_returns_current_scoped_receipts_only(artifact_http_environment, monkeypatch):
+    root, owner, members, _, _ = artifact_http_environment
+    receipt = upload(owner, 'Meeting 资料.txt')
+    upload(owner, 'Other 资料.txt', session='another-session')
+    upload(owner, 'Unrelated.txt')
+    path = root / 'outputs' / receipt['path']
+    (path.parent / 'Meeting shortcut.txt').symlink_to(path)
+    response = owner.get('/api/chat/attachment-search', params={'sessionId': 'file-session', 'query': 'meeting 资料'})
+    assert response.status_code == 200, response.text
+    assert response.json() == {'files': [{**receipt, 'mime': 'text/plain', 'size': path.stat().st_size}], 'candidates': []}
+    query = {'sessionId': 'file-session', 'query': 'meeting'}
+    ip = owner.post('/api/projects', json={'name': 'Other attachment scope'}).json()['id']
+    assert owner.get(f'/api/projects/{ip}/chat/attachment-search', params=query).json() == {'files': [], 'candidates': []}
+    assert members['operator'].get('/api/chat/attachment-search', params=query).json() == {'files': [], 'candidates': []}
+    assert members['viewer'].get('/api/chat/attachment-search', params=query).status_code == 403
+    prompts = install_runner(monkeypatch, 'api')
+    assert owner.post('/api/chat/stream', json=submission(response.json()['files'][0])).status_code == 200
+    assert prompts
+
+
+def test_attachment_library_pick_copies_verified_source_and_is_bound_to_scope(artifact_http_environment):
+    root, owner, members, _, _ = artifact_http_environment
+    library = root / 'outputs' / 'Production' / 'assets'
+    library.mkdir(parents=True, exist_ok=True)
+    source = library / 'Meeting notes.txt'
+    source.write_text('fixed source bytes')
+    (library / 'credentials.txt').write_text('private data')
+    (library / 'Meeting shortcut.txt').symlink_to(source)
+    params = {'sessionId': 'file-session', 'query': 'Meeting'}
+    response = owner.get('/api/chat/attachment-search', params=params)
+    assert response.status_code == 200, response.text
+    [candidate] = response.json()['candidates']
+    assert candidate == {'id': candidate['id'], 'name': source.name, 'mime': 'text/plain',
+                         'size': source.stat().st_size, 'context': 'Production/assets'}
+    assert str(source) not in response.text and 'credentials' not in response.text
+    assert owner.get('/api/chat/attachment-search', params={**params, 'query': 'credentials'}).json()['candidates'] == []
+    pick = {'sessionId': 'file-session', 'candidateId': candidate['id']}
+    assert owner.post('/api/chat/attachment-select', json={**pick, 'path': str(source)}).status_code == 422
+    assert owner.post('/api/chat/attachment-select', json={**pick, 'sessionId': 'another'}).status_code == 404
+    assert members['operator'].post('/api/chat/attachment-select', json=pick).status_code == 404
+    assert members['viewer'].post('/api/chat/attachment-select', json=pick).status_code == 403
+    ip = owner.post('/api/projects', json={'name': 'Other library IP'}).json()['id']
+    assert owner.post(f'/api/projects/{ip}/chat/attachment-select', json=pick).status_code == 404
+    selected = owner.post('/api/chat/attachment-select', json=pick)
+    assert selected.status_code == 200, selected.text
+    receipt = selected.json()['file']
+    copied = root / 'outputs' / receipt['path']
+    assert receipt['name'] == source.name and receipt['path'].startswith('_inbox/')
+    assert receipt['mime'] == 'text/plain' and receipt['size'] == source.stat().st_size
+    assert owner.post('/api/chat/attachment-select', json=pick).json() == selected.json()
+    assert list(copied.parent.iterdir()) == [copied]
+    assert owner.get('/api/chat/attachment-search', params=params).json()['files'] == [receipt]
+    source.write_text('changed source')
+    assert copied.read_text() == 'fixed source bytes'
+    assert owner.post('/api/chat/attachment-select', json=pick).status_code == 404
+
+
+def test_attachment_search_obeys_normal_upload_limit(artifact_http_environment, monkeypatch):
+    root, owner, _, _, _ = artifact_http_environment
+    library = root / 'outputs' / 'Production'
+    library.mkdir()
+    (library / 'large.txt').write_text('material')
+    params = {'sessionId': 'size-test', 'query': 'large'}
+    [candidate] = owner.get('/api/chat/attachment-search', params=params).json()['candidates']
+    monkeypatch.setattr(web, 'MAX_UPLOAD_MB', 0)
+    assert owner.get('/api/chat/attachment-search', params=params).json()['candidates'] == []
+    assert owner.post('/api/chat/attachment-select', json={
+        'sessionId': 'size-test', 'candidateId': candidate['id'],
+    }).status_code == 404
+
+
 def test_typed_catalog_references_share_exact_label_and_receipt_validation(artifact_http_environment):
     root, owner, members, _, _ = artifact_http_environment
     attachment = upload(owner)

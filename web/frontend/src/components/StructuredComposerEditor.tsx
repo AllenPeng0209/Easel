@@ -1,9 +1,13 @@
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import { $getSelection, $isRangeSelection, type RangeSelection, CLEAR_HISTORY_COMMAND, COMMAND_PRIORITY_HIGH, createEditor, KEY_DOWN_COMMAND, KEY_ENTER_COMMAND, PASTE_COMMAND } from 'lexical';
-import { fetchChatCommands } from '../lib/api';
+import { fetchChatCommands, searchChatAttachments, selectChatAttachment, type UploadedFile } from '../lib/api';
 import type { ChatCommand } from '../lib/chatCommands';
 import { useComposerCommandMenu } from './ComposerCommandMenu';
-import { sessionReferenceLabel, type ChatDraftSessionReference, type ChatReference } from '../lib/chatReferences';
+import { isComposerFileReceipt, useComposerFileMenu } from './ComposerFileMenu';
+import {
+  $fileReferenceTrigger, captureFileReferenceSelection, sameFileReferenceTrigger, type FileReferenceTrigger,
+} from './fileReferenceTrigger';
+import { attachmentReferenceLabel, sessionReferenceLabel, type ChatDraftSessionReference, type ChatReference } from '../lib/chatReferences';
 import {
   $projectReferenceDraft, $restoreReferenceDraft, applyCommandChip, CommandChipNode, insertReferenceChip, ReferenceChipNode,
   registerReferenceEditing, detachReferenceChips, sameReferenceDraft,
@@ -27,6 +31,9 @@ interface EditorProps {
   command?: ChatCommand;
   placeholder: string;
   disabled: boolean;
+  fileReferenceSessionId?: string;
+  onAdoptFileReference?: (file: UploadedFile) => boolean;
+  onFileSelectionPending?: (pending: boolean) => void;
   onChange: (text: string, references: ChatReference[], sessionReferences?: ChatDraftSessionReference[], command?: ChatCommand) => void;
   onSubmit: () => void;
   onPasteFiles: (files: FileList) => void;
@@ -34,12 +41,12 @@ interface EditorProps {
 
 /** React host for the pinned Harness plain-text editor and its atomic file references. */
 export default function StructuredComposerEditor({ ref, value, references, sessionReferences, command, placeholder, disabled,
-  onChange, onSubmit, onPasteFiles }: EditorProps) {
+  onChange, onSubmit, onPasteFiles, fileReferenceSessionId, onAdoptFileReference, onFileSelectionPending }: EditorProps) {
   const root = useRef<HTMLDivElement>(null);
   const projection = useRef({ text: value, references, sessionReferences, command });
   const savedSelection = useRef<RangeSelection | null>(null);
-  const current = useRef({ onChange, onSubmit, onPasteFiles, disabled });
-  current.current = { onChange, onSubmit, onPasteFiles, disabled };
+  const current = useRef({ onChange, onSubmit, onPasteFiles, onAdoptFileReference, disabled });
+  current.current = { onChange, onSubmit, onPasteFiles, onAdoptFileReference, disabled };
   const composing = useRef(false);
   const compositionEndedAt = useRef(0);
   const [editor] = useState(() => {
@@ -60,11 +67,34 @@ export default function StructuredComposerEditor({ ref, value, references, sessi
   const currentMenu = useRef(menu);
   currentMenu.current = menu;
 
+  const [fileTrigger, setFileTrigger] = useState<FileReferenceTrigger>();
+  const loadFiles = useCallback((query: string, signal: AbortSignal) =>
+    fileReferenceSessionId ? searchChatAttachments(fileReferenceSessionId, query, signal)
+      : Promise.resolve({ files: [], candidates: [] }), [fileReferenceSessionId]);
+  const fileMenu = useComposerFileMenu({ trigger: fileTrigger, disabled: disabled || menu.open || !fileReferenceSessionId,
+    load: loadFiles, onSelecting: pending => onFileSelectionPending?.(pending),
+    onPick: async (option, trigger, signal) => {
+      if (!fileReferenceSessionId) return false;
+      // Run outside the Lexical keyboard transaction even for an already adopted receipt.
+      const receipt = await (option.kind === 'attachment' ? Promise.resolve(option.file)
+        : selectChatAttachment(fileReferenceSessionId, option.file.id, signal).then(result => result.file));
+      if (signal.aborted || current.current.disabled || !editor.getRootElement() || !isComposerFileReceipt(receipt)) return false;
+      const span = captureFileReferenceSelection(editor, trigger);
+      if (!span || !current.current.onAdoptFileReference?.(receipt)) return false;
+      insertReferenceChip(editor, receipt.id, attachmentReferenceLabel(receipt), undefined, span);
+      editor.focus();
+      return true;
+    },
+  });
+  const currentFileMenu = useRef(fileMenu);
+  currentFileMenu.current = fileMenu;
+
 
   useImperativeHandle(ref, () => ({
     focus: () => editor.focus(),
     openCommandMenu() {
       if (current.current.disabled) return;
+      currentFileMenu.current.close();
       currentMenu.current.openExplicitly();
       editor.focus();
     },
@@ -97,14 +127,15 @@ export default function StructuredComposerEditor({ ref, value, references, sessi
       event.isComposing || event.keyCode === 229 || Date.now() - compositionEndedAt.current < 60;
     const dispose = registerReferenceEditing(editor);
     const unregisterChange = editor.registerUpdateListener(({ editorState }) => {
-      const updated = editorState.read($projectReferenceDraft);
+      const [updated, trigger] = editorState.read(() => [$projectReferenceDraft(), $fileReferenceTrigger()] as const);
+      setFileTrigger(previous => sameFileReferenceTrigger(previous, trigger) ? previous : trigger);
       if (sameReferenceDraft(updated, projection.current)) return;
       projection.current = { ...updated, sessionReferences: updated.sessionReferences, command: updated.command };
       current.current.onChange(updated.text, updated.references, updated.sessionReferences, updated.command);
     });
     const unregisterMenu = editor.registerCommand(KEY_DOWN_COMMAND, event => {
       if (fromComposition(event) || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false;
-      return currentMenu.current.keyDown(event);
+      return currentFileMenu.current.keyDown(event) || currentMenu.current.keyDown(event);
     }, COMMAND_PRIORITY_HIGH);
     const unregisterEnter = editor.registerCommand(KEY_ENTER_COMMAND, event => {
       if (!event || event.defaultPrevented || fromComposition(event)
@@ -151,11 +182,13 @@ export default function StructuredComposerEditor({ ref, value, references, sessi
     <div ref={root} className="chat-input structured-composer-input" contentEditable={!disabled}
       suppressContentEditableWarning role="textbox" aria-label="给 AI 发送消息" aria-multiline="true"
       aria-disabled={disabled} aria-placeholder={placeholder} spellCheck={false}
-      aria-controls={menu.open ? menu.menuId : undefined} aria-activedescendant={menu.activeId}
+      aria-controls={fileMenu.open ? fileMenu.menuId : menu.open ? menu.menuId : undefined}
+      aria-activedescendant={fileMenu.activeId ?? menu.activeId}
       onCompositionStart={() => { composing.current = true; }}
       onCompositionEnd={() => { composing.current = false; compositionEndedAt.current = Date.now(); }}
       onBlur={() => { composing.current = false; }} />
     {!value && <span className="structured-composer-placeholder" aria-hidden="true">{placeholder}</span>}
     {menu.content}
+    {fileMenu.content}
   </div>;
 }
