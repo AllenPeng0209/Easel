@@ -7461,10 +7461,10 @@
     "upstream_sha256": "c450a2f2a3f9b6e8054c85fbb4ed3b1f575590750c570c2f7e1698aa149c9b34",
     "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
     "destination_path": "web/frontend/src/components/SessionReferencePicker.tsx",
-    "destination_sha256": "d37b58330ca806f4fc0ed86ad259ce2d79f0ea5f0ebd1c2cf062ccb62acc3302",
+    "destination_sha256": "be713a2e095f34f4b61553ed34b8abe3db88202acc31a6cad058b900cee3ab55",
     "reuse_kind": "adapted",
-    "changes": "复用上游按会话 ID 选择并插入引用的结构，增加明确预览。",
-    "verification_status": "C31_verified_scoped_snapshot_and_isolated_browser"
+    "changes": "复用按会话 ID 选择并插入引用的结构，适配摘要、已完成轮次分页与确认预览。",
+    "verification_status": "C31_verified_whole_and_exact_turn_frozen_snapshot"
   },
   {
     "feature_id": "C31",
@@ -7472,10 +7472,10 @@
     "upstream_sha256": "6f623036a0f3dbde87defe417f1f71a4ad7c88e4aff94f6e62df13461bf63426",
     "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
     "destination_path": "web/chat_session_references.py",
-    "destination_sha256": "2cbbf2c37e9cef6faddf8f206bc7ec9cb77544a45ba3340fdb88fe0c86ab9116",
+    "destination_sha256": "594906145e081457effd02ee6273ccf4a9211c8d52fa3ef47f326cb0b7e94f23",
     "reuse_kind": "adapted",
-    "changes": "适配上游受限文本投影和不可信参考边界，接入 Easel 认证目录及接纳快照。",
-    "verification_status": "C31_verified_scoped_snapshot_and_isolated_browser"
+    "changes": "适配受限文本投影和不可信参考边界，接入 Easel 认证目录、轮次完成凭据及接纳快照。",
+    "verification_status": "C31_verified_whole_and_exact_turn_frozen_snapshot"
   },
   {
     "feature_id": "A23",

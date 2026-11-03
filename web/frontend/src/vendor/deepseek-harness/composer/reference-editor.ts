@@ -29,7 +29,7 @@ export interface ReferenceDraft {
   command?: ChatCommand;
 }
 
-type SessionChip = Pick<ChatDraftSessionReference, 'sessionId' | 'snapshotHash' | 'label'>;
+type SessionChip = Pick<ChatDraftSessionReference, 'sessionId' | 'snapshotHash' | 'label' | 'turnId'>;
 type SerializedChip = Spread<{ attachmentId: string; label: string; session?: SessionChip }, SerializedLexicalNode>;
 
 export class ReferenceChipNode extends DecoratorNode<null> {
@@ -136,7 +136,8 @@ export function $restoreReferenceDraft(value: ReferenceDraft): void {
     append(value.text.slice(offset, reference.start));
     const label = value.text.slice(reference.start, reference.end);
     paragraph.append('quote' in reference ? new QuoteNode(reference.quote) : 'sessionId' in reference
-      ? $createReferenceChip('', label, { sessionId: reference.sessionId, snapshotHash: reference.snapshotHash, label: reference.label })
+      ? $createReferenceChip('', label, { sessionId: reference.sessionId, snapshotHash: reference.snapshotHash, label: reference.label,
+        ...(reference.turnId !== undefined ? { turnId: reference.turnId } : {}) })
       : $createReferenceChip(reference.attachmentId, label));
     offset = reference.end;
   }
@@ -150,10 +151,10 @@ export function sameReferenceDraft(left: ReferenceDraft, right: ReferenceDraft):
   return left.text === right.text && left.command?.id === right.command?.id && left.command?.token === right.command?.token
     && left.references.length === right.references.length
     && leftSessions.length === rightSessions.length
-    && leftSessions.every(({ start, end, sessionId, snapshotHash, label }, index) => {
+    && leftSessions.every(({ start, end, sessionId, snapshotHash, label, turnId }, index) => {
       const other = rightSessions[index];
       return start === other.start && end === other.end && sessionId === other.sessionId
-        && snapshotHash === other.snapshotHash && label === other.label;
+        && snapshotHash === other.snapshotHash && label === other.label && turnId === other.turnId;
     })
     && left.references.every(({ start, end, attachmentId }, index) => {
       const other = right.references[index];

@@ -7,10 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import sqlite3
-import stat
 import time
 import uuid
 from collections.abc import Callable
@@ -19,10 +17,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from web.chat_session_references import valid_session_reference_id
+from web.chat_turn_evidence import completed_catalog_turn
 
 _MAX_COPY_BYTES = 1024 * 1024
 _MAX_CONTEXT_BYTES = 32 * 1024
-_JOURNAL_TAIL_BYTES = 64 * 1024
 
 
 class ForkRequest(BaseModel):
@@ -73,30 +71,6 @@ def preserve_fork_prefix(database, session: dict) -> None:
         raise ValueError("已保存的分叉历史不能被替换")
     session["messages"][:len(prefix)] = prefix
     session["fork"] = provenance
-
-
-def _completed_turn(catalog, database, source_id: str, turn_id: str) -> bool:
-    claim = database.execute("SELECT session_id FROM turn_claims WHERE turn_id=?", (turn_id,)).fetchone()
-    if not claim or claim[0] != source_id:
-        return False
-    path = catalog.path.parent / "jobs" / f"{turn_id}.jsonl"
-    if path.is_symlink() or path.parent.is_symlink():
-        return False
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
-        with os.fdopen(descriptor, "rb") as journal:
-            if not stat.S_ISREG(os.fstat(journal.fileno()).st_mode):
-                return False
-            size = journal.seek(0, 2)
-            journal.seek(max(0, size - _JOURNAL_TAIL_BYTES))
-            if size > _JOURNAL_TAIL_BYTES:
-                journal.readline()
-            lines = journal.read(_JOURNAL_TAIL_BYTES).splitlines()
-        last = json.loads(next(line for line in reversed(lines) if line.strip()))
-        return (isinstance(last, dict) and last.get("event") == "done" and isinstance(last.get("data"), dict)
-                and last["data"].get("outcome") == "completed" and last["data"].get("sessionKey") == source_id)
-    except (OSError, ValueError, StopIteration):
-        return False
 
 
 def _copy_visible_message(message, scrub):
@@ -155,7 +129,7 @@ def _fork_session(catalog, source_id: str, req: ForkRequest, scrub: Callable[[st
         prefix = source["messages"][:req.cutoffIndex + 1]
         cutoff = prefix[-1]
         if (cutoff.get("role") != "assistant" or cutoff.get("status") != "completed"
-                or cutoff.get("clientTurnId") != req.cutoffTurnId or not _completed_turn(catalog, database, source_id, req.cutoffTurnId)):
+                or cutoff.get("clientTurnId") != req.cutoffTurnId or not completed_catalog_turn(catalog, database, source_id, req.cutoffTurnId)):
             raise HTTPException(409, "只可从服务器已确认完成的答复分叉")
         pairs = _visible_pairs(prefix)
         encoded = _json(pairs).encode("utf-8", "backslashreplace")

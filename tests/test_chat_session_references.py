@@ -11,6 +11,7 @@ from easel.request_identity import actor_context
 from tests.test_chat_artifacts import artifact_http_environment
 from tests.test_chat_file_references import units, upload
 from tests.test_chat_topic_reference import install_runner
+from web.chat_history import ChatHistoryStore
 import web.app as web
 
 pytestmark = pytest.mark.access_integration
@@ -42,7 +43,91 @@ def request_for(snapshot, *, target=TARGET, turn='capture-turn'):
     label = '@' + snapshot['label']
     return {'message': prefix + label + '  ', 'sessionId': target, 'turnId': turn,
             'sessionReferences': [{'start': units(prefix), 'end': units(prefix + label),
-                                   'sessionId': snapshot['sessionId'], 'snapshotHash': snapshot['snapshotHash']}]}
+                                   'sessionId': snapshot['sessionId'], 'snapshotHash': snapshot['snapshotHash'],
+                                   **({'turnId': snapshot['turnId']} if 'turnId' in snapshot else {})}]}
+
+
+def seed_turns(root, owner, *, count=3):
+    messages = []
+    with actor_context(owner.get('/api/auth/me').json()), project_context('default', root):
+        catalog = ChatHistoryStore(web._sessions_dir())
+        for index in range(count):
+            turn_id = f'source-turn-{index}'
+            path = web._job_event_file(turn_id)
+            assert catalog.claim_turn(turn_id, SOURCE, 'source-digest', path)[0]
+            path.write_text(''.join(json.dumps(event) + '\n' for event in [
+                {'id': 1, 'event': 'admitted', 'data': {'turnId': turn_id, 'sessionId': SOURCE}},
+                {'id': 2, 'event': 'done', 'data': {'sessionKey': SOURCE, 'outcome': 'completed'}},
+            ]))
+            messages.extend([
+                {'role': 'user', 'content': f'Question {index}', 'clientTurnId': turn_id,
+                 'agentContent': 'inaccessible native context'},
+                {'role': 'assistant', 'content': f'Answer {index}', 'clientTurnId': turn_id, 'status': 'completed',
+                 'events': [{'kind': 'publication', 'secret': 'private tool evidence'}]},
+            ])
+        messages.append({'role': 'assistant', 'content': 'No complete evidence',
+                         'clientTurnId': 'foreign-turn', 'status': 'completed'})
+        catalog.merge([{'id': SOURCE, 'title': 'Research', 'updated': 1, 'messages': messages}])
+
+
+def test_exact_turn_preview_and_capture_use_only_verified_turn_rows(artifact_http_environment, monkeypatch):
+    root, owner, members, _, _ = artifact_http_environment
+    seed_turns(root, owner)
+    response = owner.get(ROUTE, params={'sessionId': SOURCE, 'turnId': 'source-turn-1'})
+    assert response.status_code == 200, response.text
+    snapshot = response.json()
+    assert snapshot['turnId'] == 'source-turn-1' and snapshot['label'] == 'Research · 第2轮'
+    assert snapshot['preview'] == [{'role': 'user', 'content': 'Question 1'}, {'role': 'assistant', 'content': 'Answer 1'}]
+    assert owner.get(ROUTE, params={'sessionId': SOURCE, 'turnId': 'foreign-turn'}).status_code == 422
+    assert members['operator'].get(ROUTE, params={'sessionId': SOURCE, 'turnId': 'source-turn-1'}).status_code == 404
+    prompts = install_runner(monkeypatch, 'api')
+    payload = request_for(snapshot)
+    assert owner.post('/api/chat/stream', json=payload).status_code == 200
+    with actor_context(owner.get('/api/auth/me').json()), project_context('default', root):
+        capture = web._job_event_file(payload['turnId']).with_suffix('.session-references.json')
+        assert json.loads(capture.read_text())[0]['turnId'] == snapshot['turnId']
+    assert owner.delete('/api/chat/sessions/' + SOURCE).status_code == 200
+    assert owner.post('/api/chat/stream', json=payload).status_code == 200
+    assert len(prompts) == 1
+
+
+def test_turn_reference_list_is_verified_and_paginates_without_duplicates(artifact_http_environment):
+    root, owner, members, _, _ = artifact_http_environment
+    seed_turns(root, owner, count=21)
+    route = ROUTE + '/turns'
+    first = owner.get(route, params={'sessionId': SOURCE})
+    assert first.status_code == 200, first.text
+    first = first.json()
+    assert [item['turnId'] for item in first['turns']] == [f'source-turn-{index}' for index in range(20, 0, -1)]
+    assert first['before']
+    older = owner.get(route, params={'sessionId': SOURCE, 'before': first['before']}).json()
+    assert older == {'turns': [{'turnId': 'source-turn-0', 'label': 'Research · 第1轮'}], 'before': None}
+    assert members['operator'].get(route, params={'sessionId': SOURCE}).status_code == 404
+
+
+def test_distinct_turns_from_one_source_keep_separate_snapshots_and_only_changed_turn_is_stale(
+        artifact_http_environment, monkeypatch):
+    root, owner, _, _, _ = artifact_http_environment
+    seed_turns(root, owner, count=2)
+    def turn(index):
+        return owner.get(ROUTE, params={'sessionId': SOURCE, 'turnId': f'source-turn-{index}'}).json()
+    first, old_second = turn(0), turn(1)
+    with actor_context(owner.get('/api/auth/me').json()), project_context('default', root):
+        catalog = ChatHistoryStore(web._sessions_dir())
+        source = catalog.session(SOURCE)
+        source['messages'][3]['content'] = 'Updated second answer'
+        catalog.merge([{**source, 'updated': 2}])
+    assert turn(0) == first and turn(1)['snapshotHash'] != old_second['snapshotHash']
+    prompts = install_runner(monkeypatch, 'api')
+    assert owner.post('/api/chat/stream', json=request_for(old_second, turn='stale-selected')).status_code == 422
+    first_request, second_request = request_for(first), request_for(turn(1))
+    offset = units(first_request['message'])
+    extra = second_request['sessionReferences'][0]
+    both = {**first_request, 'message': first_request['message'] + second_request['message'],
+            'sessionReferences': [first_request['sessionReferences'][0],
+                                  {**extra, 'start': extra['start'] + offset, 'end': extra['end'] + offset}]}
+    assert owner.post('/api/chat/stream', json=both).status_code == 200
+    assert len(prompts) == 1 and 'Answer 0' in prompts[0] and 'Updated second answer' in prompts[0]
 
 
 def test_preview_is_scoped_stable_and_projects_only_scrubbed_text(artifact_http_environment, monkeypatch):
@@ -82,6 +167,7 @@ def test_admitted_capture_is_private_and_replay_never_recaptures_edited_source(
     assert prompt.count('</session_references>') == 1
     captured = json.loads(prompt.split('<session_references>\n', 1)[1].split('\n</session_references>', 1)[0])
     assert captured[0]['preview'] == snapshot['preview']
+    assert 'turnId' not in captured[0]
     assert 'untrusted' in prompt.lower() or '不可信' in prompt
     with actor_context(owner.get('/api/auth/me').json()), project_context('default', root):
         path = web._job_event_file(request['turnId']).with_suffix('.session-references.json')
@@ -166,7 +252,8 @@ def test_failed_preflight_rechecks_identical_concurrent_claim(artifact_http_envi
     prompts = install_runner(monkeypatch, 'api')
 
     def concurrent(req, catalog):
-        payload = req.model_dump(exclude={'topicRef', 'workshopRef', 'references', 'command', 'planRef'})
+        payload = req.model_dump(exclude={'topicRef', 'workshopRef', 'references', 'command', 'planRef', 'modelOverride'})
+        payload['sessionReferences'] = [item.model_dump(exclude_none=True) for item in req.sessionReferences]
         digest = hashlib.sha256(json.dumps({'request': payload, 'runtime': 'api'},
             ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         path = web._job_event_file(req.turnId)

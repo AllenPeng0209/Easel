@@ -80,7 +80,7 @@ test('forward Delete removes one chip and detaching a receipt removes all its oc
 test('session and attachment chips project independently and insert at the caret saved before modal focus', async () => {
   const { editor, runtime, update, snapshot, dispose } = editorFixture();
   const flush = () => new Promise(resolve => setImmediate(resolve));
-  const selected = { sessionId: 'source-session', label: '旧计划', snapshotHash: 'a'.repeat(64) };
+  const selected = { sessionId: 'source-session', label: '旧计划', snapshotHash: 'a'.repeat(64), turnId: 'source-turn-1' };
   try {
     update(() => runtime.$restoreReferenceDraft({
       text: 'AB @x.md', references: [{ start: 3, end: 8, attachmentId: 'x' }],
@@ -102,6 +102,7 @@ test('session and attachment chips project independently and insert at the caret
     editor.dispatchCommand(REDO_COMMAND);
     await flush();
     assert.equal(snapshot().sessionReferences[0].snapshotHash, selected.snapshotHash);
+    assert.equal(snapshot().sessionReferences[0].turnId, selected.turnId);
     update(() => runtime.$restoreReferenceDraft(inserted));
     assert.deepEqual(JSON.parse(JSON.stringify(snapshot())), JSON.parse(JSON.stringify(inserted)));
   } finally { dispose(); }

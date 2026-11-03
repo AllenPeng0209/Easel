@@ -211,3 +211,21 @@ test('only explicit valid command claims persist and a late receipt preserves a 
   assert.equal(store.loadChatDraft('session').text, ' /文案 草稿');
   assert.equal(store.loadChatDraft('session').command, undefined);
 });
+
+test('single-turn reference survives validation, draft restore and wire projection', () => {
+  const local = storage();
+  const model = load('chatReferences');
+  const store = load('chatDrafts', local);
+  const turn = { ...source, turnId: 'exact-turn_1' };
+  const checked = model.validateChatSessionReferences(mixedDraft.text, [turn], mixedDraft.references);
+  assert.deepEqual(plain(checked), [turn]);
+  const { label, ...wire } = turn;
+  assert.deepEqual(plain(model.toWireSessionReferences(checked)), [wire]);
+  assert.deepEqual(plain(model.validateChatSessionReferenceSpans(mixedDraft.text, [wire], mixedDraft.references)), [wire]);
+  assert.equal(store.saveChatDraft('target', { ...mixedDraft, sessionReferences: [turn] }), true);
+  assert.deepEqual(plain(store.loadChatDraft('target').sessionReferences), [turn]);
+  for (const invalid of [null, '', '../wrong', 'a'.repeat(161)]) {
+    assert.equal(model.validateChatSessionReferences(mixedDraft.text, [{ ...turn, turnId: invalid }], mixedDraft.references), null);
+  }
+  assert.equal(model.validateChatSessionReferences(mixedDraft.text, [{ ...turn, other: 1 }], mixedDraft.references), null);
+});

@@ -256,6 +256,7 @@ test('a background queued conversation preserves its own explicit persona', () =
   assert.equal(ui.context.sessions[0].messages.length, 0);
   ui.requests[0][19]({ sessionId: 'education', turnId: 'queue-q1' });
   assert.equal(ui.context.sessions[0].messages[0].content, 'write lesson one');
+  assert.equal(ui.context.sessions[0].messages[0].clientTurnId, 'queue-q1');
 });
 
 test('a queued model stays frozen after the next-turn preference changes', () => {

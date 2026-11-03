@@ -77,9 +77,11 @@ from web.chat_artifact_compare import compare_artifact_snapshots
 from web.chat_commands import ChatCommand, chat_command_catalog, chat_command_message, validate_chat_command
 from web.chat_session_references import (
     ChatSessionReference, MAX_SESSION_REFERENCES, append_session_reference_context,
-    freeze_session_references, resolve_session_reference_context, session_reference_snapshot,
+    freeze_session_references, resolve_session_reference_context, session_reference_snapshot, session_reference_turns,
+    turn_reference_snapshot,
     valid_session_reference_id, validate_session_reference_spans,
 )
+from web.chat_turn_evidence import valid_catalog_turn_id
 from web.chat_subagents import ChatSubagentStore
 try:
     from easel.gateway_questions import (
@@ -3295,10 +3297,17 @@ async def _resolve_chat_references(req: ChatRequest) -> tuple[dict | None, dict 
     return topic, workshop
 
 
-def _read_session_reference(catalog: ChatHistoryStore, session_id: str) -> dict:
+def _session_reference_source(catalog: ChatHistoryStore, session_id: str) -> dict:
     source = catalog.session(session_id)
     if source is None or source.get("id") != session_id:
         raise HTTPException(404, "来源会话不存在或无权访问")
+    return source
+
+
+def _read_session_reference(catalog: ChatHistoryStore, session_id: str, turn_id: str | None = None) -> dict:
+    source = _session_reference_source(catalog, session_id)
+    if turn_id is not None:
+        return turn_reference_snapshot(catalog, source, turn_id, _scrub_secrets)
     return session_reference_snapshot(source, _scrub_secrets)
 
 
@@ -3306,7 +3315,7 @@ def _capture_session_references(req: ChatRequest, catalog: ChatHistoryStore) -> 
     _require_operation()
     captures = resolve_session_reference_context(
         req.message, req.sessionId, req.sessionReferences, req.references,
-        lambda session_id: _read_session_reference(catalog, session_id),
+        lambda session_id, turn_id: _read_session_reference(catalog, session_id, turn_id),
     )
     _require_operation()
     return captures
@@ -5053,15 +5062,36 @@ def api_chat_commands():
     return {"commands": chat_command_catalog()}
 
 
+def _session_reference_query(request: Request, optional: str) -> dict:
+    entries = request.query_params.multi_items()
+    params = dict(entries)
+    if (len(entries) != len(params) or set(params) - {"sessionId", optional}
+            or not valid_session_reference_id(params.get("sessionId", ""))):
+        raise HTTPException(422, "无效的来源会话标识")
+    return params
+
+
 @app.get("/api/chat/session-reference")
 def api_chat_session_reference(request: Request):
     _require_operation()
-    entries = request.query_params.multi_items()
-    if len(entries) != 1 or entries[0][0] != "sessionId" or not valid_session_reference_id(entries[0][1]):
-        raise HTTPException(422, "无效的来源会话标识")
-    snapshot = _read_session_reference(ChatHistoryStore(_sessions_dir()), entries[0][1])
+    params = _session_reference_query(request, "turnId")
+    turn_id = params.get("turnId")
+    if turn_id is not None and not valid_catalog_turn_id(turn_id):
+        raise HTTPException(422, "无效的来源回合标识")
+    snapshot = _read_session_reference(ChatHistoryStore(_sessions_dir()), params["sessionId"], turn_id)
     _require_operation()
     return snapshot
+
+
+@app.get("/api/chat/session-reference/turns")
+def api_chat_session_reference_turns(request: Request):
+    _require_operation()
+    params = _session_reference_query(request, "before")
+    catalog = ChatHistoryStore(_sessions_dir())
+    source = _session_reference_source(catalog, params["sessionId"])
+    result = session_reference_turns(catalog, source, params.get("before"), _scrub_secrets)
+    _require_operation()
+    return result
 
 
 @app.get("/api/chat/sessions")
@@ -5345,6 +5375,8 @@ async def api_chat_stream(req: ChatRequest):
         request_payload.pop("references")
     if not req.sessionReferences:
         request_payload.pop("sessionReferences")
+    else:
+        request_payload["sessionReferences"] = [reference.model_dump(exclude_none=True) for reference in req.sessionReferences]
     if req.command is None:
         request_payload.pop("command")
     if req.planRef is None:

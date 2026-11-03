@@ -16,7 +16,7 @@ import {
   validateChatSessionReferences, type ChatDraftSessionReference, type ChatReference,
 } from '../lib/chatReferences';
 import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ChatPlanRef } from '../lib/store';
-import { uploadFiles, adoptOversize, fetchSessionReference } from '../lib/api';
+import { uploadFiles, adoptOversize, fetchSessionReference, fetchSessionReferenceTurns } from '../lib/api';
 import type { ChatQuestionClosed, UploadedFile } from '../lib/api';
 import type { ChatDeliverable } from '../lib/deliverables';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
@@ -490,11 +490,11 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         loading={modelLoading} onChangeModel={onChangeModel} onReload={onReloadModels} />}
       {pickingSession && sessionReferenceCandidates && <SessionReferencePicker
         candidates={sessionReferenceCandidates.filter(candidate => candidate.id !== session.id)}
-        inspect={fetchSessionReference} onClose={() => setPickingSession(false)}
-        onInsert={({ sessionId, label, snapshotHash }) => {
+        inspect={fetchSessionReference} listTurns={fetchSessionReferenceTurns} onClose={() => setPickingSession(false)}
+        onInsert={({ sessionId, label, snapshotHash, turnId }) => {
           if (sendingRef.current || !editorRef.current ||
               draftContentRef.current.sessionReferences.length >= MAX_CHAT_SESSION_REFERENCES) return false;
-          editorRef.current.insertSessionReference({ sessionId, label, snapshotHash });
+          editorRef.current.insertSessionReference({ sessionId, label, snapshotHash, ...(turnId !== undefined ? { turnId } : {}) });
           setSubmitError('');
           return true;
         }}

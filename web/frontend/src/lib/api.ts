@@ -979,14 +979,26 @@ interface ChatSessionPage {
 
 export interface SessionReferencePreview {
   sessionId: string;
+  turnId?: string;
   label: string;
   snapshotHash: string;
   preview: { role: 'user' | 'assistant'; content: string }[];
   truncated: boolean;
 }
 
-export function fetchSessionReference(sessionId: string, signal?: AbortSignal): Promise<SessionReferencePreview> {
-  return request(`/api/chat/session-reference?sessionId=${encodeURIComponent(sessionId)}`, { signal });
+export function fetchSessionReference(sessionId: string, signal?: AbortSignal, turnId?: string): Promise<SessionReferencePreview> {
+  const query = turnId ? `&turnId=${encodeURIComponent(turnId)}` : '';
+  return request(`/api/chat/session-reference?sessionId=${encodeURIComponent(sessionId)}${query}`, { signal });
+}
+
+export interface SessionReferenceTurnPage {
+  turns: { turnId: string; label: string }[];
+  before: string | null;
+}
+
+export function fetchSessionReferenceTurns(sessionId: string, before?: string, signal?: AbortSignal): Promise<SessionReferenceTurnPage> {
+  const query = before ? `&before=${encodeURIComponent(before)}` : '';
+  return request(`/api/chat/session-reference/turns?sessionId=${encodeURIComponent(sessionId)}${query}`, { signal });
 }
 
 export interface SessionModelCapability {

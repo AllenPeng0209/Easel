@@ -67,3 +67,10 @@
   .session-reference-body { grid-template-columns: 1fr; }
   .session-reference-preview { min-height: 100px; border-left: 0; padding-left: 0; }
 }
+
+.session-reference-modes, .session-reference-turns { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.session-reference-turns { padding: 0; list-style: none; }
+.session-reference-preview .session-reference-turns li { margin: 0; padding: 0; background: transparent; }
+.session-reference-modes button[aria-pressed="true"],
+.session-reference-turns button[aria-pressed="true"] { background: var(--accent-soft); }
+.session-reference-preview [data-session-reference-more-turns] { margin: 0 0 8px; }

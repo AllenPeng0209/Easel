@@ -19,7 +19,7 @@ export interface StructuredEditorHandle {
   insertAnswerQuote: (text: string) => boolean;
   rememberSelection: () => void;
   openCommandMenu: () => void;
-  insertSessionReference: (reference: Pick<ChatDraftSessionReference, 'sessionId' | 'label' | 'snapshotHash'>) => void;
+  insertSessionReference: (reference: Pick<ChatDraftSessionReference, 'sessionId' | 'label' | 'snapshotHash' | 'turnId'>) => void;
   insertReference: (attachmentId: string, label: string) => void;
   removeReference: (attachmentId: string) => void;
 }

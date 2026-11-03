@@ -597,7 +597,7 @@ export default function App() {
         const item = session.queued?.find(row => row.id === owner.queuedId);
         if (!item) return session;
         const trimmed = trimChatReferenceText(item.text, item.references, item.sessionReferences);
-        const message: ChatMessage = { role: 'user', content: trimmed.text, attachments: item.attachments,
+        const message: ChatMessage = { role: 'user', clientTurnId: owner.turnId, content: trimmed.text, attachments: item.attachments,
           references: trimmed.references, sessionReferences: toWireSessionReferences(trimmed.sessionReferences), command: item.command, created: Date.now() };
         const updated = { ...session, updated: nextSessionRevision(session),
           queued: session.queued?.filter(row => row.id !== item.id), messages: [...session.messages, message] };

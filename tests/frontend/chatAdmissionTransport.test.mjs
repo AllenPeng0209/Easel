@@ -145,7 +145,10 @@ test('ordered typed inline occurrences are carried on POST, with old request bod
 });
 
 test('typed session context is sent only on the original POST and omitted from legacy sends', async () => {
-  const references = [{ start: 1, end: 4, sessionId: 'source', snapshotHash: 'a'.repeat(64) }];
+  const references = [
+    { start: 1, end: 4, sessionId: 'source', snapshotHash: 'a'.repeat(64) },
+    { start: 5, end: 8, sessionId: 'source', turnId: 'verified-turn', snapshotHash: 'b'.repeat(64) },
+  ];
   const result = await scenario([admission + done], { sessionReferences: references });
   assert.deepEqual(JSON.parse(result.requests[0].body).sessionReferences, references);
   const plain = await scenario([admission + done], { sessionReferences: [] });
@@ -171,5 +174,22 @@ test('an error before a disconnected live stream resumes the same admitted turn 
   ]);
   assert.deepEqual(observed, [
     ['admitted', 'exact-turn', 'session'], ['token', 'final buffered text'], ['error', undefined, '执行失败'],
+  ]);
+});
+
+test('source turn pagination and exact preview use the scoped actor and opaque identifiers', async () => {
+  const calls = [];
+  const { fetchSessionReference, fetchSessionReferenceTurns } = componentModule('lib/api.ts', {
+    user: 'author', project: 'workspace', globals: { Headers, fetch: async (url, options) => {
+      calls.push([url, options.headers.get('X-Easel-User'), options.signal]);
+      return Response.json({});
+    } },
+  });
+  const signal = new AbortController().signal;
+  await fetchSessionReferenceTurns('scope session', 'before+cursor', signal);
+  await fetchSessionReference('scope session', signal, 'selected-turn');
+  assert.deepEqual(calls, [
+    ['/api/projects/workspace/chat/session-reference/turns?sessionId=scope%20session&before=before%2Bcursor', 'author', signal],
+    ['/api/projects/workspace/chat/session-reference?sessionId=scope%20session&turnId=selected-turn', 'author', signal],
   ]);
 });
