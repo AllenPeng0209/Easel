@@ -16,7 +16,7 @@ import {
 } from '../lib/chatReferences';
 import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ChatPlanRef } from '../lib/store';
 import { uploadFiles, adoptOversize, fetchSessionReference } from '../lib/api';
-import type { UploadedFile } from '../lib/api';
+import type { ChatQuestionClosed, UploadedFile } from '../lib/api';
 import type { ChatDeliverable } from '../lib/deliverables';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
 import { AttachmentUploadQueue } from '../lib/uploadQueue';
@@ -44,8 +44,7 @@ interface ChatPageProps {
     attachments?: UploadedFile[],
     legacyAgentText?: string,
   ) => void; // 重试：仅对最后一轮
-  onQuestionAnswered?: (questionId: string) => void;   // 某道问答题提交成功（App 记录答过，重放不再出现）
-  onQuestionClosed?: (id: string, status: string) => void;
+  onQuestionAnswered?: (receipt: ChatQuestionClosed) => void;
   queue?: QueuedMessage[];
   onEditQueued?: (id: string, text: string) => boolean;
   onQueueEditChange?: (id: string | null) => void;
@@ -72,7 +71,7 @@ function greeting(): string {
   return `${g}，想创作点什么？`;
 }
 
-export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onQuestionAnswered, onQuestionClosed,
+export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onQuestionAnswered,
   sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
   const [queueEdit, setQueueEdit] = useState<{ id: string; text: string } | null>(null);
   const queueEditChange = useRef(onQueueEditChange);
@@ -593,12 +592,12 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 onOpenDeliverable={openDeliverable}
                 onOpenSubagent={openSubagent}
               />
-              {!live && msg.questions && <QuestionCards sessionId={session.id} questions={msg.questions} onDone={onQuestionAnswered} onClosed={onQuestionClosed} />}
+              {!live && msg.questions && <QuestionCards sessionId={session.id} questions={msg.questions} onDone={onQuestionAnswered} />}
               </div>
             );
           })}
           {isStreaming && (stream!.questions?.length ?? 0) > 0 && (
-            <QuestionCards sessionId={session.id} questions={stream!.questions || []} onDone={(qid) => onQuestionAnswered?.(qid)} onClosed={onQuestionClosed} />
+            <QuestionCards sessionId={session.id} questions={stream!.questions || []} onDone={onQuestionAnswered} />
           )}
         </div>
       </div>

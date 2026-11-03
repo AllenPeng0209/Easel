@@ -370,6 +370,7 @@ export interface ChatQuestionItem {
   defaultAnswer?: string[];
 }
 export interface ChatQuestion {
+  turnId?: string;
   publication?: import('./publicationApproval').PublicationApprovalRecord;
   id: string;              // gateway question record id (ask_...)
   questions: ChatQuestionItem[];
@@ -385,27 +386,51 @@ export interface ChatQuestion {
 export interface ChatQuestionClosed {
   id: string; status: string; answers?: Record<string, string[]>; resolvedBy?: string;
 }
+const questionTerminal = new Set([
+  'resolved', 'answered', 'expired', 'revoked', 'replaced', 'cancelled',
+  'declined', 'blocked', 'denied', 'not_found',
+]);
+
+function readQuestionReceipt(value: unknown, id: string): ChatQuestionClosed | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { id: reportedId, status, answers, resolvedBy } = value as Partial<ChatQuestionClosed>;
+  if (reportedId !== id || typeof status !== 'string' || !questionTerminal.has(status)) return undefined;
+  const validAnswers = answers && typeof answers === 'object' && !Array.isArray(answers)
+    && Object.values(answers).every(items => Array.isArray(items) && items.every(item => typeof item === 'string'));
+  return { id, status, ...(validAnswers ? { answers } : {}),
+    ...(typeof resolvedBy === 'string' ? { resolvedBy } : {}) };
+}
+
 export async function answerQuestion(
-  payload: { questionId: string; answers: Record<string, string[]>; resolvedBy?: string },
-): Promise<{ ok: boolean; error?: string; status?: string; expired?: boolean }> {
+  payload: { questionId: string; sessionId?: string; turnId?: string; answers: Record<string, string[]>; resolvedBy?: string },
+): Promise<{ ok: boolean; error?: string; status?: string; expired?: boolean; receipt?: ChatQuestionClosed }> {
   const res = await projectFetch(projectUrl(`${BASE}/api/chat/question/answer`), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; status?: string; expired?: boolean };
-  return { ok: data.ok === true, error: data.error, status: data.status, expired: data.expired };
+  if (res.status === 401 || res.status === 403) return { ok: false, status: 'revoked' };
+  const data = await res.json().catch(() => ({})) as { ok?: boolean; status?: string; expired?: boolean; receipt?: unknown };
+  const receipt = readQuestionReceipt(data.receipt, payload.questionId);
+  const status = receipt?.status ?? (typeof data.status === 'string' &&
+    (questionTerminal.has(data.status) || data.status === 'pending' || data.status === 'unknown') ? data.status : 'pending');
+  return { ok: res.ok && data.ok === true && !!receipt && ['resolved', 'answered'].includes(receipt.status),
+    status, expired: data.expired === true, receipt };
 }
 
 /** 批量查 question 状态：过滤重放中已解决/已过期的旧题。 */
 export async function questionStatus(
-  questionIds: string[],
+  questionIds: string[], sessionId?: string,
 ): Promise<Record<string, { status: string; answers?: Record<string, string[]>; resolvedBy?: string }>> {
   if (!questionIds.length) return {};
   try {
     const res = await projectFetch(projectUrl(`${BASE}/api/chat/question/status`), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ questionIds }),
+      body: JSON.stringify({ questionIds, sessionId }),
     });
+    if (res.status === 401 || res.status === 403) {
+      return Object.fromEntries(questionIds.map(id => [id, { status: 'revoked' }]));
+    }
+    if (!res.ok) return {};
     const data = await res.json().catch(() => ({})) as { ok?: boolean; questions?: Record<string, { status: string; answers?: Record<string, string[]>; resolvedBy?: string }> };
     return data.questions || {};
   } catch {

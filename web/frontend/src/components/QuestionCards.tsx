@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ChatQuestion, ChatQuestionItem } from '../lib/api';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ChatQuestion, ChatQuestionClosed, ChatQuestionItem } from '../lib/api';
 import { answerQuestion, questionStatus } from '../lib/api';
 import { createQuestionDraftStore } from '../vendor/deepseek-harness/message/question-drafts';
 import { QuestionReplyBubble } from '../vendor/deepseek-harness/message/QuestionReplyBubble';
@@ -14,8 +14,29 @@ type QuestionDetails = ChatQuestion & {
   resolvedBy?: string;
   answers?: Record<string, string[]>;
   resolvedAtMs?: number;
+  turnId?: string;
 };
 const settledStatuses = new Set(['answered', 'resolved', 'defaulted', 'declined', 'blocked']);
+const definitiveStatuses = new Set([...settledStatuses, 'expired', 'revoked', 'replaced', 'cancelled']);
+const terminalStatuses = new Set([...definitiveStatuses, 'closed', 'not_found']);
+type SubmitPhase = 'idle' | 'submitting' | 'checking';
+
+function requestIdentity(question: QuestionDetails, sessionId: string): string {
+  return JSON.stringify([sessionId, question.id, question.turnId ?? null, question.publication?.id ?? null,
+    question.publication?.payloadHash ?? null, question.kind ?? null, question.requiresHuman === true,
+    question.questions.map(item => [item.questionId, item.question, item.multiSelect === true, item.options?.map(option => option.label) ?? []])]);
+}
+
+function matchingReceipt(value: unknown, id: string): ChatQuestionClosed | null {
+  if (!value || typeof value !== 'object') return null;
+  const receipt = value as Partial<ChatQuestionClosed>;
+  if (receipt.id !== id || typeof receipt.status !== 'string' || !definitiveStatuses.has(receipt.status)) return null;
+  const answers = receipt.answers && typeof receipt.answers === 'object' && !Array.isArray(receipt.answers)
+    && Object.values(receipt.answers).every(values => Array.isArray(values) && values.every(value => typeof value === 'string'))
+    ? receipt.answers : undefined;
+  return { id, status: receipt.status, ...(answers ? { answers } : {}),
+    ...(typeof receipt.resolvedBy === 'string' ? { resolvedBy: receipt.resolvedBy } : {}) };
+}
 const replyLabels: Record<string, string> = {
   'reply.label': '已接受的问答', 'reply.skipped': '未提供答案', 'reply.answerLabel': '答复：', copied: '已复制', copy: '复制',
 };
@@ -26,13 +47,14 @@ function QuestionResolution({ question }: { question: QuestionDetails }) {
     questions: question.questions.map(item => ({ id: item.questionId, question: item.question, header: item.header })),
     answers: Object.entries(question.answers || {}).map(([id, selected]) => ({ id, selected })),
   };
-  return <div className="question-resolution">
+  return <div className="question-resolution" data-question-request={question.id} data-question-phase={question.status}>
     {question.publication && <PublicationSubjectView subject={question.publication.subject} />}
     <div className="question-resolution__status">{question.status === 'blocked' ? '等待确认超时，任务在需要授权的步骤受阻'
       : question.status === 'declined' ? '未获授权，操作未执行'
       : question.resolvedBy === 'default' || question.status === 'defaulted' ? '已按默认答案继续' : '已答复'}</div>
     {question.answers ? <QuestionReplyBubble data={data} t={key => replyLabels[key] || key} />
-      : <p className="agent-event__note">答复已被服务端接受，正在同步记录。</p>}
+      : question.status !== 'blocked' && question.status !== 'declined'
+        ? <p className="agent-event__note">答复已被服务端接受，正在同步记录。</p> : null}
   </div>;
 }
 
@@ -42,19 +64,42 @@ function QuestionResolution({ question }: { question: QuestionDetails }) {
  * OpenClaw 的 ask_user 一次可带 1-3 个问题（question.questions[]）。gateway 的
  * question.resolve 要求 answers 里**每个问题都有答案**（单个缺失即报
  * QUESTION_INVALID_ANSWER: "question 'xxx' requires an answer"）。
- * 因此多问题时渲染全部题目，用户每问答完一项，全部选齐后自动提交一次。
+ * 多问题保留完整题目，用户选齐后明确提交一次。
  *
  * 多选：问题对象带 multiSelect: true 时，answers[qid] 可携带多个 label
  * （gateway 对 multiSelect=false 的多值直接报 "does not allow multiple answers"，
  * 前端只按数据渲染，不绕过校验）。
  */
-function QuestionCard({ question: original, sessionId, onAnswered, onClosed }: { question: QuestionDetails; sessionId: string;
-  onAnswered: (resolved: QuestionDetails) => void; onClosed?: (status: string) => void }) {
-  const [resolution, setResolution] = useState<Partial<QuestionDetails>>({});
-  const question = { ...original, ...resolution };
+function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: {
+  question: QuestionDetails; sessionId: string; requestKey: string;
+  onReceipt?: (receipt: ChatQuestionClosed) => void;
+}) {
+  const [resolution, setResolution] = useState<ChatQuestionClosed>();
+  const authoritativeStatus = terminalStatuses.has(original.status || '') ? original.status : undefined;
+  const question = { ...original, ...(authoritativeStatus ? {} : resolution) };
   const draftStore = useMemo(() => createQuestionDraftStore(sessionId), [sessionId]);
-  const [draft] = useState(() => draftStore.get(question.id));
-  const [busy, setBusy] = useState(false);
+  const draftKey = original.turnId || original.publication || original.kind === 'approval' || original.requiresHuman
+    ? requestKey : original.id;
+  const [draft] = useState(() => draftStore.get(draftKey));
+  const [phase, setPhase] = useState<SubmitPhase>('idle');
+  const phaseRef = useRef<SubmitPhase>('idle');
+  const submission = useRef<symbol | null>(null);
+  const received = useRef(false);
+  const mounted = useRef(true);
+  const originalStatus = useRef(authoritativeStatus);
+  originalStatus.current = authoritativeStatus;
+  const receiptCallback = useRef(onReceipt);
+  receiptCallback.current = onReceipt;
+  const [reconcile, setReconcile] = useState(0);
+  const [pendingConfirmed, setPendingConfirmed] = useState(false);
+  const changePhase = useCallback((next: SubmitPhase) => {
+    phaseRef.current = next;
+    setPhase(next);
+  }, []);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; submission.current = null; };
+  }, []);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<Record<string, string[]>>(() => Object.fromEntries(question.questions
     .map((item, index) => [item.questionId, draft?.drafts[index]?.selected || []])));
@@ -65,47 +110,65 @@ function QuestionCard({ question: original, sessionId, onAnswered, onClosed }: {
       .filter(value => !(item.options || []).some(option => option.label === value))])));
   const [showCustom, setShowCustom] = useState<Record<string, boolean>>({});
   const [now, setNow] = useState(Date.now());
-  const [closed, setClosed] = useState('');
   const requiresApproval = question.kind === 'approval' || question.requiresHuman === true;
   const defaultScheduled = !requiresApproval && typeof question.autoResolveAtMs === 'number'
     && !!question.defaultAnswers && Object.keys(question.defaultAnswers).length > 0;
   const deadlineReached = !defaultScheduled && typeof question.expiresAtMs === 'number' && now >= question.expiresAtMs;
-  const status = closed || question.status || 'pending';
+  const observedStatus = question.status === 'unknown' && pendingConfirmed ? 'pending' : question.status;
+  const status = authoritativeStatus || resolution?.status || observedStatus || 'pending';
   const settled = settledStatuses.has(status);
-  const expired = deadlineReached || (status !== 'pending' && status !== 'unknown');
-  const locked = busy || expired;
-  const closedCallback = useRef(onClosed);
-  closedCallback.current = onClosed;
+  const expired = deadlineReached || terminalStatuses.has(status);
+  const locked = phase !== 'idle' || expired || status !== 'pending';
+  const applyReceipt = useCallback((value: unknown): boolean => {
+    const receipt = matchingReceipt(value, original.id);
+    if (!receipt || !mounted.current || received.current || originalStatus.current) return false;
+    received.current = true;
+    setResolution(receipt);
+    setError('');
+    changePhase('idle');
+    draftStore.clear(draftKey);
+    receiptCallback.current?.(receipt);
+    return true;
+  }, [changePhase, draftKey, draftStore, original.id]);
 
   useEffect(() => {
-    if (settled || expired) { draftStore.clear(question.id); return; }
-    draftStore.replace(question.id, { index: 0, drafts: question.questions.map(item => ({
+    if (terminalStatuses.has(status)) { draftStore.clear(draftKey); return; }
+    draftStore.replace(draftKey, { index: 0, drafts: question.questions.map(item => ({
       selected: selected[item.questionId] || [], custom: custom[item.questionId] || '', skipped: false,
     })) });
-  }, [draftStore, question.id, question.questions, selected, custom, settled, expired]);
+  }, [draftKey, draftStore, question.questions, selected, custom, status]);
 
   useEffect(() => {
-    if (status !== 'pending' || deadlineReached) return;
+    if (terminalStatuses.has(status)) return;
     let active = true;
+    let polling = false;
     let lastPoll = 0;
     const tick = () => {
       setNow(Date.now());
-      if (Date.now() - lastPoll < 4500) return;
+      if (polling || Date.now() - lastPoll < 4500) return;
+      polling = true;
       lastPoll = Date.now();
-      void questionStatus([question.id]).then(states => {
-        const details = states[question.id] as Partial<QuestionDetails> | undefined;
+      void questionStatus([original.id]).then(states => {
+        if (!active || !mounted.current || originalStatus.current || received.current) return;
+        const details = states[original.id] as (Partial<ChatQuestionClosed> & { status: string }) | undefined;
+        if (details?.id !== undefined && details.id !== original.id) return;
         const next = details?.status;
-        if (active && next && next !== 'pending' && next !== 'unknown') {
-          setResolution(details || {});
-          setClosed(next);
-          closedCallback.current?.(next);
+        if (next && definitiveStatuses.has(next)) {
+          applyReceipt({ ...details, id: original.id });
+        } else if (next === 'pending') {
+          setPendingConfirmed(true);
+          if (phaseRef.current === 'checking' && !submission.current) {
+            changePhase('idle');
+            setError('服务端仍在等待答复，请核对后重新提交。');
+          }
         }
-      });
+      }).catch(() => { /* Keep the current request visible until status is known. */ })
+        .finally(() => { polling = false; });
     };
     tick();
     const timer = setInterval(tick, 1000);
     return () => { active = false; clearInterval(timer); };
-  }, [question.id, status, deadlineReached]);
+  }, [applyReceipt, changePhase, original.id, reconcile, status]);
 
   const items: ChatQuestionItem[] = question.questions || [];
   const valsOf = (it: ChatQuestionItem): string[] => selected[it.questionId] || [];
@@ -140,33 +203,30 @@ function QuestionCard({ question: original, sessionId, onAnswered, onClosed }: {
   };
 
   const submit = async (override?: Record<string, string[]>) => {
-    if (locked || !items.length) return;
+    if (locked || submission.current || received.current || originalStatus.current || !items.length ||
+        (!defaultScheduled && typeof question.expiresAtMs === 'number' && Date.now() >= question.expiresAtMs)) return;
     const answers: Record<string, string[]> = {};
     for (const it of items) {
       const values = override ? override[it.questionId] : valsOf(it);
       if (!Array.isArray(values) || !values.length || values.some(value => typeof value !== 'string' || !value.trim())) return;
       answers[it.questionId] = values;
     }
-    setBusy(true); setError('');
+    const owner = Symbol('question submission');
+    submission.current = owner;
+    changePhase('submitting'); setError('');
     try {
-      const res = await answerQuestion({ questionId: question.id, answers });
-      if (!res.ok && (res.expired || (res.status && res.status !== 'pending'))) {
-        setClosed(res.status || 'expired');
-        onClosed?.(res.status || 'expired');
-        setError('该问题已过期或关闭。若仍需补充，请在聊天输入框发送答复。');
-      } else if (!res.ok) setError(res.error || '提交失败');
-      else {
-        const accepted = { ...question, status: 'answered', answers, resolvedBy: 'human' };
-        setResolution(accepted);
-        setClosed('answered');
-        draftStore.clear(question.id);
-        onAnswered(accepted);
-      }
-    } catch (e) {
-      setError(String(e));
+      const response = await answerQuestion({ questionId: question.id, answers,
+        ...(sessionId === 'legacy' ? {} : { sessionId }), ...(question.turnId ? { turnId: question.turnId } : {}) });
+      if (!mounted.current || submission.current !== owner || received.current || originalStatus.current) return;
+      if (applyReceipt(response.receipt)) return;
+    } catch {
+      if (!mounted.current || submission.current !== owner || received.current || originalStatus.current) return;
     } finally {
-      setBusy(false);
+      if (submission.current === owner) submission.current = null;
     }
+    changePhase('checking');
+    setError('提交结果未确认，正在核对服务端状态。');
+    setReconcile(value => value + 1);
   };
 
   if (settled) return <QuestionResolution question={{ ...question, status }} />;
@@ -174,7 +234,8 @@ function QuestionCard({ question: original, sessionId, onAnswered, onClosed }: {
   return (
     <div className="message-row assistant">
       <div className="msg-col assistant question-card-column">
-        <div className="question-card">
+        <div className="question-card" data-question-request={question.id}
+          data-question-phase={expired ? status : phase} aria-busy={phase !== 'idle'}>
           <div className="question-card__mode">{requiresApproval ? '需要你确认' : '补充信息'}</div>
           {requiresApproval && <div className="question-card__hint">未答复不会自动授权。</div>}
           {question.publication && <><PublicationSubjectView subject={question.publication.subject} />
@@ -188,7 +249,12 @@ function QuestionCard({ question: original, sessionId, onAnswered, onClosed }: {
                 onClick={() => void submit(question.defaultAnswers)}>按默认答案继续</button>
             </div>
           </div>}
-          {expired ? <div className="question-card__hint">该问题已过期或关闭，无法再提交。请在聊天输入框发送补充答复。</div>
+          {expired ? <div className="question-card__hint">
+              {status === 'revoked' ? '操作权限已撤销，无法提交。'
+                : status === 'replaced' ? '该请求已被替换，请查看新的确认卡。'
+                  : deadlineReached && !terminalStatuses.has(status) ? '本地截止时间已到，正在核对是否已过期或关闭。'
+                    : '该问题已过期或关闭，无法再提交。请在聊天输入框发送补充答复。'}
+            </div>
             : !defaultScheduled && typeof question.expiresAtMs === 'number' && <div className="question-card__hint">
               本次输入截止时间：{new Date(question.expiresAtMs).toLocaleString()} · 剩余约 {Math.max(0, Math.ceil((question.expiresAtMs - now) / 60000))} 分钟（可能提前关闭）
             </div>}
@@ -256,24 +322,13 @@ function QuestionCard({ question: original, sessionId, onAnswered, onClosed }: {
             );
           })}
 
-          {/* 单选题：选完点提交；多题：全部选齐后提交（单选/多选同一规则） */}
-          {items.length === 1 ? (
-            <div className="question-card__actions">
-              <button className="question-card__submit" disabled={locked || !allAnswered}
-                onClick={() => void submit()}>
-                提交
-              </button>
-            </div>
-          ) : (
-            allAnswered && !locked && (
-              <div className="question-card__actions">
-                <button className="question-card__submit" disabled={locked} onClick={() => void submit()}>
-                  全部已选，提交
-                </button>
-              </div>
-            )
-          )}
-          {busy && <div className="question-card__hint">已提交，Agent 继续处理中…</div>}
+          {(items.length === 1 || allAnswered) && <div className="question-card__actions">
+            <button className="question-card__submit" disabled={locked || !allAnswered}
+              onClick={() => void submit()}>{phase === 'submitting' ? '提交中…'
+                : phase === 'checking' ? '核对中…' : items.length === 1 ? '提交' : '全部已选，提交'}</button>
+          </div>}
+          {phase === 'submitting' && <div className="question-card__hint" role="status">提交中，等待服务端确认…</div>}
+          {phase === 'idle' && status === 'unknown' && <div className="question-card__hint" role="status">正在核对服务端请求状态。</div>}
           {error && <div className="question-card__hint question-card__error">{error}</div>}
         </div>
       </div>
@@ -281,20 +336,17 @@ function QuestionCard({ question: original, sessionId, onAnswered, onClosed }: {
   );
 }
 
-/** 流式中的 ask_user 问答题列表（一次性卡片，答完即从当前流移除）。 */
-export default function QuestionCards({ questions, sessionId = 'legacy', onDone, onClosed }: { questions: ChatQuestion[];
-  sessionId?: string; onDone?: (questionId: string) => void; onClosed?: (id: string, status: string) => void }) {
-  const [answered, setAnswered] = useState<Record<string, QuestionDetails>>({});
-  const visible = useMemo(() => questions.map(question => ({ ...question, ...answered[question.id] })), [questions, answered]);
-  if (!visible.length) return null;
-  return (
-    <>
-      {visible.map((q) => (
-        <QuestionCard key={q.id} question={q} sessionId={sessionId} onClosed={status => onClosed?.(q.id, status)} onAnswered={resolved => {
-          setAnswered((a) => ({ ...a, [q.id]: resolved }));
-          onDone?.(q.id);   // 通知 App：此题已答，重放/恢复不再出现
-        }} />
-      ))}
-    </>
-  );
+/** Keep a request visible until its exact terminal observation arrives. */
+export default function QuestionCards({ questions, sessionId = 'legacy', onDone }: {
+  questions: ChatQuestion[];
+  sessionId?: string;
+  onDone?: (receipt: ChatQuestionClosed) => void;
+}) {
+  if (!questions.length) return null;
+  return <>
+    {questions.map(question => {
+      const key = requestIdentity(question, sessionId);
+      return <QuestionCard key={key} question={question} sessionId={sessionId} requestKey={key} onReceipt={onDone} />;
+    })}
+  </>;
 }

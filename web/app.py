@@ -121,25 +121,83 @@ def _gateway_question_state(question: dict | None) -> dict:
     return {"status": status, **_gateway_question_timing(question)}
 
 
+def _finish_gateway_question(record, status, *, answers=None, source=None):
+    if record["status"] != "pending":
+        return
+    record["status"] = status
+    if answers is not None:
+        record["answers"] = answers
+        record["resolvedBy"] = source
+        visible = _question_receipt(record)
+        record["emit"]("agent_event", {"id": "decision_" + record["id"], "kind": "decision",
+            "questionId": record["id"], "questions": record["questions"], "answers": visible["answers"],
+            "source": source, "resolvedBy": source, "status": status, "completedAt": int(time.time() * 1000)})
+    record["emit"]("question_closed", json.dumps(_question_receipt(record), ensure_ascii=False))
+
+
+def _gateway_canonical_answers(questions, answers):
+    options = {question.get("questionId"): {option.get("label"): option["value"]
+               for option in question.get("options", []) if isinstance(option, dict)
+               and isinstance(option.get("label"), str) and isinstance(option.get("value"), str)}
+               for question in questions}
+    return {key: [options.get(key, {}).get(value, value.strip()) for value in values]
+            for key, values in answers.items()}
+
+
+def _observe_gateway_question(record, evidence, *, readback):
+    if readback and evidence is None:
+        _finish_gateway_question(record, "expired")
+        return False
+    if not isinstance(evidence, dict):
+        return False
+    if readback and (evidence.get("id") != record["id"]
+            or evidence.get("sessionKey") != f"agent:main:{_native_session_key(record['session'])}"):
+        return False
+    status = _gateway_question_state(evidence)["status"]
+    attempt = record.get("attempt")
+    if status in ("answered", "resolved") and attempt:
+        answers, source, canonical = attempt
+        result = evidence.get("answers")
+        if (isinstance(result, dict) and result.get("answers") == canonical
+                and (not readback or evidence.get("resolvedBy") == source)):
+            _finish_gateway_question(record, "declined" if source == "timeout" else "resolved", answers=answers, source=source)
+            return True
+    if status in ("answered", "resolved", "cancelled", "expired", "closed"):
+        _finish_gateway_question(record, "closed" if status in ("answered", "resolved") else status)
+    return False
+
+
 def _settle_gateway_question(record: dict, answers: dict, source: str, client) -> bool:
-    """The gateway receipt, not a local echo, authorizes one terminal decision."""
+    """Allow one mutation and return whether this call observed an earlier attempt."""
     with record["lock"]:
         if record["status"] != "pending":
-            return False
+            return True
         if record.get("secret"):
             raise HarnessError("请在原生终端完成敏感凭证输入")
+        if "attempt" in record:
+            evidence = client.get_question(record["id"])
+            _observe_gateway_question(record, evidence, readback=True)
+            return True
+        if not record.get("active", lambda: True)():
+            _finish_gateway_question(record, "replaced")
+            return False
+        if source == "human" and _gateway_question_expired(record):
+            return False
         _require_host_tools()
-        client.resolve(record["id"], answers, source)
-        record.update(status="declined" if source == "timeout" else "resolved", answers=answers, resolvedBy=source)
-        record["emit"]("agent_event", {"id": "decision_" + record["id"], "kind": "decision",
-            "questionId": record["id"], "questions": record["questions"], "answers": answers,
-            "source": source, "resolvedBy": source, "status": record["status"], "completedAt": int(time.time() * 1000)})
-        record["emit"]("question_closed", _scrub_secrets(json.dumps({
-            "id": record["id"], "status": record["status"], "answers": answers, "resolvedBy": source}, ensure_ascii=False)))
-        return True
+        record["attempt"] = (answers, source, _gateway_canonical_answers(record.get("rawQuestions", []), answers))
+        evidence = client.resolve(record["id"], answers, source)
+        _observe_gateway_question(record, evidence, readback=False)
+        return False
 
 
-def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event, mode: str | None = None) -> None:
+def _gateway_question_expired(record):
+    expires = _gateway_question_timing(record).get("expiresAtMs")
+    return ((record.get("deadline") is not None and time.monotonic() >= record["deadline"])
+            or (expires is not None and time.time() * 1000 >= expires))
+
+
+def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event, mode: str | None = None,
+                            turn_id: str | None = None) -> None:
     global _QBRIDGE_DISABLED
     if _QBRIDGE_DISABLED or GatewayClient is None:
         return
@@ -153,6 +211,11 @@ def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event, mode: st
     pushed: set[str] = set()
     pending: set[str] = set()
     final_check = False
+
+    def current_record(identifier):
+        record = _GATEWAY_QUESTION_POLICIES.get(identifier)
+        return record if record and record.get("session") == sk and record.get("turnId") == turn_id else None
+
     try:
         try:
             client = GatewayClient()
@@ -179,7 +242,14 @@ def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event, mode: st
             current = {item["id"] for item in items if item.get("id")}
             for identifier in sorted(pending - current):
                 try:
-                    status = _gateway_question_state(client.get_question(identifier))["status"]
+                    evidence = client.get_question(identifier)
+                    status = _gateway_question_state(evidence)["status"]
+                    record = current_record(identifier)
+                    if record is not None:
+                        with record["lock"]:
+                            _observe_gateway_question(record, evidence, readback=True)
+                            if record["status"] != "pending":
+                                continue
                 except GatewayQuestionClosedError as error:
                     status = error.status
                 except GatewayUnsupportedError:
@@ -189,6 +259,11 @@ def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event, mode: st
                     continue
                 if status in ("pending", "unknown"):
                     current.add(identifier)
+                    continue
+                record = current_record(identifier)
+                if record is not None:
+                    with record["lock"]:
+                        _finish_gateway_question(record, "expired" if status == "not_found" else status)
                     continue
                 emit("question_closed", json.dumps({"id": identifier, "status": status}))
             for item in items:
@@ -207,22 +282,29 @@ def _poll_gateway_questions(sk: str, proc, emit, stop: threading.Event, mode: st
                         payload.update(questions=public_questions(questions), kind="approval" if policy.requires_human else "preference",
                             requiresHuman=policy.requires_human, defaultAnswers=policy.default_answers,
                             autoResolveAtMs=None if policy.requires_human else deadline)
+                        if turn_id is not None:
+                            payload["turnId"] = turn_id
                         if secret:
                             payload["questions"] = [{"questionId": "secret", "question": "请在原生终端完成敏感凭证输入", "options": []}]
+                        older = _GATEWAY_QUESTION_POLICIES.get(identifier)
                         _GATEWAY_QUESTION_POLICIES[identifier] = {
-                            **payload, "status": "pending", "policy": policy, "deadline": time.monotonic() + policy.wait_seconds,
+                            **payload, "session": sk, "turnId": turn_id, "rawQuestions": questions,
+                            "requiresBoundTurn": bool(older and current_record(identifier) is None),
+                            "active": lambda: proc.poll() is None and not stop.is_set(),
+                            "status": "pending", "policy": policy, "deadline": time.monotonic() + policy.wait_seconds,
                             "lock": threading.Lock(), "emit": emit, "secret": secret}
                     emit("question", json.dumps(payload, ensure_ascii=False))
                 if mode is not None and identifier:
-                    record = _GATEWAY_QUESTION_POLICIES.get(identifier)
+                    record = current_record(identifier)
                     if record and record["status"] == "pending" and time.monotonic() >= record["deadline"]:
                         policy = record["policy"]
                         fallback = policy.timeout_answers if policy.requires_human else policy.default_answers
                         if fallback and not record.get("secret"):
                             try:
                                 _settle_gateway_question(record, fallback, "timeout" if policy.requires_human else "default", client)
-                            except GatewayQuestionClosedError:
-                                record["status"] = "closed"
+                            except GatewayQuestionClosedError as error:
+                                with record["lock"]:
+                                    _finish_gateway_question(record, "expired" if error.status == "not_found" else error.status)
                             except Exception:
                                 # Keep the card pending on transient RPC failure;
                                 # a local timeout is not a successful answer.
@@ -3857,69 +3939,90 @@ class _HarnessProc(_GatewayHttpProc):
             task.get_loop().call_soon_threadsafe(cancel_once)
 
 
-async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "autonomous", publication=None) -> dict:
+def _question_receipt(record: dict) -> dict:
+    fields = {key: record[key] for key in ("id", "status", "answers", "resolvedBy") if key in record}
+    return json.loads(_scrub_secrets(json.dumps(fields, ensure_ascii=False)))
+
+
+def _remember_harness_question(identifier, record, status, emit, *, answers=None, source=None, publication=None):
+    closed = {"id": identifier, "status": status}
+    if answers is not None:
+        closed["answers"] = answers
+    if source is not None:
+        closed["resolvedBy"] = source
+    record.update(closed)
+    _HARNESS_QUESTION_RESULTS[identifier] = {**closed, "session": record["session"], "turnId": record["turnId"]}
+    while len(_HARNESS_QUESTION_RESULTS) > 256:
+        _HARNESS_QUESTION_RESULTS.pop(next(iter(_HARNESS_QUESTION_RESULTS)), None)
+    record["receiptFuture"].set_result(closed)
+    visible = _question_receipt(closed)
+    emit("agent_event", {"id": "decision_" + identifier, "kind": "decision",
+        "questionId": identifier, "status": status, "completedAt": int(time.time() * 1000),
+        **({"source": source, "resolvedBy": source} if source else {}),
+        **({"questions": record["questions"], "answers": visible["answers"]} if answers is not None else {}),
+        **({"publication": publication} if publication is not None else {})})
+    emit("question_closed", json.dumps(visible, ensure_ascii=False))
+
+
+async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "autonomous", publication=None,
+                       turn_id: str | None = None) -> dict:
     _require_host_tools()
     if requests_secret(questions):
         raise HarnessError("请在原生终端完成敏感凭证输入，不要将密码或密钥写入聊天记录")
     identifier = "harness_" + uuid.uuid4().hex
-    future = asyncio.get_running_loop().create_future()
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
     policy = question_policy(questions, mode)
     deadline = int((time.time() + policy.wait_seconds) * 1000)
-    visible_questions = public_questions(questions)
-    record = {"session": sk, "future": future, "status": "pending", "questions": visible_questions,
+    record = {"id": identifier, "session": sk, "turnId": turn_id, "future": future,
+              "receiptFuture": loop.create_future(), "deadline": time.monotonic() + policy.wait_seconds,
+              "status": "pending", "questions": public_questions(questions),
               "kind": "approval" if policy.requires_human else "preference",
               "requiresHuman": policy.requires_human,
               "defaultAnswers": policy.default_answers,
               "autoResolveAtMs": None if policy.requires_human else deadline,
-              "expiresAtMs": deadline, "resolvedBy": "human"}
+              "expiresAtMs": deadline}
     if publication is not None:
-        record['publication'] = publication
+        record["publication"] = publication
     _HARNESS_QUESTIONS[identifier] = record
     try:
-        public = {key: value for key, value in record.items() if key not in ("future", "session", "resolvedBy")}
+        public = {key: value for key, value in record.items() if key not in ("future", "receiptFuture", "session", "deadline")}
         emit("agent_event", {"id": "decision_pending_" + identifier, "kind": "decision",
             "questionId": identifier, "status": "pending", "startedAt": int(time.time() * 1000)})
-        emit("question", _scrub_secrets(json.dumps({"id": identifier, **public}, ensure_ascii=False)))
+        emit("question", _scrub_secrets(json.dumps(public, ensure_ascii=False)))
+        source = "human"
         try:
             answers = await asyncio.wait_for(asyncio.shield(future), policy.wait_seconds)
         except asyncio.TimeoutError:
-            # Human responses and this timer run on the same loop. The future is
-            # the single settlement point; shielding it avoids timeout cancelling
-            # a concurrently submitted answer.
-            if not future.done():
+            if future.done():
+                answers = future.result()
+            else:
                 _require_host_tools()
-                fallback = policy.timeout_answers if policy.requires_human else policy.default_answers
-                if not fallback:
-                    record.update(status="blocked", resolvedBy="timeout")
-                    closed = {"id": identifier, "status": "blocked", "resolvedBy": "timeout", "answers": {}}
-                    _HARNESS_QUESTION_RESULTS[identifier] = closed
-                    emit("agent_event", {"id": "decision_" + identifier, "kind": "decision", "questionId": identifier,
-                        "status": "blocked", "source": "timeout", "resolvedBy": "timeout", "answers": {},
-                        "questions": visible_questions, "completedAt": int(time.time() * 1000)})
-                    emit("question_closed", json.dumps(closed, ensure_ascii=False))
+                answers = policy.timeout_answers if policy.requires_human else policy.default_answers
+                source = "timeout" if policy.requires_human else "default"
+                if not answers:
+                    _remember_harness_question(identifier, record, "blocked", emit, answers={}, source=source)
                     raise ChatFailure("permission_denied", diagnostic="等待人工确认超时，任务在需要授权的步骤受阻，未执行该操作")
-                record["resolvedBy"] = "timeout" if policy.requires_human else "default"
-                future.set_result(fallback)
-            answers = future.result()
         _require_host_tools()
-        status = "declined" if record["resolvedBy"] == "timeout" else "resolved"
-        record.update(status=status, answers=answers)
-        closed = {"id": identifier, "status": status, "answers": answers, "resolvedBy": record["resolvedBy"]}
-        _HARNESS_QUESTION_RESULTS[identifier] = closed
-        # Bounded terminal cache supports status refresh without keeping futures.
-        while len(_HARNESS_QUESTION_RESULTS) > 256:
-            _HARNESS_QUESTION_RESULTS.pop(next(iter(_HARNESS_QUESTION_RESULTS)), None)
-        emit("agent_event", {"id": "decision_" + identifier, "kind": "decision", "questionId": identifier,
-            "status": status, "source": record["resolvedBy"], "resolvedBy": record["resolvedBy"],
-            "questions": visible_questions, "answers": answers, "completedAt": int(time.time() * 1000),
-            **({'publication': publication} if publication is not None else {})})
-        emit("question_closed", _scrub_secrets(json.dumps(closed, ensure_ascii=False)))
+        status = "declined" if source == "timeout" else "resolved"
+        _remember_harness_question(identifier, record, status, emit, answers=answers, source=source, publication=publication)
         return answers
     except asyncio.CancelledError:
-        emit("agent_event", {"id": "decision_" + identifier, "kind": "decision",
-            "questionId": identifier, "status": "cancelled", "completedAt": int(time.time() * 1000)})
+        if not record["receiptFuture"].done():
+            try:
+                _require_host_tools()
+            except HTTPException:
+                _remember_harness_question(identifier, record, "revoked", emit)
+            else:
+                _remember_harness_question(identifier, record, "cancelled", emit)
+        raise
+    except HTTPException as error:
+        if error.status_code in (401, 403) and not record["receiptFuture"].done():
+            _remember_harness_question(identifier, record, "revoked", emit)
         raise
     finally:
+        if not record["receiptFuture"].done():
+            _remember_harness_question(identifier, record, "cancelled", emit)
         _HARNESS_QUESTIONS.pop(identifier, None)
 
 
@@ -4013,7 +4116,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     async def ask(questions):
         if not interactive:
             raise HarnessError("此操作需要权限确认，请在流式对话中执行并确认权限")
-        return await _harness_ask(sk, questions, receive, mode=req.autonomyMode)
+        return await _harness_ask(sk, questions, receive, mode=req.autonomyMode, turn_id=turn_id)
 
     async def present(files: list[dict], call_id: str) -> list[dict]:
         # The native reverse-RPC callback already owns the verified Session and
@@ -4112,7 +4215,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 answers = await _harness_ask(sk, [{'questionId': 'publication', 'kind': 'approval',
                     'header': '发布批准', 'question': '请核对下方的具体账号、文案及媒体版本。是否批准本次操作？',
                     'options': [{'label': allow}, {'label': '暂不执行'}]}], receive,
-                    mode=req.autonomyMode, publication=record)
+                    mode=req.autonomyMode, publication=record, turn_id=turn_id)
                 record = workflow.decide(record['id'], answers.get('publication') == [allow], record['payloadHash'])
             if record['state'] != 'approved':
                 return publication_event({**record, 'message': '此版本未获发布批准；保留草稿并继续其它可完成工作，未公开发布。'},
@@ -5463,7 +5566,7 @@ async def api_chat_stream(req: ChatRequest):
 
         if GatewayClient is not None and not _QBRIDGE_DISABLED and project_id() == "default":
             question_poll_fut = loop.run_in_executor(
-                None, copy_context().run, _poll_gateway_questions, sk, proc, emit_question, question_stop, req.autonomyMode)
+                None, copy_context().run, _poll_gateway_questions, sk, proc, emit_question, question_stop, req.autonomyMode, turn_id)
 
         def _handle(line: str):
             o = _raw_event_for_run(line, run_info["run_id"])
@@ -5778,10 +5881,41 @@ async def api_chat_stream(req: ChatRequest):
 
 
 class QuestionAnswerRequest(BaseModel):
-    sessionId: str | None = None
-    questionId: str
+    sessionId: str | None = Field(default=None, max_length=256)
+    turnId: str | None = Field(default=None, max_length=160)
+    questionId: str = Field(min_length=1, max_length=256)
     answers: dict  # {questionId: [optionValues]}
     resolvedBy: str | None = None
+
+
+def _question_scope_matches(record, req) -> bool:
+    return ((req.sessionId is None or record.get("session") == req.sessionId)
+            and (not record.get("requiresBoundTurn") or req.turnId is not None)
+            and (req.turnId is None or record.get("turnId") == req.turnId))
+
+
+def _validate_question_answers(questions: list[dict], answers: dict) -> None:
+    required = {question["questionId"]: question for question in questions
+                if isinstance(question, dict) and isinstance(question.get("questionId"), str)}
+    if not required or len(required) != len(questions) or set(answers) != set(required):
+        raise HTTPException(400, "回答与当前问题不匹配")
+    for identifier, values in answers.items():
+        question = required[identifier]
+        labels = {option["label"] for option in question.get("options", [])
+                  if isinstance(option, dict) and isinstance(option.get("label"), str)}
+        if (not isinstance(values, list) or not 1 <= len(values) <= (20 if question.get("multiSelect") is True else 1)
+                or any(not isinstance(value, str) or not value.strip() or len(value) > 16384 for value in values)
+                or len(set(values)) != len(values) or (labels and not set(values) <= labels)):
+            raise HTTPException(400, "回答与当前问题的选项不匹配")
+
+
+def _question_answer_receipt(record: dict, req: QuestionAnswerRequest, *, replayed=False) -> dict:
+    receipt = _question_receipt(record)
+    accepted = (receipt.get("status") == "resolved" and record.get("resolvedBy") == "human"
+                and record.get("answers") == req.answers)
+    return {"ok": accepted, "status": receipt["status"], "receipt": receipt,
+            **({"replayed": True} if accepted and replayed else {}),
+            **({"expired": True} if not accepted else {})}
 
 
 @app.post("/api/chat/question/answer")
@@ -5791,89 +5925,149 @@ async def api_question_answer(req: QuestionAnswerRequest):
         _require_host_tools()
         record = _HARNESS_QUESTIONS.get(req.questionId)
         if record is None:
+            terminal = _HARNESS_QUESTION_RESULTS.get(req.questionId)
+            if terminal is not None:
+                if not _question_scope_matches(terminal, req):
+                    return {"ok": False, "status": "replaced"}
+                return _question_answer_receipt(terminal, req, replayed=True)
             return {"ok": False, "expired": True, "status": "expired",
                     "error": "权限或问答请求已过期，请重试"}
-        required = {question["questionId"] for question in record["questions"]}
-        if set(req.answers or {}) != required:
-            raise HTTPException(400, "回答与当前问题不匹配")
-        if record["future"].done():
-            return {"ok": False, "expired": True, "status": "resolved", "error": "请求已回答"}
-        for values in req.answers.values():
-            if not isinstance(values, list) or not values or any(not isinstance(value, str) or not value.strip() for value in values):
-                raise HTTPException(400, "回答格式无效")
-        record["resolvedBy"] = "human"
-        record["future"].set_result(req.answers)
-        return {"ok": True}
+        if not _question_scope_matches(record, req):
+            return {"ok": False, "status": "replaced"}
+        _validate_question_answers(record["questions"], req.answers)
+        replayed = record["future"].done() or record["receiptFuture"].done()
+        if not replayed:
+            if time.monotonic() >= record["deadline"]:
+                return {"ok": False, "expired": True, "status": "expired"}
+            record["future"].set_result(req.answers)
+        settled = await asyncio.shield(record["receiptFuture"])
+        return _question_answer_receipt(settled, req, replayed=replayed)
     if project_id() != "default":
         raise HTTPException(409, "当前项目使用独立执行空间，请在对话中用文字继续")
     if _direct_api_enabled():
         raise HTTPException(409, "API 直连模式使用文字问答，请新建对话")
     if _harness_settings()["runtime"] != "openclaw":
         raise HTTPException(409, "此问题属于旧 OpenClaw 会话，请使用当前底座的新对话")
+    record = _GATEWAY_QUESTION_POLICIES.get(req.questionId)
+    if record is None and (current_user() is not None or req.sessionId is not None or req.turnId is not None):
+        return {"ok": False, "expired": True, "status": "expired"}
+    if record is not None:
+        _require_host_tools()
+        if not _question_scope_matches(record, req):
+            return {"ok": False, "status": "replaced"}
+        if record.get("secret"):
+            raise HTTPException(403, "请在原生终端完成敏感凭证输入")
+        if record["status"] != "pending":
+            return _question_answer_receipt(record, req, replayed=True)
+        _validate_question_answers(record["questions"], req.answers)
     if GatewayClient is None:
-        return {"ok": False, "error": "gateway question bridge unavailable"}
-    client = GatewayClient()
-    try:
-        client.connect()
-        record = _GATEWAY_QUESTION_POLICIES.get(req.questionId)
-        if record is not None:
-            accepted = _settle_gateway_question(record, req.answers or {}, "human", client)
-            return {"ok": accepted, "status": record["status"], "expired": not accepted}
-        result = client.resolve(req.questionId, req.answers or {}, req.resolvedBy)
-        return {"ok": True, "result": result}
-    except GatewayQuestionClosedError as error:
-        return {"ok": False, "expired": True, "status": "expired", "reason": error.reason,
-                "error": "此问题已关闭或过期，答案未发送。请在输入框中继续对话。"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    finally:
-        client.close()
+        return {"ok": False, "status": "unknown", "error": "无法核对原问答状态"}
+
+    def submit():
+        client = GatewayClient()
+        try:
+            client.connect()
+            if record is not None:
+                replayed = _settle_gateway_question(record, req.answers, "human", client)
+                if record["status"] != "pending":
+                    return _question_answer_receipt(record, req, replayed=replayed)
+                if "attempt" not in record and _gateway_question_expired(record):
+                    return {"ok": False, "status": "expired", "expired": True}
+                return {"ok": False, "status": "unknown"}
+            # A legacy local-only request can report a closed diagnostic, but an
+            # unowned question must not be forwarded as a positive mutation.
+            client.get_question(req.questionId)
+            return {"ok": False, "expired": True, "status": "expired"}
+        except GatewayQuestionClosedError as error:
+            if record is not None:
+                with record["lock"]:
+                    _finish_gateway_question(record, "expired" if error.status == "not_found" else error.status)
+                    return _question_answer_receipt(record, req)
+            return {"ok": False, "expired": True, "status": "expired", "reason": error.reason,
+                    "error": "此问题已关闭或过期，答案未发送。请在输入框中继续对话。"}
+        except HTTPException:
+            raise
+        except Exception:
+            return {"ok": False, "status": "unknown", "error": "无法确认原问答是否已接受"}
+        finally:
+            client.close()
+
+    return await asyncio.to_thread(submit)
 
 
 class QuestionStatusRequest(BaseModel):
-    questionIds: list[str]
+    questionIds: list[str] = Field(max_length=100)
+    sessionId: str | None = Field(default=None, max_length=256)
+    turnId: str | None = Field(default=None, max_length=160)
 
 
 @app.post("/api/chat/question/status")
 async def api_question_status(req: QuestionStatusRequest):
-    """批量查 question 状态（重放旧事件时过滤已解决的题）。"""
-    if req.questionIds and all(identifier.startswith("harness_") for identifier in req.questionIds):
-        return {"ok": True, "questions": {
-            identifier: ({key: value for key, value in _HARNESS_QUESTIONS[identifier].items()
-                          if key not in ("future", "session", "questions")}
-                         if identifier in _HARNESS_QUESTIONS else _HARNESS_QUESTION_RESULTS.get(identifier, {"status": "not_found"}))
-            for identifier in req.questionIds}}
-    if project_id() != "default" or _direct_api_enabled():
-        return {"ok": True, "questions": {qid: {"status": "not_found"} for qid in req.questionIds}}
-    if _harness_settings()["runtime"] != "openclaw":
-        return {"ok": False, "questions": {}}
-    if GatewayClient is None:
-        return {"ok": False, "questions": {}}
-    client = GatewayClient()
-    try:
-        client.connect()
+    """Read only exact owned question observations, even when a batch mixes engines."""
+    def read():
         out = {}
-        for qid in req.questionIds:
-            try:
-                record = _GATEWAY_QUESTION_POLICIES.get(qid)
-                if record is not None and record["status"] != "pending":
-                    out[qid] = {key: record[key] for key in ("status", "answers", "resolvedBy") if key in record}
-                    continue
-                q = client.get_question(qid)
-                out[qid] = _gateway_question_state(q)
-            except GatewayQuestionClosedError as error:
-                out[qid] = {"status": error.status}
-            except GatewayUnsupportedError:
-                return {"ok": False, "error": "gateway question status unsupported", "questions": {}}
-            except GatewayQuestionError:
-                out[qid] = {"status": "unknown"}
-            except Exception:
-                out[qid] = {"status": "unknown"}   # 网络/连接异常：保持 unknown（前端保留显示，宁不缺题）
-        return {"ok": True, "questions": out}
-    except Exception as e:
-        return {"ok": False, "error": str(e), "questions": {}}
-    finally:
-        client.close()
+        gateway = {}
+        revoked = False
+        try:
+            _require_host_tools()
+        except HTTPException as error:
+            if error.status_code not in (401, 403):
+                raise
+            revoked = True
+        for identifier in req.questionIds:
+            if identifier.startswith("harness_"):
+                record = _HARNESS_QUESTIONS.get(identifier) or _HARNESS_QUESTION_RESULTS.get(identifier)
+                out[identifier] = ({"status": "not_found"} if record is None else
+                                   {"status": "replaced"} if not _question_scope_matches(record, req) else
+                                   {"status": "revoked"} if revoked else
+                                   {**_question_receipt(record), **_gateway_question_timing(record)})
+                continue
+            record = _GATEWAY_QUESTION_POLICIES.get(identifier)
+            if record is None and (current_user() is not None or req.sessionId is not None or req.turnId is not None):
+                out[identifier] = {"status": "not_found"}
+            elif record is not None and not _question_scope_matches(record, req):
+                out[identifier] = {"status": "replaced"}
+            elif record is not None and revoked:
+                out[identifier] = {"status": "revoked"}
+            elif record is not None and record["status"] != "pending":
+                out[identifier] = _question_receipt(record)
+            else:
+                gateway[identifier] = record
+        if not gateway:
+            return {"ok": True, "questions": out}
+        if project_id() != "default" or _direct_api_enabled():
+            out.update({identifier: {"status": "not_found"} for identifier in gateway})
+            return {"ok": True, "questions": out}
+        if _harness_settings()["runtime"] != "openclaw" or GatewayClient is None:
+            return {"ok": False, "questions": out}
+        client = GatewayClient()
+        try:
+            client.connect()
+            for identifier, record in gateway.items():
+                try:
+                    evidence = client.get_question(identifier)
+                    if record is None:
+                        out[identifier] = _gateway_question_state(evidence)
+                    else:
+                        with record["lock"]:
+                            _observe_gateway_question(record, evidence, readback=True)
+                            out[identifier] = {**_question_receipt(record), **_gateway_question_timing(record)}
+                except GatewayQuestionClosedError as error:
+                    if record is not None:
+                        with record["lock"]:
+                            _finish_gateway_question(record, "expired" if error.status == "not_found" else error.status)
+                    out[identifier] = {"status": error.status}
+                except GatewayUnsupportedError:
+                    return {"ok": False, "questions": out}
+                except Exception:
+                    out[identifier] = {"status": "unknown"}
+            return {"ok": True, "questions": out}
+        except Exception:
+            return {"ok": False, "questions": out}
+        finally:
+            client.close()
+
+    return await asyncio.to_thread(read)
 
 
 class StopRequest(BaseModel):

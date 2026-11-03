@@ -599,21 +599,41 @@ export default function App() {
   }, []);
 
   const closeQuestion = useCallback((sessionId: string, closed: ChatQuestionClosed) => {
+    if (!closed.status || ['pending', 'unknown', 'not_found'].includes(closed.status)) return;
+    const merge = (question: ChatQuestion): ChatQuestion => {
+      if (question.id !== closed.id) return question;
+      if (question.status && question.status !== 'pending' && question.status !== closed.status
+          && !(question.status === 'answered' && closed.status === 'resolved')) return question;
+      const sameTerminal = question.status === closed.status;
+      return { ...question, ...closed,
+        answers: sameTerminal ? question.answers ?? closed.answers : closed.answers ?? question.answers,
+        resolvedBy: sameTerminal ? question.resolvedBy ?? closed.resolvedBy : closed.resolvedBy ?? question.resolvedBy };
+    };
     const owner = streamAcc.current[sessionId];
     if (owner && owner.questions.some(question => question.id === closed.id)) {
-      owner.questions = owner.questions.map(question => question.id === closed.id
-        ? { ...question, ...closed } : question);
+      owner.questions = owner.questions.map(merge);
       setStreams(previous => previous[sessionId] ? { ...previous,
         [sessionId]: { ...previous[sessionId], questions: [...owner.questions],
           lifecycle: previous[sessionId].lifecycle === 'stopping' || previous[sessionId].lifecycle === 'stop_failed'
             ? previous[sessionId].lifecycle : owner.questions.some(question => !question.status || question.status === 'pending') ? 'waiting_input' : 'running' } } : previous);
     }
     setSessions(previous => {
-      const updated = previous.map(session => session.id === sessionId ? { ...session, updated: nextSessionRevision(session),
-        messages: session.messages.map(message => ({ ...message, questions: message.questions?.map(question =>
-          question.id === closed.id ? { ...question, ...closed } : question) })) } : session);
-      saveSessions(updated);
-      return updated;
+      let changed = false;
+      const updated = previous.map(session => {
+        if (session.id !== sessionId) return session;
+        let changedMessages = false;
+        const messages = session.messages.map(message => {
+          const questions = message.questions?.map(merge);
+          if (!questions?.some((question, index) => question !== message.questions?.[index])) return message;
+          changedMessages = true;
+          return { ...message, questions };
+        });
+        if (!changedMessages) return session;
+        changed = true;
+        return { ...session, messages, updated: nextSessionRevision(session) };
+      });
+      if (changed) saveSessions(updated);
+      return changed ? updated : previous;
     });
   }, []);
 
@@ -624,7 +644,8 @@ export default function App() {
       [sessionId]: { ...previous[sessionId], questions: [...owner.questions],
         lifecycle: previous[sessionId].lifecycle === 'stopping' || previous[sessionId].lifecycle === 'stop_failed'
           ? previous[sessionId].lifecycle : 'waiting_input' } } : previous);
-    void questionStatus([q.id]).then(states => {
+    void questionStatus([q.id], sessionId).then(states => {
+      if (streamAcc.current[sessionId] !== owner) return;
       const status = states[q.id]?.status;
       if (status && status !== 'pending' && status !== 'unknown') closeQuestion(sessionId, { id: q.id, ...states[q.id] });
     });
@@ -732,7 +753,7 @@ export default function App() {
       },
       // onHeartbeat：防呆心跳（30s 静默）。只设独立的「未卡住」提示，绝不写 activity/thinking → 不顶掉真实状态。
       (note) => { if (streamAcc.current[sessionId] === owner) setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)); },
-      (closed) => closeQuestion(sessionId, closed),
+      (closed) => { if (streamAcc.current[sessionId] === owner) closeQuestion(sessionId, closed); },
       (event) => receiveAgentEvent(sessionId, owner, event),
       topicRef,
       workshopRef,
@@ -858,7 +879,7 @@ export default function App() {
       },
       // onHeartbeat：同上，独立的「未卡住」提示，不覆盖 activity/thinking。
       (note) => { if (streamAcc.current[sessionId] === owner) setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)); },
-      (closed) => closeQuestion(sessionId, closed),
+      (closed) => { if (streamAcc.current[sessionId] === owner) closeQuestion(sessionId, closed); },
       (event) => receiveAgentEvent(sessionId, owner, event),
       undefined, undefined, () => {
         confirmQueuedMessage(sessionId, owner);
@@ -1521,14 +1542,10 @@ export default function App() {
             onResend={(userIndex, displayText, attachments, legacyAgentText) => handleResend(
               activeSession.id, userIndex, displayText, attachments, legacyAgentText,
             )}
-            onQuestionAnswered={(qid) => {
-              answeredRef.current.add(qid);
-              closeQuestion(activeSession.id, { id: qid, status: 'answered' });
-              void questionStatus([qid]).then(states => {
-                if (states[qid]) closeQuestion(activeSession.id, { id: qid, ...states[qid] });
-              });
+            onQuestionAnswered={receipt => {
+              answeredRef.current.add(receipt.id);
+              closeQuestion(activeSession.id, receipt);
             }}
-            onQuestionClosed={(id, status) => closeQuestion(activeSession.id, { id, status })}
           />
         ) : null;
       }

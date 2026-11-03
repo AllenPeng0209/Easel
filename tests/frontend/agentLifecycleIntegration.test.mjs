@@ -687,3 +687,14 @@ test('approved plan execution keeps its exact reference through chat admission',
   assert.equal(ui.context.sessions[0].messages[0].planRef.digest, plan.digest);
   assert.equal(ui.context.sessions[0].messages[0].content, plan.text);
 });
+
+test('a delayed question status cannot replace an already accepted resolution', () => {
+  const ui = appBoundary([{ id: 's', title: 'Approval', created: 1, messages: [] }]);
+  const owner = { questions: [{ id: 'q', status: 'resolved', answers: { approval: ['winner'] } }] };
+  ui.context.streamAcc.current.s = owner;
+  ui.callback('closeQuestion')('s', { id: 'q', status: 'expired' });
+  assert.equal(owner.questions[0].status, 'resolved');
+  assert.deepEqual(plain(owner.questions[0].answers), { approval: ['winner'] });
+  ui.callback('closeQuestion')('s', { id: 'q', status: 'resolved', answers: { approval: ['late'] } });
+  assert.deepEqual(plain(owner.questions[0].answers), { approval: ['winner'] });
+});

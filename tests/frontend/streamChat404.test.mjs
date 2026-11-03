@@ -263,3 +263,20 @@ test('chat admission rejection keeps HTTP status but discards provider diagnosti
   assert.equal(error.status, 400);
   assert.doesNotMatch(error.message, /private upstream diagnostic/);
 });
+
+test('approval answer success requires the exact authoritative server receipt', async () => {
+  const request = { questionId: 'exact-question', sessionId: 'chat-1', answers: { approval: ['approve'] } };
+  for (const data of [
+    { ok: true },
+    { ok: true, receipt: { id: 'different-question', status: 'resolved' } },
+    { ok: true, receipt: { id: 'exact-question', status: 'pending' } },
+  ]) {
+    const { api } = loadApi(() => ({ ok: true, status: 200, json: async () => data }));
+    assert.equal((await api.answerQuestion(request)).ok, false);
+  }
+  const receipt = { id: 'exact-question', status: 'resolved', answers: { approval: ['decline'] }, resolvedBy: 'human' };
+  const { api } = loadApi(() => ({ ok: true, status: 200, json: async () => ({ ok: false, receipt }) }));
+  const result = await api.answerQuestion(request);
+  assert.equal(result.ok, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.receipt)), receipt);
+});

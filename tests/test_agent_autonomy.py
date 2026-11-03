@@ -236,7 +236,7 @@ def test_gateway_question_defaults_on_server_without_browser(monkeypatch):
         def resolve(self, identifier, answers, resolved_by=None):
             assert identifier == 'ordinary'
             self.resolved = answers
-            return {'ok': True}
+            return {'status': 'answered', 'answers': {'answers': answers}}
         def close(self):
             pass
     client = Client()

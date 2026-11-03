@@ -99,11 +99,14 @@ async function submitFixture(override) {
   const received = [];
   let accepted;
   const submit = runInNewContext(code, {
-    locked: false, allAnswered: false, items: base.questions, question: base,
-    valsOf: () => [], setBusy: () => {}, setError: () => {}, setClosed: () => {},
-    setResolution: () => {}, draftStore: { clear: () => {} }, onClosed: () => {},
-    onAnswered: value => { accepted = value; },
-    answerQuestion: async payload => { received.push(JSON.parse(JSON.stringify(payload))); return { ok: true }; },
+    locked: false, items: base.questions, question: base, sessionId: 'legacy', defaultScheduled: true,
+    submission: { current: null }, received: { current: false }, originalStatus: { current: undefined },
+    mounted: { current: true }, valsOf: () => [], changePhase: () => {}, setError: () => {}, setReconcile: () => {},
+    applyReceipt: value => { accepted = value; return true; },
+    answerQuestion: async payload => {
+      received.push(JSON.parse(JSON.stringify(payload)));
+      return { ok: true, receipt: { id: payload.questionId, status: 'resolved', answers: payload.answers, resolvedBy: 'human' } };
+    },
   });
   await submit(override);
   return { received, accepted };

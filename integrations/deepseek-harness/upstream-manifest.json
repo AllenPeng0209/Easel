@@ -7939,12 +7939,23 @@
     "reuse_kind": "adapted",
     "changes": "适配计划审核状态和精确版本绑定，读取 Easel 用户/IP/会话的计划历史。",
     "verification_status": "B26_exact_plan_review_and_chat_execution_verified"
+  },
+  {
+    "feature_id": "B32",
+    "upstream_path": "packages/client/ui-user-questions/src/client/QuestionComposer.tsx",
+    "upstream_sha256": "a54e89dd81f30fc511faf97865f51a268efe4714438577097554434f13b6bcd2",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/QuestionCards.tsx",
+    "destination_sha256": "8c2d5d0b086729792c446dd48061be06e11a668c4498f3d0fdda1b4aeabfb4b6",
+    "reuse_kind": "adapted",
+    "changes": "适配等待提交回执和请求所有权，接入 Easel 授权、过期和确认结果。",
+    "verification_status": "B32_scoped_authoritative_approval_receipt_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 95,
+    "source_migration_files": 96,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 80,
+    "adapted_upstream_files": 81,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",
