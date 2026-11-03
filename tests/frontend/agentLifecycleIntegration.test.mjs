@@ -493,7 +493,7 @@ test('unconfirmed terminal events preserve output without marking it completed u
   ui.callback('finalizeStream')('s1', owner, 'key', undefined, 'unconfirmed');
   const saved = ui.saved.at(-1)[0];
   assert.equal(saved.messages.at(-1).content, '部分输出');
-  assert.equal(saved.messages.at(-1).status, undefined);
+  assert.equal(saved.messages.at(-1).status, 'unconfirmed');
   assert.equal(saved.unreadCompletion, false);
 });
 
@@ -618,4 +618,36 @@ test('an explicit command claim follows the accepted turn and ordinary text stay
   const plainSend = appBoundary([{ id: 'plain', title: 'Chat', created: 1, messages: [] }]);
   plainSend.callback('handleSendMessage')('plain', '/文案 教育');
   assert.equal(plainSend.requests[0][23], undefined);
+});
+
+test('live answer receipt updates only the exact active turn and does not finish it', () => {
+  const ui = appBoundary([{ id: 's', title: 'Answer', created: 1, messages: [] }]);
+  ui.callback('handleSendMessage')('s', 'model answer', []);
+  const request = ui.requests[0];
+  request[19]();
+  request[24]({ itemId: 'answer-one' });
+  assert.equal(ui.context.streams.s.answerCompletion.itemId, 'answer-one');
+  assert.ok(ui.context.streamAcc.current.s);
+  assert.equal(ui.context.sessions[0].messages.filter(row => row.role === 'assistant').length, 0);
+  ui.context.streamAcc.current.s = { turnId: 'next-turn' };
+  request[24]({ itemId: 'late-answer' });
+  assert.equal(ui.context.streams.s.answerCompletion.itemId, 'answer-one');
+  assert.equal(ui.context.streamAcc.current.s.answerCompletion, undefined);
+});
+
+test('cold recovery preserves explicit answer evidence and labels missing turn outcome unconfirmed', async () => {
+  const captured = [];
+  const agentEvents = helper('agentEvents');
+  const ui = appBoundary([{ id: 's', title: 'Recovered', created: 1, pendingTurnId: 'turn',
+    messages: [{ role: 'user', content: 'question' }] }], {
+    fetchLastTurn: async () => ({ status: 'done', turn_id: 'turn', text: 'saved reply',
+      answer_completed: { itemId: 'saved-answer' } }),
+    recoverAgentTimeline: helper('agentTimeline', { require: () => agentEvents }).recoverAgentTimeline,
+    appendAssistant: (_, message) => captured.push(message),
+  });
+  ui.callback('resumePendingTurn')('s');
+  ui.requests[0][11]();
+  await settle();
+  assert.equal(captured[0].answerCompletion.itemId, 'saved-answer');
+  assert.equal(captured[0].status, 'unconfirmed');
 });

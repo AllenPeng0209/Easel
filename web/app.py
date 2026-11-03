@@ -3680,6 +3680,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     full_text: list[str] = []
     agent_events = [{**event, "runId": run_id} for event in initial_events]
     reasoning_summary = None
+    answer_completed = None
     clean_end = False
     reason = "error"
     error_message = ""
@@ -3695,7 +3696,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     permission_revoked = False
 
     def receive(kind, text):
-        nonlocal error_message, reasoning_summary
+        nonlocal error_message, reasoning_summary, answer_completed
         if kind == "thinking":
             return
         if kind == "reasoning_summary":
@@ -3705,6 +3706,13 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             reasoning_summary = {"text": summary_text[:4000],
                                  "truncated": text.get("truncated") is True or len(summary_text) > 4000}
             emit(kind, reasoning_summary)
+            return
+        if kind == "answer_completed":
+            item_id = text.get("itemId") if isinstance(text, dict) else None
+            if (runtime == "codex" and isinstance(item_id, str) and item_id.strip() and len(item_id) <= 256
+                    and not re.search(r"[\x00-\x1f\x7f-\x9f]", item_id) and _scrub_secrets(item_id) == item_id):
+                answer_completed = {"itemId": item_id}
+                emit(kind, answer_completed)
             return
         # Preserve a structured event as an object through live SSE, replay and
         # final snapshot. Scrub known secrets without converting it to a string.
@@ -3955,6 +3963,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 "turn_id": turn_id, "stop_turn_id": stop_turn_id, "runtime": runtime,
                 "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
                 **({"reasoning_summary": reasoning_summary} if reasoning_summary is not None else {}),
+                **({"answer_completed": answer_completed} if answer_completed is not None else {}),
                 **_chat_snapshot_outcome(stopped=reason == "stopped",
                                          failed=bool(error_message) or permission_revoked,
                                          completed=clean_end)})
@@ -5422,7 +5431,7 @@ async def api_chat_stream(req: ChatRequest):
                 yield {"id": str(item["id"]), "event": "activity", "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t in ("question", "question_closed"):
                 yield {"id": str(item["id"]), "event": t, "data": item["text"]}
-            elif t in ("admitted", "agent_event", "reasoning_summary"):
+            elif t in ("admitted", "agent_event", "reasoning_summary", "answer_completed"):
                 yield {"id": str(item["id"]), "event": t, "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t == "error":
                 yield {"id": str(item["id"]), "event": "error", "data": json.dumps(item["text"], ensure_ascii=False)}

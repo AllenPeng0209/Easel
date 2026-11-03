@@ -515,6 +515,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 message={msg}
                 isStreaming={live}
                 reasoningSummary={live ? stream!.reasoningSummary : undefined}
+                answerCompletion={live ? stream!.answerCompletion : undefined}
+                turnLifecycle={live ? stream!.lifecycle : undefined}
                 activity={live ? stream!.stopFeedback?.message ?? stream!.activity : ''}
                 stillWorking={live ? stream!.stillWorking : ''}
                 events={live ? stream!.events : msg.events}

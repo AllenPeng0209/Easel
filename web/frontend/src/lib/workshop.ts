@@ -172,6 +172,15 @@ export interface WorkshopProjectPatch {
   beeftv_canvas_id?: string;
 }
 
+class WorkshopRequestError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const result = await projectFetch(projectUrl(`/api/workshop${path}`), {
     cache: 'no-store',
@@ -185,7 +194,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       : typeof detail?.message === 'string' ? detail.message
       : typeof data?.message === 'string' ? data.message
       : result.status === 409 ? '项目已发生变化，请刷新后核对再提交。' : `工坊请求失败（${result.status}）`;
-    throw new Error(message);
+    throw new WorkshopRequestError(message, result.status);
   }
   return data as T;
 }
@@ -282,6 +291,66 @@ function retainRenderReceipt(current: WorkshopRenderReceipt, candidate: Workshop
 }
 
 /** One UI owner per project; the server's durable receipts survive navigation. */
+const renderReceiptId = /^[a-f0-9]{32}$/;
+const renderTaskId = /^[A-Za-z0-9:_-]{1,160}$/;
+const renderStates = new Set(['queued', 'running', 'succeeded', 'failed', 'cancelled']);
+
+function chatWorkshopReceipt(value: unknown): value is WorkshopRenderReceipt {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.id === 'string' && renderReceiptId.test(item.id)
+    && typeof item.operation_id === 'string' && item.operation_id.length > 0 && item.operation_id.length <= 256
+    && typeof item.task_id === 'string' && (item.task_id === '' || renderTaskId.test(item.task_id))
+    && Number.isSafeInteger(item.content_revision) && Number.isSafeInteger(item.engine_revision)
+    && typeof item.status === 'string' && renderStates.has(item.status)
+    && (item.submission_state === undefined || item.submission_state === 'confirmed' || item.submission_state === 'unconfirmed')
+    && typeof item.progress === 'number' && item.progress >= 0 && item.progress <= 1
+    && typeof item.created_at === 'string' && Number.isFinite(Date.parse(item.created_at))
+    && typeof item.updated_at === 'string' && Number.isFinite(Date.parse(item.updated_at))
+    && (item.artifact_id === undefined || typeof item.artifact_id === 'string' && renderReceiptId.test(item.artifact_id));
+}
+
+/** Bind one observation to the current revision of a scoped workshop card. */
+export function selectChatWorkshopRender(project: Record<string, unknown>, id: string, revision: number | null): WorkshopRenderReceipt | null {
+  if (!renderReceiptId.test(id) || project.id !== id || project.revision !== revision || project.archived_at
+      || !Array.isArray(project.renders)) return null;
+  const candidate = project.renders.findLast(item => item?.content_revision === revision);
+  return chatWorkshopReceipt(candidate) ? candidate : null;
+}
+
+export function chatWorkshopRenderState(receipt: WorkshopRenderReceipt) {
+  if (receipt.submission_state === 'unconfirmed' || !receipt.task_id) {
+    return { code: 'unconfirmed', label: '渲染提交结果待核对', active: false };
+  }
+  switch (receipt.status) {
+    case 'queued': return { code: 'queued', label: '渲染已排队', active: true };
+    case 'running': return { code: 'running', label: '渲染进行中', active: true };
+    case 'succeeded': return receipt.artifact_id
+      ? { code: 'collected', label: '已记录成片收取 · 审核见工坊记录', active: false }
+      : { code: 'uncollected', label: '渲染成功，尚未收取成片', active: false };
+    case 'failed': return { code: 'failed', label: '渲染失败', active: false };
+    case 'cancelled': return { code: 'cancelled', label: '渲染已取消', active: false };
+  }
+}
+
+export function canRetryChatWorkshopObservation(error: unknown): boolean {
+  return error instanceof TypeError || error instanceof WorkshopRequestError
+    && (error.status === 408 || error.status === 429 || error.status >= 500);
+}
+
+export async function observeChatWorkshopRender(projectId: string, receipt: WorkshopRenderReceipt, signal: AbortSignal): Promise<WorkshopRenderReceipt> {
+  if (!renderReceiptId.test(projectId) || !chatWorkshopReceipt(receipt) || !chatWorkshopRenderState(receipt).active) {
+    throw new Error('没有可观察的渲染回执');
+  }
+  const next = await request<unknown>(renderPath(projectId, receipt.id), { signal });
+  if (!chatWorkshopReceipt(next) || next.id !== receipt.id || next.operation_id !== receipt.operation_id
+      || next.task_id !== receipt.task_id || next.content_revision !== receipt.content_revision
+      || next.engine_revision !== receipt.engine_revision) {
+    throw new Error('渲染回执身份不一致');
+  }
+  return retainRenderReceipt(receipt, next) ? receipt : next;
+}
+
 export class WorkshopRenderFlow {
   private readonly projectId: string;
   private current: WorkshopRenderReceipt | null = null;

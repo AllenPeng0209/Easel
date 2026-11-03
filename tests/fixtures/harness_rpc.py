@@ -109,9 +109,28 @@ while True:
                     "content": ["private-final-reasoning"]}}})
                 send({"method": "item/reasoning/summaryTextDelta", "params": {
                     **common, "summaryIndex": 0, "delta": "late summary"}})
-            send({"method": "item/agentMessage/delta", "params": {**common, "delta": "你好"}})
-            send({"method": "item/completed",
-                  "params": {**common, "item": {"type": "agentMessage", "id": "text", "text": "你好"}}})
+            if mode != "answer-fallback":
+                send({"method": "item/agentMessage/delta", "params": {**common, "delta": "你好"}})
+            answer = {"type": "agentMessage", "id": "text", "text": "你好"}
+            if mode == "answer-phase":
+                final = {**answer, "phase": "final_answer"}
+                for method, envelope, item in (
+                    ("item/started", common, final),
+                    ("item/completed", {**common, "threadId": "foreign"}, final),
+                    ("item/completed", {**common, "turnId": "foreign"}, final),
+                    ("item/completed", {key: value for key, value in common.items() if key != "turnId"}, final),
+                    ("item/completed", common, {**answer, "phase": "partial_answer"}),
+                    ("item/completed", common, {**answer, "phase": "commentary"}),
+                    ("item/completed", common, final),
+                    ("item/completed", common, final),
+                ):
+                    send({"method": method, "params": {**envelope, "item": item}})
+            elif mode == "answer-fallback":
+                for item in ({**answer, "phase": "final_answer"},
+                             {**answer, "id": "new-final", "text": "再见", "phase": "final_answer"}):
+                    send({"method": "item/completed", "params": {**common, "item": item}})
+            else:
+                send({"method": "item/completed", "params": {**common, "item": answer}})
             if mode == "fatal":
                 send({"method": "error", "params": {**common, "willRetry": False}})
             else:

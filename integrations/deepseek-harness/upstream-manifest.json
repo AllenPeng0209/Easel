@@ -7642,12 +7642,34 @@
     "reuse_kind": "adapted",
     "changes": "适配上游推理引文区的独立背景和折叠按钮样式，加入截断提示。",
     "verification_status": "B14_public_summary_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B15",
+    "upstream_path": "packages/client/ui-trajectory/src/client/trajectory-assistant-definition.ts",
+    "upstream_sha256": "aaf935e0a998376c9b139d379711e51564140bad26eb7d1d243ad0131c251556",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/AnswerTurnPhase.tsx",
+    "destination_sha256": "409d2723c49b24975205ac648ea22a4cacb6bba1b873a9e898831fe4cec4749f",
+    "reuse_kind": "adapted",
+    "changes": "将上游回答节点和轮次结束边界适配为独立状态标识，以 Easel 原生回答与整轮回执为准。",
+    "verification_status": "B15_separate_receipts_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B15",
+    "upstream_path": "packages/client/ui-jobs/src/client/JobListAction.tsx",
+    "upstream_sha256": "ae1b9aac19c1d50cfc915c909edfefd07ff54371a26af43ecc2e323d253914d7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/WorkshopRenderObservation.tsx",
+    "destination_sha256": "b1859fbe162618453c0c568b2d237d0c6eacf56584c6e3ea564f526b24b70d17",
+    "reuse_kind": "adapted",
+    "changes": "复用单个可见任务的观察与卸载释放逻辑，接入 Easel 按确切回执查询的工坊接口。",
+    "verification_status": "B15_separate_receipts_verified_protocol_and_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 68,
+    "source_migration_files": 70,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 53,
+    "adapted_upstream_files": 55,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

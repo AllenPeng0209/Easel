@@ -19,6 +19,8 @@ import BusinessObjectCard from './BusinessObjectCard';
 import CommandExecutionCard from './CommandExecutionCard';
 import FileMutationCard from './FileMutationCard';
 import ToolValueInspector from './ToolValueInspector';
+import { selectChatWorkshopRender } from '../lib/workshop';
+import type { WorkshopRenderReceipt } from '../lib/workshop';
 
 export interface ToolRendererView {
   title: string;
@@ -26,6 +28,7 @@ export interface ToolRendererView {
   statusLabel?: string;
   unconfirmed?: boolean;
   suppressDerivedDuration?: boolean;
+  workshopRender?: { projectId: string; initial: WorkshopRenderReceipt };
   details: (showTerminalFacts: boolean) => ReactNode;
 }
 
@@ -112,8 +115,16 @@ export const resolveToolRenderer = createToolRendererRegistry([
     key: 'workshop', names: ['easel_business_objects'],
     project: (event, _settled, records) => {
       const workshops = records?.workshops;
-      return !nativeBusinessToolKey(event) || !workshops?.length ? undefined : {
+      if (!nativeBusinessToolKey(event) || !workshops?.length) return undefined;
+      const workshopRender = workshops.map(record => {
+        const project = record.details.project;
+        if (!project || typeof project !== 'object' || Array.isArray(project)) return undefined;
+        const initial = selectChatWorkshopRender(project as Record<string, unknown>, record.id, record.version.revision);
+        return initial ? { projectId: record.id, initial } : undefined;
+      }).find(Boolean);
+      return {
         title: '视频工坊',
+        workshopRender,
         details: () => createElement('div', { 'data-tool-workshop-records': true }, workshops.map(record =>
           createElement(BusinessObjectCard, { key: businessObjectIdentity(record), record, onRefresh: fetchBusinessObject }))),
       };

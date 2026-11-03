@@ -243,3 +243,17 @@ test('finalized turn persists its public reasoning summary without legacy thinki
   assert.equal(state.messages[0].message.reasoningSummary?.truncated, true);
   assert.equal(state.messages[0].message.thinking, undefined);
 });
+
+test('only a completed model item leaves answer evidence in a finalized turn', () => {
+  const state = setup();
+  state.document.visibilityState = 'hidden';
+  state.finalizeStream('session', state.owner, 'native');
+  assert.equal(state.messages[0].message.status, 'completed');
+  assert.equal(state.messages[0].message.answerCompletion, undefined);
+
+  const withEvidence = setup();
+  withEvidence.document.visibilityState = 'hidden';
+  withEvidence.owner.answerCompletion = { itemId: 'model-final-1' };
+  withEvidence.finalizeStream('session', withEvidence.owner, 'native');
+  assert.equal(withEvidence.messages[0].message.answerCompletion?.itemId, 'model-final-1');
+});

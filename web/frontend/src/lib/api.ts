@@ -1,6 +1,6 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
-import type { ChatSession, ReasoningSummary } from './store';
+import type { ChatSession, ReasoningSummary, AnswerCompletion } from './store';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
 import type { ChatCommand, ChatCommandOption } from './chatCommands';
 import { mergeSessionCatalog } from './sessionSync';
@@ -660,6 +660,13 @@ function publicReasoningSummary(value: unknown): ReasoningSummary | undefined {
   return { text, truncated };
 }
 
+function parseAnswerCompletion(value: unknown): AnswerCompletion | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { itemId } = value as Partial<AnswerCompletion>;
+  if (typeof itemId !== 'string' || !itemId.trim() || itemId.length > 512 || /\p{Cc}/u.test(itemId)) return undefined;
+  return { itemId };
+}
+
 export function streamChat(
   message: string,
   persona: string | undefined,
@@ -685,6 +692,7 @@ export function streamChat(
   references?: ChatReference[],
   sessionReferences?: ChatSessionReference[],
   command?: ChatCommand,
+  onAnswerCompleted?: (receipt: AnswerCompletion) => void,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -747,6 +755,11 @@ export function streamChat(
             const summary = publicReasoningSummary(JSON.parse(data));
             if (summary) onReasoningSummary(summary);
           } catch { /* Ignore malformed summary snapshots. */ }
+        } else if (currentEvent === 'answer_completed' && onAnswerCompleted) {
+          try {
+            const receipt = parseAnswerCompletion(JSON.parse(data));
+            if (receipt) onAnswerCompleted(receipt);
+          } catch { /* Ignore malformed answer receipts. */ }
         } else if (currentEvent === 'activity' && onActivity) {
           try { onActivity(JSON.parse(data) as string); } catch { onActivity(data); }
         } else if (currentEvent === 'agent_event' && onAgentEvent) {
@@ -875,12 +888,14 @@ interface LastChatTurn {
   status: string; text: string; turn_id?: string; events?: AgentEvent[]; questions?: ChatQuestion[];
   outcome?: Exclude<ChatTurnOutcome, 'unconfirmed'>; clean_end?: boolean; stop_reason?: string;
   reasoning_summary?: ReasoningSummary;
+  answer_completed?: AnswerCompletion;
 }
 
 export async function fetchLastTurn(sessionId: string, turnId?: string, signal?: AbortSignal): Promise<LastChatTurn> {
   const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
   const result = await request<LastChatTurn>(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`, { signal });
-  return { ...result, reasoning_summary: publicReasoningSummary(result.reasoning_summary) };
+  return { ...result, reasoning_summary: publicReasoningSummary(result.reasoning_summary),
+    answer_completed: parseAnswerCompletion(result.answer_completed) };
 }
 
 interface ChatSessionPage {

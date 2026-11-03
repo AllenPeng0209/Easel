@@ -67,3 +67,22 @@ test('a provider reusing the same call ID in two runs keeps its workshop evidenc
   assert.equal(second.dataset.runId, 'run-two');
   assert.notEqual(first.dataset.chatAnchorKey, second.dataset.chatAnchorKey);
 });
+
+test('a settled chat shows the exact current workshop render state without inventing collection or publication', () => {
+  const id = 'a'.repeat(32);
+  const current = { id: 'b'.repeat(32), operation_id: 'native-operation', task_id: 'native-task',
+    content_revision: 2, engine_revision: 3, status: 'running', submission_state: 'confirmed',
+    progress: 0.35, created_at: '2026-11-03T02:58:00Z', updated_at: '2026-11-03T03:00:00Z' };
+  const details = { project: { id, revision: 2, stage: 'draft', renders: [
+    { ...current, id: 'c'.repeat(32), content_revision: 1 }, current,
+  ] } };
+  const document = show([tool('call-a'), business('a', 'call-a', {}, { details })]);
+  const state = row(document, 'call-a').querySelector('.agent-tool__status [data-render-observation]');
+  assert.equal(state?.dataset.renderObservation, current.id);
+  assert.equal(state?.dataset.renderState, 'running');
+  assert.match(state.textContent, /渲染进行中.*35%/);
+  assert.doesNotMatch(state.textContent, /收取|发布/);
+
+  const standalone = show([business('a', 'unmatched', {}, { details })]);
+  assert.equal(card(standalone, 'a').querySelector('[data-render-observation]'), null);
+});

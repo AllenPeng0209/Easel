@@ -368,6 +368,7 @@ class CodexAdapter:
         thread_id = request.native_id
         turn_id = ""
         streamed: set[str] = set()
+        completed_answers: set[str] = set()
         events = EventProjector(emit, request.env)
         business_calls: dict[str, tuple[str, asyncio.Future]] = {}
         summaries: dict[str, dict[int, str]] = {}
@@ -448,8 +449,17 @@ class CodexAdapter:
                     events.activity(f"工具：{item.get('type', 'tool')}")
             elif method == "item/completed":
                 item = params.get("item") or {}
-                if item.get("type") == "agentMessage" and item.get("id") not in streamed:
-                    emit("token", item.get("text", ""))
+                if item.get("type") == "agentMessage":
+                    item_id, answer = item.get("id"), item.get("text")
+                    if isinstance(item_id, str) and isinstance(answer, str):
+                        if item_id not in streamed:
+                            streamed.add(item_id)
+                            emit("token", answer)
+                        if (item.get("phase") == "final_answer" and envelope_turn == turn_id and not completion.done()
+                                and item_id not in completed_answers and item_id.strip()
+                                and len(item_id) <= 256 and not re.search(r"[\x00-\x1f\x7f-\x9f]", item_id)):
+                            completed_answers.add(item_id)
+                            emit("answer_completed", {"itemId": item_id})
                 if item.get('type') == 'reasoning' and envelope_turn == turn_id and not completion.done():
                     item_id, summary = item.get('id'), item.get('summary')
                     if (isinstance(summary, list) and all(isinstance(part, str) for part in summary[:32])

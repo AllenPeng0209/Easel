@@ -1,5 +1,5 @@
 import { Fragment, useMemo } from 'react';
-import type { ChatMessage, ReasoningSummary } from '../lib/store';
+import type { AnswerCompletion, ChatMessage, ReasoningSummary, StreamState } from '../lib/store';
 import type { AgentTimelineObservation } from '../lib/agentTimeline';
 import type { AgentEvent, AgentSubagent } from '../lib/agentEvents';
 import { renderMarkdown } from '../lib/sanitize';
@@ -17,6 +17,7 @@ import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-re
 import AgentEventPanel from './AgentEventPanel';
 import AgentTimeline from './AgentTimeline';
 import ReasoningSummaryDisclosure from './ReasoningSummaryDisclosure';
+import AnswerTurnPhase from './AnswerTurnPhase';
 import { UserMessageBubble } from '../vendor/deepseek-harness/message/UserMessageBubble';
 import { useClipboardCopy } from '../vendor/deepseek-harness/message/use-clipboard-copy';
 import '../styles/agent-chat.css';
@@ -34,6 +35,8 @@ interface MessageBubbleProps {
   sessionId?: string;
   isStreaming?: boolean;
   reasoningSummary?: ReasoningSummary;
+  answerCompletion?: AnswerCompletion;
+  turnLifecycle?: StreamState['lifecycle'];
   activity?: string;
   stillWorking?: string;   // 防呆心跳提示（未卡住）；仅流式时的独立提示，不替代思考/活动
   events?: AgentEvent[];
@@ -91,7 +94,7 @@ function UserText({ message }: { message: ChatMessage }) {
     title="已选命令">{leadingCommand.token}</span>}{parts}{content.slice(offset)}</>;
 }
 
-export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
+export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const recordedTimeline = isStreaming ? timeline : message.timeline;
   const effTimeline = Array.isArray(recordedTimeline) ? recordedTimeline : undefined;
@@ -128,6 +131,11 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
   }
 
   // ---- 助手消息 ----
+  const answerItem = (isStreaming ? answerCompletion : message.answerCompletion)?.itemId;
+  const answerCompleted = typeof answerItem === 'string' && !!answerItem.trim()
+    && answerItem.length <= 512 && !/\p{Cc}/u.test(answerItem);
+  const phase = <AnswerTurnPhase answerCompleted={answerCompleted} active={isStreaming === true}
+    lifecycle={turnLifecycle} outcome={message.status} />;
   const suppliedSummary = isStreaming ? reasoningSummary : message.reasoningSummary;
   const publicSummary = typeof suppliedSummary?.text === 'string' && typeof suppliedSummary.truncated === 'boolean'
     && (suppliedSummary.text.trim() || suppliedSummary.truncated) ? suppliedSummary : undefined;
@@ -155,11 +163,12 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
     </div>
   ) : null;
 
-  // 等待回复中（还没有正文、思考、活动）
-  if (isStreaming && !message.content && !publicSummary && !liveActivity && !liveHint && !effEvents.length && !effTimeline?.length) {
+  // 等待回复中，还未收到答复或其他可见执行记录。
+  if (isStreaming && !answerCompleted && !message.content && !publicSummary && !liveActivity && !liveHint && !effEvents.length && !effTimeline?.length) {
     return (
       <div className="message-row assistant">
         <div className="message-bubble assistant">
+          {phase}
           <div className="typing-indicator">
             <span className="typing-dot" />
             <span className="typing-dot" />
@@ -174,6 +183,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
     <div className="message-row assistant">
       <div className="msg-col assistant">
         <div className="message-bubble assistant">
+          {phase}
           {livePanel}
           {publicSummary && <ReasoningSummaryDisclosure summary={publicSummary} />}
           {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} /> : null}
@@ -184,7 +194,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
           {!isStreaming && (legacyArtifacts.length > 0 || legacyArchives.length > 0) && (
             <ArtifactGallery artifacts={legacyArtifacts} archives={legacyArchives} />
           )}
-          {isStreaming && <span className="streaming-cursor" />}
+          {isStreaming && !answerCompleted && <span className="streaming-cursor" />}
         </div>
         {actions && !isStreaming && <ActionBar actions={actions} text={message.content} />}
       </div>

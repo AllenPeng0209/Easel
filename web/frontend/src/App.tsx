@@ -43,7 +43,7 @@ import {
   loadActiveId,
   saveActiveId,
 } from './lib/store';
-import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ReasoningSummary } from './lib/store';
+import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ReasoningSummary, AnswerCompletion } from './lib/store';
 
 const TAB_SESSION_KEY = projectStorageKey('easel_tab_session');
 const ONBOARDING_SEEN_KEY = projectStorageKey('easel_onboarding_seen');
@@ -51,7 +51,7 @@ const VideoWorkshopPage = lazy(() => import('./components/VideoWorkshopPage'));
 const InteractionCenterPage = lazy(() => import('./components/InteractionCenterPage'));
 
 interface LiveTurnAccumulator {
-  content: string; reasoningSummary?: ReasoningSummary; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[]; timeline: AgentTimelineObservation[];
+  content: string; reasoningSummary?: ReasoningSummary; answerCompletion?: AnswerCompletion; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[]; timeline: AgentTimelineObservation[];
   turnId?: string;
   queuedId?: string;
   queueAdmitted?: boolean;
@@ -555,11 +555,12 @@ export default function App() {
         flushTyping(sessionId);
         appendAssistant(sessionId, {
           role: 'assistant', content: owner.content + (owner.stopConfirmed ? '\n\n_（已停止）_' : error ? `\n\nError: ${error.message}` : ''),
-          reasoningSummary: owner.reasoningSummary, activity: owner.steps.join('\n') || undefined,
+          reasoningSummary: owner.reasoningSummary, answerCompletion: owner.answerCompletion,
+          activity: owner.steps.join('\n') || undefined,
           questions: owner.questions.length ? [...owner.questions] : undefined,
           events: owner.events.length ? [...owner.events] : undefined,
           timeline: owner.timeline?.length ? owner.timeline : undefined,
-          status: owner.stopConfirmed ? 'stopped' : error ? 'failed' : outcome === 'unconfirmed' ? undefined : outcome ?? 'completed',
+          status: owner.stopConfirmed ? 'stopped' : error ? 'failed' : outcome ?? 'completed',
         }, sessionKey);
         if (error) setSessions(previous => previous.map(session => session.id === sessionId
           ? { ...session, queuePaused: true, updated: nextSessionRevision(session) } : session));
@@ -734,6 +735,11 @@ export default function App() {
       references,
       sessionReferences,
       command,
+      (answerCompletion) => {
+        if (streamAcc.current[sessionId] !== owner || owner.answerCompletion?.itemId === answerCompletion.itemId) return;
+        owner.answerCompletion = answerCompletion;
+        setStreams(p => p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], answerCompletion } } : p);
+      },
     );
     return owner;
   }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage, confirmPromptAdmission, failPromptAdmission]);
@@ -767,11 +773,12 @@ export default function App() {
       }
       confirmQueuedMessage(sessionId, owner);
       const status = result.outcome ?? (result.stop_reason === 'user_stopped' ? 'stopped'
-        : result.clean_end === true ? 'completed' : undefined);
+        : result.clean_end === true ? 'completed' : 'unconfirmed');
       appendAssistant(sessionId, { role: 'assistant', content: result.text || '（无输出）',
         events: result.events?.filter(event => event.kind !== 'decision' || event.status !== 'pending'),
         timeline: recoverAgentTimeline(result.events, owner.timeline),
         reasoningSummary: result.reasoning_summary ?? owner.reasoningSummary,
+        answerCompletion: result.answer_completed ?? owner.answerCompletion,
         questions: result.questions, status });
     };
     if (!turnId) {
@@ -847,6 +854,12 @@ export default function App() {
         confirmQueuedMessage(sessionId, owner);
         confirmPromptAdmission(sessionId, owner);
       }, !!prompt,
+      undefined, undefined, undefined,
+      (answerCompletion) => {
+        if (streamAcc.current[sessionId] !== owner || owner.answerCompletion?.itemId === answerCompletion.itemId) return;
+        owner.answerCompletion = answerCompletion;
+        setStreams(p => p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], answerCompletion } } : p);
+      },
     );
   }, [appendAssistant, clearStream, finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage,
     confirmPromptAdmission, failQueuedAdmission, failPromptAdmission]);
@@ -1243,6 +1256,7 @@ export default function App() {
       if (snapshot?.status === 'done' && snapshot.turn_id === expectedTurnId && snapshot.outcome === 'stopped') {
         owner.content = snapshot.text;
         owner.reasoningSummary = snapshot.reasoning_summary ?? owner.reasoningSummary;
+        owner.answerCompletion = snapshot.answer_completed ?? owner.answerCompletion;
         typingBuf.current[sessionId] = '';
         if (snapshot.events) {
           owner.timeline = recoverAgentTimeline(snapshot.events, owner.timeline);
@@ -1262,6 +1276,7 @@ export default function App() {
       role: 'assistant',
       content: owner.content + '\n\n_（已停止）_',
       reasoningSummary: owner.reasoningSummary,
+      answerCompletion: owner.answerCompletion,
       activity: owner.steps.join('\n') || undefined,
       questions: owner.questions.length ? [...owner.questions] : undefined,
       events: owner.events.length ? [...owner.events] : undefined,

@@ -174,3 +174,34 @@ test('chat renders only validated public summary snapshots from SSE and last-tur
   const recovered = await api.fetchLastTurn('summary-session', 'turn');
   assert.deepEqual(JSON.parse(JSON.stringify(recovered.reasoning_summary)), expected);
 });
+
+test('explicit final answer evidence arrives independently of turn completion', async () => {
+  const encoder = new TextEncoder();
+  const receipt = { itemId: 'final-item-1' };
+  const events = [
+    ['token', '正文'],
+    ['answer_completed', { itemId: 123 }],
+    ['answer_completed', { ...receipt, text: 'strip unrelated fields' }],
+    ['done', { sessionKey: 'native-session', outcome: 'completed' }],
+  ].map(([kind, data]) => `event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+  const { api } = loadApi((_url, init) => {
+    if (init?.method !== 'POST') {
+      return { ok: true, json: async () => ({ status: 'done', text: '正文', answer_completed: { ...receipt, text: 'strip' } }) };
+    }
+    let read = false;
+    return { ok: true, body: { getReader: () => ({
+      read: async () => read ? { done: true } : (read = true, { done: false, value: encoder.encode(events) }),
+      cancel: async () => {},
+    }) } };
+  });
+  const observations = [];
+  await new Promise((resolve, reject) => {
+    const args = ['hi', undefined, 'answer-session', () => observations.push('token'),
+      () => { observations.push('turn-done'); resolve(); }, reject];
+    args[24] = value => observations.push(JSON.parse(JSON.stringify(value)));
+    api.streamChat(...args);
+  });
+  assert.deepEqual(observations, ['token', receipt, 'turn-done']);
+  const recovered = await api.fetchLastTurn('answer-session', 'turn');
+  assert.deepEqual(JSON.parse(JSON.stringify(recovered.answer_completed)), receipt);
+});

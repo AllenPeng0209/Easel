@@ -7,6 +7,7 @@ import ToolRendererDetails from './ToolRendererDetails';
 import { inspectToolValue } from '../lib/toolValueInspection';
 import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
 import BusinessObjectCard from './BusinessObjectCard';
+import WorkshopRenderObservation from './WorkshopRenderObservation';
 import { normalizeBusinessObject } from '../lib/businessObjects';
 import { fetchBusinessObject } from '../lib/businessObjectApi';
 import PublicationReceiptCard from './PublicationReceiptCard';
@@ -94,6 +95,7 @@ function ToolEvent({ event, open, settled, children, childCount, onToggle, recor
   const { status: state, phase, awaitingTerminal: unconfirmed } = toolLifecycle(view?.status ?? event.status, settled);
   const running = phase === 'running' || (phase === 'preparing' && state === 'preparing');
   const visualState = phase === 'unconfirmed' || view?.unconfirmed ? 'unconfirmed' : state;
+  const workshopRender = view?.workshopRender;
   const publication = event.name === 'easel_publish' || event.name === 'easel_publication_status';
   const stateLabel = view?.statusLabel ?? (unconfirmed ? '未收到工具终态'
     : publication && state === 'completed' ? '调用已结束 · 查看发布回执' : statusText[state]);
@@ -109,6 +111,8 @@ function ToolEvent({ event, open, settled, children, childCount, onToggle, recor
       onToggle={onToggle}
       headerAccessory={<span className="agent-tool__status">{stateLabel}
         {duration !== undefined && <span> · {(duration / 1000).toFixed(1)}s</span>}
+        {workshopRender && <WorkshopRenderObservation key={JSON.stringify([workshopRender.projectId,
+          workshopRender.initial.id, workshopRender.initial.updated_at, workshopRender.initial.artifact_id])} {...workshopRender} />}
         {childCount > 0 && <span className="agent-tool__child-count">{childCount} 个子调用</span>}</span>}
       collapsedContent={event.parentCallId ? <span className="agent-tool__nested">子调用</span> : undefined}>
       {children}

@@ -329,6 +329,22 @@ def test_codex_completed_summary_replaces_delta_and_explicitly_reports_clipping(
                       ("reasoning_summary", {"text": "s" * 4000, "truncated": True}), ("token", "你好")]
 
 
+@pytest.mark.parametrize("mode,expected", [
+    ("answer-phase", [("token", "你好"), ("answer_completed", {"itemId": "text"})]),
+    ("answer-fallback", [("token", "你好"), ("answer_completed", {"itemId": "text"}),
+                         ("token", "再见"), ("answer_completed", {"itemId": "new-final"})]),
+])
+def test_codex_answer_completion_requires_exact_terminal_final_answer_item(tmp_path, mode, expected):
+    events = []
+
+    async def reject(questions):
+        pytest.fail("No permissions expected")
+
+    asyncio.run(CodexAdapter().run(request_for(tmp_path, "codex", mode=mode),
+                                  lambda kind, value: events.append((kind, value)), reject, lambda _: None))
+    assert [event for event in events if event[0] != "reasoning_summary"] == expected
+
+
 @pytest.mark.parametrize("runtime,adapter", [("codex", CodexAdapter), ("acp", ACPAdapter)])
 @pytest.mark.parametrize("native_id", ["", "old-native"])
 def test_native_events_resume_model_and_binding(tmp_path, runtime, adapter, native_id):
@@ -818,6 +834,7 @@ def test_web_stream_replay_resume_and_delete(sandbox, monkeypatch):
             emit("thinking", "思考")
             emit("reasoning_summary", {"text": "公开摘要", "truncated": False})
             emit("token", "成功")
+            emit("answer_completed", {"itemId": "final-item"})
 
     monkeypatch.setattr(web.harnesses, "adapter", lambda runtime: Fake())
     for turn_id in ("first", "second"):
@@ -826,15 +843,18 @@ def test_web_stream_replay_resume_and_delete(sandbox, monkeypatch):
         assert "event: token" in response.text and "成功" in response.text
         assert "event: thinking" not in response.text and "思考" not in response.text
         assert "event: reasoning_summary" in response.text and "event: done" in response.text
+        assert response.text.index("event: token") < response.text.index("event: answer_completed") < response.text.index("event: done")
     assert requests[0].native_id == "" and requests[1].native_id == "durable-native"
     assert all(request.model == "test-model" for request in requests)
     last = sandbox.get("/api/chat/last/same").json()
     assert last["text"] == "成功" and last["clean_end"] is True
     assert last["outcome"] == "completed"
     assert last['reasoning_summary'] == {'text': '公开摘要', 'truncated': False}
+    assert last['answer_completed'] == {'itemId': 'final-item'}
     replay = sandbox.get("/api/chat/jobs/second/stream").text
     assert "成功" in replay and '"outcome": "completed"' in replay
     assert "event: reasoning_summary" in replay and "公开摘要" in replay and "思考" not in replay
+    assert 'event: answer_completed' in replay and '"itemId": "final-item"' in replay
     assert sandbox.post("/api/settings/harness", json={"runtime": "opencode"}).status_code == 200
     assert sandbox.post("/api/chat", json={"sessionId": "same", "message": "hello"}).status_code == 409
     assert sandbox.delete("/api/session/same").json()["deleted"]

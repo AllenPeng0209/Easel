@@ -36,6 +36,7 @@
 }
 .agent-tool__child-count { margin-inline-start: 8px; }
 .agent-tool__status { flex: none; font-size: 11px; line-height: 24px; white-space: nowrap; color: var(--text-tertiary); margin-left: 12px; }
+.agent-tool[data-tool-renderer="workshop"] .agent-tool__status { flex: 0 1 auto; line-height: 1.35; white-space: normal; text-align: right; }
 .agent-tool__nested { font-size: 10px; margin-left: 8px; padding: 0 5px; border-radius: 4px; color: var(--text-tertiary); background: var(--surface-hover); }
 .agent-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-tertiary); display: inline-block; }
 .agent-status-dot[data-state='running'], .agent-status-dot[data-state='preparing'] { background: var(--accent-start, #7389df); }

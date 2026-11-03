@@ -18,6 +18,10 @@ export interface QueuedMessage {
   delivery?: 'sending' | 'rejected' | 'unconfirmed';
 }
 
+export interface AnswerCompletion {
+  itemId: string;
+}
+
 export interface ReasoningSummary {
   text: string;
   truncated: boolean;
@@ -34,12 +38,13 @@ export interface ChatMessage {
   topicRef?: { id: string; snapshotHash: string };
   workshopRef?: WorkshopReference;
   reasoningSummary?: ReasoningSummary;
+  answerCompletion?: AnswerCompletion;
   activity?: string;   // 工具/执行活动步骤（换行分隔），持久保留
   questions?: ChatQuestion[];
   events?: AgentEvent[];
   timeline?: AgentTimelineObservation[];
   created?: number;
-  status?: 'completed' | 'failed' | 'stopped';
+  status?: 'completed' | 'failed' | 'stopped' | 'unconfirmed';
 }
 
 export interface ChatSession {
@@ -63,6 +68,7 @@ export interface StreamState {
   steerTurnId?: string;
   content: string;
   reasoningSummary?: ReasoningSummary;
+  answerCompletion?: AnswerCompletion;
   activity: string;
   stopFeedback?: { kind: 'failed' | 'unconfirmed'; message: string };
   stillWorking?: string;   // 防呆心跳提示（未卡住）；独立于 activity，不覆盖真实状态
