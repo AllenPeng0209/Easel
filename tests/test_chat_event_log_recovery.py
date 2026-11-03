@@ -187,3 +187,46 @@ def test_replay_keeps_receipt_written_after_error_before_done(event_log, monkeyp
         assert json.loads(events[1]["data"]) == receipt
 
     asyncio.run(scenario())
+
+
+def test_exact_legacy_post_replay_has_admission_and_resumable_cursor(event_log):
+    token = {"id": 1, "event": "token", "data": "saved answer"}
+    done = {"id": 2, "event": "done", "data": {"sessionKey": "session"}}
+    claim = claim_recovery_turn(event_log, token, done)
+    original = event_log.read_bytes()
+
+    async def scenario():
+        response = await web._replay_claimed_turn(claim, "session", "hash", "recovery-turn")
+        assert response.headers["X-Easel-Legacy-Admission"] == "1"
+        events = [event async for event in response.body_iterator]
+        assert [(event["id"], event["event"]) for event in events] == [
+            ("1", "admitted"), ("2", "token"), ("3", "done"),
+        ]
+        assert json.loads(events[0]["data"]) == {"turnId": "recovery-turn", "sessionId": "session"}
+        assert json.loads(events[1]["data"]) == token["data"]
+        resumed = await web.api_chat_job_stream("recovery-turn", after=2, legacyAdmission=True)
+        assert [event async for event in resumed.body_iterator] == events[2:]
+        legacy = await web.api_chat_job_stream("recovery-turn")
+        assert [(event["id"], event["event"]) async for event in legacy.body_iterator] == [
+            ("1", "token"), ("2", "done"),
+        ]
+
+    asyncio.run(scenario())
+    assert event_log.read_bytes() == original
+
+
+@pytest.mark.parametrize("events", [
+    [{"id": 1, "event": "done", "data": {"sessionKey": "other"}}],
+    [{"id": 1, "event": "admitted", "data": {"turnId": "recovery-turn", "sessionId": "other"}},
+     {"id": 2, "event": "done", "data": {"sessionKey": "session"}}],
+    [{"id": 2, "event": "done", "data": {"sessionKey": "session"}}],
+])
+def test_legacy_recovery_cannot_admit_inconsistent_journal(event_log, events):
+    claim = claim_recovery_turn(event_log, *events)
+
+    async def scenario():
+        response = await web._replay_claimed_turn(claim, "session", "hash", "recovery-turn")
+        assert response.headers.get("X-Easel-Legacy-Admission") is None
+        assert "admitted" not in [event["event"] async for event in response.body_iterator]
+
+    asyncio.run(scenario())

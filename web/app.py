@@ -5335,9 +5335,9 @@ async def api_chat_last(session_id: str, turn_id: str | None = None):
 
 
 @app.get("/api/chat/jobs/{turn_id}/stream")
-async def api_chat_job_stream(turn_id: str, after: int = 0):
+async def api_chat_job_stream(turn_id: str, after: int = 0, legacyAdmission: bool = False):
     """Replay missed events, then tail this turn until its terminal event arrives."""
-    return _job_stream_response(turn_id, after)
+    return _job_stream_response(turn_id, after, recover_legacy_admission=legacyAdmission)
 
 
 def _job_owner_alive(claim: dict, turn_id: str) -> bool:
@@ -5357,7 +5357,8 @@ def _turn_admission_event(turn_id: str, session_id: str) -> dict:
     return {"id": 1, "event": "admitted", "data": {"turnId": turn_id, "sessionId": session_id}}
 
 
-def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = None):
+def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = None,
+                         recover_legacy_admission: bool = False):
     replay = claim is not None
     if not _job_event_file(turn_id).is_file():
         if replay:
@@ -5370,6 +5371,21 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
     initial = _read_job_events(turn_id)
     admission = _turn_admission_event(turn_id, claim["sessionId"]) if claim is not None else None
     has_admission = bool(initial and initial[0] == admission)
+    last = initial[-1] if initial else {}
+    completion = last.get("data")
+    legacy_recovery = (
+        recover_legacy_admission and admission is not None and not has_admission
+        and last.get("event") == "done" and isinstance(completion, dict)
+        and completion.get("sessionKey") == claim["sessionId"]
+        and all(event["id"] == index and event["event"] not in ("admitted", "done")
+                for index, event in enumerate(initial[:-1], 1))
+        and last["id"] == len(initial)
+    )
+    if legacy_recovery:
+        # A completed old journal and its durable claim prove admission. Keep
+        # the original file immutable and offset only this negotiated stream.
+        initial = [admission, *[{**event, "id": event["id"] + 1} for event in initial]]
+        has_admission = True
     terminal = any(event["event"] == "done" or (not owner_alive and event["event"] == "error")
                    for event in initial)
     if claim is not None and not owner_alive and not terminal and not has_admission:
@@ -5434,13 +5450,14 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
         "Cache-Control": "no-cache, no-transform",
         "X-Accel-Buffering": "no",
         "Content-Encoding": "identity",
+        **({"X-Easel-Legacy-Admission": "1"} if legacy_recovery else {}),
     })
 
 
 async def _replay_claimed_turn(claim: dict, session_id: str, payload_hash: str, turn_id: str):
     if claim["sessionId"] != session_id or claim["payloadHash"] != payload_hash:
         raise HTTPException(409, "同一任务标识已绑定不同的会话或请求，请新建任务")
-    return _job_stream_response(turn_id, claim=claim)
+    return _job_stream_response(turn_id, claim=claim, recover_legacy_admission=True)
 
 
 @app.post("/api/chat/stream")

@@ -193,3 +193,16 @@ test('source turn pagination and exact preview use the scoped actor and opaque i
     ['/api/projects/workspace/chat/session-reference?sessionId=scope%20session&turnId=selected-turn', 'author', signal],
   ]);
 });
+
+test('legacy admitted replay resumes with the negotiated shifted cursor', async () => {
+  const { requests, observed } = await scenario([
+    new Response(admission + frame(2, 'token', 'saved prefix'), {
+      headers: { 'X-Easel-Legacy-Admission': '1' },
+    }),
+    frame(3, 'token', 'saved tail') + frame(4, 'done', { outcome: 'completed' }),
+  ]);
+  assert.equal(requests[1].url, '/api/chat/jobs/exact-turn/stream?after=2&legacyAdmission=true');
+  assert.deepEqual(observed, [
+    ['admitted', 'exact-turn', 'session'], ['token', 'saved prefix'], ['token', 'saved tail'], ['done', 'completed'],
+  ]);
+});

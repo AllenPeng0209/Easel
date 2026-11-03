@@ -905,9 +905,10 @@ export function streamChat(
   void (async () => {
     const started = Date.now();
     let first = !resumeOnly;
+    let legacyAdmission = false;
     while (!controller.signal.aborted) {
       try {
-        const res = first
+        const res: Response = first
           ? await projectFetch(projectUrl(`${BASE}/api/chat/stream`), {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef,
@@ -917,10 +918,11 @@ export function streamChat(
                 ...(modelOverride ? { modelOverride } : {}) }),
               signal: controller.signal,
             })
-          : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {
+          : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}${legacyAdmission ? '&legacyAdmission=true' : ''}`), {
               signal: controller.signal,
             });
         if (controller.signal.aborted) return;
+        legacyAdmission ||= res.headers.get('X-Easel-Legacy-Admission') === '1';
         // jobs 流 404 = 任务记录不存在（后端重启丢日志 / 首发请求 5xx 没起 supervisor）。
         // 必须终结：旧逻辑依赖 onRecoveryUnavailable（新发送不传），不传时静默落进
         // 无限重试（1s 一次 ×130 分钟），onError 永不触发，会话卡死在「自动续接」。
