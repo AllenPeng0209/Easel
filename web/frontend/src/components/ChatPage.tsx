@@ -1,5 +1,6 @@
 import { projectUrl, projectFetch } from '../lib/projectScope';
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
+import ForkChatDialog, { type CreatedChatFork } from './ForkChatDialog';
 import MessageBubble from './MessageBubble';
 import ChatPlanPanel from './ChatPlanPanel';
 import DeliverablePreviewPane, { ChatInspectionPane } from './DeliverablePreviewPane';
@@ -44,6 +45,8 @@ interface ChatPageProps {
     attachments?: UploadedFile[],
     legacyAgentText?: string,
   ) => void; // 重试：仅对最后一轮
+  onForkAnswer?: (messageIndex: number) => Promise<CreatedChatFork | null>;
+  onOpenFork?: (id: string) => void;
   onQuestionAnswered?: (receipt: ChatQuestionClosed) => void;
   queue?: QueuedMessage[];
   onEditQueued?: (id: string, text: string) => boolean;
@@ -71,8 +74,10 @@ function greeting(): string {
   return `${g}，想创作点什么？`;
 }
 
-export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onQuestionAnswered,
+export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onForkAnswer, onOpenFork, onQuestionAnswered,
   sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
+  const [forkTarget, setForkTarget] = useState<{ sessionId: string; index: number; turnId: string; answer: string }>();
+  useEffect(() => setForkTarget(undefined), [session.id]);
   const [queueEdit, setQueueEdit] = useState<{ id: string; text: string } | null>(null);
   const queueEditChange = useRef(onQueueEditChange);
   queueEditChange.current = onQueueEditChange;
@@ -510,15 +515,29 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     );
   }
 
+  const forkMessage = forkTarget?.sessionId === session.id ? session.messages[forkTarget.index] : undefined;
+  const forkDialog = forkTarget && forkMessage?.status === 'completed' && forkMessage.clientTurnId === forkTarget.turnId
+    && forkMessage.content === forkTarget.answer && onForkAnswer && onOpenFork
+    ? <ForkChatDialog key={forkTarget.turnId} sourceTitle={session.title} answerText={forkTarget.answer}
+      messageCount={forkTarget.index + 1} onFork={() => onForkAnswer(forkTarget.index)}
+      onOpen={onOpenFork} onClose={() => setForkTarget(undefined)} /> : null;
   // ---- 对话态 ----
   const lastUserIndex = session.messages.findLastIndex(message => message.role === 'user');
   const displayMessages: ChatMessage[] = [...session.messages];
   if (isStreaming) displayMessages.push({ role: 'assistant', content: stream!.content || '' });
 
+  const lineage = session.fork;
+  const hasLineage = lineage && typeof lineage.sourceTitle === 'string' &&
+    Number.isSafeInteger(lineage.cutoffIndex) && lineage.cutoffIndex >= 0;
   const chat = (
     <div className="chat-page agent-chat" {...dragProps}>
-      {dragOverlay}{preview}
-      <div className="chat-session-header"><div><span>AI 对话</span><h1>{session.title === 'New Chat' ? '新对话' : session.title}</h1></div>
+      {dragOverlay}{preview}{forkDialog}
+      <div className="chat-session-header"><div><span>AI 对话</span><h1>{session.title === 'New Chat' ? '新对话' : session.title}</h1>
+        {hasLineage && <p className="chat-fork-source" data-chat-fork-source>
+          分叉自「{lineage.sourceTitle}」 · 截止第 {lineage.cutoffIndex + 1} 条消息
+          {lineage.contextTruncated === true && ' · 引擎上下文保留了部分历史'}
+        </p>}
+      </div>
         <div className="chat-session-controls">
           <label><span>工作细节</span><select aria-label="工作细节" value={workDetails.mode}
             onChange={event => changeWorkDetails({ ...workDetails, mode: event.target.value === 'detailed' ? 'detailed' : 'compact' })}>
@@ -557,10 +576,15 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                   canModify: !isStreaming,
                 };
               } else {
+                const turnId = msg.clientTurnId;
                 const pi = i - 1;
                 const prevUser = pi >= 0 && session.messages[pi]?.role === 'user' ? session.messages[pi] : null;
                 actions = {
                   onCopy: copy,
+                  onFork: onForkAnswer && onOpenFork && msg.status === 'completed' && typeof turnId === 'string' &&
+                    /^[A-Za-z0-9_.-]{1,160}$/.test(turnId)
+                    ? () => setForkTarget({ sessionId: session.id, index: i, turnId, answer: msg.content })
+                    : undefined,
                   onRetry: (isLastFinal && prevUser && !prevUser.planRef)
                     ? () => onResend(pi, prevUser.content, prevUser.attachments, prevUser.agentContent)
                     : undefined,
@@ -575,6 +599,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 sessionId={session.id}
                 message={msg}
                 isStreaming={live}
+                inheritedForkText={isFinal && !!hasLineage && i <= lineage.cutoffIndex}
                 detailMode={workDetails.mode}
                 foldWorkDetails={isFinal && (workDetails.collapseTiming === 'completion' || i < lastUserIndex)}
                 reasoningSummary={live ? stream!.reasoningSummary : undefined}

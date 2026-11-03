@@ -29,6 +29,7 @@ const EMPTY_EVENTS: AgentEvent[] = [];
 export interface BubbleActions {
   onCopy: () => void | Promise<void>;
   onRetry?: () => void;    // 仅最后一轮可用（append-only：不改写历史）
+  onFork?: () => void;
   canModify: boolean;      // 流式中禁用 retry
 }
 
@@ -36,6 +37,7 @@ interface MessageBubbleProps {
   message: ChatMessage;
   sessionId?: string;
   isStreaming?: boolean;
+  inheritedForkText?: boolean;
   reasoningSummary?: ReasoningSummary;
   answerCompletion?: AnswerCompletion;
   turnLifecycle?: StreamState['lifecycle'];
@@ -53,7 +55,7 @@ interface MessageBubbleProps {
   onOpenDeliverable?: (file: import('../lib/deliverables').ChatDeliverable, trigger: HTMLElement) => void;
 }
 
-function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) {
+function ActionBar({ actions, text, onFork }: { actions: BubbleActions; text: string; onFork?: () => void }) {
   // Harness's shared hook waits for an accepted clipboard write, including its
   // fallback, before success feedback. The legacy callback was copy-only.
   const { copied, onCopy } = useClipboardCopy(text);
@@ -62,6 +64,7 @@ function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) 
       <button className="msg-action" onClick={onCopy} title="复制">
         {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}<span>{copied ? '已复制' : '复制'}</span>
       </button>
+      {onFork && <button className="msg-action" type="button" data-fork-answer onClick={onFork}>从此答复分叉</button>}
       {actions.onRetry && actions.canModify && (
         <button className="msg-action" onClick={actions.onRetry} title="重新生成"><IconRetry size={14} /><span>重试</span></button>
       )}
@@ -120,9 +123,10 @@ function visibleAssistantContent(message: ChatMessage): string {
   return error === -1 ? message.content : message.content.slice(0, error);
 }
 
-export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, detailMode, foldWorkDetails, actions, onOpenFailureSettings, onQuoteAnswer, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
+export default function MessageBubble({ message, sessionId, isStreaming, inheritedForkText, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, detailMode, foldWorkDetails, actions, onOpenFailureSettings, onQuoteAnswer, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const toolLocator = useRef<AgentToolLocator>(null);
-  const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
+  const inheritedAssistant = message.role === 'assistant' && inheritedForkText === true;
+  const effEvents = inheritedAssistant ? EMPTY_EVENTS : isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const recordedTimeline = isStreaming ? timeline : message.timeline;
   const effTimeline = Array.isArray(recordedTimeline) ? recordedTimeline : undefined;
   const waitingQuestions = isStreaming ? pendingTimelineQuestions
@@ -130,7 +134,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
   const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
   const assistantContent = visibleAssistantContent(message);
   const rejectedPaths = useMemo(() => rejectedSnapshotPaths(effEvents), [effEvents]);
-  const rendered = useAnswerMarkdown(message.role === 'assistant' ? assistantContent : '',
+  const rendered = useAnswerMarkdown(message.role === 'assistant' && !inheritedAssistant ? assistantContent : '',
     isStreaming === true, declared, rejectedPaths);
   const legacyArtifacts = useMemo(() => omitDeclaredArtifacts(rendered.artifacts, declared, rejectedPaths), [rendered.artifacts, declared, rejectedPaths]);
   // Legacy ZIPs retain D22's current-file index. Snapshots use their bound member API.
@@ -152,12 +156,23 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
     );
   }
 
+  if (inheritedAssistant) return <div className="message-row assistant">
+    <div className="msg-col assistant">
+      <div className="message-bubble assistant">
+        <div className="chat-fork-inherited-text" data-assistant-answer data-inherited-fork-text>{assistantContent}</div>
+      </div>
+      {actions && assistantContent && <ActionBar actions={{ ...actions, onRetry: undefined }} text={assistantContent} />}
+    </div>
+  </div>;
+
   // ---- 助手消息 ----
   const answerItem = (isStreaming ? answerCompletion : message.answerCompletion)?.itemId;
   const answerCompleted = typeof answerItem === 'string' && !!answerItem.trim()
     && answerItem.length <= 512 && !/\p{Cc}/u.test(answerItem);
   const phase = <AnswerTurnPhase answerCompleted={answerCompleted} active={isStreaming === true}
     lifecycle={turnLifecycle} outcome={message.status} />;
+  const canFork = !isStreaming && message.status === 'completed' && typeof message.clientTurnId === 'string'
+    && /^[A-Za-z0-9_.-]{1,160}$/.test(message.clientTurnId);
   const failedTurn = !isStreaming && (message.status === 'failed' || !!message.failure);
   const uncertainTurn = !isStreaming && message.status === 'unconfirmed';
   const hasPublicationReceipt = effEvents.some(event => event.kind === 'publication' && event.publication);
@@ -227,7 +242,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
           {isStreaming && !answerCompleted && <span className="streaming-cursor" />}
         </div>
         {actions && !isStreaming && (!(failedTurn || uncertainTurn) || assistantContent) &&
-          <ActionBar actions={failedTurn || uncertainTurn ? { ...actions, onRetry: undefined } : actions} text={assistantContent} />}
+          <ActionBar actions={failedTurn || uncertainTurn ? { ...actions, onRetry: undefined } : actions} text={assistantContent} onFork={canFork ? actions.onFork : undefined} />}
       </div>
     </div>
   );

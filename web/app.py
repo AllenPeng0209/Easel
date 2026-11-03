@@ -837,6 +837,10 @@ from web.access_control import AccessControlMiddleware
 app.include_router(_access_router(lambda: PROJECT_ROOT, lambda: _project_registry(PROJECT_ROOT)))
 app.add_middleware(AccessControlMiddleware, get_root=lambda: PROJECT_ROOT)
 
+from web.chat_session_forks import create_router as _chat_fork_router, read_fork_context, append_fork_context
+app.include_router(_chat_fork_router(lambda: _sessions_dir(), scrub=lambda text: _scrub_secrets(text),
+                                     require_operation=lambda: _require_operation()))
+
 from web.chat_plan_routes import create_router as _chat_plan_router, plan_scope, PlanReference
 from easel.chat_plans import ChatPlanError, ChatPlanStore
 
@@ -5209,18 +5213,19 @@ async def api_chat_stream(req: ChatRequest):
             "按以下已批准的生产计划执行制作。计划批准仅适用于制作；公开发布仍须另行确认具体内容和版本。"
             f"\n\n【已批准方案 V{ref.revision}】\n" + record["text"]})
     try:
+        fork_context = await asyncio.to_thread(read_fork_context, catalog, req.sessionId)
         topic, workshop = await _resolve_chat_references(req)
         captures = await asyncio.to_thread(_capture_session_references, req, catalog) if req.sessionReferences else []
         if direct:
             content, system = _direct_chat_content(req)
             content = _with_chat_workshop(_with_chat_topic(content, topic), workshop)
-            content = append_session_reference_context(content, captures)
+            content = append_fork_context(append_session_reference_context(content, captures), fork_context)
             message = ""
         else:
             if req.sessionId and history_path(_sessions_dir(), req.sessionId).is_file():
                 raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
             message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
-            message = append_session_reference_context(message, captures)
+            message = append_fork_context(append_session_reference_context(message, captures), fork_context)
     except HTTPException:
         # Another identical POST may have been admitted during the scoped read.
         existing = catalog.turn_claim(req.turnId)
@@ -6257,6 +6262,7 @@ async def api_chat(req: ChatRequest):
     catalog = ChatHistoryStore(_sessions_dir()) if req.sessionId else None
     if catalog is not None and catalog.is_deleted(req.sessionId):
         raise HTTPException(410, "该会话已删除，请新建会话")
+    fork_context = await asyncio.to_thread(read_fork_context, catalog, req.sessionId) if catalog is not None else None
     runtime = _chat_backend(req.sessionId)
     topic, workshop = await _resolve_chat_references(req)
     captures = await asyncio.to_thread(_capture_session_references, req, ChatHistoryStore(_sessions_dir())) if req.sessionReferences else []
@@ -6264,7 +6270,7 @@ async def api_chat(req: ChatRequest):
         raise HTTPException(410, "该会话已删除，请新建会话")
     if runtime not in ("api", "openclaw"):
         message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
-        message = append_session_reference_context(message, captures)
+        message = append_fork_context(append_session_reference_context(message, captures), fork_context)
         sk = req.sessionId or uuid.uuid4().hex
         errors = []
         def emit(kind, text):
@@ -6278,7 +6284,7 @@ async def api_chat(req: ChatRequest):
     if runtime == "api":
         content, system = _direct_chat_content(req)
         content = _with_chat_workshop(_with_chat_topic(content, topic), workshop)
-        content = append_session_reference_context(content, captures)
+        content = append_fork_context(append_session_reference_context(content, captures), fork_context)
         errors = []
         def emit(kind, text):
             if kind == "error":
@@ -6292,7 +6298,7 @@ async def api_chat(req: ChatRequest):
         raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
     message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
-    message = append_session_reference_context(message, captures)
+    message = append_fork_context(append_session_reference_context(message, captures), fork_context)
     loop = asyncio.get_event_loop()
     # chat 可能中途触发制作层长任务 → 用 TIMEOUT_CHAT，与流式 /api/chat/stream 一致（勿用 300s）
     result = await asyncio.to_thread(run_agent_sync, message, TIMEOUT_CHAT, req.sessionId)

@@ -7983,12 +7983,34 @@
     "reuse_kind": "adapted",
     "changes": "适配明确的工作空间确认流程，接入目录删除回执、保留范围和重试/归档选择。",
     "verification_status": "C14_exact_catalog_deletion_boundary_verified"
+  },
+  {
+    "feature_id": "C15",
+    "upstream_path": "packages/api/session-controller/src/commands.ts",
+    "upstream_sha256": "7693776e7f12dace951d0ba88a29a0ee4243099f91a13e218ce2ac2f3a2665b0",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/chat_session_forks.py",
+    "destination_sha256": "281cdd3bca28dd40d77280d65f9afd8a29dc66bf24205f68891bb8e2ca6abbf4",
+    "reuse_kind": "adapted",
+    "changes": "适配已完成回合边界和独立分支，冻结当前 Easel 目录中的可见文字及来源信息。",
+    "verification_status": "C15_exact_completed_fork_and_native_independence_verified"
+  },
+  {
+    "feature_id": "C15",
+    "upstream_path": "packages/client/ui-workspace/src/client/index.ts",
+    "upstream_sha256": "0ceec848fa1ba6f07f2ea94096cc57075d40965ef964924e23514b369ff291b8",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ForkChatDialog.tsx",
+    "destination_sha256": "286fd86f50df57f9de3e8d2f7901b55f893795b2779f585416f81c21191c4c3c",
+    "reuse_kind": "adapted",
+    "changes": "适配创建分叉后保留源选择的工作区流程，显式预览截止答复和打开分支。",
+    "verification_status": "C15_exact_completed_fork_and_native_independence_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 99,
+    "source_migration_files": 101,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 84,
+    "adapted_upstream_files": 86,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

@@ -63,6 +63,16 @@ export interface ChatMessage {
   failure?: ChatFailure;
 }
 
+export interface ChatFork {
+  sourceSessionId: string;
+  sourceTitle: string;
+  cutoffIndex: number;
+  cutoffTurnId: string;
+  prefixHash: string;
+  createdAt: number;
+  contextTruncated?: boolean;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -77,6 +87,7 @@ export interface ChatSession {
   updated?: number;
   queued?: QueuedMessage[];
   queuePaused?: boolean;
+  fork?: ChatFork;
 }
 
 /** 进行中的流式状态（存于 App，不随页面切换/ChatPage 卸载而丢失）。 */

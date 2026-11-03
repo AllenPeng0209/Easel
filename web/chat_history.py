@@ -163,12 +163,17 @@ class ChatHistoryStore:
                 raise sqlite3.IntegrityError("steer reservation is no longer available")
 
     def merge(self, values: list[dict]) -> list[dict]:
+        from web.chat_session_forks import has_forks, preserve_fork_prefix
+
         if not isinstance(values, list):
             raise ValueError("会话列表无效")
         sessions = [validated_session(value) for value in values]
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            fork_metadata_exists = has_forks(connection)
             for session in sessions:
+                if fork_metadata_exists:
+                    preserve_fork_prefix(connection, session)
                 connection.execute("INSERT INTO sessions(id,updated,payload) VALUES(?,?,?) "
                     "ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,payload=excluded.payload "
                     "WHERE sessions.deleted=0 AND excluded.updated>sessions.updated",

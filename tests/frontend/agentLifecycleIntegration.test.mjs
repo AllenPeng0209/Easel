@@ -762,3 +762,26 @@ test('stop then archive uses the original remote turn and rejects a newer or fai
     ['archive', 's', true], ['resume', 's', 'old-turn'],
   ]);
 });
+
+test('forking binds a completed turn and keeps the source selected until explicitly opening the child', async () => {
+  const sent = [];
+  const source = { id: 's', title: 'Source', created: 1, messages: [
+    { role: 'user', content: 'question' }, { role: 'assistant', content: 'answer', status: 'completed', clientTurnId: 'cutoff' },
+  ] };
+  const child = { id: 'child', title: 'Source · 分支', created: 2,
+    fork: { sourceSessionId: 's', cutoffIndex: 1, cutoffTurnId: 'cutoff', prefixHash: 'a'.repeat(64) },
+    messages: source.messages.map(({ role, content }) => ({ role, content })) };
+  const ui = appBoundary([source], {
+    forkRequests: { current: new Map() }, crypto: { randomUUID: () => 'fixed-request-id' },
+    forkPrefixHash: async () => 'a'.repeat(64),
+    forkChatSession: async (...args) => { sent.push(args); return { session: child }; },
+    setActiveSessionId: () => assert.fail('fork creation preserves source selection'),
+  });
+  assert.equal((await ui.callback('handleForkAnswer')('s', 1)).id, child.id);
+  assert.deepEqual(plain(sent[0]), ['s', {
+    cutoffIndex: 1, cutoffTurnId: 'cutoff', prefixHash: 'a'.repeat(64), requestId: 'fixed-request-id',
+  }]);
+  assert.deepEqual(plain(ui.context.sessions.find(item => item.id === 's')), source);
+  assert.equal(ui.context.sessions[0].id, child.id);
+  assert.equal(ui.context.forkRequests.current.size, 0);
+});

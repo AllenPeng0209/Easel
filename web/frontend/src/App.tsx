@@ -19,7 +19,7 @@ import BreakdownPage from './components/BreakdownPage';
 import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
 import SettingsPanel from './components/SettingsPanel';
-import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession } from './lib/api';
+import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession, forkChatSession, forkPrefixHash } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed, ChatTurnOutcome } from './lib/api';
 import { reduceAgentEvents } from './lib/agentEvents';
 import { observeAgentTimeline, recoverAgentTimeline, type AgentTimelineObservation } from './lib/agentTimeline';
@@ -98,6 +98,7 @@ export default function App() {
   const [workshopJobsOpen, setWorkshopJobsOpen] = useState(false);
   const [archiveRequest, setArchiveRequest] = useState<ArchiveIntent | null>(null);
   const archiveGeneration = useRef(0);
+  const forkRequests = useRef(new Map<string, string>());
   const [deleteRequest, setDeleteRequest] = useState<{ id: string; title: string } | null>(null);
   const [interactionEntry, setInteractionEntry] = useState(0);
   const [businessEntry, setBusinessEntry] = useState<BusinessTarget | null>(null);
@@ -1459,6 +1460,35 @@ export default function App() {
     return true;
   }, [applySessionArchive, handleStopStream, resumePendingTurn]);
 
+  const handleForkAnswer = useCallback(async (sessionId: string, cutoffIndex: number) => {
+    const source = sessionsRef.current.find(session => session.id === sessionId);
+    const message = source?.messages[cutoffIndex];
+    if (!canOperate || !source || message?.role !== 'assistant' || message.status !== 'completed'
+        || !message.clientTurnId) return null;
+    try {
+      const prefixHash = await forkPrefixHash(source.messages, cutoffIndex);
+      const key = JSON.stringify([sessionId, message.clientTurnId, cutoffIndex, prefixHash]);
+      const requestId = forkRequests.current.get(key) ?? crypto.randomUUID();
+      forkRequests.current.set(key, requestId);
+      const { session: child } = await forkChatSession(sessionId, {
+        cutoffIndex, cutoffTurnId: message.clientTurnId, prefixHash, requestId,
+      });
+      if (!child?.id || child.id === sessionId || child.fork?.sourceSessionId !== sessionId
+          || child.fork.cutoffIndex !== cutoffIndex || child.fork.cutoffTurnId !== message.clientTurnId
+          || child.fork.prefixHash !== prefixHash) return null;
+      forkRequests.current.delete(key);
+      setSessions(previous => {
+        if (previous.some(session => session.id === child.id)) return previous;
+        const updated = [child, ...previous];
+        saveSessions(updated);
+        return updated;
+      });
+      return child;
+    } catch {
+      return null;
+    }
+  }, [canOperate]);
+
   const handleNewChat = useCallback(() => {
     const newSession = createSession(selectedPersona || undefined);
     setSessions((prev) => {
@@ -1637,6 +1667,8 @@ export default function App() {
             } : undefined}
             sessionReferenceCandidates={sessions.filter(item => item.id !== activeSession.id && item.messages.length > 0)}
             onExecutePlan={canOperate ? plan => handleExecutePlan(activeSession.id, plan) : undefined}
+            onForkAnswer={canOperate ? index => handleForkAnswer(activeSession.id, index) : undefined}
+            onOpenFork={handleSessionSelect}
             onSend={(displayText, attachments, references, sessionReferences, command) =>
               handleSendMessage(activeSession.id, displayText, attachments, references, sessionReferences, command)}
             onSteer={streams[activeSession.id]?.steerTurnId && streams[activeSession.id]?.lifecycle === 'running'

@@ -126,6 +126,8 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return "view" if read else "manage_ip"
     if resource == "chat/sessions" or re.fullmatch(r"chat/sessions/[^/]+", resource):
         return "operate"
+    if re.fullmatch(r"chat/sessions/[^/]+/fork", resource):
+        return "operate" if method == "POST" else None
     if re.fullmatch(r"chat/plans/[^/]+", resource):
         return "operate" if read or method == "POST" else None
     if re.fullmatch(r"chat/plans/[^/]+/approve", resource):
@@ -287,6 +289,8 @@ class AccessControlMiddleware:
             return True
 
         live_access = still_authorized
+        if method == "POST" and re.fullmatch(r"chat/sessions/[^/]+/fork", resource):
+            scope["state"]["chat_fork_authorized"] = still_authorized
         if re.fullmatch(r"chat/plans/[^/]+(?:/approve)?", resource):
             scope["state"]["chat_plan_authorized"] = still_authorized
         if method == "POST" and re.fullmatch(r"workshop/projects/[a-f0-9]{32}/renders/[a-f0-9]{32}/cancel", resource):

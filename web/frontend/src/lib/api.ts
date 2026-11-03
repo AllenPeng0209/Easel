@@ -1,6 +1,6 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
-import type { ChatSession, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef } from './store';
+import type { ChatMessage, ChatSession, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef } from './store';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
 import type { ChatCommand, ChatCommandOption } from './chatCommands';
 import { mergeSessionCatalog } from './sessionSync';
@@ -1019,6 +1019,20 @@ export async function fetchChatSessions(signal?: AbortSignal): Promise<{ session
 export function syncChatSessions(sessions: ChatSession[]): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
   return request('/api/chat/sessions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions }) });
 }
+export async function forkPrefixHash(messages: readonly ChatMessage[], cutoffIndex: number): Promise<string> {
+  const prefix = messages.slice(0, cutoffIndex + 1).map(message => [message.role, message.content]);
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(prefix)));
+  return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function forkChatSession(sourceId: string, body: {
+  cutoffIndex: number; cutoffTurnId: string; prefixHash: string; requestId: string;
+}): Promise<{ session: ChatSession }> {
+  return request(`/api/chat/sessions/${encodeURIComponent(sourceId)}/fork`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+}
+
 export interface ChatDeletionReceipt {
   ok: true;
   sessionId: string;

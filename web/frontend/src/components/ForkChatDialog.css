@@ -1,0 +1,45 @@
+/* Workspace confirmation and fork preview adapted from pinned Harness patterns. */
+.fork-chat-overlay {
+  position: fixed;
+  z-index: 520;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 44%);
+}
+.fork-chat-dialog {
+  box-sizing: border-box;
+  width: min(480px, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.fork-chat-dialog h2 { margin: 0; font-size: 17px; }
+.fork-chat-dialog p, .chat-fork-source { color: var(--text-secondary); font-size: 13px; }
+.fork-chat-dialog blockquote {
+  margin: 4px 0 8px;
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--accent-start);
+  white-space: pre-wrap;
+}
+.fork-chat-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.fork-chat-dialog button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.fork-chat-dialog button:disabled { opacity: .65; cursor: default; }
+.fork-chat-dialog button:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }
+.chat-fork-source { margin: 4px 0 0; }
+
+.chat-fork-inherited-text { white-space: pre-wrap; overflow-wrap: anywhere; }
