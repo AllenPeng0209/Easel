@@ -3576,7 +3576,8 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
 
 async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: str,
                             config: dict, emit, timeout: int = TIMEOUT_CHAT, *, interactive=True,
-                            initial_events: tuple[dict, ...] = (), run_id: str | None = None) -> str:
+                            initial_events: tuple[dict, ...] = (), run_id: str | None = None,
+                            stop_turn_id: str | None = None) -> str:
     pk = f"web:{sk}"
     turn_id = req.turnId or uuid.uuid4().hex
     run_id = run_id or uuid.uuid4().hex
@@ -3793,6 +3794,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         _STOPPED_CHAT.discard(sk)
         proc._task = task
         proc.turn_id = turn_id
+        proc.stop_turn_id = stop_turn_id
         proc.steer_emit = receive
         _RUNNING_CHAT[sk] = proc
         _save_turn(pk, "running", "", {"turn_id": turn_id, "runtime": runtime})
@@ -3838,7 +3840,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         if claimed:
             snapshot = "".join(full_text) + (f"\n\n❌ {error_message}" if error_message else "")
             _save_turn(pk, "done", snapshot, {
-                "turn_id": turn_id, "runtime": runtime,
+                "turn_id": turn_id, "stop_turn_id": stop_turn_id, "runtime": runtime,
                 "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
                 **_chat_snapshot_outcome(stopped=reason == "stopped",
                                          failed=bool(error_message) or permission_revoked,
@@ -3847,19 +3849,19 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         # 结果快照不被失败轮覆盖（见 test_failed_ownership_check_does_not_overwrite_
         # previous_result）；错误经 SSE 事件流（job log）回放可见。
         proc.finish()
-        if _RUNNING_CHAT.get(sk) is proc:
-            _RUNNING_CHAT.pop(sk, None)
-        if claimed:
-            _STOPPED_CHAT.discard(sk)
         xlock.release()
         if locked:
             lock.release()
+        if _RUNNING_CHAT.get(sk) is proc:
+            _STOPPED_CHAT.discard(sk)
+            _RUNNING_CHAT.pop(sk, None)
         _HARNESS_TASKS.discard(task)
     return "".join(full_text)
 
 
 async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit, *,
-                           initial_events: tuple[dict, ...] = (), run_id: str | None = None) -> str:
+                           initial_events: tuple[dict, ...] = (), run_id: str | None = None,
+                           stop_turn_id: str | None = None) -> str:
     """Run one API turn with the same stop/recovery/session locking as Gateway chat."""
     pk = f"web:{sk}"
     turn_id = req.turnId or uuid.uuid4().hex
@@ -3902,6 +3904,7 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
         _save_turn(pk, "running", "", {"turn_id": turn_id})
         claimed = True
         proc._task = asyncio.current_task()
+        proc.stop_turn_id = stop_turn_id
         _RUNNING_CHAT[sk] = proc
         emit("activity", "🧠 正在通过 API 思考…")
 
@@ -3934,19 +3937,19 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
         try:
             if claimed:
                 _save_turn(pk, "done", snapshot, {
-                    "turn_id": turn_id, "clean_end": clean_end, "stop_reason": reason,
+                    "turn_id": turn_id, "stop_turn_id": stop_turn_id,
+                    "clean_end": clean_end, "stop_reason": reason,
                     **({"events": [{**event, "runId": run_id} for event in initial_events]} if initial_events else {}),
                     **_chat_snapshot_outcome(stopped=reason == "user_stopped",
                                              failed=bool(error_message), completed=clean_end),
                 })
         finally:
-            if _RUNNING_CHAT.get(sk) is proc:
-                _RUNNING_CHAT.pop(sk, None)
-            if claimed:
-                _STOPPED_CHAT.discard(sk)
             xlock.release()
             if locked:
                 lock.release()
+            if _RUNNING_CHAT.get(sk) is proc:
+                _STOPPED_CHAT.discard(sk)
+                _RUNNING_CHAT.pop(sk, None)
             _DIRECT_CHAT_TASKS.discard(task)
     return "".join(full_text)
 
@@ -4681,7 +4684,7 @@ async def api_chat_stream(req: ChatRequest):
             try:
                 await _run_direct_chat(
                     req.model_copy(update={"turnId": turn_id}), sk, content, system, to_client,
-                    run_id=run_id, **initial_event_args)
+                    run_id=run_id, stop_turn_id=turn_id, **initial_event_args)
             finally:
                 await finish_saved_stream()
             return
@@ -4689,7 +4692,8 @@ async def api_chat_stream(req: ChatRequest):
         if alternate:
             try:
                 await _run_harness_chat(req.model_copy(update={"turnId": turn_id}),
-                                        sk, message, runtime, config, to_client, run_id=run_id, **initial_event_args)
+                                        sk, message, runtime, config, to_client, run_id=run_id,
+                                        stop_turn_id=turn_id, **initial_event_args)
             finally:
                 await finish_saved_stream()
             return
@@ -4876,7 +4880,10 @@ async def api_chat_stream(req: ChatRequest):
                 if startup_error:
                     to_client("error", startup_error)
                 finish_stream(startup_outcome.get("outcome"))
-        _RUNNING_CHAT[sk] = proc         # 注册运行中进程（HTTP 模式为伪进程），供 /api/chat/stop
+        proc.stop_turn_id = turn_id
+        # Ending a thin CLI or HTTP transport cannot prove the gateway agent stopped.
+        proc.stop_requires_gateway = is_http or "--local" not in cmd
+        _RUNNING_CHAT[sk] = proc
         # 经 gateway 后客户端 stdout 没有 model-fetch 标记（那是独立跑 agent 才有），先立刻
         # 给一个「正在思考」活动指示，随后 token 从共享 raw stream 流进来接管显示。
         to_client("activity", "🧠 正在思考…")
@@ -5114,8 +5121,7 @@ async def api_chat_stream(req: ChatRequest):
             # 就绝不能再换回 cli —— 网关那份 transcript 我们按名字找不回来，换边即丢历史。
             if is_http and emitted:
                 _pin_transport(sk, "http")
-            user_stopped = sk in _STOPPED_CHAT
-            _STOPPED_CHAT.discard(sk)
+            user_stopped = _RUNNING_CHAT.get(sk) is proc and sk in _STOPPED_CHAT
             # Reaching finally while the child is alive means timeout, explicit
             # stop, cancellation, or an internal stream failure. Never release
             # the session locks while such a process can still write history.
@@ -5170,7 +5176,7 @@ async def api_chat_stream(req: ChatRequest):
             completed = final_rc == 0 and (run_info.get("http_completed", False) if is_http else clean_end)
             outcome = _chat_snapshot_outcome(stopped=user_stopped, failed=failed, completed=completed)
             _save_turn(pk, "done", "".join(full_text), {
-                "turn_id": turn_id,
+                "turn_id": turn_id, "stop_turn_id": turn_id,
                 "clean_end": clean_end,
                 "stop_reason": "user_stopped" if user_stopped else run_info.get("stop_reason"),
                 "events": structured_events,
@@ -5178,7 +5184,9 @@ async def api_chat_stream(req: ChatRequest):
             })
             xlock.release()
             lock.release()
-            _RUNNING_CHAT.pop(sk, None)
+            if _RUNNING_CHAT.get(sk) is proc:
+                _STOPPED_CHAT.discard(sk)
+                _RUNNING_CHAT.pop(sk, None)
             finish_stream(outcome.get("outcome"))
 
     # 把 run 跑在独立后台任务里（持强引用防 GC）——客户端断开不取消它。
@@ -5346,6 +5354,7 @@ async def api_question_status(req: QuestionStatusRequest):
 
 class StopRequest(BaseModel):
     sessionId: str | None = None
+    expectedTurnId: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.-]{1,160}$")
 
 
 class ChatSteerRequest(BaseModel):
@@ -5436,12 +5445,47 @@ async def api_chat_steer(req: ChatSteerRequest):
 _CHAT_STOP_CONFIRM_SECONDS = 5
 
 
+def _stop_journal_outcome(session_id: str, turn_id: str) -> str | None:
+    """The terminal journal record is appended after supervisor cleanup."""
+    try:
+        with _job_event_file(turn_id).open("rb") as stream:
+            size = stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, size - 4096))
+            tail = stream.read(4096)
+        if not tail.endswith(b"\n"):
+            return None
+        event = json.loads(tail.splitlines()[-1])
+    except (OSError, ValueError, IndexError):
+        return None
+    if not isinstance(event, dict) or event.get("event") != "done":
+        return None
+    data = event.get("data")
+    return data.get("outcome") if isinstance(data, dict) and data.get("sessionKey") == session_id else None
+
+
+def _bound_stop_receipt(outcome: str | None) -> dict:
+    if outcome == "stopped":
+        return {"stopped": True, "status": "stopped"}
+    if outcome == "completed":
+        return {"stopped": False, "status": "already_finished"}
+    return {"stopped": False, "status": "unconfirmed"}
+
+
 @app.post("/api/chat/stop")
 async def api_chat_stop(req: StopRequest):
     """用户显式停止当前会话正在跑的对话 agent：终止进程 → supervisor 收尾释放会话锁 →
     下一句立刻能发（不再卡「上一条还在跑」）。仅此显式入口会杀进程；客户端断线不经此路径。"""
     sk = (req.sessionId or "").strip()
     proc = _RUNNING_CHAT.get(sk) if sk else None
+    expected = req.expectedTurnId
+    if expected is not None:
+        if proc is None:
+            outcome = await asyncio.to_thread(_stop_journal_outcome, sk, expected) if sk else None
+            return _bound_stop_receipt(outcome)
+        if getattr(proc, "stop_turn_id", None) != expected:
+            return {"stopped": False, "status": "turn_mismatch"}
+        if getattr(proc, "stop_requires_gateway", False):
+            return {"stopped": False, "status": "unconfirmed"}
     if proc is not None and proc.poll() is None:
         _STOPPED_CHAT.add(sk)          # 标记为用户停止，供 supervisor 正常收尾（不报「被中断」）
         try:
@@ -5465,6 +5509,11 @@ async def api_chat_stop(req: StopRequest):
         while _RUNNING_CHAT.get(sk) is proc and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
         confirmed = proc.poll() is not None and _RUNNING_CHAT.get(sk) is not proc
+        if confirmed and expected is not None:
+            snapshot = await api_chat_last(sk, expected)
+            if snapshot.get("status") == "done" and snapshot.get("stop_turn_id") == expected:
+                return _bound_stop_receipt(snapshot.get("outcome"))
+            return _bound_stop_receipt(await asyncio.to_thread(_stop_journal_outcome, sk, expected))
         return {"stopped": confirmed, "status": "stopped" if confirmed else "stopping"}
     if proc is not None:
         # A process can end before its supervisor flushes the snapshot/unlocks.

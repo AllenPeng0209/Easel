@@ -136,7 +136,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const waitingApproval = stream?.questions?.some(question => (!question.status || question.status === 'pending')
     && (question.requiresHuman || question.kind === 'approval' || question.publication));
   const lifecycleLabel = stream?.lifecycle === 'waiting_input' ? (waitingApproval ? '等待你批准' : '等待补充信息')
-    : stream?.lifecycle === 'stopping' ? '正在停止' : stream?.lifecycle === 'stop_failed' ? '停止未确认'
+    : stream?.lifecycle === 'stopping' ? '正在停止'
+    : stream?.lifecycle === 'stop_failed' ? (stream.stopFeedback?.kind === 'failed' ? '停止请求失败' : '停止未确认')
     : isStreaming ? '任务进行中' : apiDirect ? '文字与附件分析' : '自主执行';
 
   useEffect(() => {
@@ -458,7 +459,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 message={msg}
                 isStreaming={live}
                 thinking={live ? stream!.thinking : ''}
-                activity={live ? stream!.activity : ''}
+                activity={live ? stream!.stopFeedback?.message ?? stream!.activity : ''}
                 stillWorking={live ? stream!.stillWorking : ''}
                 events={live ? stream!.events : msg.events}
                 actions={actions}

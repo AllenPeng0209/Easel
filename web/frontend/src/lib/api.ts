@@ -633,11 +633,11 @@ export function submitLoginSms(platform: string, code: string): Promise<{ ok: bo
 }
 
 /** 用户显式停止：终止后端正在跑的对话 agent，释放会话锁，令下一句能立刻发。 */
-export function stopChat(sessionId: string): Promise<{ stopped: boolean; status?: string }> {
+export function stopChat(sessionId: string, expectedTurnId: string): Promise<{ stopped: boolean; status?: string }> {
   return request('/api/chat/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, expectedTurnId }),
   });
 }
 
@@ -822,12 +822,12 @@ export function streamChat(
 }
 
 /** 取某会话最近一轮的完整结果（SSE 断线后据此取回）。 */
-export function fetchLastTurn(sessionId: string, turnId?: string): Promise<{
+export function fetchLastTurn(sessionId: string, turnId?: string, signal?: AbortSignal): Promise<{
   status: string; text: string; turn_id?: string; events?: AgentEvent[]; questions?: ChatQuestion[];
   outcome?: Exclude<ChatTurnOutcome, 'unconfirmed'>; clean_end?: boolean; stop_reason?: string;
 }> {
   const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
-  return request(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`);
+  return request(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`, { signal });
 }
 
 interface ChatSessionPage {

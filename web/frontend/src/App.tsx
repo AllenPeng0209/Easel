@@ -1017,50 +1017,78 @@ export default function App() {
     setBusinessNotice('');
   }, [canOperate, selectedPersona, sendUserAndStream]);
 
-  const handleStopStream = useCallback(async (sessionId: string) => {
+  const handleStopStream = useCallback(async (sessionId: string, owner: LiveTurnAccumulator | undefined) => {
+    if (!owner || streamAcc.current[sessionId] !== owner || owner.stopRequested) return;
     setSessions(previous => {
       const next = previous.map(session => session.id === sessionId ? { ...session, queuePaused: true, updated: nextSessionRevision(session) } : session);
       saveSessions(next); return next;
     });
     const pending = finalizers.current.get(sessionId);
-    if (pending) { pending.finish(); return; }
-    const owner = streamAcc.current[sessionId];
-    if (!owner) return;
-    owner.stopRequested = true;
-    setStreams(previous => previous[sessionId] ? { ...previous,
-      [sessionId]: { ...previous[sessionId], lifecycle: 'stopping', activity: '正在停止，等待执行引擎确认…' } } : previous);
-    let receipt: 'stopped' | 'already_finished';
-    try { receipt = await confirmChatStop(() => stopChat(sessionId)); }
-    catch (error) {
+    if (pending?.owner === owner) { pending.finish(); return; }
+
+    const expectedTurnId = owner.turnId;
+    const finishWithoutStop = (kind: 'failed' | 'unconfirmed', message: string) => {
       owner.stopRequested = false;
-      finalizers.current.get(sessionId)?.finish();
-      if (streamAcc.current[sessionId] === owner) setStreams(previous => previous[sessionId] ? { ...previous,
-        [sessionId]: { ...previous[sessionId], lifecycle: 'stop_failed', activity: error instanceof Error ? error.message : '停止失败，可再次尝试。' } } : previous);
+      if (streamAcc.current[sessionId] !== owner) return;
+      const completed = finalizers.current.get(sessionId);
+      if (completed?.owner === owner) { completed.finish(); return; }
+      setStreams(previous => previous[sessionId] ? { ...previous,
+        [sessionId]: { ...previous[sessionId], lifecycle: 'stop_failed', stopFeedback: { kind, message } } } : previous);
+    };
+    if (!expectedTurnId) {
+      finishWithoutStop('unconfirmed', '尚未确认当前回合，正在等待恢复。');
       return;
     }
+
+    owner.stopRequested = true;
+    setStreams(previous => previous[sessionId] ? { ...previous,
+      [sessionId]: { ...previous[sessionId], lifecycle: 'stopping', stopFeedback: undefined } } : previous);
+    let receipt: Awaited<ReturnType<typeof stopChat>>;
+    try {
+      receipt = await stopChat(sessionId, expectedTurnId);
+    } catch {
+      finishWithoutStop('failed', '停止请求失败，可对同一回合重试。');
+      return;
+    }
+    if (!receipt.stopped || (receipt.status && receipt.status !== 'stopped')) {
+      const message = receipt.status === 'turn_mismatch' ? '当前回合已变更，正在等待原回合结果。'
+        : receipt.status === 'already_finished' ? '引擎已结束，正在等待本回合结果。'
+        : '停止尚未确认，任务可能仍在运行。';
+      finishWithoutStop('unconfirmed', message);
+      return;
+    }
+
     if (streamAcc.current[sessionId] !== owner) return;
-    owner.stopConfirmed = receipt === 'stopped';
+    if (finalizers.current.get(sessionId)?.owner !== owner) {
+      // The HTTP receipt can arrive before the last events on the SSE stream.
+      const snapshot = await fetchLastTurn(sessionId, expectedTurnId, AbortSignal.timeout(2000)).catch(() => undefined);
+      if (streamAcc.current[sessionId] !== owner) return;
+      if (snapshot?.status === 'done' && snapshot.turn_id === expectedTurnId && snapshot.outcome === 'stopped') {
+        owner.content = snapshot.text;
+        typingBuf.current[sessionId] = '';
+        if (snapshot.events) owner.events = snapshot.events.reduce(reduceAgentEvents, owner.events);
+        if (snapshot.questions) owner.questions = snapshot.questions;
+      }
+    }
+    owner.stopConfirmed = true;
     owner.stopRequested = false;
     const completed = finalizers.current.get(sessionId);
-    if (completed) { completed.finish(); return; }
+    if (completed?.owner === owner) { completed.finish(); return; }
     streamCtl.current[sessionId]?.abort();
-    flushTyping(sessionId);   // 停止时立刻把队列余字吐完，保证已到内容不丢
-    const a = streamAcc.current[sessionId];
-    if (a) {
-      appendAssistant(sessionId, {
-        role: 'assistant',
-        content: (a.content || '') + (receipt === 'stopped' ? '\n\n_（已停止）_' : ''),
-        thinking: a.thinking || undefined,
-        activity: a.steps.join('\n') || undefined,
-        questions: a.questions.length ? [...a.questions] : undefined,
-        events: a.events.length ? [...a.events] : undefined,
-        status: receipt === 'stopped' ? 'stopped' : 'completed',
-      });
-    }
+    flushTyping(sessionId);
+    appendAssistant(sessionId, {
+      role: 'assistant',
+      content: owner.content + '\n\n_（已停止）_',
+      thinking: owner.thinking || undefined,
+      activity: owner.steps.join('\n') || undefined,
+      questions: owner.questions.length ? [...owner.questions] : undefined,
+      events: owner.events.length ? [...owner.events] : undefined,
+      status: 'stopped',
+    });
     clearStream(sessionId);
-    // 关键：清掉「本轮进行中」标记，否则下一句被判为「上一条还没跑完」拦下
     setSessions((prev) => {
-      const next = prev.map((s) => (s.id === sessionId ? { ...s, pendingTurnId: undefined, updated: nextSessionRevision(s) } : s));
+      const next = prev.map((s) => s.id === sessionId && s.pendingTurnId === expectedTurnId
+        ? { ...s, pendingTurnId: undefined, updated: nextSessionRevision(s) } : s);
       saveSessions(next);
       return next;
     });
@@ -1117,30 +1145,41 @@ export default function App() {
     setCurrentPage('chat');
   }, [sessions]);
 
-  const handleSessionDelete = useCallback((id: string) => {
+  const handleSessionDelete = useCallback(async (id: string) => {
     if (!window.confirm('删除 Easel 中的这条对话？引擎原生历史可能仍保留。')) return;
-    void deleteChatSession(id).catch(() => setHistoryNotice('服务器删除尚未确认，请稍后重试。'));
-
     const target = sessionsRef.current.find((s) => s.id === id);
-    const wasRunning = Boolean(streamCtl.current[id]);
-    const stopped = wasRunning
-      ? stopChat(id).catch(() => ({ stopped: false }))
-      : Promise.resolve({ stopped: false });
-    streamCtl.current[id]?.abort();   // 删除正在流式的会话时中止其流
+    const owner = streamAcc.current[id];
+    const expectedTurnId = owner ? owner.turnId : target?.pendingTurnId;
+    if (owner || streamCtl.current[id] || expectedTurnId) {
+      if (!expectedTurnId) {
+        setHistoryNotice('当前回合尚未确认，请等待恢复后再删除。');
+        return;
+      }
+      try {
+        await confirmChatStop(() => stopChat(id, expectedTurnId));
+      } catch {
+        setHistoryNotice('停止尚未确认，对话仍保留。请稍后重试删除。');
+        return;
+      }
+      const currentOwner = streamAcc.current[id];
+      const currentPending = sessionsRef.current.find((s) => s.id === id)?.pendingTurnId;
+      if ((currentOwner && currentOwner !== owner) || (currentPending && currentPending !== expectedTurnId)) {
+        setHistoryNotice('对话已有新的回合，请确认后再删除。');
+        return;
+      }
+    }
+    void deleteChatSession(id).catch(() => setHistoryNotice('服务器删除尚未确认，请稍后重试。'));
+    streamCtl.current[id]?.abort();
     clearStream(id);
     try { sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${id}`)); } catch { /* ignore */ }
 
-    if (target?.sessionKey) {
-      // Do not delete OpenClaw's session record while its agent is still
-      // writing to it; the stop endpoint waits for backend cleanup first.
-      void stopped.then(() => deleteRemoteSession(target.sessionKey as string)).catch(() => {});
-    }
+    if (target?.sessionKey) void deleteRemoteSession(target.sessionKey).catch(() => {});
 
     setSessions((prev) => {
       const updated = prev.filter((s) => s.id !== id);
       saveSessions(updated);
 
-      if (id === activeSessionId) {
+      if (id === activeIdRef.current) {
         if (updated.length > 0) {
           setActiveSessionId(updated[0].id);
         } else {
@@ -1152,7 +1191,7 @@ export default function App() {
       }
       return updated;
     });
-  }, [activeSessionId, clearStream]);
+  }, [clearStream]);
 
   const handleSessionPin = useCallback((id: string, pinned: boolean) => {
     setSessions(previous => {
@@ -1219,7 +1258,8 @@ export default function App() {
             onUseSavedIdea={handleUseSavedIdea}
           />
         );
-      case 'chat':
+      case 'chat': {
+        const stopOwner = activeSession ? streamAcc.current[activeSession.id] : undefined;
         return activeSession ? (
           <ChatPage
             apiDirect={apiDirect}
@@ -1236,7 +1276,7 @@ export default function App() {
             onSend={(displayText, attachments) => handleSendMessage(activeSession.id, displayText, attachments)}
             onSteer={streams[activeSession.id]?.steerTurnId && streams[activeSession.id]?.lifecycle === 'running'
               ? text => handleSteer(activeSession.id, text) : undefined}
-            onStop={() => handleStopStream(activeSession.id)}
+            onStop={() => handleStopStream(activeSession.id, stopOwner)}
             onResend={(userIndex, displayText, attachments, legacyAgentText) => handleResend(
               activeSession.id, userIndex, displayText, attachments, legacyAgentText,
             )}
@@ -1250,6 +1290,7 @@ export default function App() {
             onQuestionClosed={(id, status) => closeQuestion(activeSession.id, { id, status })}
           />
         ) : null;
+      }
       case 'trends':
         return <TrendsPage onUseSavedIdea={handleUseSavedIdea} />;
       case 'ideas':

@@ -48,6 +48,7 @@ export interface StreamState {
   content: string;
   thinking: string;
   activity: string;
+  stopFeedback?: { kind: 'failed' | 'unconfirmed'; message: string };
   stillWorking?: string;   // 防呆心跳提示（未卡住）；独立于 activity，不覆盖真实状态
   questions: ChatQuestion[];   // ask_user 问答题卡片（进行中）
   events?: AgentEvent[];

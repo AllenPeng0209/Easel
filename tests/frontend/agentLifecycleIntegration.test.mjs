@@ -183,20 +183,21 @@ test('closing one question keeps another pending question visible and never over
 test('confirmed stop persists a turn containing only tool events and an input card', async () => {
   const ui = appBoundary([{ id: 's1', title: 'Draft', created: 1, pendingTurnId: 'active-turn',
     messages: [{ role: 'user', content: 'prepare a draft' }] }], {
-    confirmChatStop, stopChat: async () => ({ stopped: true, status: 'stopped' }),
+    confirmChatStop, AbortSignal, fetchLastTurn: async () => undefined,
+    stopChat: async () => ({ stopped: true, status: 'stopped' }),
     finalizers: { current: new Map() }, activeIdRef: { current: 's1' }, flushTyping() {},
   });
   const nativeEvent = { id: 'event1', kind: 'tool', callId: 'render1', name: 'render', status: 'running',
     output: 'Submitted task-123' };
   ui.context.streamAcc.current.s1 = {
-    content: '', thinking: '', steps: [], events: [nativeEvent],
+    turnId: 'active-turn', content: '', thinking: '', steps: [], events: [nativeEvent],
     questions: [{ id: 'question1', status: 'pending', questions: [] }],
   };
   ui.context.streamCtl.current.s1 = new AbortController();
   ui.context.streams.s1 = { content: '', thinking: '', activity: '', lifecycle: 'waiting_input' };
   ui.context.appendAssistant = ui.callback('appendAssistant');
   ui.context.clearStream = ui.callback('clearStream');
-  await ui.callback('handleStopStream')('s1');
+  await ui.callback('handleStopStream')('s1', ui.context.streamAcc.current.s1);
   const saved = ui.context.sessions[0];
   assert.equal(saved.messages.length, 2);
   assert.equal(saved.messages[1].status, 'stopped');
