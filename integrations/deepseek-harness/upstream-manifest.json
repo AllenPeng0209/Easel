@@ -7950,12 +7950,34 @@
     "reuse_kind": "adapted",
     "changes": "适配等待提交回执和请求所有权，接入 Easel 授权、过期和确认结果。",
     "verification_status": "B32_scoped_authoritative_approval_receipt_verified"
+  },
+  {
+    "feature_id": "C13",
+    "upstream_path": "packages/client/ui-workspace/src/client/session-actions/ArchiveSession.tsx",
+    "upstream_sha256": "25060f622ca339c2ef84e6ac29c05d57de18442ecab2f97984806078d3c5ddb7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ArchiveRunningChatDialog.tsx",
+    "destination_sha256": "4a7a6659a2bde6ee29c1cc9dcf7d03e6b59242cdf8562a17f84eee08dbbfc2ba",
+    "reuse_kind": "adapted",
+    "changes": "适配运行活动归档确认，提供后台继续和按原回合停止两种选择。",
+    "verification_status": "C13_running_archive_choices_and_exact_stop_verified"
+  },
+  {
+    "feature_id": "C13",
+    "upstream_path": "packages/client/ui-workspace/src/client/index.ts",
+    "upstream_sha256": "0ceec848fa1ba6f07f2ea94096cc57075d40965ef964924e23514b369ff291b8",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/App.tsx",
+    "destination_sha256": "cbae6b2da46e761d6412d0c766fa903b4ae4589ca73365559c5e9a29933e8487",
+    "reuse_kind": "adapted",
+    "changes": "适配先核对活动再归档，保留原回合的可恢复记录和确认失败状态。",
+    "verification_status": "C13_running_archive_choices_and_exact_stop_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 96,
+    "source_migration_files": 98,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 81,
+    "adapted_upstream_files": 83,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

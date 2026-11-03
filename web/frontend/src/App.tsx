@@ -4,6 +4,7 @@ import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from './components/Sidebar';
 import type { Page } from './components/Sidebar';
 import ChatPage from './components/ChatPage';
+import ArchiveRunningChatDialog from './components/ArchiveRunningChatDialog';
 import SkillPage from './components/SkillPage';
 import OutputsPage from './components/OutputsPage';
 import AccountsPage from './components/AccountsPage';
@@ -51,6 +52,14 @@ const VideoWorkshopPage = lazy(() => import('./components/VideoWorkshopPage'));
 const WorkshopJobsDrawer = lazy(() => import('./components/WorkshopJobsDrawer'));
 const InteractionCenterPage = lazy(() => import('./components/InteractionCenterPage'));
 
+interface ArchiveIntent {
+  id: string;
+  title: string;
+  generation: number;
+  turnId?: string;
+  remote: boolean;
+}
+
 interface LiveTurnAccumulator {
   content: string; reasoningSummary?: ReasoningSummary; answerCompletion?: AnswerCompletion; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[]; timeline: AgentTimelineObservation[];
   turnId?: string;
@@ -87,6 +96,8 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>(() => canOperate ? 'chat' : 'dashboard');
   const [workshopEntry, setWorkshopEntry] = useState(0);
   const [workshopJobsOpen, setWorkshopJobsOpen] = useState(false);
+  const [archiveRequest, setArchiveRequest] = useState<ArchiveIntent | null>(null);
+  const archiveGeneration = useRef(0);
   const [interactionEntry, setInteractionEntry] = useState(0);
   const [businessEntry, setBusinessEntry] = useState<BusinessTarget | null>(null);
   const [businessNotice, setBusinessNotice] = useState('');
@@ -423,7 +434,8 @@ export default function App() {
       && (chatOrigin.current !== sessionId || document.visibilityState === 'hidden');
     setSessions((prev) => {
       const next = prev.map((s) =>
-        s.id === sessionId
+        s.id === sessionId && (!msg.clientTurnId || !s.messages.some(message =>
+          message.role === 'assistant' && message.clientTurnId === msg.clientTurnId))
           ? { ...s, updated: nextSessionRevision(s), messages: [...s.messages, { ...msg, created: Date.now() }], sessionKey: sessionKey || s.sessionKey, pendingTurnId: undefined, unreadCompletion }
           : s);
       saveSessions(next);
@@ -561,7 +573,7 @@ export default function App() {
             ?? { code: 'unknown', retryable: false, phase: 'execution' } as const
           : undefined;
         appendAssistant(sessionId, {
-          role: 'assistant', content: owner.content + (owner.stopConfirmed ? '\n\n_（已停止）_' : ''),
+          role: 'assistant', clientTurnId: owner.turnId, content: owner.content + (owner.stopConfirmed ? '\n\n_（已停止）_' : ''),
           failure,
           reasoningSummary: owner.reasoningSummary, answerCompletion: owner.answerCompletion,
           activity: owner.steps.join('\n') || undefined,
@@ -776,18 +788,25 @@ export default function App() {
   }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage, confirmPromptAdmission, failPromptAdmission]);
 
   // 刷新/重开页面后按 eventId=0 重放当前 job，再继续实时 tail；旧任务无事件日志时退回最终快照。
-  const resumePendingTurn = useCallback((sessionId: string) => {
+  const resumePendingTurn = useCallback((sessionId: string, observedTurnId?: string) => {
     if (streamCtl.current[sessionId] || streamAcc.current[sessionId]) return;  // 本标签正在跑，不插手
     const s = sessionsRef.current.find((x) => x.id === sessionId);
     if (!s) return;
     const last = s.messages.at(-1);
     let turnId = s.pendingTurnId;
     try { turnId = sessionStorage.getItem(projectStorageKey(`easel_pending_turn:${sessionId}`)) || turnId; } catch { /* use persisted id */ }
+    if (observedTurnId) turnId = observedTurnId;
+    if (turnId && s.messages.some(message => message.role === 'assistant' && message.clientTurnId === turnId)) return;
     const attempt = loadPromptAttempt(sessionId);
     if (!turnId && attempt?.state === 'unconfirmed') return;
     const prompt = attempt?.turnId === turnId ? attempt : undefined;
     const queuedId = s.queued?.find(row => turnId === `queue-${row.id}`)?.id;
-    if (!queuedId && !prompt && last?.role !== 'user') return;
+    if (!observedTurnId && !queuedId && !prompt && last?.role !== 'user') return;
+    if (observedTurnId) {
+      try { sessionStorage.setItem(projectStorageKey(`easel_pending_turn:${sessionId}`), observedTurnId); } catch {}
+      setSessions(previous => previous.map(session => session.id === sessionId
+        ? { ...session, pendingTurnId: observedTurnId } : session));
+    }
     const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry: !!queuedId, prompt, content: '', steps: [], questions: [], events: [], timeline: [] };
     streamAcc.current[sessionId] = owner;
     if (prompt?.state === 'accepted') confirmPromptAdmission(sessionId, owner);
@@ -805,7 +824,7 @@ export default function App() {
       confirmQueuedMessage(sessionId, owner);
       const status = result.outcome ?? (result.stop_reason === 'user_stopped' ? 'stopped'
         : result.error ? 'failed' : result.clean_end === true ? 'completed' : 'unconfirmed');
-      appendAssistant(sessionId, { role: 'assistant', content: result.text || '（无输出）',
+      appendAssistant(sessionId, { role: 'assistant', clientTurnId: result.turn_id ?? turnId, content: result.text || '（无输出）',
         events: result.events?.filter(event => event.kind !== 'decision' || event.status !== 'pending'),
         timeline: recoverAgentTimeline(result.events, owner.timeline),
         reasoningSummary: result.reasoning_summary ?? owner.reasoningSummary,
@@ -1325,6 +1344,7 @@ export default function App() {
     flushTyping(sessionId);
     appendAssistant(sessionId, {
       role: 'assistant',
+      clientTurnId: expectedTurnId,
       content: owner.content + '\n\n_（已停止）_',
       reasoningSummary: owner.reasoningSummary,
       answerCompletion: owner.answerCompletion,
@@ -1354,14 +1374,14 @@ export default function App() {
     });
   }, []);
 
-  const handleSessionArchive = useCallback((id: string, archived: boolean) => {
+  const applySessionArchive = useCallback((id: string, archived: boolean) => {
     setSessions((prev) => {
       const next = prev.map((s) => (s.id === id ? { ...s, archived, updated: nextSessionRevision(s) } : s));
       saveSessions(next);
       return next;
     });
     // 归档当前激活会话 → 切到另一个未归档会话或新建
-    if (archived && id === activeSessionId) {
+    if (archived && id === activeIdRef.current) {
       const rest = sessionsRef.current.filter((s) => s.id !== id && !s.archived);
       if (rest.length) {
         setActiveSessionId(rest[0].id);
@@ -1372,7 +1392,69 @@ export default function App() {
       }
       setCurrentPage('chat');
     }
-  }, [activeSessionId, selectedPersona]);
+  }, [selectedPersona]);
+
+  const closeArchiveRequest = () => {
+    archiveGeneration.current += 1;
+    setArchiveRequest(null);
+  };
+
+  const handleSessionArchive = useCallback(async (id: string, archived: boolean) => {
+    const generation = ++archiveGeneration.current;
+    setArchiveRequest(null);
+    if (!archived) { applySessionArchive(id, false); return; }
+    const target = sessionsRef.current.find(session => session.id === id);
+    if (!target || target.archived) return;
+    const local = streamAcc.current[id];
+    if (local || streamCtl.current[id] || target.pendingTurnId) {
+      setArchiveRequest({ id, title: target.title, generation,
+        turnId: local?.turnId ?? target.pendingTurnId, remote: !local });
+      return;
+    }
+    const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
+    if (archiveGeneration.current !== generation) return;
+    const current = sessionsRef.current.find(session => session.id === id);
+    if (!current || current.archived) return;
+    const owner = streamAcc.current[id];
+    if (owner || streamCtl.current[id] || current.pendingTurnId || latest?.status === 'running') {
+      setArchiveRequest({ id, title: current.title, generation, remote: !owner,
+        turnId: owner?.turnId ?? current.pendingTurnId ?? latest?.turn_id });
+    } else if (latest?.status === 'done' || latest?.status === 'none') {
+      applySessionArchive(id, true);
+    } else {
+      setHistoryNotice('暂时无法确认会话是否运行，请稍后再归档。');
+    }
+  }, [applySessionArchive]);
+
+  const handleArchiveChoice = useCallback(async (intent: ArchiveIntent, action: 'continue' | 'stop') => {
+    const { id, turnId, generation, remote } = intent;
+    const matches = () => {
+      const session = sessionsRef.current.find(row => row.id === id);
+      const owner = streamAcc.current[id];
+      return archiveGeneration.current === generation && !!session && !session.archived
+        && (!owner || owner.turnId === turnId) && (!session.pendingTurnId || session.pendingTurnId === turnId);
+    };
+    if (!matches()) return false;
+    if (action === 'stop') {
+      if (!turnId) return false;
+      const owner = streamAcc.current[id];
+      try {
+        if (owner) await handleStopStream(id, owner);
+        else await confirmChatStop(() => stopChat(id, turnId));
+      } catch { /* A final snapshot can still confirm the original turn. */ }
+      const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
+      if (!matches() || latest?.status !== 'done' || latest.turn_id !== turnId
+          || (latest.outcome !== 'stopped' && latest.outcome !== 'completed'
+            && !(latest.outcome === undefined && latest.clean_end === true))) return false;
+    } else if (remote && turnId) {
+      const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
+      if (!matches() || latest?.turn_id !== turnId
+          || (latest.status !== 'running' && latest.status !== 'done')) return false;
+    }
+    applySessionArchive(id, true);
+    if (remote && turnId && !streamAcc.current[id]) resumePendingTurn(id, turnId);
+    return true;
+  }, [applySessionArchive, handleStopStream, resumePendingTurn]);
 
   const handleNewChat = useCallback(() => {
     const newSession = createSession(selectedPersona || undefined);
@@ -1672,6 +1754,11 @@ export default function App() {
           </aside>}
         </div>
       </main>
+
+      {archiveRequest && <ArchiveRunningChatDialog key={archiveRequest.generation}
+        sessionTitle={archiveRequest.title} onClose={closeArchiveRequest}
+        onContinue={() => handleArchiveChoice(archiveRequest, 'continue')}
+        onStopAndArchive={() => handleArchiveChoice(archiveRequest, 'stop')} />}
 
       {workshopJobsOpen && <Suspense fallback={null}>
         <WorkshopJobsDrawer open canOperate={canOperate} onClose={closeWorkshopJobs} onOpenWorkshop={openWorkshopJob} />

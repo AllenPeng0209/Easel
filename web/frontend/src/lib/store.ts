@@ -41,6 +41,7 @@ export interface ChatPlanRef {
 }
 
 export interface ChatMessage {
+  clientTurnId?: string;
   role: 'user' | 'assistant';
   content: string;
   agentContent?: string; // 仅发给 Agent 的增强消息（如附件路径），不在对话页面展示

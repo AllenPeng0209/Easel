@@ -118,7 +118,7 @@ function appBoundary(initial, overrides = {}) {
   const projectStorageKey = value => `scope:${value}`;
   const prompt = helper('promptAdmission', { localStorage, require: name => name === './chatReferences' ? chatReferences : { projectStorageKey } });
   const context = vm.createContext({
-    Date, Math, Error, Boolean, Array, AbortController, undefined, nextSessionRevision, mergeSessionCatalog, nextQueuedMessage,
+    Date, Math, Error, Boolean, Array, AbortController, AbortSignal, undefined, nextSessionRevision, mergeSessionCatalog, nextQueuedMessage,
     sessions: plain(initial), sessionsRef: { current: plain(initial) }, streams: {},
     streamCtl: { current: {} }, streamAcc: { current: {} }, typingBuf: { current: {} }, queueEdits: { current: {} },
     selectedPersona: 'another-brand-persona', historyReady: true, canOperate: true,
@@ -697,4 +697,68 @@ test('a delayed question status cannot replace an already accepted resolution', 
   assert.deepEqual(plain(owner.questions[0].answers), { approval: ['winner'] });
   ui.callback('closeQuestion')('s', { id: 'q', status: 'resolved', answers: { approval: ['late'] } });
   assert.deepEqual(plain(owner.questions[0].answers), { approval: ['winner'] });
+});
+
+test('running archive waits for an explicit choice and leaves a failed stop visible', async () => {
+  let intent;
+  const owner = { turnId: 'live-turn' };
+  const reads = [];
+  const ui = appBoundary([{ id: 's', title: 'Running', created: 1, messages: [], pendingTurnId: owner.turnId }], {
+    archiveGeneration: { current: 0 },
+    setArchiveRequest: value => { intent = value; },
+    setHistoryNotice() {},
+    handleStopStream: async (id, target) => { assert.equal(id, 's'); assert.equal(target, owner); return false; },
+    fetchLastTurn: async id => { reads.push(id); return { status: 'running', turn_id: owner.turnId }; },
+    applySessionArchive: () => assert.fail('unconfirmed stop must keep the session visible'),
+  });
+  ui.context.streamAcc.current.s = owner;
+  await ui.callback('handleSessionArchive')('s', true);
+  assert.equal(intent.turnId, owner.turnId);
+  assert.equal(ui.saved.length, 0);
+  assert.equal(await ui.callback('handleArchiveChoice')(intent, 'stop'), false);
+  assert.equal(ui.context.sessions[0].archived, undefined);
+  assert.deepEqual(reads, ['s']);
+});
+
+test('archiving a different browser’s active session keeps its original turn recoverable', async () => {
+  let intent;
+  const archives = [], resumed = [];
+  const ui = appBoundary([{ id: 's', title: 'Remote', created: 1, messages: [] }], {
+    archiveGeneration: { current: 0 },
+    setArchiveRequest: value => { intent = value; },
+    setHistoryNotice() {},
+    fetchLastTurn: async () => ({ status: 'running', turn_id: 'remote-turn' }),
+    applySessionArchive: (...args) => archives.push(args),
+    resumePendingTurn: (...args) => resumed.push(args),
+  });
+  await ui.callback('handleSessionArchive')('s', true);
+  assert.equal(intent.turnId, 'remote-turn');
+  assert.deepEqual(archives, []);
+  assert.equal(await ui.callback('handleArchiveChoice')(intent, 'continue'), true);
+  assert.deepEqual(archives, [['s', true]]);
+  assert.deepEqual(resumed, [['s', 'remote-turn']]);
+});
+
+test('stop then archive uses the original remote turn and rejects a newer or failed result', async () => {
+  const effects = [];
+  const intent = { id: 's', title: 'Remote', generation: 1, turnId: 'old-turn', remote: true };
+  let latest = { status: 'done', turn_id: 'new-turn', outcome: 'completed' };
+  const ui = appBoundary([{ id: 's', title: 'Remote', created: 1, messages: [] }], {
+    archiveGeneration: { current: 1 },
+    confirmChatStop: async stop => stop(),
+    stopChat: async (id, turn) => { effects.push(['stop', id, turn]); return { stopped: true, status: 'stopped' }; },
+    fetchLastTurn: async () => latest,
+    applySessionArchive: (...args) => effects.push(['archive', ...args]),
+    resumePendingTurn: (...args) => effects.push(['resume', ...args]),
+  });
+  const choose = ui.callback('handleArchiveChoice');
+  assert.equal(await choose(intent, 'stop'), false);
+  latest = { status: 'done', turn_id: 'old-turn', outcome: 'failed' };
+  assert.equal(await choose(intent, 'stop'), false);
+  latest = { status: 'done', turn_id: 'old-turn', outcome: 'stopped' };
+  assert.equal(await choose(intent, 'stop'), true);
+  assert.deepEqual(effects, [
+    ['stop', 's', 'old-turn'], ['stop', 's', 'old-turn'], ['stop', 's', 'old-turn'],
+    ['archive', 's', true], ['resume', 's', 'old-turn'],
+  ]);
 });
