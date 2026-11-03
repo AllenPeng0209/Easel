@@ -7412,12 +7412,23 @@
     "reuse_kind": "adapted",
     "changes": "复用命令工具分派和退出状态展示，按 Codex 已记录字段映射。",
     "verification_status": "B04_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "A03",
+    "upstream_path": "packages/client/ui-conversation/src/client/input/machine.ts",
+    "upstream_sha256": "560ce1771c81248b1b8d10329fc2bbf7e2fdcf9fc9995317a02d477ae6b8980b",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/lib/promptAdmission.ts",
+    "destination_sha256": "dfc3e13ff19b769e6c27776d1d6749ad539d506902f9980044f9951809219d0e",
+    "reuse_kind": "adapted",
+    "changes": "复用同一发送尝试只在接收后提交草稿的规则，适配持久回执与会话恢复。",
+    "verification_status": "A03_verified_host_journal_and_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 50,
+    "source_migration_files": 51,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 35,
+    "adapted_upstream_files": 36,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

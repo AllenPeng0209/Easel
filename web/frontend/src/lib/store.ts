@@ -1,4 +1,5 @@
 import { ACTIVE_PROJECT_ID, ACTIVE_USER_ID, projectStorageKey } from './projectScope';
+import { loadPromptAttempt } from './promptAdmission';
 import type { UploadedFile, ChatQuestion } from './api';
 import type { AgentEvent } from './agentEvents';
 import type { WorkshopReference } from './workshop';
@@ -148,7 +149,7 @@ export function loadSessions(): ChatSession[] {
 function prune(sessions: ChatSession[]): ChatSession[] {
   let keptEmpty = false;
   const pruned = sessions.filter((s) => {
-    if (s.messages.length > 0) return true;
+    if (s.messages.length || s.pendingTurnId || s.queued?.length || loadPromptAttempt(s.id)) return true;
     if (keptEmpty) return false;
     keptEmpty = true;
     return true;

@@ -672,11 +672,18 @@ export function streamChat(
   topicRef?: { id: string; snapshotHash: string },
   workshopRef?: import('./workshop').WorkshopReference,
   onAdmitted?: (receipt: { turnId: string; sessionId: string }) => void,
+  requireAdmission = false,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
+  let admitted = false;
+  let admissionTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearAdmissionTimer = () => {
+    if (admissionTimer !== undefined) clearTimeout(admissionTimer);
+    admissionTimer = undefined;
+  };
 
-  const consume = async (res: Response): Promise<boolean> => {
+  const consume = async (res: Response, replay: boolean): Promise<boolean> => {
       if (!res.ok) {
         let detail = `Stream error: ${res.status}`;
         try {
@@ -697,15 +704,32 @@ export function streamChat(
       let dataLines: string[] = [];
 
       const dispatch = () => {
-        if (!currentEvent || dataLines.length === 0) return false;
-        if (currentId > lastEventId) lastEventId = currentId;
+        if (controller.signal.aborted) return true;
+        if (!currentEvent || dataLines.length === 0 || (currentId > 0 && currentId <= lastEventId)) return false;
         const data = dataLines.join('\n');
+        if (currentEvent === 'admitted') {
+          let receipt: { turnId?: string; sessionId?: string } | undefined;
+          try { receipt = JSON.parse(data); } catch { return false; }
+          if (!turnId || receipt?.turnId !== turnId || receipt.sessionId !== sessionId
+              || (requireAdmission && currentId !== 1)) return false;
+          if (currentId > 0) lastEventId = currentId;
+          if (!admitted) {
+            admitted = true;
+            clearAdmissionTimer();
+            onAdmitted?.({ turnId, sessionId });
+          }
+          return false;
+        }
+        if (requireAdmission && !admitted) {
+          if (replay && (currentEvent === 'done' || currentEvent === 'error')) {
+            onError(new Error('没有收到任务接收回执，发送状态未确认。'));
+            return true;
+          }
+          return false;
+        }
+        if (currentId > 0) lastEventId = currentId;
         if (currentEvent === 'token') {
           try { onToken(JSON.parse(data) as string); } catch { onToken(data); }
-        } else if (currentEvent === 'admitted' && onAdmitted) {
-          let receipt: { turnId?: string; sessionId?: string } | undefined;
-          try { receipt = JSON.parse(data); } catch { /* Ignore malformed receipts. */ }
-          if (turnId && receipt?.turnId === turnId && receipt.sessionId === sessionId) onAdmitted({ turnId, sessionId });
         } else if (currentEvent === 'thinking' && onThinking) {
           try { onThinking(JSON.parse(data) as string); } catch { onThinking(data); }
         } else if (currentEvent === 'activity' && onActivity) {
@@ -759,21 +783,27 @@ export function streamChat(
           if (line === '') {
             if (dispatch()) return true;
             currentEvent = ''; currentId = 0; dataLines = [];
-          } else if (line.startsWith('id:')) currentId = Number(line.slice(3).trim()) || 0;
+          } else if (line.startsWith('id:')) {
+            const id = Number(line.slice(3).trim());
+            currentId = Number.isSafeInteger(id) && id > 0 ? id : 0;
+          }
           else if (line.startsWith('event:')) currentEvent = line.slice(6).trim();
           else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
         }
       }
-      buffer += decoder.decode();
-      if (buffer) {
-        for (const line of buffer.split(/\r?\n/)) {
-          if (line.startsWith('id:')) currentId = Number(line.slice(3).trim()) || 0;
-          else if (line.startsWith('event:')) currentEvent = line.slice(6).trim();
-          else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
-        }
-      }
-      return dispatch();
+      // A disconnect can leave a complete-looking data line with no SSE frame
+      // terminator. Never dispatch it or move the recovery cursor past it.
+      return false;
   };
+
+  if (requireAdmission) {
+    admissionTimer = setTimeout(() => {
+      if (controller.signal.aborted || admitted) return;
+      controller.abort();
+      onError(new Error('等待任务接收回执超时，发送状态未确认。'));
+    }, 30_000);
+    controller.signal.addEventListener('abort', clearAdmissionTimer, { once: true });
+  }
 
   void (async () => {
     const started = Date.now();
@@ -789,6 +819,7 @@ export function streamChat(
           : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {
               signal: controller.signal,
             });
+        if (controller.signal.aborted) return;
         // jobs 流 404 = 任务记录不存在（后端重启丢日志 / 首发请求 5xx 没起 supervisor）。
         // 必须终结：旧逻辑依赖 onRecoveryUnavailable（新发送不传），不传时静默落进
         // 无限重试（1s 一次 ×130 分钟），onError 永不触发，会话卡死在「自动续接」。
@@ -797,9 +828,9 @@ export function streamChat(
           else onError(new Error('任务记录不存在或已失效，无法续接；请重新发送'));
           return;
         }
-        if (await consume(res)) return;
+        if (await consume(res, !first)) return;
       } catch (err: unknown) {
-        if (err instanceof Error && err.name === 'AbortError') return;
+        if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return;
         const status = (err as Error & { status?: number })?.status;
         if (first && status && status >= 400 && status < 500) {
           onError(err instanceof Error ? err : new Error('请求失败'));
@@ -816,7 +847,7 @@ export function streamChat(
       onInterrupted?.();
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-  })();
+  })().finally(clearAdmissionTimer);
 
   return controller;
 }

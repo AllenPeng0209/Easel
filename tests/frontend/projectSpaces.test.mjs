@@ -28,7 +28,7 @@ function load(project, localStorage = storage({}), userId = '') {
     runInNewContext(code, { ...environment, exports, require: name => read(name.replace('./', '')) });
     return exports;
   }
-  return { scope: read('projectScope'), store: read('store'), localStorage, sessionStorage };
+  return { scope: read('projectScope'), store: read('store'), prompt: read('promptAdmission'), localStorage, sessionStorage };
 }
 
 test('identical session IDs and publish drafts stay in their own project and survive reload', () => {
@@ -67,4 +67,24 @@ test('two users in the same IP never share conversation history or publication d
   assert.equal(b.store.loadSessions().length, 0);
   assert.equal(b.store.loadPublishDraft().title, '');
   assert.equal(load('default', entries, 'alice').store.loadSessions()[0].messages[0].content, 'Alice only');
+});
+
+test('a blank conversation with a pending admission survives alongside newer blank sessions', () => {
+  const space = load('default', storage({}), 'alice');
+  const pending = { id: 'pending', title: 'Sending', messages: [], pendingTurnId: 'send-1' };
+  const blank = { id: 'blank', title: 'New Chat', messages: [] };
+  space.store.saveSessions([blank, pending]);
+  assert.deepEqual(Array.from(space.store.loadSessions(), session => session.id), ['blank', 'pending']);
+});
+
+test('unconfirmed blank conversations survive locally without leaking into another account', () => {
+  const entries = storage({});
+  const owner = load('default', entries, 'alice');
+  const blank = { id: 'blank', title: 'New Chat', messages: [] };
+  const waiting = { id: 'waiting', title: 'Uncertain send', messages: [] };
+  owner.prompt.savePromptAttempt('waiting', { turnId: 'send-2', state: 'unconfirmed',
+    wireText: 'first try', message: { role: 'user', content: 'first try' }, composer: true });
+  owner.store.saveSessions([blank, waiting]);
+  assert.deepEqual(Array.from(load('default', entries, 'alice').store.loadSessions(), session => session.id), ['blank', 'waiting']);
+  assert.equal(load('default', entries, 'bob').prompt.loadPromptAttempt('waiting'), undefined);
 });

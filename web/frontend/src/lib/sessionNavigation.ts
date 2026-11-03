@@ -1,4 +1,5 @@
 import type { ChatSession, StreamState } from './store';
+import { loadPromptAttempt } from './promptAdmission';
 import { orderByRecency, pinCurrentBlank, sectionMembers } from '../vendor/deepseek-harness/navigation/order';
 import { formatSessionMarkdown } from '../vendor/deepseek-harness/navigation/markdown';
 import type { SessionEvent } from '../vendor/deepseek-harness/navigation/markdown-types';
@@ -14,7 +15,8 @@ export function navigationSessions(sessions: readonly NavigableSession[], query:
     id: session.id, blank: !session.messages.length, updatedAt: session.updated || session.created || 0,
   }]));
   const members = sessions.filter(session => {
-    if (!session.messages.length && (normalized || session.id !== activeId)) return false;
+    if (!session.messages.length && (normalized || session.id !== activeId)
+        && !session.pendingTurnId && !session.queued?.length && !loadPromptAttempt(session.id)) return false;
     if (filter === 'only' && !session.archived) return false;
     if (filter === 'default' && session.archived) return false;
     return !normalized || [session.title, session.id, session.persona || ''].some(value => value.toLowerCase().includes(normalized));

@@ -54,6 +54,13 @@ export function saveChatDraft(sessionId: string, draft: ChatDraft, composerId?: 
   } catch { return false; }
 }
 
+export function chatDraftOwner(sessionId: string): string | undefined {
+  try {
+    const stored = JSON.parse(localStorage.getItem(keyFor(sessionId)) || 'null');
+    return typeof stored?.composerId === 'string' ? stored.composerId : undefined;
+  } catch { return undefined; }
+}
+
 /** Consume the admitted text and receipts only while this composer owns the saved draft. */
 export function consumeChatDraft(sessionId: string, composerId: string, reminders?: InterruptedFile[]): boolean {
   try {

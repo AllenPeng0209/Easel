@@ -46,12 +46,12 @@ function compileExpression(node, context) {
   return vm.runInContext(code, context);
 }
 
-function helper(name) {
+function helper(name, context = {}) {
   const exports = {};
   const code = ts.transpileModule(readFileSync(new URL(`../../web/frontend/src/lib/${name}.ts`, import.meta.url), 'utf8'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
-  vm.runInNewContext(code, { exports, Date, Math });
+  vm.runInNewContext(code, { exports, Date, Math, ...context });
   return exports;
 }
 
@@ -63,12 +63,21 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function appBoundary(initial, overrides = {}) {
   const requests = [];
   const saved = [];
+  const storage = new Map();
+  const localStorage = overrides.localStorage || {
+    getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value),
+    removeItem: key => storage.delete(key),
+  };
+  const projectStorageKey = value => `scope:${value}`;
+  const prompt = helper('promptAdmission', { localStorage, require: () => ({ projectStorageKey }) });
   const context = vm.createContext({
     Date, Math, Error, Boolean, Array, AbortController, undefined, nextSessionRevision, mergeSessionCatalog, nextQueuedMessage,
     sessions: plain(initial), sessionsRef: { current: plain(initial) }, streams: {},
     streamCtl: { current: {} }, streamAcc: { current: {} }, typingBuf: { current: {} }, queueEdits: { current: {} },
     selectedPersona: 'another-brand-persona', historyReady: true, canOperate: true,
-    projectStorageKey: value => `scope:${value}`, sessionStorage: { setItem() {} },
+    projectStorageKey, localStorage, sessionStorage: { setItem() {}, getItem() { return null; }, removeItem() {} },
+    ...prompt, admissionFeedback: {},
+    loadChatDraft: () => ({ text: '', attachments: [] }), chatDraftOwner: () => 'composer',
     saveSessions: value => saved.push(plain(value)), updateSessionTitle() {},
     startTypingPump() {}, ensureTypingPump() {}, finalizeStream() {},
     receiveQuestion() {}, receiveAgentEvent() {}, closeQuestion() {}, resumePendingTurn() {},
@@ -84,6 +93,13 @@ function appBoundary(initial, overrides = {}) {
   context.setStreams = update => {
     context.streams = typeof update === 'function' ? update(context.streams) : update;
   };
+  context.setAdmissionFeedback = update => { context.admissionFeedback = update(context.admissionFeedback); };
+  context.clearStream ??= id => {
+    delete context.streamCtl.current[id];
+    delete context.streamAcc.current[id];
+  };
+  context.confirmPromptAdmission = compileExpression(callbackNode('confirmPromptAdmission'), context);
+  context.failPromptAdmission = compileExpression(callbackNode('failPromptAdmission'), context);
   context.confirmQueuedMessage = compileExpression(callbackNode('confirmQueuedMessage'), context);
   context.failQueuedAdmission = compileExpression(callbackNode('failQueuedAdmission'), context);
   context.startStream = compileExpression(callbackNode('startStream'), context);
@@ -100,10 +116,85 @@ for (const persona of [undefined, '']) {
     assert.equal(ui.context.sendUserAndStream('general', 'continue the draft'), true);
     assert.equal(ui.requests.length, 1);
     assert.equal(ui.requests[0][1], persona);
+    assert.equal(ui.context.sessions[0].messages.length, 0);
+    ui.requests[0][19]();
     assert.equal(ui.context.sessions[0].messages[0].content, 'continue the draft');
     assert.notEqual(ui.requests[0][1], 'another-brand-persona');
   });
 }
+
+test('ordinary composer waits for matching admission before committing one echo', async () => {
+  const ui = appBoundary([{ id: 'ordinary', title: 'Ordinary', created: 1, messages: [] }]);
+  const send = ui.callback('handleSendMessage')('ordinary', 'wait for host', []);
+  assert.equal(typeof send?.then, 'function');
+  assert.equal(ui.context.sessions[0].messages.length, 0);
+  assert.equal(ui.requests[0][20], true);
+  ui.requests[0][19]();
+  ui.requests[0][19]();
+  assert.equal(await send, true);
+  assert.equal(ui.context.sessions[0].messages.length, 1);
+  assert.equal(ui.context.sessions[0].messages[0].content, 'wait for host');
+});
+
+test('pre-admission rejection preserves the previous transcript', async () => {
+  const previous = [{ role: 'user', content: 'old user' }, { role: 'assistant', content: 'old answer' }];
+  const ui = appBoundary([{ id: 'ordinary', title: 'Ordinary', created: 1, messages: previous }]);
+  const send = ui.callback('handleSendMessage')('ordinary', 'rejected draft', []);
+  ui.requests[0][4](Object.assign(new Error('Bad draft'), { status: 400 }));
+  assert.equal(await send, false);
+  assert.deepEqual(plain(ui.context.sessions[0].messages), previous);
+});
+
+test('uncertain send persists exact attachment and turn identity across refresh and changed draft', async () => {
+  const files = [{ id: 'file1', name: 'brief.txt', path: '_inbox/s/b/brief.txt' }];
+  const ui = appBoundary([{ id: 's', title: 'Draft', persona: 'original persona', created: 1, messages: [] }]);
+  const pending = ui.callback('handleSendMessage')('s', 'frozen text', files);
+  const first = ui.requests[0];
+  first[4](new Error('receipt lost'));
+  assert.equal(await pending, false);
+  const refreshed = appBoundary(ui.context.sessions, { localStorage: ui.context.localStorage });
+  const rejected = refreshed.callback('handleSendMessage')('s', 'newer text', []);
+  assert.equal(rejected, false);
+  assert.equal(refreshed.requests.length, 0);
+  refreshed.callback('reconcilePromptAttempt')('s');
+  const retry = refreshed.requests[0];
+  assert.deepEqual(plain([retry[0], retry[1], retry[9], retry[12]]),
+    plain([first[0], first[1], first[9], first[12]]));
+  retry[19]();
+  assert.equal(refreshed.context.sessions[0].messages[0].content, 'frozen text');
+  assert.equal(refreshed.context.sessions[0].messages.length, 1);
+});
+
+test('cold admitted echo does not resend an identical restored composer draft', () => {
+  const ui = appBoundary([{ id: 's', title: 'Draft', created: 1, messages: [] }]);
+  ui.callback('handleSendMessage')('s', 'already accepted', []);
+  const restored = appBoundary(ui.context.sessions, {
+    localStorage: ui.context.localStorage,
+    loadChatDraft: () => ({ text: 'already accepted', attachments: [] }),
+  });
+  restored.callback('resumePendingTurn')('s');
+  assert.equal(restored.requests[0][10], true);
+  restored.requests[0][19]();
+  assert.equal(restored.context.sessions[0].messages[0].content, 'already accepted');
+  assert.equal(restored.callback('handleSendMessage')('s', 'already accepted', []), true);
+  assert.equal(restored.requests.length, 1);
+  assert.equal(restored.context.sessions[0].messages.length, 1);
+});
+
+test('regeneration only truncates the original suffix after admission', () => {
+  const transcript = [{ role: 'user', content: 'first' }, { role: 'assistant', content: 'old reply' }];
+  const ui = appBoundary([{ id: 's', title: 'Draft', created: 1, messages: transcript }]);
+  ui.context.sendUserAndStream('s', 'regenerated', [], undefined, 0);
+  assert.deepEqual(plain(ui.context.sessions[0].messages), transcript);
+  ui.context.sessions[0].messages.push({ role: 'assistant', content: 'newer tab reply' });
+  ui.requests[0][19]();
+  assert.deepEqual(plain(ui.context.sessions[0].messages.map(item => item.content)),
+    ['first', 'old reply', 'newer tab reply', 'regenerated']);
+  const unchanged = appBoundary([{ id: 's', title: 'Draft', created: 1, messages: transcript }]);
+  unchanged.context.sendUserAndStream('s', 'regenerated', [], undefined, 0);
+  unchanged.requests[0][19]();
+  assert.deepEqual(plain(unchanged.context.sessions[0].messages.map(item => item.content)), ['regenerated']);
+});
 
 test('a background queued conversation preserves its own explicit persona', () => {
   const ui = appBoundary([{ id: 'education', title: 'Education', persona: 'education-brand', created: 1, messages: [],
@@ -276,9 +367,11 @@ test('saved idea starts a conversation with the exact inspected snapshot and ret
   await ui.callback('handleUseSavedIdea')(idea.id);
   const ref = { id: idea.id, snapshotHash: idea.snapshotHash };
   assert.deepEqual(plain(ui.requests[0][17]), ref);
+  ui.requests[0][19]();
   assert.deepEqual(plain(ui.saved.at(-1)[0].messages[0].topicRef), ref);
   assert.equal(ui.context.sessions[0].title, idea.title);
 
+  delete ui.context.sessions[0].pendingTurnId;
   ui.context.sessionsRef.current = plain(ui.context.sessions);
   ui.context.streamAcc.current = {};
   ui.context.streamCtl.current = {};
@@ -302,9 +395,11 @@ test('workshop handoff sends the selected delivery into its originating chat and
   handoff(reference, 'origin');
   assert.equal(ui.requests[0][2], 'origin');
   assert.deepEqual(plain(ui.requests[0][18]), reference);
+  ui.requests[0][19]();
   assert.deepEqual(plain(ui.saved.at(-1)[0].messages[0].workshopRef), reference);
   assert.deepEqual(plain(ui.saved.at(-1)[1].messages), []);
 
+  delete ui.context.sessions[0].pendingTurnId;
   ui.context.sessionsRef.current = plain(ui.context.sessions);
   ui.context.streamAcc.current = {};
   ui.context.streamCtl.current = {};

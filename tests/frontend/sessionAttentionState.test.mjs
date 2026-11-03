@@ -27,3 +27,17 @@ test('persisted completion and failures remain visible beyond the initial histor
   assert.equal(sessionAttentionState(failed), 'failed');
   assert.equal(visibleHistoryCount([session, failed], 1, null, { failed: 'failed' }), 2);
 });
+
+test('an empty session with an unconfirmed prompt remains discoverable after switching chats', () => {
+  const options = { user: 'reader', project: 'default', storageValues: new Map() };
+  const attempts = componentModule('lib/promptAdmission.ts', options);
+  const { navigationSessions } = componentModule('lib/sessionNavigation.ts', options);
+  attempts.savePromptAttempt('uncertain', { turnId: 'run-1', state: 'unconfirmed',
+    wireText: 'try', message: { role: 'user', content: 'try' }, composer: true });
+  const sessions = [
+    { id: 'active', title: 'Current', messages: [] },
+    { id: 'uncertain', title: 'Need review', messages: [] },
+    { id: 'empty', title: 'Empty', messages: [] },
+  ];
+  assert.deepEqual(Array.from(navigationSessions(sessions, 'review', 'default', 'active'), session => session.id), ['uncertain']);
+});

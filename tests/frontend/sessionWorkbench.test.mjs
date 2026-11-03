@@ -40,7 +40,7 @@ function mount(sessions, overrides = {}, { narrow = false } = {}) {
       require: name => name === 'react' ? hooks
         : name === 'react/jsx-runtime' ? { jsx, jsxs: jsx, Fragment: 'fragment' }
           : name === './ProjectSpace' ? { ProjectSwitcher: 'IPSwitcher', useIpPermissions: () => ({ canOperate: true, isPlatformAdmin: true }) }
-            : (name.includes('sessionNavigation') || name.includes('vendor/deepseek-harness/navigation') || name.startsWith('./markdown') || name === './useModalLayer' || name === './focus' || name === './keyboard-composition')
+            : (name.includes('sessionNavigation') || name === './promptAdmission' || name === './projectScope' || name.includes('vendor/deepseek-harness/navigation') || name.startsWith('./markdown') || name === './useModalLayer' || name === './focus' || name === './keyboard-composition')
               ? load(resolve(dirname(path), name.endsWith('.ts') ? name : `${name}.ts`))
               : new Proxy({}, { get: (_, name) => name }),
     });

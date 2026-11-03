@@ -300,3 +300,16 @@ test('restored files block sends until verified, and unavailable receipts must b
   nodes = await ui.ready();
   assert.equal(control(nodes, '发送').props.disabled, false);
 });
+
+test('an uncertain earlier send can be reconciled without editing the current draft', async () => {
+  let checks = 0;
+  const ui = view({ initial: 'new text stays editable', queueProps: { admissionNotice: {
+    message: '上一条发送未确认。', action: { label: '核对上一条发送', run: () => { checks++; } },
+  } } });
+  const nodes = await ui.ready();
+  const action = nodes.find(node => node.type === 'button' && text(node) === '核对上一条发送');
+  assert.ok(action);
+  action.props.onClick();
+  assert.equal(checks, 1);
+  assert.equal(editor(ui.render()).props.value, 'new text stays editable');
+});

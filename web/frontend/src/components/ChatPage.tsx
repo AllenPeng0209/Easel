@@ -41,6 +41,7 @@ interface ChatPageProps {
   queuePaused?: boolean;
   onResumeQueue?: () => void;
   historyNotice?: string;
+  admissionNotice?: { message: string; action?: { label: string; run: () => void } };
 }
 
 // 空态推荐（贴合 Easel 社媒创作场景）
@@ -58,7 +59,7 @@ function greeting(): string {
 }
 
 export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onQuestionAnswered, onQuestionClosed,
-  queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice }: ChatPageProps) {
+  queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice }: ChatPageProps) {
   const [queueEdit, setQueueEdit] = useState<{ id: string; text: string } | null>(null);
   const queueEditChange = useRef(onQueueEditChange);
   queueEditChange.current = onQueueEditChange;
@@ -375,6 +376,13 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     })}
   </div>;
 
+  const admissionBanner = admissionNotice && <div className="composer-notice">
+    <span role="status">{admissionNotice.message}</span>
+    {admissionNotice.action && <button type="button" disabled={sending} onClick={admissionNotice.action.run}>
+      {admissionNotice.action.label}
+    </button>}
+  </div>;
+
   // ---- 空态：居中欢迎页 ----
   if (isEmpty) {
     return (
@@ -389,6 +397,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           <p className="chat-hero-sub">{apiDirect ? 'API 直连：写文案、策划选题、分析附件。本机工具和自动发布未启用。'
             : '从选题到发布，一站式帮你把想法做成能发的内容。'}</p>
           {queueDock}{inputBox(true)}
+          {admissionBanner}
           {historyNotice && <p className="chat-history-notice" role="status">{historyNotice}</p>}
           <div className="suggestions">
             {SUGGESTIONS.filter((s) => !apiDirect || ['写小红书文案', '口播脚本'].includes(s.title)).map((s) => (
@@ -480,6 +489,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         {!reading.following && <button className="chat-back-to-bottom" onClick={reading.backToBottom}>
           {reading.unread ? '有新内容 · 回到底部' : '回到底部'} <span>↓</span></button>}
         <div className="chat-input-inner">{queueDock}{inputBox(false)}
+          {admissionBanner}
           {historyNotice && <p className="chat-history-notice" role="status">{historyNotice}</p>}
           <p className="chat-autonomy-hint">{apiDirect ? '文字与附件分析模式' : 'AI 持续推进任务；需要你补充信息时会显示输入卡。'}</p></div>
       </div>
