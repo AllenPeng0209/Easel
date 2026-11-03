@@ -3,7 +3,6 @@ import { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react
 import type { ReactNode } from 'react';
 import ForkChatDialog, { type CreatedChatFork } from './ForkChatDialog';
 import MessageBubble from './MessageBubble';
-import ChatPlanPanel from './ChatPlanPanel';
 import DeliverablePreviewPane, { ChatInspectionPane } from './DeliverablePreviewPane';
 import { SubagentTranscript } from './AgentSubagentLineage';
 import type { AgentSubagent } from '../lib/agentEvents';
@@ -15,7 +14,7 @@ import {
   attachmentReferenceLabel, MAX_CHAT_REFERENCES, validateChatReferences,
   validateChatSessionReferences, type ChatDraftSessionReference, type ChatReference,
 } from '../lib/chatReferences';
-import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ChatPlanRef } from '../lib/store';
+import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from '../lib/store';
 import { uploadFiles, adoptOversize } from '../lib/api';
 import type { ChatQuestionClosed, UploadedFile } from '../lib/api';
 import type { ChatDeliverable } from '../lib/deliverables';
@@ -65,7 +64,6 @@ interface ChatPageProps {
   onResumeQueue?: () => void;
   historyNotice?: string;
   onOpenFailureSettings?: () => void;
-  onExecutePlan?: (plan: ChatPlanRef & { text: string }) => boolean | Promise<boolean>;
   admissionNotice?: { message: string; action?: { label: string; run: () => void } };
 }
 
@@ -84,7 +82,7 @@ function greeting(): string {
 }
 
 export default function ChatPage({ apiDirect, session, stream, onSend, onSendSuperagent, superagentTasks, onSteer, onStop, onResend, onEditHistory, onLoadEarlier, onForkAnswer, onOpenFork, onQuestionAnswered,
-  modelCapability, nextModel, turnModel, onChangeModel, modelLoading, onReloadModels, onNewContextChat, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
+  modelCapability, nextModel, turnModel, onChangeModel, modelLoading, onReloadModels, onNewContextChat, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings }: ChatPageProps) {
   const [forkTarget, setForkTarget] = useState<{ sessionId: string; index: number; turnId: string; answer: string }>();
   useEffect(() => setForkTarget(undefined), [session.id]);
   const [historyEdit, setHistoryEdit] = useState<{ sessionId: string; index: number; pending: boolean; error?: string }>();
@@ -150,7 +148,6 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
   const backgroundExecution = sendInBackground && !!onSendSuperagent;
   const [selectingFile, setSelectingFile] = useState(false);
   const selectingFileRef = useRef(false);
-  const [planOpen, setPlanOpen] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [draftError, setDraftError] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
@@ -333,7 +330,6 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
     if (e.dataTransfer.files?.length) doUpload(e.dataTransfer.files);
   };
   const submitDraft = async (intent: 'send' | 'steer') => {
-    if (planOpen) return;
     const { text: submittedText, references: submittedReferences,
       sessionReferences: submittedSessionReferences, command: submittedCommand } = draftContentRef.current;
     const trimmed = submittedText.trim();
@@ -558,17 +554,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
     })}
   </div>;
 
-  const composerWithPlan = (hero: boolean) => <>
-    {onExecutePlan && <button className="btn btn-sm" type="button" aria-expanded={planOpen}
-      disabled={!planOpen && (isStreaming || sending || selectingFile)}
-      onClick={() => setPlanOpen(value => !value)}>{planOpen ? '返回对话输入' : '计划审阅'}</button>}
-    {planOpen && onExecutePlan ? <ChatPlanPanel sessionId={session.id} canOperate={!isStreaming}
-      onExecute={async plan => {
-        if (isStreaming || sendingRef.current || selectingFileRef.current) return false;
-        const admitted = await onExecutePlan(plan);
-        if (admitted && mountedRef.current) setPlanOpen(false);
-        return admitted;
-      }} /> : inputBox(hero)}
+  const composer = (hero: boolean) => <>
+    {inputBox(hero)}
     <ContextBudgetMeter budget={contextBudget} onNewChat={onNewContextChat} />
   </>;
 
@@ -592,7 +579,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
           <h1 className="chat-hero-title">{greeting()}</h1>
           <p className="chat-hero-sub">{apiDirect ? 'API 直连：写文案、策划选题、分析附件。本机工具和自动发布未启用。'
             : '从选题到发布，一站式帮你把想法做成能发的内容。'}</p>
-          {queueDock}{composerWithPlan(true)}
+          {queueDock}{composer(true)}
           {superagentTasks}
           {admissionBanner}
           {historyNotice && <p className="chat-history-notice" role="status">{historyNotice}</p>}
@@ -757,7 +744,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
       <div className="chat-input-area">
         {!reading.following && <button className="chat-back-to-bottom" onClick={reading.backToBottom}>
           {reading.unread ? '有新内容 · 回到底部' : '回到底部'} <span>↓</span></button>}
-        <div className="chat-input-inner">{queueDock}{composerWithPlan(false)}
+        <div className="chat-input-inner">{queueDock}{composer(false)}
           {admissionBanner}
           {historyNotice && <p className="chat-history-notice" role="status">{historyNotice}</p>}
           <p className="chat-autonomy-hint">{apiDirect ? '文字与附件分析模式' : 'AI 持续推进任务；需要你补充信息时会显示输入卡。'}</p></div>

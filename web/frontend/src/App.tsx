@@ -1099,15 +1099,6 @@ export default function App() {
     return waitForAdmission ? owner.admissionPromise! : true;
   }, [selectedPersona, startStream]);
 
-  const handleExecutePlan = useCallback((sessionId: string, plan: ChatPlanRef & { text: string }) => {
-    if (!canOperate || !sessionsRef.current.some(session => session.id === sessionId)
-        || !/^[a-f0-9]{32}$/.test(plan.planId) || !Number.isSafeInteger(plan.revision) || plan.revision < 1
-        || !/^[a-f0-9]{64}$/.test(plan.digest)) return false;
-    const ref = { planId: plan.planId, revision: plan.revision, digest: plan.digest };
-    return sendUserAndStream(sessionId, plan.text, [], undefined,
-      `plan-${ref.planId}-${ref.revision}`, undefined, undefined, false, undefined, undefined, undefined, ref);
-  }, [canOperate, sendUserAndStream]);
-
   const handleSendMessage = useCallback((sessionId: string, displayText: string, attachments?: UploadedFile[], references?: ChatReference[], sessionReferences?: ChatSessionReference[], command?: ChatCommand) => {
     const session = sessionsRef.current.find(item => item.id === sessionId);
     if (!session || (!displayText.trim() && !attachments?.length) || (command && !validateChatCommand(displayText, command))) return false;
@@ -1802,7 +1793,6 @@ export default function App() {
               ...(canReconcile
                 ? { action: { label: '核对上一条发送', run: () => reconcilePromptAttempt(activeSession.id) } } : {}),
             } : undefined}
-            onExecutePlan={canOperate ? plan => handleExecutePlan(activeSession.id, plan) : undefined}
             onForkAnswer={canOperate ? index => handleForkAnswer(activeSession.id, index) : undefined}
             onOpenFork={handleSessionSelect}
             onLoadEarlier={canOperate ? handleLoadEarlier : undefined}
