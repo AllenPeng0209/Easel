@@ -10,16 +10,17 @@ const { parseHTML } = require('linkedom');
 const capability = { runtime: 'codex', model: 'runtime-default', canSelect: true,
   options: [{ id: 'model-a', label: '模型 A' }, { id: 'model-b', label: '模型 B' }] };
 
-test('shows the requested running model separately from the next-turn choice', () => {
+test('shows a compact next-turn choice and keeps the running model in its tooltip', () => {
   const Control = componentModule('components/SessionModelControl.tsx').default;
   const output = renderToStaticMarkup(React.createElement(Control, {
     capability, nextModel: 'model-b', turnModel: 'model-a', running: true, onChangeModel() {},
   }));
   const document = parseHTML(output).document;
-  assert.match(document.querySelector('[data-session-model-current]').textContent, /Codex.*本轮请求模型.*模型 A/);
+  assert.match(document.querySelector('[data-session-model-control]').getAttribute('title') || '', /Codex.*本轮请求模型.*模型 A/);
   const next = document.querySelector('[data-next-session-model]');
   assert.equal(next.querySelector('option[selected]').getAttribute('value'), 'model-b');
-  assert.match(document.textContent ?? output, /下一轮/);
+  assert.equal(next.getAttribute('aria-label'), '下一轮模型');
+  assert.doesNotMatch(document.querySelector('[data-session-model-control]').textContent, /本轮请求模型|下一轮/);
 });
 
 test('does not offer switching for an unsupported engine and explains why', () => {
@@ -67,7 +68,7 @@ test('a selection changes the next request only and never accepts an unknown opt
       await React.act(async () => select.dispatchEvent(new window.Event('change', { bubbles: true })));
     }
     assert.deepEqual(requested, ['model-b', null]);
-    assert.match(document.querySelector('[data-session-model-current]').textContent, /本轮请求模型.*模型 A/);
+    assert.match(document.querySelector('[data-session-model-control]').getAttribute('title'), /本轮请求模型.*模型 A/);
   } finally {
     await React.act(() => root.unmount());
     for (const [name, descriptor] of Object.entries(descriptors)) {

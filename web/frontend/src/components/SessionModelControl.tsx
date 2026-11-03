@@ -38,13 +38,11 @@ export default function SessionModelControl({ capability, nextModel, turnModel, 
   const observedLabel = turnModel ? running ? '本轮请求模型' : '最近请求模型' : '会话模型';
   const unavailable = !!nextModel && !options.some(option => option.id === nextModel);
   const canChoose = canSelect && options.length > 0 && onChangeModel;
-  return <div className="composer-model-control" data-session-model-control>
-    <span className="composer-model-current" data-session-model-current>
-      <strong>{runtimeLabel}</strong><span> · {observed ? `${observedLabel} ${labelOf(observed)}` : '模型未确认'}</span>
-    </span>
-    {canChoose ? <label className="composer-model-choice">
-      <span>下一轮</span>
-      <select aria-label="下一轮模型" data-next-session-model
+  const modelDetails = observed ? `${observedLabel} ${labelOf(observed)}` : '模型未确认';
+  const availability = reason || (!canChoose ? loading ? '正在读取可选模型…' : '当前会话无法切换模型。' : '');
+  const details = [runtimeLabel, modelDetails, availability].filter(Boolean).join(' · ');
+  return <div className="composer-model-control" data-session-model-control title={details}>
+    {canChoose ? <select className="composer-model-choice" aria-label="下一轮模型" data-next-session-model
         value={unavailable ? unavailableValue : nextModel ?? ''}
         disabled={disabled || loading}
         onChange={event => {
@@ -52,13 +50,9 @@ export default function SessionModelControl({ capability, nextModel, turnModel, 
           if (!value || options.some(option => option.id === value)) onChangeModel(value || null);
         }}>
         {unavailable && <option value={unavailableValue} disabled>之前选择的模型不可用</option>}
-        <option value="">使用底座默认</option>
+        <option value="">{model ? `${labelOf(model)} · 默认` : `${runtimeLabel} 默认模型`}</option>
         {options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
-      </select>
-    </label> : <span className="composer-model-reason">
-      {reason || (loading ? '正在读取可选模型…' : '当前会话无法切换模型。')}
-    </span>}
-    {canChoose && reason && <span className="composer-model-reason">{reason}</span>}
+    </select> : <span className="composer-model-current">{observed ? labelOf(observed) : runtimeLabel}</span>}
     {!canChoose && nextModel && onChangeModel && <button type="button" className="composer-attach-btn"
       data-reset-session-model disabled={disabled || loading} onClick={() => onChangeModel(null)}>清除原选择</button>}
   </div>;

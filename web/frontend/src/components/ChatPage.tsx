@@ -489,15 +489,15 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
             <IconStop size={14} /><span>{stream?.lifecycle === 'stopping' ? '停止中' : stream?.lifecycle === 'stop_failed' ? '重试停止' : '停止'}</span></button>}
           {showSteer && <button type="button" className="composer-attach-btn" title="立即指导"
             onClick={() => submitDraft('steer')} disabled={!canSend}>立即指导</button>}
+          {(modelCapability || modelLoading || onReloadModels) && <SessionModelControl capability={modelCapability}
+            nextModel={nextModel} turnModel={turnModel} running={isStreaming} disabled={sending}
+            loading={modelLoading} onChangeModel={onChangeModel} onReload={onReloadModels} />}
           <button className={`send-btn ${backgroundExecution || isStreaming ? 'send-btn-queue' : ''}`} onClick={handleSend} disabled={!canSend}
             data-superagent-composer-send={backgroundExecution || undefined} title={sendLabel} aria-label={sendLabel}>
             {backgroundExecution || isStreaming ? <span>{sendLabel}</span> : <IconArrowUp size={17} />}
           </button>
         </div>
       </div>
-      {(modelCapability || modelLoading || onReloadModels) && <SessionModelControl capability={modelCapability}
-        nextModel={nextModel} turnModel={turnModel} running={isStreaming} disabled={sending}
-        loading={modelLoading} onChangeModel={onChangeModel} onReload={onReloadModels} />}
       {failedUploads && <div className="composer-feedback" role="alert">请重试或移除失败的附件后发送。</div>}
       {backgroundExecution && backgroundBlocked && <div className="composer-feedback" role="status">
         后台执行只接收文字。请移除附件、引用或命令，或切回对话模式。

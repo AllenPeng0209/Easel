@@ -44,6 +44,7 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
         projectFetch: async (url, options) => url.endsWith('/upload/validate') && validate
           ? validate(options) : ({ json: async () => ({ max_mb: 50 }) }) };
       if (name.endsWith('/api')) return { uploadFiles: async () => [], adoptOversize: async () => [], mediaUrl: path => `/api/media/${path}` };
+      if (name === './SessionModelControl') return { __esModule: true, default: 'session-model-control' };
       if (name === './StructuredComposerEditor') return { __esModule: true, default: 'structured-editor' };
       if (name === './MessageBubble') return { __esModule: true, default: 'message-bubble' };
       if (name.includes('QuestionCards') || name.includes('BrushEntry')) return { default: () => null };
@@ -540,4 +541,12 @@ test('the conversation composer omits the autonomy footer copy', async () => {
   const session = { id: 's1', title: 'Chat', created: 1, messages: [{ role: 'user', content: 'hello' }] };
   const nodes = await view({ queueProps: { session } }).ready();
   assert.ok(!nodes.some(node => node.type === 'p' && text(node).includes('AI 持续推进任务')));
+});
+
+test('the model choice sits immediately left of the send button', async () => {
+  const nodes = await view({ queueProps: { modelLoading: true } }).ready();
+  const controls = nodes.find(node => node.props.className === 'composer-send-controls');
+  const children = [controls.props.children].flat(Infinity).filter(Boolean);
+  assert.equal(children.at(-2)?.type, 'session-model-control');
+  assert.equal(children.at(-1)?.props['aria-label'], '发送');
 });
