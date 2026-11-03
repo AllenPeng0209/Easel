@@ -887,3 +887,46 @@ def test_render_retry_freezes_attempts_and_reuses_only_unconfirmed_operation(tmp
     assert WorkshopStore(tmp_path).get(project["id"])["renders"][0] == failed
     assert client.post(base + "/renders", json={"expected_revision": 1}).json() == recovered
     assert len(operations) == 3
+
+
+def test_render_progress_unknown_stays_distinct_from_zero_and_terminal_time_is_fixed(tmp_path, video_bytes):
+    client, state = render_client(tmp_path, video_bytes)
+    project = create_project(client)
+    base = f"/api/workshop/projects/{project['id']}"
+    initial = client.post(base + "/renders", json={"expected_revision": 1}).json()
+    route = base + "/renders/" + initial["id"]
+    assert initial["progress_known"] is False
+    assert "completed_at" not in initial
+    state.update(status="running", progress=0.0)
+    zero = client.get(route).json()
+    assert zero["progress_known"] is True and zero["progress"] == 0.0
+    state.update(progress=0.45)
+    client.get(route)
+    state.update(progress=None)
+    running = client.get(route).json()
+    assert running["progress_known"] is True and running["progress"] == 0.45
+    assert "completed_at" not in running
+
+    state.update(status="succeeded")
+    terminal = client.get(route).json()
+    assert terminal["status"] == "succeeded"
+    assert terminal["completed_at"] == terminal["updated_at"]
+    assert terminal["progress_known"] is False
+    collected = client.post(route + "/collect", json={"expected_revision": 1})
+    assert collected.status_code == 200
+    assert client.get(route).json()["completed_at"] == terminal["completed_at"]
+
+
+def test_unconfirmed_submission_does_not_get_terminal_time(tmp_path):
+    def lost(_project, _operation):
+        raise TimeoutError("not confirmed")
+
+    client = workshop_client(tmp_path, canvas_creator=lambda _project: "canvas",
+                             canvas_state=lambda _project: {"revision": 4}, render_start=lost)
+    project = create_project(client)
+    base = f"/api/workshop/projects/{project['id']}"
+    assert client.post(base + "/renders", json={"expected_revision": 1}).status_code == 503
+    receipt = client.get(base).json()["renders"][0]
+    assert receipt["submission_state"] == "unconfirmed"
+    assert receipt["progress_known"] is False
+    assert "completed_at" not in receipt

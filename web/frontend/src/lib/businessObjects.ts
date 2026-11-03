@@ -73,7 +73,7 @@ const PROJECT_FIELDS = ['id', 'title', 'brief', 'aspect_ratio', 'revision', 'sta
 const DELIVERABLE_FIELDS = ['id', 'name', 'path', 'revision', 'engine_revision', 'sha256', 'render_id', 'created_at'];
 const REVIEW_FIELDS = ['id', 'revision', 'artifact_id', 'artifact_sha256', 'kind', 'decision', 'notes', 'created_at',
   'actorId', 'actor_id', 'reviewerId', 'reviewer_id', 'reviewer'];
-const RENDER_FIELDS = ['id', 'operation_id', 'task_id', 'content_revision', 'engine_revision', 'status', 'submission_state', 'progress', 'artifact_id',
+const RENDER_FIELDS = ['id', 'operation_id', 'task_id', 'content_revision', 'engine_revision', 'status', 'submission_state', 'progress', 'progress_known', 'artifact_id',
   'collected_revision', 'created_at', 'updated_at', 'collected_at'];
 const PUBLICATION_FIELDS = ['id', 'revision', 'artifact_id', 'artifact_sha256', 'platform', 'created_at', 'published_at', 'source', 'kind'];
 const VERIFICATION_FIELDS = ['engineVerification', 'publishEligibility', 'deliveryVerification', 'publicationEvidence', 'canvasBinding'];

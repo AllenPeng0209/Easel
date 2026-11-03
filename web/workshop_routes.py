@@ -10,6 +10,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from easel.video_workshop import WorkshopError, WorkshopStore
+from easel.projects import project_id
+from web.workshop_jobs import workshop_jobs
 
 
 class RequestModel(BaseModel):
@@ -134,6 +136,10 @@ def create_router(outputs_provider: Callable[[], Path], runtime_status=None, can
     @router.get("/projects")
     def projects(http_request: Request):
         return {"projects": perform(store(http_request).list, render_status=render_status)}
+
+    @router.get("/jobs")
+    def jobs(http_request: Request):
+        return {"projectId": project_id(), "jobs": perform(workshop_jobs, store(http_request))}
 
     @router.post("/projects", status_code=201)
     def create(http_request: Request, request: NewProject):

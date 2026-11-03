@@ -71,12 +71,12 @@ export default function ProjectSpace({ children }: { children: ReactNode }) {
   return <SpaceContext.Provider value={{ projects, current, refresh }}>{children}</SpaceContext.Provider>;
 }
 
-export function ProjectBreadcrumb() {
+export function ProjectBreadcrumb({ children }: { children?: ReactNode }) {
   const space = useContext(SpaceContext);
   if (!space) return null;
   return <div className="space-breadcrumb"><span className="space-dot" /><strong>{space.current.name}</strong>
     <span className="space-breadcrumb-divider">/</span><span>自媒体工作空间</span>
-    <span className="space-breadcrumb-hint">{ROLE_NAMES[space.current.role || 'owner']} · 账号 · 对话 · 内容独立管理</span></div>;
+    <span className="space-breadcrumb-hint">{ROLE_NAMES[space.current.role || 'owner']} · 账号 · 对话 · 内容独立管理</span>{children}</div>;
 }
 
 export function ProjectSwitcher() {

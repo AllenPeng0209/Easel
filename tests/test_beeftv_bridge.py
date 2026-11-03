@@ -111,7 +111,7 @@ def test_render_start_records_the_accepted_source_version(monkeypatch):
     client = module.BeefTVClient('http://127.0.0.1:8842/api', 'client', 'private', transport=httpx.MockTransport(remote))
     monkeypatch.setattr(module, 'configured_client', lambda: client)
     assert module.render_start({'beeftv_canvas_id': 'canvas-a', 'engine_current_revision': 7}, 'render-project-v7') == {
-        'task_id': 'a' * 32, 'engine_revision': 7, 'status': 'queued', 'progress': 0}
+        'task_id': 'a' * 32, 'engine_revision': 7, 'status': 'queued'}
 
 
 def test_render_status_is_queried_without_starting_a_second_render(monkeypatch):
@@ -153,3 +153,14 @@ def test_resource_download_rejects_path_escape_before_any_request(tmp_path):
     client = bridge().BeefTVClient('http://127.0.0.1:8842/api', 'client', 'private', transport=httpx.MockTransport(remote))
     with pytest.raises(ValueError):
         client.download_resource('../private', tmp_path / 'final.mp4')
+
+
+@pytest.mark.parametrize("reported, expected", [(None, {}), (False, {}), ("nan", {}), (-1, {}), (101, {}), (0, {"progress": 0.0})])
+def test_render_status_does_not_invent_missing_progress(monkeypatch, reported, expected):
+    def remote(request):
+        assert request.method == 'GET'
+        return httpx.Response(200, json={'code': 0, 'data': {'status': 'running', 'progress': reported}})
+    module = bridge()
+    client = module.BeefTVClient('http://127.0.0.1:8842/api', 'client', 'private', transport=httpx.MockTransport(remote))
+    monkeypatch.setattr(module, 'configured_client', lambda: client)
+    assert module.render_status({}, {'task_id': 'a' * 32}) == {'status': 'running', **expected}

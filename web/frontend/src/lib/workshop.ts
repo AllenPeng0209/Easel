@@ -95,6 +95,12 @@ export function normalizeWorkshopSubmissionAttempts(value: unknown): WorkshopSub
   return [...attempts.values()].sort((first, next) => first.number - next.number);
 }
 
+export function workshopProgress(receipt?: { progress?: unknown; progress_known?: unknown }): number | null {
+  const progress = receipt?.progress;
+  return receipt?.progress_known === true && typeof progress === 'number' && progress >= 0 && progress <= 1
+    ? progress : null;
+}
+
 export interface WorkshopRenderReceipt {
   id: string;
   operation_id: string;
@@ -105,6 +111,8 @@ export interface WorkshopRenderReceipt {
   submission_state?: 'unconfirmed' | 'confirmed';
   submission_attempts?: WorkshopSubmissionAttempt[];
   progress: number;
+  progress_known?: boolean;
+  completed_at?: string;
   message?: string;
   created_at: string;
   updated_at: string;

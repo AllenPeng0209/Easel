@@ -72,7 +72,7 @@ test('a settled chat shows the exact current workshop render state without inven
   const id = 'a'.repeat(32);
   const current = { id: 'b'.repeat(32), operation_id: 'native-operation', task_id: 'native-task',
     content_revision: 2, engine_revision: 3, status: 'running', submission_state: 'confirmed',
-    progress: 0.35, created_at: '2026-11-03T02:58:00Z', updated_at: '2026-11-03T03:00:00Z' };
+    progress: 0.35, progress_known: true, created_at: '2026-11-03T02:58:00Z', updated_at: '2026-11-03T03:00:00Z' };
   const details = { project: { id, revision: 2, stage: 'draft', renders: [
     { ...current, id: 'c'.repeat(32), content_revision: 1 }, current,
   ] } };

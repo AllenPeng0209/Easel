@@ -7873,12 +7873,34 @@
     "reuse_kind": "adapted",
     "changes": "适配自动折叠和手动展开所有权，保留正在操作的详情焦点。",
     "verification_status": "A36_work_details_persistence_and_reading_anchor_verified"
+  },
+  {
+    "feature_id": "B19",
+    "upstream_path": "packages/client/ui-jobs/src/client/JobListAction.tsx",
+    "upstream_sha256": "ae1b9aac19c1d50cfc915c909edfefd07ff54371a26af43ecc2e323d253914d7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/WorkshopJobsDrawer.tsx",
+    "destination_sha256": "94d6807804bd871ec1cebbbb246221e83051d2e5fc31ce6e6a3a0fd43294fb8f",
+    "reuse_kind": "adapted",
+    "changes": "适配后台任务抽屉和可见范围内的任务观察，按当前 IP 显示工坊回执。",
+    "verification_status": "B19_workshop_roster_progress_and_scope_verified"
+  },
+  {
+    "feature_id": "B19",
+    "upstream_path": "packages/client/ui-jobs/src/client/JobListAction.tsx",
+    "upstream_sha256": "ae1b9aac19c1d50cfc915c909edfefd07ff54371a26af43ecc2e323d253914d7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/lib/workshopJobs.ts",
+    "destination_sha256": "f641ccea1f807b1f9a2fb8464f6620676d4dd455f688a3cf277953c284ca4083",
+    "reuse_kind": "adapted",
+    "changes": "接入 Easel 持久名单与准确任务状态查询，限制每轮观察并保留未知进度。",
+    "verification_status": "B19_workshop_roster_progress_and_scope_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 89,
+    "source_migration_files": 91,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 74,
+    "adapted_upstream_files": 76,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

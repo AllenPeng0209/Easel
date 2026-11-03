@@ -180,7 +180,7 @@ class BusinessObjectService:
             'reviews': {'id', 'revision', 'artifact_id', 'artifact_sha256', 'kind', 'decision', 'notes',
                         'created_at', 'actor_id', 'actorId', 'reviewer_id'},
             'renders': {'id', 'operation_id', 'task_id', 'status', 'content_revision', 'engine_revision',
-                        'submission_state', 'progress', 'artifact_id', 'collected_revision',
+                        'submission_state', 'progress', 'progress_known', 'artifact_id', 'collected_revision',
                         'created_at', 'updated_at', 'collected_at'},
             'publications': {'id', 'revision', 'artifact_id', 'artifact_sha256', 'platform', 'published_at', 'created_at'},
         }

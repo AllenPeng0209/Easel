@@ -119,3 +119,11 @@ test('only transient transport failures are retryable', async () => {
   await assert.rejects(observeChatWorkshopRender(projectId, receipt(), signal),
     error => !canRetryChatWorkshopObservation(error));
 });
+
+test('only confirmed provider progress is displayed, including a real zero', () => {
+  const { workshopProgress } = load();
+  assert.equal(workshopProgress(receipt({ progress: 0, progress_known: true })), 0);
+  assert.equal(workshopProgress(receipt({ progress: 0.35, progress_known: true })), 0.35);
+  assert.equal(workshopProgress(receipt({ progress: 0.35 })), null);
+  assert.equal(workshopProgress(receipt({ progress: 2, progress_known: true })), null);
+});

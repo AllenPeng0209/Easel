@@ -48,6 +48,7 @@ import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ReasoningSum
 const TAB_SESSION_KEY = projectStorageKey('easel_tab_session');
 const ONBOARDING_SEEN_KEY = projectStorageKey('easel_onboarding_seen');
 const VideoWorkshopPage = lazy(() => import('./components/VideoWorkshopPage'));
+const WorkshopJobsDrawer = lazy(() => import('./components/WorkshopJobsDrawer'));
 const InteractionCenterPage = lazy(() => import('./components/InteractionCenterPage'));
 
 interface LiveTurnAccumulator {
@@ -85,6 +86,7 @@ export default function App() {
   const { canOperate, isPlatformAdmin } = useIpPermissions();
   const [currentPage, setCurrentPage] = useState<Page>(() => canOperate ? 'chat' : 'dashboard');
   const [workshopEntry, setWorkshopEntry] = useState(0);
+  const [workshopJobsOpen, setWorkshopJobsOpen] = useState(false);
   const [interactionEntry, setInteractionEntry] = useState(0);
   const [businessEntry, setBusinessEntry] = useState<BusinessTarget | null>(null);
   const [businessNotice, setBusinessNotice] = useState('');
@@ -1568,6 +1570,19 @@ export default function App() {
     setActiveSessionId(newSession.id);
   }, [activeSessionId]);
 
+  const closeWorkshopJobs = () => setWorkshopJobsOpen(false);
+  const openWorkshopJob = (id: string, artifactId?: string) => {
+    if (!/^[a-f0-9]{32}$/.test(id)) return;
+    businessNavigation.current += 1;
+    setBusinessNotice('');
+    setWorkshopPanel(null);
+    setBusinessEntry({ kind: 'workshop', id,
+      ...(/^[a-f0-9]{32}$/.test(artifactId ?? '') ? { artifactId } : {}) });
+    setWorkshopEntry(value => value + 1);
+    setCurrentPage('workshop');
+    closeWorkshopJobs();
+  };
+
   const visibleWorkshop = canOperate && currentPage === 'chat' && workshopPanel?.sessionId === activeSessionId
     ? workshopPanel : null;
   return (
@@ -1599,7 +1614,12 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
       <main className="main-content">
-        <ProjectBreadcrumb />
+        <ProjectBreadcrumb>
+          <button type="button" className="btn btn-sm space-breadcrumb-action"
+            aria-haspopup="dialog" aria-expanded={workshopJobsOpen} onClick={() => setWorkshopJobsOpen(true)}>
+            后台任务
+          </button>
+        </ProjectBreadcrumb>
         {businessNotice && <p className="agent-event__note" role="status">{businessNotice}</p>}
         {(['trends', 'ideas', 'breakdown'] as Page[]).includes(currentPage) && (
           <SubNav current={currentPage} onNavigate={page => { businessNavigation.current += 1;
@@ -1621,6 +1641,10 @@ export default function App() {
           </aside>}
         </div>
       </main>
+
+      {workshopJobsOpen && <Suspense fallback={null}>
+        <WorkshopJobsDrawer open onClose={closeWorkshopJobs} onOpenWorkshop={openWorkshopJob} />
+      </Suspense>}
 
       {/* 首次使用：推荐配置画像 */}
       {showRecommend && (

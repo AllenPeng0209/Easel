@@ -148,7 +148,7 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
             return "operate"
         if resource in {"status", "personas", "skills", "outputs", "artifacts/archive", "accounts",
                         "analytics/platforms", "publishing-policy", "upload/limits", "schedule",
-                        "schedule/context", "ideas", "trends", "interactions/bootstrap", "workshop/projects"}:
+                        "schedule/context", "ideas", "trends", "interactions/bootstrap", "workshop/projects", "workshop/jobs"}:
             return "view"
         if (re.fullmatch(r"persona/[^/]+(?:/files)?", resource)
                 or re.fullmatch(r"skill/[^/]+", resource)

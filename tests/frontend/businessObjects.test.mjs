@@ -27,7 +27,7 @@ const workshop=changes=>object({kind:'workshop',id:workshopId,title:'课程介�
   details:{engineVerification:'not_checked',publishEligibility:'unverified',deliveryVerification:'stale_revision',
     publicationEvidence:'stored_records_only',canvasBinding:'verified',project:{id:workshopId,revision:4,stage:'simulated_reviewed',
     deliverables:[{id:'delivery-one',revision:3,sha256:'d'.repeat(64),path:'videos/final.mp4'}],
-    renders:[{id:'render-one',operation_id:'render-operation',task_id:'render-task',content_revision:4,engine_revision:7,status:'running',progress:0.4}],
+    renders:[{id:'render-one',operation_id:'render-operation',task_id:'render-task',content_revision:4,engine_revision:7,status:'running',progress:0.4,progress_known:true}],
     reviews:[{id:'review-sim',kind:'simulated',decision:'approved',revision:3,artifact_id:'delivery-one',artifact_sha256:'d'.repeat(64),notes:'模拟预审'},
       {id:'review-human',kind:'human',decision:'changes_requested',revision:4,artifact_id:'delivery-two',artifact_sha256:'e'.repeat(64),reviewer_id:'reviewer-from-host',notes:'补充字幕'}],
     publications:[{id:'publication-one',revision:3,platform:'抖音',artifact_id:'delivery-one',artifact_sha256:'d'.repeat(64),url:'https://evil.test/not-a-trusted-link'}]}},

@@ -6,7 +6,6 @@ the caller's stable operation id and are never automatically retried.
 from __future__ import annotations
 
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -177,6 +176,19 @@ def _task_id(receipt: dict) -> str:
     return task_id
 
 
+def _render_progress(result: dict) -> dict[str, float]:
+    reported = result.get('progress')
+    if isinstance(reported, bool):
+        return {}
+    try:
+        progress = float(reported)
+    except (TypeError, ValueError, OverflowError):
+        return {}
+    if not 0 <= progress <= 100:
+        return {}
+    return {'progress': progress / 100 if progress > 1 else progress}
+
+
 def render_start(project: dict, operation_id: str) -> dict:
     revision = project.get('engine_current_revision')
     if type(revision) is not int or revision < 0 or not project.get('beeftv_canvas_id'):
@@ -187,7 +199,7 @@ def render_start(project: dict, operation_id: str) -> dict:
     if result.get('sourceRevision') != revision or not result.get('taskId'):
         raise BeefTVError('未能确认本次渲染的来源版本')
     return {'task_id': result['taskId'], 'engine_revision': result['sourceRevision'],
-            'status': result.get('status', 'queued'), 'progress': 0}
+            'status': result.get('status', 'queued'), **_render_progress(result)}
 
 
 def render_status(project: dict, receipt: dict) -> dict:
@@ -197,15 +209,7 @@ def render_status(project: dict, receipt: dict) -> dict:
         state = 'running'
     if state not in ('queued', 'running', 'succeeded', 'failed', 'cancelled'):
         raise BeefTVError('渲染状态无法确认，请查询原任务', 503)
-    try:
-        progress = float(task.get('progress') or 0)
-    except (TypeError, ValueError):
-        progress = 0
-    if not math.isfinite(progress):
-        progress = 0
-    if progress > 1:
-        progress /= 100
-    return {'status': state, 'progress': max(0, min(1, progress))}
+    return {'status': state, **_render_progress(task)}
 
 
 def render_collect(project: dict, receipt: dict, outputs_root: Path | None = None) -> dict:

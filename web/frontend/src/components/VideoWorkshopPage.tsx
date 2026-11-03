@@ -6,7 +6,7 @@ import {
   addWorkshopComment, addWorkshopReview, connectWorkshopCanvas, createWorkshopProject,
   archiveWorkshopProject, deliveryReviewState, fetchWorkshopProject, fetchWorkshopProjects, fetchWorkshopProjectsWithActive, fetchWorkshopStatus,
   filterWorkshopProjects, projectLifecycle, recordWorkshopPublication, reviewSummary, safeRuntimeUrl, WORKSHOP_LIFECYCLE_STATES,
-  updateWorkshopProject, workshopCanvasUrl, workshopMediaUrl, WorkshopRenderFlow,
+  updateWorkshopProject, workshopCanvasUrl, workshopMediaUrl, workshopProgress, WorkshopRenderFlow,
 } from '../lib/workshop';
 import type {
   ReviewDecision, ReviewKind, WorkshopDeliverable, WorkshopProject,
@@ -161,18 +161,19 @@ function ExportControls({ project, connected, onUpdate, onOpenReview, observeOnl
   const busy = starting || (!!active && !paused);
   const failed = receipt && ['failed', 'cancelled'].includes(receipt.status);
   const unconfirmed = failed && receipt.submission_state === 'unconfirmed';
-  const progress = Math.round(Math.max(0, Math.min(1, receipt?.progress || 0)) * 100);
+  const observedProgress = workshopProgress(receipt ?? undefined);
+  const progress = observedProgress === null ? null : Math.round(observedProgress * 100);
   const label = starting ? '正在提交导出任务…' : !receipt ? '使用当前画布素材合成完整视频'
     : receipt.artifact_id ? '成片已导出，可进入交付与审阅'
       : receipt.status === 'queued' ? '导出任务正在排队'
-        : receipt.status === 'running' ? `正在导出成片 · ${progress}%`
+        : receipt.status === 'running' ? `正在导出成片 · ${progress === null ? '进度未知' : `${progress}%`}`
           : receipt.status === 'succeeded' ? paused ? '导出完成，交付登记待处理' : '导出完成，正在登记交付…'
             : unconfirmed ? '导出提交结果待核对'
               : receipt.status === 'cancelled' ? '导出任务已取消' : '导出任务失败';
 
   return <section className="workshop-export-bar" aria-label="成片导出">
     <div className="workshop-export-status"><strong role="status">{label}</strong>
-      {receipt && !receipt.artifact_id && ['queued', 'running'].includes(receipt.status)
+      {progress !== null && receipt && !receipt.artifact_id && ['queued', 'running'].includes(receipt.status)
         && <div className="workshop-export-progress" role="progressbar" aria-label="成片导出进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
           <span style={{ width: `${progress}%` }} /></div>}
       {(error || (failed && receipt.message)) && <p className="workshop-export-error" role="alert">{error || receipt?.message}</p>}

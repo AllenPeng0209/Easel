@@ -58,4 +58,8 @@ for (const canOperate of [true,false]) test(`the application opens the ${canOper
   });
   const sidebar=nodes(exports.default()).find(node=>node.props?.onPageChange && Object.hasOwn(node.props,'currentPage'));
   assert.equal(sidebar.props.currentPage,canOperate ? 'chat' : 'dashboard');
+  const breadcrumb = nodes(exports.default()).find(node => node.type === 'breadcrumb');
+  const jobs = nodes(breadcrumb.props.children).find(node => node.type === 'button');
+  assert.equal(jobs.props['aria-haspopup'], 'dialog');
+  assert.equal(text(jobs), '后台任务');
 });

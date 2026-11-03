@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import errno
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -462,17 +461,26 @@ class WorkshopStore:
         status = aliases.get(status, status)
         if status not in {"queued", "running", *_RENDER_TERMINAL}:
             raise WorkshopError("BeefTV 返回未知渲染状态，未当成成功", 503)
-        progress = result.get("progress", 1.0 if status == "succeeded" else 0.0)
-        if not isinstance(progress, (int, float)) or isinstance(progress, bool) or not math.isfinite(progress):
-            progress = 0.0
-        progress = min(1.0, max(0.0, float(progress)))
-        if status == "succeeded":
-            progress = 1.0
+        progress = result.get("progress")
+        known = type(progress) in (int, float) and 0 <= progress <= 1
+        if not known:
+            progress = 1.0 if status == "succeeded" else 0.0
         message = {
             "queued": "渲染已排队", "running": "渲染进行中", "succeeded": "渲染成功",
             "failed": "渲染失败", "cancelled": "渲染已取消",
         }[status]
-        return {"status": status, "progress": progress, "message": message}
+        return {"status": status, "progress": progress, "progress_known": known, "message": message}
+
+    @staticmethod
+    def _observe_confirmed_render(receipt: dict, result: dict, **identity) -> None:
+        observed_at = _now()
+        if result["status"] in _RENDER_TERMINAL:
+            # The engine supplied a terminal status; record when it was first
+            # confirmed locally, independent of subsequent artifact collection.
+            receipt.setdefault("completed_at", observed_at)
+        elif not result["progress_known"] and receipt.get("progress_known") is True:
+            result = {**result, "progress": receipt["progress"], "progress_known": True}
+        receipt.update(result, **identity, submission_state="confirmed", updated_at=observed_at)
 
     def start_render(self, identifier: str, expected_revision: int, canvas_state=None, render_start=None) -> dict:
         if canvas_state is None or render_start is None:
@@ -530,7 +538,7 @@ class WorkshopStore:
                 return existing
             if existing is not None and not confirmed:
                 receipt = existing
-                receipt.update(status="queued", progress=0.0, submission_state="unconfirmed",
+                receipt.update(status="queued", progress=0.0, progress_known=False, submission_state="unconfirmed",
                                message="正在核对原渲染操作，未创建另一任务", updated_at=_now())
             else:
                 render_id = uuid.uuid4().hex
@@ -540,7 +548,7 @@ class WorkshopStore:
                     "content_revision": project["revision"], "engine_revision": engine_revision,
                     "canvas_id": project["beeftv_canvas_id"],
                     "task_id": "", "status": "queued", "submission_state": "unconfirmed",
-                    "progress": 0.0, "message": "正在提交本地渲染任务",
+                    "progress": 0.0, "progress_known": False, "message": "正在提交本地渲染任务",
                     "created_at": _now(), "updated_at": _now(),
                 }
                 project["renders"].append(receipt)
@@ -568,7 +576,7 @@ class WorkshopStore:
             with self._locked():
                 project = self._read(identifier)
                 saved = self._render_entry(project, receipt["id"])
-                saved.update(status="failed", progress=0.0, submission_state="unconfirmed",
+                saved.update(status="failed", progress=0.0, progress_known=False, submission_state="unconfirmed",
                              message="渲染提交结果待核对；可点击重试核对原操作，尚未确认任务失败。", updated_at=_now())
                 if isinstance(result, dict):
                     if isinstance(result.get("task_id"), str) and _CANVAS_ID.fullmatch(result["task_id"]):
@@ -583,7 +591,7 @@ class WorkshopStore:
         with self._locked():
             project = self._read(identifier)
             saved = self._render_entry(project, receipt["id"])
-            saved.update(update, task_id=result["task_id"], submission_state="confirmed", updated_at=_now())
+            self._observe_confirmed_render(saved, update, task_id=result["task_id"])
             self._settle_render_submission(saved, "confirmed", task_id=result["task_id"])
             self._write(project)
             return saved
@@ -603,7 +611,7 @@ class WorkshopStore:
                         project = self._read(identifier)
                         saved = self._render_entry(project, render_id)
                         if not self._submission_confirmed(saved) and saved["status"] not in _RENDER_TERMINAL:
-                            saved.update(status="failed", submission_state="unconfirmed", updated_at=_now(),
+                            saved.update(status="failed", progress_known=False, submission_state="unconfirmed", updated_at=_now(),
                                          message="原渲染提交已中断，结果待核对；请点击重试核对原操作。")
                             self._settle_render_submission(saved, "unconfirmed", error_code="submission_interrupted")
                             self._write(project)
@@ -624,7 +632,7 @@ class WorkshopStore:
             project = self._read(identifier)
             saved = self._render_entry(project, render_id)
             if saved["status"] not in _RENDER_TERMINAL:
-                saved.update(update, submission_state="confirmed", updated_at=_now())
+                self._observe_confirmed_render(saved, update)
                 self._write(project)
             return saved
 

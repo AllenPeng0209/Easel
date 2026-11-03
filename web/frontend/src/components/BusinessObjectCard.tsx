@@ -18,7 +18,7 @@ import DraftSnapshotPreview from './DraftSnapshotPreview';
 import { useIpPermissions } from './ProjectSpace';
 import { IconIdea, IconOutputs, IconVideo } from './icons';
 import '../styles/businessObjects.css';
-import { normalizeWorkshopSubmissionAttempts, workshopSubmissionErrors } from '../lib/workshop';
+import { normalizeWorkshopSubmissionAttempts, workshopProgress, workshopSubmissionErrors } from '../lib/workshop';
 
 interface Props {
   record: BusinessObject;
@@ -96,13 +96,15 @@ function WorkshopDetails({ record }: { record: BusinessObject }) {
       <strong>{valueText(item.id)}</strong><VersionRelation current={record.version.revision} observed={item.revision} />
       <code>{valueText(item.sha256)}</code></li>)}</ul> : <p>没有保存成片记录。</p>}</section>
     <section><h4>渲染记录 · {renders.length}</h4>{renders.length ? <ul>{renders.map((item, index) => {
+      const progress = workshopProgress({ progress: item.progress, progress_known: item.progress_known });
       const adopted = typeof item.artifact_id === 'string' && typeof item.collected_revision === 'number'
         && deliverables.find(file => file.id === item.artifact_id && file.render_id === item.id
           && file.revision === item.collected_revision && file.engine_revision === item.engine_revision
           && typeof file.sha256 === 'string' && /^[a-f0-9]{64}$/.test(file.sha256));
       return <li key={String(item.id ?? index)}>
       <strong>{valueText(item.id)}</strong><span>{valueText(item.status)}</span>
-      {typeof item.progress === 'number' && item.progress >= 0 && item.progress <= 1 && <span>{Math.round(item.progress * 100)}%</span>}
+      {progress !== null ? <span>{Math.round(progress * 100)}%</span>
+        : (item.status === 'queued' || item.status === 'running') && <span>进度未知</span>}
       <VersionRelation current={record.version.revision} observed={item.content_revision} />
       <span>引擎版本：{valueText(item.engine_revision)}</span>
       {typeof item.operation_id === 'string' && <span>操作编号：<code>{item.operation_id}</code></span>}
