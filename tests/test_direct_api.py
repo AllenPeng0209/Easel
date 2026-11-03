@@ -95,8 +95,10 @@ def test_stream_history_and_recovery_without_openclaw(sandbox, monkeypatch, lega
     assert "技能库" not in requests[0]["messages"][-1]["content"]
     last = sandbox.get("/api/chat/last/same", params={"turn_id": "second"}).json()
     assert last["text"] == "测试成功" and last["clean_end"] is True
+    assert last["outcome"] == "completed"
     replay = sandbox.get("/api/chat/jobs/second/stream").text
     assert "测试成功" in replay and "event: done" in replay
+    assert '"outcome": "completed"' in replay
     assert sandbox.delete("/api/session/same").json()["deleted"]
     assert not direct_api.history_path(web.SESSIONS_DIR, "same").exists()
 
@@ -118,6 +120,7 @@ def test_failed_stream_is_not_committed(sandbox, monkeypatch, status, events):
     assert not direct_api.history_path(web.SESSIONS_DIR, "failed").exists()
     last = sandbox.get("/api/chat/last/failed").json()
     assert last["status"] == "done" and last["clean_end"] is False
+    assert last["outcome"] == "failed"
 
 
 def test_nonstream_and_model_save_without_openclaw(sandbox, monkeypatch):
@@ -182,7 +185,8 @@ def test_stop_cancels_upstream_and_releases_session(sandbox, monkeypatch):
     assert not worker.is_alive()
     assert "event: done" in responses[0].text
     assert "event: error" not in responses[0].text
-    assert sandbox.get("/api/chat/last/stop").json()["stop_reason"] == "user_stopped"
+    stopped = sandbox.get("/api/chat/last/stop").json()
+    assert stopped["stop_reason"] == "user_stopped" and stopped["outcome"] == "stopped"
     assert not web._RUNNING_CHAT
     assert not direct_api.history_path(web.SESSIONS_DIR, "stop").exists()
 

@@ -18,13 +18,14 @@ import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
 import SettingsPanel from './components/SettingsPanel';
 import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, fetchChatSessions, syncChatSessions, deleteChatSession } from './lib/api';
-import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed } from './lib/api';
+import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed, ChatTurnOutcome } from './lib/api';
 import { reduceAgentEvents } from './lib/agentEvents';
 import { fetchBusinessObject, parseBusinessHash } from './lib/businessObjectApi';
 import type { BusinessTarget } from './lib/businessObjectApi';
 import type { WorkshopReference } from './lib/workshop';
 import type { AgentEvent } from './lib/agentEvents';
 import { mergeSessionCatalog, nextSessionRevision } from './lib/sessionSync';
+import { sessionAttentionState } from './lib/sessionNavigation';
 import { confirmChatStop, enqueueMessage, nextQueuedMessage } from './lib/chatControl';
 import { questionStatus } from './lib/api';
 import { deleteSession as deleteRemoteSession } from './lib/api';
@@ -87,7 +88,6 @@ export default function App() {
   const [historyReady, setHistoryReady] = useState(false);
   const [navigationReady, setNavigationReady] = useState(false);
   const [historyNotice, setHistoryNotice] = useState('');
-  const [unreadSessions, setUnreadSessions] = useState<Record<string, boolean>>({});
   const [historyRetry, setHistoryRetry] = useState(0);
   // 装完还没配模型时，首开要把用户直接带到模型设置页（安装脚本不再在终端问 Key）
   const [needModelSetup, setNeedModelSetup] = useState(false);
@@ -282,6 +282,23 @@ export default function App() {
   useEffect(() => { activeIdRef.current = activeSessionId; }, [activeSessionId]);
 
   useEffect(() => {
+    if (!historyReady || !canOperate || currentPage !== 'chat' || !activeSessionId || !activeSession?.unreadCompletion) return;
+    const markSeen = () => {
+      if (chatOrigin.current !== activeSessionId || document.visibilityState === 'hidden') return;
+      setSessions(previous => {
+        const next = previous.map(session => session.id === activeSessionId && session.unreadCompletion
+          ? { ...session, unreadCompletion: false, updated: nextSessionRevision(session) } : session);
+        if (next.every((item, index) => item === previous[index])) return previous;
+        saveSessions(next);
+        return next;
+      });
+    };
+    markSeen();
+    document.addEventListener('visibilitychange', markSeen);
+    return () => document.removeEventListener('visibilitychange', markSeen);
+  }, [activeSessionId, activeSession?.unreadCompletion, canOperate, currentPage, historyReady]);
+
+  useEffect(() => {
     if (!canOperate || !navigationReady) return;
     let cancelled = false;
     void fetchChatSessions().then(result => {
@@ -379,15 +396,16 @@ export default function App() {
   };
 
   const appendAssistant = useCallback((sessionId: string, msg: ChatMessage, sessionKey?: string) => {
+    const unreadCompletion = msg.status === 'completed'
+      && (chatOrigin.current !== sessionId || document.visibilityState === 'hidden');
     setSessions((prev) => {
       const next = prev.map((s) =>
         s.id === sessionId
-          ? { ...s, updated: nextSessionRevision(s), messages: [...s.messages, { ...msg, created: Date.now() }], sessionKey: sessionKey || s.sessionKey, pendingTurnId: undefined }
+          ? { ...s, updated: nextSessionRevision(s), messages: [...s.messages, { ...msg, created: Date.now() }], sessionKey: sessionKey || s.sessionKey, pendingTurnId: undefined, unreadCompletion }
           : s);
       saveSessions(next);
       return next;
     });
-    if (activeIdRef.current !== sessionId) setUnreadSessions(previous => ({ ...previous, [sessionId]: true }));
   }, []);
 
   const clearStream = useCallback((sessionId: string) => {
@@ -406,7 +424,7 @@ export default function App() {
   }, []);
 
   const finalizeStream = useCallback((sessionId: string, owner: typeof streamAcc.current[string],
-    sessionKey?: string, error?: Error) => {
+    sessionKey?: string, error?: Error, outcome?: ChatTurnOutcome) => {
     if (streamAcc.current[sessionId] !== owner || finalizers.current.has(sessionId)) return;
     const pending: { owner: object; finish: () => void; timer?: ReturnType<typeof setTimeout> } = {
       owner,
@@ -421,7 +439,7 @@ export default function App() {
           thinking: owner.thinking || undefined, activity: owner.steps.join('\n') || undefined,
           questions: owner.questions.length ? [...owner.questions] : undefined,
           events: owner.events.length ? [...owner.events] : undefined,
-          status: owner.stopConfirmed ? 'stopped' : error ? 'failed' : 'completed',
+          status: owner.stopConfirmed ? 'stopped' : error ? 'failed' : outcome === 'unconfirmed' ? undefined : outcome ?? 'completed',
         }, sessionKey);
         if (error) setSessions(previous => previous.map(session => session.id === sessionId
           ? { ...session, queuePaused: true, updated: nextSessionRevision(session) } : session));
@@ -472,7 +490,9 @@ export default function App() {
     if (streamAcc.current[sessionId] !== owner || answeredRef.current.has(q.id) || owner.questions.some(question => question.id === q.id)) return;
     owner.questions.push({ ...q, status: q.status || 'pending' });
     setStreams(previous => previous[sessionId] ? { ...previous,
-      [sessionId]: { ...previous[sessionId], questions: [...owner.questions], lifecycle: 'waiting_input' } } : previous);
+      [sessionId]: { ...previous[sessionId], questions: [...owner.questions],
+        lifecycle: previous[sessionId].lifecycle === 'stopping' || previous[sessionId].lifecycle === 'stop_failed'
+          ? previous[sessionId].lifecycle : 'waiting_input' } } : previous);
     void questionStatus([q.id]).then(states => {
       const status = states[q.id]?.status;
       if (status && status !== 'pending' && status !== 'unknown') closeQuestion(sessionId, { id: q.id, ...states[q.id] });
@@ -508,7 +528,7 @@ export default function App() {
     });
     const owner = { content: '', thinking: '', steps: [] as string[], questions: [] as ChatQuestion[], events: [] as AgentEvent[] };
     streamAcc.current[sessionId] = owner;
-    setStreams((prev) => ({ ...prev, [sessionId]: { content: '', thinking: '', activity: '', questions: [], events: [], lifecycle: 'running' } }));
+    setStreams((prev) => ({ ...prev, [sessionId]: { content: '', thinking: '', activity: '', questions: [], events: [], lifecycle: 'recovering' } }));
     // 打字机队列：流式事件按批到达（OpenClaw 攒批），前端按字符节奏显示，体验逐字浮现。
     typingBuf.current[sessionId] = '';
     startTypingPump(sessionId);
@@ -520,10 +540,10 @@ export default function App() {
         typingBuf.current[sessionId] = (typingBuf.current[sessionId] || '') + chunk;
         ensureTypingPump(sessionId);
       },
-      (sessionKey) => {
+      (sessionKey, outcome) => {
         // done 不能立即 flush——token 和 done 几乎同时到达（OpenClaw 攒批），
         // 立即 flush 会把整包瞬间冲出，打字机白做。等队列吐完再落盘。
-        finalizeStream(sessionId, owner, sessionKey);
+        finalizeStream(sessionId, owner, sessionKey, undefined, outcome);
       },
       (err) => {
         finalizeStream(sessionId, owner, undefined, err);
@@ -538,7 +558,8 @@ export default function App() {
         const a = streamAcc.current[sessionId]; if (a !== owner) return;
         if (a.steps[a.steps.length - 1] !== status) a.steps.push(status);
         // 有真实活动状态 → 清掉防呆提示，让真实状态占据活动行
-        setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], activity: status, stillWorking: undefined } } : p));
+        setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], activity: status, stillWorking: undefined,
+          lifecycle: p[sessionId].lifecycle === 'recovering' ? 'running' : p[sessionId].lifecycle } } : p));
       },
       // onInterrupted：SSE 被中断（长任务时代理掐断），但后端仍在跑并会落盘完整结果。
       // streamChat 会按 eventId 自动重连并补发遗漏事件；这里只更新用户可见状态。
@@ -575,13 +596,19 @@ export default function App() {
     try { turnId = sessionStorage.getItem(projectStorageKey(`easel_pending_turn:${sessionId}`)) || turnId; } catch { /* use persisted id */ }
     const owner = { content: '', thinking: '', steps: [] as string[], questions: [] as ChatQuestion[], events: [] as AgentEvent[] };
     streamAcc.current[sessionId] = owner;
-    setStreams((p) => ({ ...p, [sessionId]: { content: '', thinking: '', activity: '⏳ 正在接回上一轮结果…', questions: [] } }));
+    setStreams((p) => ({ ...p, [sessionId]: { content: '', thinking: '', activity: '⏳ 正在接回上一轮结果…', questions: [], lifecycle: 'recovering' } }));
     typingBuf.current[sessionId] = '';
     startTypingPump(sessionId);
+    const appendRecovered = (result: Awaited<ReturnType<typeof fetchLastTurn>>) => {
+      const status = result.outcome ?? (result.stop_reason === 'user_stopped' ? 'stopped'
+        : result.clean_end === true ? 'completed' : undefined);
+      appendAssistant(sessionId, { role: 'assistant', content: result.text || '（无输出）',
+        events: result.events, questions: result.questions, status });
+    };
     if (!turnId) {
       void fetchLastTurn(sessionId).then((r) => {
         if (streamAcc.current[sessionId] !== owner) return;
-        if (r.status === 'done') appendAssistant(sessionId, { role: 'assistant', content: r.text || '（无输出）', events: r.events, questions: r.questions });
+        if (r.status === 'done') appendRecovered(r);
         clearStream(sessionId);
       }).catch(() => { if (streamAcc.current[sessionId] === owner) clearStream(sessionId); });
       return;
@@ -593,8 +620,8 @@ export default function App() {
         typingBuf.current[sessionId] = (typingBuf.current[sessionId] || '') + chunk;
         ensureTypingPump(sessionId);
       },
-      (sessionKey) => {
-        finalizeStream(sessionId, owner, sessionKey);
+      (sessionKey, outcome) => {
+        finalizeStream(sessionId, owner, sessionKey, undefined, outcome);
       },
       (err) => {
         finalizeStream(sessionId, owner, undefined, err);
@@ -603,7 +630,8 @@ export default function App() {
       (status) => {
         const a = streamAcc.current[sessionId]; if (a !== owner) return;
         if (a.steps[a.steps.length - 1] !== status) a.steps.push(status);
-        setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], activity: status } } : p));
+        setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], activity: status,
+          lifecycle: p[sessionId].lifecycle === 'recovering' ? 'running' : p[sessionId].lifecycle } } : p));
       },
       () => { if (streamAcc.current[sessionId] === owner) setStreams((p) => (p[sessionId]
         ? { ...p, [sessionId]: { ...p[sessionId], activity: '⏳ 正在自动续接…' } } : p)); },
@@ -615,7 +643,7 @@ export default function App() {
         void fetchLastTurn(sessionId, turnId).then((r) => {
           if (streamAcc.current[sessionId] !== owner) return;
           if (r.status === 'done') {
-            appendAssistant(sessionId, { role: 'assistant', content: r.text || '（无输出）', events: r.events, questions: r.questions });
+            appendRecovered(r);
           } else {
             appendAssistant(sessionId, {
               role: 'assistant',
@@ -645,8 +673,19 @@ export default function App() {
 
   // 活跃会话确定后（含挂载首刷）尝试恢复它悬空的一轮
   useEffect(() => {
-    if (activeSessionId) resumePendingTurn(activeSessionId);
-  }, [activeSessionId, activeSession?.pendingTurnId, activeSession?.updated, historyReady, resumePendingTurn]);
+    if (canOperate && activeSessionId) resumePendingTurn(activeSessionId);
+  }, [activeSessionId, activeSession?.pendingTurnId, activeSession?.updated, canOperate, historyReady, resumePendingTurn]);
+
+  useEffect(() => {
+    if (!historyReady || !canOperate) return;
+    for (const session of sessions) {
+      if (!session.pendingTurnId || session.id === activeSessionId) continue;
+      // Only this tab's own background turns are resumed automatically.
+      let ownedTurn: string | null = null;
+      try { ownedTurn = sessionStorage.getItem(projectStorageKey(`easel_pending_turn:${session.id}`)); } catch { /* Wait for explicit open. */ }
+      if (ownedTurn === session.pendingTurnId) resumePendingTurn(session.id);
+    }
+  }, [activeSessionId, canOperate, historyReady, resumePendingTurn, sessions]);
 
   // 落用户消息（可选先把 messages 截断到 truncateAt）→ 启动流。retry/edit 都走这里。
   const sendUserAndStream = useCallback((
@@ -919,7 +958,6 @@ export default function App() {
 
   const handleSessionSelect = useCallback((id: string) => {
     setActiveSessionId(id);
-    setUnreadSessions(previous => ({ ...previous, [id]: false }));
     const target = sessions.find(s => s.id === id);
     if (target) {
       setSelectedPersona(target.persona || '');
@@ -1131,12 +1169,7 @@ export default function App() {
         onSessionRename={handleSessionRename}
         onSessionArchive={handleSessionArchive}
         onSessionPin={handleSessionPin}
-        sessionStates={Object.fromEntries(sessions.map(session => {
-          const stream = streams[session.id];
-          const state = stream ? stream.lifecycle === 'waiting_input' ? 'waiting' : stream.lifecycle === 'stopping' ? 'stopping' : 'running'
-            : unreadSessions[session.id] ? 'completed-unread' : session.messages.at(-1)?.status === 'failed' ? 'failed' : '';
-          return [session.id, state];
-        }))}
+        sessionStates={Object.fromEntries(sessions.map(session => [session.id, sessionAttentionState(session, streams[session.id])]))}
         onNewChat={() => { businessNavigation.current += 1; setBusinessNotice(''); setWorkshopPanel(null); handleNewChat(); }}
         gatewayStatus={gatewayStatus}
         apiDirect={apiDirect}

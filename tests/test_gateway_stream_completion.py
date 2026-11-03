@@ -13,7 +13,8 @@ import web.app as web
 @pytest.mark.parametrize("parts", [["complete"], ["开始", "中间", "结束"], ["a" * 8192, "tail"]])
 @pytest.mark.parametrize("buffered", [True, False])
 @pytest.mark.parametrize("raw_failure", [False, True])
-def test_gateway_stream_preserves_every_token(tmp_path, monkeypatch, parts, buffered, raw_failure):
+@pytest.mark.parametrize("outcome", ["completed", "failed", None])
+def test_gateway_stream_preserves_every_token(tmp_path, monkeypatch, parts, buffered, raw_failure, outcome):
     monkeypatch.setattr(web, "SESSIONS_DIR", tmp_path / "sessions")
     monkeypatch.setattr(web, "DEBUG_DIR", tmp_path / "debug")
     monkeypatch.setattr(web, "SHARED_RAW_STREAM", tmp_path / "absent-raw.jsonl")
@@ -34,8 +35,11 @@ def test_gateway_stream_preserves_every_token(tmp_path, monkeypatch, parts, buff
     monkeypatch.setattr(web, "chat_completions_url", lambda: "http://gateway.test/v1/chat/completions")
     events = [{"choices": [{"delta": {"reasoning_content": "thinking"}}]}]
     events.extend({"choices": [{"delta": {"content": part}}]} for part in parts)
-    events.append({"choices": [{"delta": {}, "finish_reason": "stop"}]})
-    payload = "".join("data: " + json.dumps(event) + "\n\n" for event in events) + "data: [DONE]\n\n"
+    if outcome is not None:
+        events.append({"choices": [{"delta": {}, "finish_reason": "stop" if outcome == "completed" else "length"}]})
+    payload = "".join("data: " + json.dumps(event) + "\n\n" for event in events)
+    if outcome is not None:
+        payload += "data: [DONE]\n\n"
 
     raw_failed = threading.Event()
 
@@ -91,11 +95,16 @@ def test_gateway_stream_preserves_every_token(tmp_path, monkeypatch, parts, buff
         assert [json.loads(event["data"]) for event in received
                 if event["event"] == "thinking"] == ["thinking"]
         assert received[-1]["event"] == "done"
+        assert json.loads(received[-1]["data"]) == {
+            "sessionKey": "buffered", "outcome": outcome or "unconfirmed",
+        }
         snapshot = await web.api_chat_last("buffered", turn_id="buffered-turn")
         assert snapshot["text"] == "".join(parts)
+        assert snapshot.get("outcome") == outcome
         replay = web._read_job_events("buffered-turn")
         assert [event["data"] for event in replay if event["event"] == "token"] == parts
         assert replay[-1]["event"] == "done"
+        assert replay[-1]["data"] == json.loads(received[-1]["data"])
         assert not web._RUNNING_CHAT
         assert not web._session_lock("buffered").locked()
 

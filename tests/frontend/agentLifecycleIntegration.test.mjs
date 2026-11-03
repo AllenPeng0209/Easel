@@ -301,3 +301,54 @@ test('workshop handoff sends the selected delivery into its originating chat and
   ui.callback('handleResend')('origin', 0, '核对这个版本');
   assert.deepEqual(plain(ui.requests[1].at(-1)), reference);
 });
+
+test('completed results outside the visible chat persist unread without mislabeling failures', () => {
+  const ui = appBoundary([{ id: 'task', title: 'Task', messages: [], created: 1 }], {
+    chatOrigin: { current: null },
+    document: { visibilityState: 'visible' },
+  });
+  const append = ui.callback('appendAssistant');
+  append('task', { role: 'assistant', content: '完成', status: 'completed' });
+  assert.equal(ui.saved.at(-1)[0].unreadCompletion, true);
+  append('task', { role: 'assistant', content: '失败', status: 'failed' });
+  assert.equal(ui.saved.at(-1)[0].unreadCompletion, false);
+  ui.context.chatOrigin.current = 'task';
+  ui.context.document.visibilityState = 'hidden';
+  append('task', { role: 'assistant', content: '后台完成', status: 'completed' });
+  assert.equal(ui.saved.at(-1)[0].unreadCompletion, true);
+  ui.context.document.visibilityState = 'visible';
+  append('task', { role: 'assistant', content: '可见完成', status: 'completed' });
+  assert.equal(ui.saved.at(-1)[0].unreadCompletion, false);
+});
+
+test('unconfirmed terminal events preserve output without marking it completed unread', () => {
+  const ui = appBoundary([{ id: 's1', title: 'Draft', created: 1, messages: [] }], {
+    finalizers: { current: new Map() }, chatOrigin: { current: null },
+    document: { visibilityState: 'hidden' }, flushTyping() {},
+  });
+  const owner = { content: '部分输出', thinking: '', steps: [], events: [], questions: [] };
+  ui.context.streamAcc.current.s1 = owner;
+  ui.context.appendAssistant = ui.callback('appendAssistant');
+  ui.context.clearStream = ui.callback('clearStream');
+  ui.callback('finalizeStream')('s1', owner, 'key', undefined, 'unconfirmed');
+  const saved = ui.saved.at(-1)[0];
+  assert.equal(saved.messages.at(-1).content, '部分输出');
+  assert.equal(saved.messages.at(-1).status, undefined);
+  assert.equal(saved.unreadCompletion, false);
+});
+
+test('opening an unread chat in a hidden tab defers the read acknowledgement', () => {
+  const item = { id: 's1', title: 'Draft', created: 1, messages: [], unreadCompletion: true };
+  const events = new Map();
+  const ui = appBoundary([item], {
+    currentPage: 'chat', activeSessionId: 's1', activeSession: item, chatOrigin: { current: 's1' },
+    document: { visibilityState: 'hidden',
+      addEventListener: (name, fn) => events.set(name, fn), removeEventListener: name => events.delete(name) },
+  });
+  const cleanup = ui.effect('markSeen')();
+  assert.equal(ui.saved.length, 0);
+  ui.context.document.visibilityState = 'visible';
+  events.get('visibilitychange')();
+  assert.equal(ui.saved.at(-1)[0].unreadCompletion, false);
+  cleanup();
+});

@@ -3409,6 +3409,16 @@ def _raw_event_for_run(line: str, expected_run_id: str | None) -> dict | None:
     return event
 
 
+def _chat_snapshot_outcome(*, stopped=False, failed=False, completed=False) -> dict:
+    if stopped:
+        return {"outcome": "stopped"}
+    if failed:
+        return {"outcome": "failed"}
+    if completed:
+        return {"outcome": "completed"}
+    return {}
+
+
 def _save_turn(sk: str, status: str, text: str, extra: dict | None = None) -> None:
     """持久化本轮结果（running/done），供 SSE 连接中断后前端用 /api/chat/last 取回。
 
@@ -3541,6 +3551,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     permission_revoked = False
 
     def receive(kind, text):
+        nonlocal error_message
         # Preserve a structured event as an object through live SSE, replay and
         # final snapshot. Scrub known secrets without converting it to a string.
         safe = json.loads(_scrub_secrets(json.dumps(text, ensure_ascii=False))) if isinstance(text, dict) else _scrub_secrets(text)
@@ -3548,6 +3559,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             full_text.append(safe)
         elif kind == "agent_event" and isinstance(safe, dict):
             agent_events.append(safe)
+        elif kind == "error":
+            error_message = safe if isinstance(safe, str) and safe else "Agent 执行失败"
         emit(kind, safe)
 
     async def ask(questions):
@@ -3718,8 +3731,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
             lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
-        clean_end = True
-        reason = "completed"
+        clean_end = not error_message
+        reason = "completed" if clean_end else "error"
     except asyncio.CancelledError:
         reason = "permission_revoked" if permission_revoked else "stopped" if sk in _STOPPED_CHAT else "shutdown"
         emit("activity", "权限已变更，本轮已停止" if permission_revoked else "已停止" if reason == "stopped" else "服务关闭，本轮已取消")
@@ -3741,7 +3754,10 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             snapshot = "".join(full_text) + (f"\n\n❌ {error_message}" if error_message else "")
             _save_turn(pk, "done", snapshot, {
                 "turn_id": turn_id, "runtime": runtime,
-                "clean_end": clean_end, "stop_reason": reason, "events": agent_events})
+                "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
+                **_chat_snapshot_outcome(stopped=reason == "stopped",
+                                         failed=bool(error_message) or permission_revoked,
+                                         completed=clean_end)})
         # 注意：claim 失败（锁被占/底座已切换）时刻意**不**落盘——保留上一轮的
         # 结果快照不被失败轮覆盖（见 test_failed_ownership_check_does_not_overwrite_
         # previous_result）；错误经 SSE 事件流（job log）回放可见。
@@ -3834,6 +3850,8 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
                 _save_turn(pk, "done", snapshot, {
                     "turn_id": turn_id, "clean_end": clean_end, "stop_reason": reason,
                     **({"events": list(initial_events)} if initial_events else {}),
+                    **_chat_snapshot_outcome(stopped=reason == "user_stopped",
+                                             failed=bool(error_message), completed=clean_end),
                 })
         finally:
             if _RUNNING_CHAT.get(sk) is proc:
@@ -4298,16 +4316,44 @@ async def api_chat_last(session_id: str, turn_id: str | None = None):
 @app.get("/api/chat/jobs/{turn_id}/stream")
 async def api_chat_job_stream(turn_id: str, after: int = 0):
     """Replay missed events, then tail this turn until its terminal event arrives."""
-    # A stale browser-side pendingTurnId must fail promptly instead of receiving
-    # heartbeats forever. The frontend can then recover from the final snapshot.
+    return _job_stream_response(turn_id, after)
+
+
+def _job_owner_alive(claim: dict, turn_id: str) -> bool:
+    owner_pid = claim.get("ownerPid", 0)
+    if owner_pid == os.getpid():
+        return turn_id in _ACTIVE_TURN_IDS
+    if isinstance(owner_pid, int) and owner_pid > 0:
+        try:
+            os.kill(owner_pid, 0)
+            return True
+        except OSError:
+            pass
+    return False
+
+
+def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = None):
+    replay = claim is not None
     if not _job_event_file(turn_id).is_file():
+        if replay:
+            raise HTTPException(409, "已接收的任务记录不完整，未重新执行；请先核对原任务结果")
         raise HTTPException(404, "对话任务记录不存在或已失效")
+
+    if claim is None:
+        claim = ChatHistoryStore(_sessions_dir()).turn_claim(turn_id)
+    owner_alive = claim is not None and _job_owner_alive(claim, turn_id)
+    initial = _read_job_events(turn_id)
+    terminal = any(event["event"] in ("done", "error") for event in initial)
+    if claim is not None and not owner_alive and not terminal:
+        if replay:
+            raise HTTPException(409, "原任务执行状态未确认，未重新执行；请先核对已有产物和发布回执")
+        raise HTTPException(404, "原任务状态未确认，请核对已有产物和发布回执")
 
     async def events():
         cursor = max(0, after)
+        batch = [event for event in initial if event["id"] > cursor]
         idle_since = time.monotonic()
         while True:
-            batch = _read_job_events(turn_id, cursor)
             if batch:
                 idle_since = time.monotonic()
                 for event in batch:
@@ -4329,12 +4375,22 @@ async def api_chat_job_stream(turn_id: str, after: int = 0):
                     }
                     if event["event"] in ("done", "error"):
                         return
-            else:
-                # Keep proxy connections active; reconnecting remains safe if it still drops.
-                if time.monotonic() - idle_since >= 15:
-                    yield {"event": "ping", "data": "{}"}
-                    idle_since = time.monotonic()
-                await asyncio.sleep(0.25)
+            if terminal:
+                return  # This cursor had already passed the terminal event.
+            if claim is not None and not _job_owner_alive(claim, turn_id):
+                # The owner can append the terminal event between the last read
+                # and the liveness check. Drain that final batch before reporting.
+                batch = _read_job_events(turn_id, cursor)
+                if batch:
+                    continue
+                yield {"event": "error", "data": json.dumps(
+                    "原任务状态未确认，请核对已有产物和发布回执", ensure_ascii=False)}
+                return
+            if time.monotonic() - idle_since >= 15:
+                yield {"event": "ping", "data": "{}"}
+                idle_since = time.monotonic()
+            await asyncio.sleep(0.25)
+            batch = _read_job_events(turn_id, cursor)
 
     return EventSourceResponse(events(), headers={
         "Cache-Control": "no-cache, no-transform",
@@ -4346,22 +4402,7 @@ async def api_chat_job_stream(turn_id: str, after: int = 0):
 async def _replay_claimed_turn(claim: dict, session_id: str, payload_hash: str, turn_id: str):
     if claim["sessionId"] != session_id or claim["payloadHash"] != payload_hash:
         raise HTTPException(409, "同一任务标识已绑定不同的会话或请求，请新建任务")
-    if not _job_event_file(turn_id).is_file():
-        raise HTTPException(409, "已接收的任务记录不完整，未重新执行；请先核对原任务结果")
-    terminal = any(event["event"] in ("done", "error") for event in _read_job_events(turn_id))
-    owner_pid = claim.get("ownerPid", 0)
-    alive = False
-    if owner_pid == os.getpid():
-        alive = turn_id in _ACTIVE_TURN_IDS
-    elif isinstance(owner_pid, int) and owner_pid > 0:
-        try:
-            os.kill(owner_pid, 0)
-            alive = True
-        except OSError:
-            pass
-    if not terminal and not alive:
-        raise HTTPException(409, "原任务执行状态未确认，未重新执行；请先核对已有产物和发布回执")
-    return await api_chat_job_stream(turn_id)
+    return _job_stream_response(turn_id, claim=claim)
 
 
 @app.post("/api/chat/stream")
@@ -4435,14 +4476,16 @@ async def api_chat_stream(req: ChatRequest):
         full_text: list[str] = []        # 累积完整回答，供断线取回
         structured_events: list[dict] = []
         timed_out = False                # 只有真·超时才 terminate 进程；断线绝不杀
+        stream_error = False
 
         event_path = _job_event_file(turn_id)
 
-        def to_client(kind, text=None, **extra):
-            nonlocal event_seq
+        def to_client(kind, text=None):
+            nonlocal event_seq, stream_error
             event_seq += 1
-            data = ({"sessionKey": extra.get("sessionKey")} if kind == "done" else text)
-            event = {"id": event_seq, "event": kind, "data": data}
+            if kind == "error":
+                stream_error = True
+            event = {"id": event_seq, "event": kind, "data": text}
             if kind == "agent_event" and isinstance(text, dict):
                 structured_events.append(text)
             try:
@@ -4451,7 +4494,16 @@ async def api_chat_stream(req: ChatRequest):
                     ef.flush()
             except OSError:
                 pass
-            client_q.put_nowait({"t": kind, "text": text, "id": event_seq, **extra})
+            client_q.put_nowait({"t": kind, "text": text, "id": event_seq})
+
+        def finish_stream(outcome=None):
+            to_client("done", {"sessionKey": sk, "outcome": outcome or "unconfirmed"})
+            client_q.put_nowait(CLIENT_DONE)
+
+        async def finish_saved_stream():
+            snapshot = await api_chat_last(sk, turn_id)
+            outcome = snapshot.get("outcome") if isinstance(snapshot, dict) and snapshot.get("status") == "done" else None
+            finish_stream(outcome if outcome in ("completed", "failed", "stopped") else None)
 
         # 秒级反馈：发出即亮「已收到」，不等 agent 冷启动（首个 SSE 事件，随流回放必达）
         to_client("activity", "⏳ 已收到…" if direct else "⏳ 已收到，正在唤醒 agent…")
@@ -4471,8 +4523,7 @@ async def api_chat_stream(req: ChatRequest):
                     req.model_copy(update={"turnId": turn_id}), sk, content, system, to_client,
                     **initial_event_args)
             finally:
-                to_client("done", sessionKey=sk)
-                client_q.put_nowait(CLIENT_DONE)
+                await finish_saved_stream()
             return
 
         if alternate:
@@ -4480,8 +4531,7 @@ async def api_chat_stream(req: ChatRequest):
                 await _run_harness_chat(req.model_copy(update={"turnId": turn_id}),
                                         sk, message, runtime, config, to_client, **initial_event_args)
             finally:
-                to_client("done", sessionKey=sk)
-                client_q.put_nowait(CLIENT_DONE)
+                await finish_saved_stream()
             return
 
         async def _run_gateway_turn(hproc):
@@ -4504,6 +4554,7 @@ async def api_chat_stream(req: ChatRequest):
             tool_noted = False
             saw_done = False
             got_text = False
+            finish_reason = None
             try:
                 import httpx as _httpx
                 timeout = _httpx.Timeout(TIMEOUT_CHAT + 60, connect=10)
@@ -4529,7 +4580,9 @@ async def api_chat_stream(req: ChatRequest):
                             if isinstance(d.get("error"), dict):   # 200 里夹错误对象：不能当正常流吞掉
                                 to_client("error", f"❌ 网关返回错误：{str(d['error'])[:160]}")
                                 return
-                            delta = (d.get("choices") or [{}])[0].get("delta") or {}
+                            choice = (d.get("choices") or [{}])[0]
+                            delta = choice.get("delta") or {}
+                            finish_reason = choice.get("finish_reason") or finish_reason
                             # 思考流的两个可能来源，先到先得（`sse_thinking` 闩锁，防两路都来时重复）：
                             # ① 这里的 reasoning 增量 —— openclaw 2026.6.11 的 chat/completions
                             #    实现里 reasoning/thinking 出现 0 次，**不会**给；留着是给别的网关/
@@ -4556,6 +4609,9 @@ async def api_chat_stream(req: ChatRequest):
                     to_client("error", "❌ 网关流异常结束：没有收到任何内容（检查 "
                                        "gateway.http.endpoints.chatCompletions 是否开启，"
                                        "或设 EASEL_CHAT_TRANSPORT=cli 回退）")
+                run_info["http_completed"] = got_text and saw_done and finish_reason == "stop"
+                run_info["http_failed"] = (saw_done and not got_text
+                                           or finish_reason not in (None, "stop"))
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
@@ -4646,18 +4702,20 @@ async def api_chat_stream(req: ChatRequest):
             if not started:
                 # A queued/cancelled waiter never owns the previous snapshot.
                 # Persist an owned failure before releasing either lock.
+                startup_outcome = _chat_snapshot_outcome(failed=bool(startup_error))
                 if claimed:
                     _save_turn(pk, "done", startup_error or "", {
                         "turn_id": turn_id, "clean_end": False,
                         "stop_reason": startup_reason,
+                        **({"events": structured_events} if structured_events else {}),
+                        **startup_outcome,
                     })
                 xlock.release()
                 if locked:
                     lock.release()
                 if startup_error:
                     to_client("error", startup_error)
-                to_client("done", sessionKey=sk)
-                client_q.put_nowait(CLIENT_DONE)
+                finish_stream(startup_outcome.get("outcome"))
         _RUNNING_CHAT[sk] = proc         # 注册运行中进程（HTTP 模式为伪进程），供 /api/chat/stop
         # 经 gateway 后客户端 stdout 没有 model-fetch 标记（那是独立跑 agent 才有），先立刻
         # 给一个「正在思考」活动指示，随后 token 从共享 raw stream 流进来接管显示。
@@ -4944,17 +5002,24 @@ async def api_chat_stream(req: ChatRequest):
             except Exception:
                 pass
             # 落盘完整结果：后端跑完整轮不依赖客户端连接，断线后前端用 /api/chat/last 取回
+            clean_end = run_info.get("last_ev") == "assistant_message_end"
+            final_rc = proc.poll()
+            failed = (stream_error or timed_out or final_rc not in (0, None)
+                      or run_info.get("http_failed", False)
+                      or run_info.get("stop_reason") in ("max_tokens", "length", "model_length", "tool_use"))
+            completed = final_rc == 0 and (run_info.get("http_completed", False) if is_http else clean_end)
+            outcome = _chat_snapshot_outcome(stopped=user_stopped, failed=failed, completed=completed)
             _save_turn(pk, "done", "".join(full_text), {
                 "turn_id": turn_id,
-                "clean_end": run_info.get("last_ev") == "assistant_message_end",
+                "clean_end": clean_end,
                 "stop_reason": "user_stopped" if user_stopped else run_info.get("stop_reason"),
                 "events": structured_events,
+                **outcome,
             })
             xlock.release()
             lock.release()
             _RUNNING_CHAT.pop(sk, None)
-            to_client("done", sessionKey=sk)
-            client_q.put_nowait(CLIENT_DONE)
+            finish_stream(outcome.get("outcome"))
 
     # 把 run 跑在独立后台任务里（持强引用防 GC）——客户端断开不取消它。
     task = asyncio.create_task(supervisor())
@@ -5015,7 +5080,7 @@ async def api_chat_stream(req: ChatRequest):
             elif t == "error":
                 yield {"id": str(item["id"]), "event": "error", "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t == "done":
-                yield {"id": str(item["id"]), "event": "done", "data": json.dumps({"sessionKey": item.get("sessionKey")}, ensure_ascii=False)}
+                yield {"id": str(item["id"]), "event": "done", "data": json.dumps(item["text"], ensure_ascii=False)}
 
     return EventSourceResponse(forward(), headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "Content-Encoding": "identity"})
 

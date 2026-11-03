@@ -84,6 +84,7 @@ def test_queued_turn_preserves_owner_until_lock_acquired(sandbox, owner_status):
             await collect(response)
         snapshot = await web.api_chat_last("same", turn_id="queued")
         assert snapshot["stop_reason"] == "spawn_failed"
+        assert snapshot["outcome"] == "failed"
         assert not lock.locked() and not sandbox.held
 
     asyncio.run(scenario())

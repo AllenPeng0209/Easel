@@ -114,3 +114,14 @@ test('streamChat: 提供 onRecoveryUnavailable 时仍走回调（恢复语义不
   assert.equal(seen.error, 0, '有回调时不应再走 onError 兜底');
   assert.equal(calls.fetch, 1, '只发一次 jobs 请求后终结');
 });
+
+test('terminal SSE preserves the host outcome alongside the existing session key', async () => {
+  const { api } = loadApi(() => new Response(
+    'event: done\ndata: {"sessionKey":"saved-chat","outcome":"unconfirmed"}\n\n',
+    { headers: { 'Content-Type': 'text/event-stream' } },
+  ));
+  const result = await new Promise((resolve, reject) => {
+    api.streamChat('hello', undefined, 'chat', () => {}, (key, outcome) => resolve({ key, outcome }), reject);
+  });
+  assert.deepEqual(result, { key: 'saved-chat', outcome: 'unconfirmed' });
+});

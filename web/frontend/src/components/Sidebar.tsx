@@ -59,6 +59,25 @@ const OPERATIONS_NAV: NavigationItem[] = [
   { page: 'interactions', Icon: IconInteractions, label: '互动中心' },
 ];
 
+// DeepSeek workspace rows put requests for human input ahead of live work
+// and unread completion. Keep these categories distinct in the compact view.
+const SESSION_ATTENTION = [
+  { key: 'approval', label: '待审批' },
+  { key: 'question', label: '待回答' },
+  { key: 'stop_failed', label: '停止失败' },
+  { key: 'failed', label: '执行失败' },
+  { key: 'recovering', label: '待核对任务' },
+  { key: 'stopping', label: '正在停止' },
+  { key: 'running', label: '运行中' },
+  { key: 'completed-unread', label: '完成未读' },
+] as const;
+
+function sessionAttention(state: string | undefined) {
+  const key = state === 'waiting' ? 'question' : state === 'streaming' ? 'running'
+    : state === 'unread' ? 'completed-unread' : state;
+  return SESSION_ATTENTION.find(item => item.key === key);
+}
+
 export default function Sidebar({
   currentPage,
   onPageChange,
@@ -132,8 +151,19 @@ export default function Sidebar({
   const visibleArchives = archived.slice(0, archiveLimit);
   const historyCount = sessions.filter((s) => s.messages.length > 0).length;
   const archivedOpen = showArchived || archiveFilter !== 'default';
-  const statusLabel = (id: string) => ({ running: '进行中', streaming: '进行中', stopping: '正在停止', waiting: '等待输入',
-    approval: '等待确认', question: '等待输入', unread: '有新结果', 'completed-unread': '有新结果', failed: '执行失败' }[sessionStates[id]] || '');
+  const attentionCounts = new Map<string, number>();
+  if (canOperate) {
+    for (const session of sessions) {
+      if (session.archived) continue;
+      const status = sessionAttention(sessionStates[session.id]);
+      if (status) attentionCounts.set(status.key, (attentionCounts.get(status.key) || 0) + 1);
+    }
+  }
+  const attention = SESSION_ATTENTION.filter(item => attentionCounts.has(item.key));
+  const attentionLabel = attention.map(item => `${item.label} ${attentionCounts.get(item.key)}`).join('，');
+  const attentionTotal = [...attentionCounts.values()].reduce((total, count) => total + count, 0);
+  const attentionBadge = attentionTotal > 0 && <span aria-hidden="true"
+    className={`session-attention-count state-${attention[0].key}`}>{attentionTotal}</span>;
   const exportSession = (session: ChatSession) => {
     try { downloadSessionMarkdown(session); setExportError(''); }
     catch { setExportError('导出未成功，请稍后重试。'); }
@@ -153,6 +183,7 @@ export default function Sidebar({
   };
 
   const renderItem = (s: ChatSession, isArchived: boolean) => {
+    const attentionStatus = sessionAttention(sessionStates[s.id]);
     if (renamingId === s.id) {
       return (
         <div key={s.id} className="session-item">
@@ -188,7 +219,7 @@ export default function Sidebar({
       >
         {(s as ChatSession & { pinned?: boolean }).pinned && !isArchived && <span className="session-pin-mark" aria-label="已置顶">⌖</span>}
         <span className="session-item-title" title={s.title}>{s.title}</span>
-        {statusLabel(s.id) && <span className={`session-state-dot state-${sessionStates[s.id]}`} title={statusLabel(s.id)} aria-label={statusLabel(s.id)} />}
+        {attentionStatus && <span className={`session-attention-label state-${attentionStatus.key}`}>{attentionStatus.label}</span>}
         <div className="session-actions">
           {!isArchived && onSessionPin && <button className="session-act" title={(s as ChatSession & { pinned?: boolean }).pinned ? '取消置顶' : '置顶'}
             onClick={(e) => { e.stopPropagation(); onSessionPin(s.id, !(s as ChatSession & { pinned?: boolean }).pinned); }}>⌖</button>}
@@ -217,8 +248,9 @@ export default function Sidebar({
       tabIndex={drawer ? -1 : undefined} inert={drawer && !drawerOpen ? true : undefined}>
       {!drawer && railCollapsed ? <div className="sidebar-rail">
         <button className="sidebar-shell-toggle" aria-label="展开侧栏" title="展开侧栏" data-sidebar-toggle onClick={toggleRail}>☰</button>
-        <button className="sidebar-rail-action" aria-label="AI 对话" title="AI 对话" disabled={!canOperate}
-          onClick={() => { if (canOperate) onPageChange('chat'); }}><IconChat size={20} /></button>
+        <button className="sidebar-rail-action" aria-label="AI 对话" aria-description={attentionLabel || undefined}
+          title={attentionLabel || 'AI 对话'} disabled={!canOperate}
+          onClick={() => { if (canOperate) onPageChange('chat'); }}><IconChat size={20} />{attentionBadge}</button>
         <button className="sidebar-rail-action" aria-label="新建对话" title="新建对话" disabled={!canOperate}
           onClick={() => { if (canOperate) onNewChat(); }}><IconNewChat size={19} /></button>
         {isPlatformAdmin && <button className="sidebar-rail-action sidebar-rail-settings" aria-label="设置" title="设置" onClick={onOpenSettings}><IconGear size={18} /></button>}
@@ -264,10 +296,14 @@ export default function Sidebar({
             </div>}
 
             {canOperate && <>
-              <button className="sidebar-history-toggle" aria-label="历史对话" aria-expanded={historyOpen}
+              <button className="sidebar-history-toggle" aria-label="历史对话"
+                aria-description={!historyOpen ? attentionLabel || undefined : undefined}
+                title={!historyOpen ? attentionLabel || undefined : undefined} aria-expanded={historyOpen}
                 aria-controls="sidebar-chat-history" onClick={() => setHistoryOpen(value => !value)}>
                 <span className={`sidebar-history-chevron ${historyOpen ? 'open' : ''}`}><IconChevron size={11} /></span>
-                <span>历史对话</span><span className="sidebar-history-count">{historyCount || '暂无'}</span>
+                <span>历史对话</span>{!historyOpen && attentionTotal > 0 && <span aria-hidden="true"
+                  className={`session-attention-count state-${attention[0].key}`}>动态 {attentionTotal}</span>}
+                <span className="sidebar-history-count">{historyCount || '暂无'}</span>
               </button>
               {historyOpen && <div id="sidebar-chat-history" className="sidebar-chat-history">
                 <div className="session-history-controls">

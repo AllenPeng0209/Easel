@@ -7,10 +7,25 @@
 .session-show-more:hover { background: var(--surface-hover); color: var(--accent-end); }
 .session-archive-hint { margin: 2px 7px 5px; color: var(--text-tertiary); font-size: 10px; line-height: 1.5; }
 .session-export-error { margin: 5px 7px; color: var(--danger, #e17979); font-size: 11px; line-height: 1.5; }
-.session-state-dot { display: block; width: 6px; height: 6px; margin-left: 5px; flex-shrink: 0; border-radius: 50%; background: var(--accent-end); }
-.session-state-dot:is(.state-waiting, .state-approval, .state-question) { background: #d6a453; }
-.session-state-dot.state-failed { background: #d87575; }
-.session-state-dot:is(.state-unread, .state-completed-unread) { background: #5aaf8c; }
+.session-attention-label, .session-attention-count {
+  --attention-color: var(--accent-end);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 5px;
+  color: var(--attention-color);
+  background: color-mix(in srgb, var(--attention-color) 12%, var(--bg-elev));
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+:is(.session-attention-label, .session-attention-count):is(.state-approval, .state-question, .state-stopping, .state-recovering) { --attention-color: var(--text); }
+:is(.session-attention-label, .session-attention-count):is(.state-failed, .state-stop_failed) { --attention-color: var(--danger, #d87575); }
+:is(.session-attention-label, .session-attention-count).state-completed-unread { --attention-color: var(--text-secondary); }
+.sidebar-rail-action { position: relative; }
+.sidebar-rail-action .session-attention-count { position: absolute; top: -2px; right: -3px; }
 #sidebar-archived-history .session-item { opacity: .75; cursor: default; }
 .sidebar-chat-history .session-item:focus-within .session-actions { display: flex; }
 .sidebar-chat-history .session-actions { max-width: 112px; }

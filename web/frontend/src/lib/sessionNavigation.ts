@@ -1,4 +1,4 @@
-import type { ChatSession } from './store';
+import type { ChatSession, StreamState } from './store';
 import { orderByRecency, pinCurrentBlank, sectionMembers } from '../vendor/deepseek-harness/navigation/order';
 import { formatSessionMarkdown } from '../vendor/deepseek-harness/navigation/markdown';
 import type { SessionEvent } from '../vendor/deepseek-harness/navigation/markdown-types';
@@ -30,9 +30,23 @@ export function navigationSessions(sessions: readonly NavigableSession[], query:
 export function visibleHistoryCount(sessions: readonly ChatSession[], requested: number, activeId: string | null, states: Readonly<Record<string, string>>): number {
   let count = requested;
   sessions.forEach((session, index) => {
-    if (session.id === activeId || /^(running|streaming|stopping|waiting|approval|question|unread|completed-unread)/.test(states[session.id] || '')) count = Math.max(count, index + 1);
+    if (session.id === activeId || /^(running|streaming|recovering|stopping|stop_failed|failed|waiting|approval|question|unread|completed-unread)$/.test(states[session.id] || '')) count = Math.max(count, index + 1);
   });
   return Math.min(sessions.length, count);
+}
+
+/** Project the same waiting/active/completed facts used by the upstream workspace rows. */
+export function sessionAttentionState(session: ChatSession, stream?: StreamState): string {
+  if (stream) {
+    if (stream.lifecycle === 'stopping' || stream.lifecycle === 'stop_failed') return stream.lifecycle;
+    const pending = stream.questions.filter(question => !question.status || question.status === 'pending');
+    if (pending.some(question => question.kind === 'approval' || question.publication)) return 'approval';
+    if (pending.length) return 'question';
+    return stream.lifecycle === 'recovering' ? 'recovering' : 'running';
+  }
+  if (session.pendingTurnId) return 'recovering';
+  if (session.messages.at(-1)?.status === 'failed') return 'failed';
+  return session.unreadCompletion ? 'completed-unread' : '';
 }
 
 function exportText(value: string): string {

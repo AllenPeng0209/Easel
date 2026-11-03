@@ -42,9 +42,11 @@ def validated_session(value: dict) -> dict:
         raise ValueError("无效的排队请求")
     if "queuePaused" in value and not isinstance(value["queuePaused"], bool):
         raise ValueError("无效的队列状态")
+    if "unreadCompletion" in value and not isinstance(value["unreadCompletion"], bool):
+        raise ValueError("无效的未读完成状态")
     result = {key: item for key, item in value.items() if key in {
         "id", "title", "messages", "persona", "created", "updated", "sessionKey", "pendingTurnId",
-        "archived", "pinned", "autonomyMode", "queued", "queuePaused"}}
+        "archived", "pinned", "autonomyMode", "queued", "queuePaused", "unreadCompletion"}}
     result.update(title=title, updated=updated)
     # Round-trip validates nested event values, rejects NaN, and prevents callers
     # retaining mutable references to the catalog transaction's input.

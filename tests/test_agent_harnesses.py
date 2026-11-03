@@ -814,7 +814,9 @@ def test_web_stream_replay_resume_and_delete(sandbox, monkeypatch):
     assert all(request.model == "test-model" for request in requests)
     last = sandbox.get("/api/chat/last/same").json()
     assert last["text"] == "成功" and last["clean_end"] is True
-    assert "成功" in sandbox.get("/api/chat/jobs/second/stream").text
+    assert last["outcome"] == "completed"
+    replay = sandbox.get("/api/chat/jobs/second/stream").text
+    assert "成功" in replay and '"outcome": "completed"' in replay
     assert sandbox.post("/api/settings/harness", json={"runtime": "opencode"}).status_code == 200
     assert sandbox.post("/api/chat", json={"sessionId": "same", "message": "hello"}).status_code == 409
     assert sandbox.delete("/api/session/same").json()["deleted"]
@@ -891,9 +893,11 @@ def test_web_stop_timeout_and_lock_cleanup(sandbox, monkeypatch):
         assert not web._session_lock("stoppable").locked()
         last = json.loads(web._turn_file("web:stoppable").read_text(encoding="utf-8"))
         assert last["stop_reason"] == "stopped" and not last["clean_end"]
+        assert last["outcome"] == "stopped"
         await web._run_harness_chat(req, "stoppable", "hello", "codex", web._harness_settings(), emit, timeout=0.1)
         last = json.loads(web._turn_file("web:stoppable").read_text(encoding="utf-8"))
         assert last["stop_reason"] == "timeout" and not web._session_lock("stoppable").locked()
+        assert last["outcome"] == "failed"
         assert "执行超时" in last["text"]
 
     asyncio.run(exercise())

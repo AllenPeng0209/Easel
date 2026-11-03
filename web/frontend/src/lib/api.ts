@@ -640,12 +640,14 @@ export function stopChat(sessionId: string): Promise<{ stopped: boolean; status?
   });
 }
 
+export type ChatTurnOutcome = 'completed' | 'failed' | 'stopped' | 'unconfirmed';
+
 export function streamChat(
   message: string,
   persona: string | undefined,
   sessionId: string,
   onToken: (chunk: string) => void,
-  onDone: (sessionKey?: string) => void,
+  onDone: (sessionKey?: string, outcome?: ChatTurnOutcome) => void,
   onError: (err: Error) => void,
   onThinking?: (chunk: string) => void,
   onActivity?: (status: string) => void,
@@ -721,7 +723,11 @@ export function streamChat(
           onError(new Error(msg));
           return true;
         } else if (currentEvent === 'done') {
-          try { onDone((JSON.parse(data) as { sessionKey?: string }).sessionKey); } catch { onDone(); }
+          let completion: { sessionKey?: string; outcome?: ChatTurnOutcome } | undefined;
+          try { completion = JSON.parse(data); } catch { /* Legacy done event. */ }
+          const outcome = completion?.outcome;
+          onDone(completion?.sessionKey, outcome === 'completed' || outcome === 'failed' ||
+            outcome === 'stopped' || outcome === 'unconfirmed' ? outcome : undefined);
           return true;
         }
         return false;
@@ -802,7 +808,10 @@ export function streamChat(
 }
 
 /** 取某会话最近一轮的完整结果（SSE 断线后据此取回）。 */
-export function fetchLastTurn(sessionId: string, turnId?: string): Promise<{ status: string; text: string; turn_id?: string; events?: AgentEvent[]; questions?: ChatQuestion[] }> {
+export function fetchLastTurn(sessionId: string, turnId?: string): Promise<{
+  status: string; text: string; turn_id?: string; events?: AgentEvent[]; questions?: ChatQuestion[];
+  outcome?: Exclude<ChatTurnOutcome, 'unconfirmed'>; clean_end?: boolean; stop_reason?: string;
+}> {
   const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
   return request(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`);
 }

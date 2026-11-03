@@ -33,6 +33,7 @@ export interface ChatSession {
   created: number;
   sessionKey?: string;  // OpenClaw 的 session key，用于后端删除
   pendingTurnId?: string; // 进行中的可重连 job；浏览器重开后继续按 eventId 续流
+  unreadCompletion?: boolean;
   archived?: boolean;   // 归档：从 History 主列表移到「已归档」区
   pinned?: boolean;
   updated?: number;
@@ -48,7 +49,7 @@ export interface StreamState {
   stillWorking?: string;   // 防呆心跳提示（未卡住）；独立于 activity，不覆盖真实状态
   questions: ChatQuestion[];   // ask_user 问答题卡片（进行中）
   events?: AgentEvent[];
-  lifecycle?: 'running' | 'waiting_input' | 'stopping' | 'stop_failed';
+  lifecycle?: 'recovering' | 'running' | 'waiting_input' | 'stopping' | 'stop_failed';
 }
 
 /** 发布中心草稿：持久化到 localStorage，切页/刷新都不丢。 */

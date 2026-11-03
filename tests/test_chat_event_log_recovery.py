@@ -3,8 +3,10 @@ import asyncio
 import json
 
 import pytest
+from fastapi import HTTPException
 
 import web.app as web
+from web.chat_history import ChatHistoryStore
 
 
 def encoded(event):
@@ -76,3 +78,56 @@ def test_replay_reaches_terminal_event_after_corrupt_record(event_log):
 
 def test_missing_log_returns_empty(event_log):
     assert web._read_job_events("recovery-turn") == []
+
+
+def claim_recovery_turn(event_log, *events):
+    store = ChatHistoryStore(web._sessions_dir())
+    store.claim_turn("recovery-turn", "session", "hash", event_log)
+    event_log.write_bytes(b"".join(encoded(event) for event in events))
+    return store.turn_claim("recovery-turn")
+
+
+def test_dead_nonterminal_claim_rejects_get_and_same_request_post_replay(event_log, monkeypatch):
+    monkeypatch.setattr(web, "_ACTIVE_TURN_IDS", set())
+    claim = claim_recovery_turn(event_log, {"id": 1, "event": "activity", "data": "received"})
+
+    async def scenario():
+        with pytest.raises(HTTPException) as error:
+            await web.api_chat_job_stream("recovery-turn")
+        assert error.value.status_code == 404
+        with pytest.raises(HTTPException) as error:
+            await web._replay_claimed_turn(claim, "session", "hash", "recovery-turn")
+        assert error.value.status_code == 409
+
+    asyncio.run(scenario())
+
+
+def test_dead_terminal_claim_replays_and_already_consumed_cursor_closes(event_log, monkeypatch):
+    monkeypatch.setattr(web, "_ACTIVE_TURN_IDS", set())
+    claim_recovery_turn(event_log, {"id": 1, "event": "done", "data": {"sessionKey": "session"}})
+
+    async def scenario():
+        response = await web.api_chat_job_stream("recovery-turn")
+        assert [event["event"] async for event in response.body_iterator] == ["done"]
+        exhausted = await web.api_chat_job_stream("recovery-turn", after=1)
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(anext(exhausted.body_iterator), timeout=1)
+
+    asyncio.run(scenario())
+
+
+def test_active_claim_replays_prefix_then_owner_loss_reports_unconfirmed(event_log, monkeypatch):
+    active = {"recovery-turn"}
+    monkeypatch.setattr(web, "_ACTIVE_TURN_IDS", active)
+    claim_recovery_turn(event_log, {"id": 1, "event": "activity", "data": "received"})
+
+    async def scenario():
+        response = await web.api_chat_job_stream("recovery-turn")
+        assert (await anext(response.body_iterator))["event"] == "activity"
+        active.clear()
+        last = await asyncio.wait_for(anext(response.body_iterator), timeout=1)
+        assert last["event"] == "error" and "原任务状态未确认" in last["data"]
+        with pytest.raises(StopAsyncIteration):
+            await anext(response.body_iterator)
+
+    asyncio.run(scenario())

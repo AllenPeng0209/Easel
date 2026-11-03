@@ -156,3 +156,25 @@ def test_deleted_ids_are_available_after_store_reload(tmp_path):
     reloaded = ChatHistoryStore(tmp_path)
     assert reloaded.deleted_ids() == ['a']
     assert [item['id'] for item in reloaded.sessions()] == ['b']
+
+
+def test_catalog_unread_completion_round_trips_and_obeys_snapshot_order(tmp_path):
+    from web.chat_history import ChatHistoryStore
+    store = ChatHistoryStore(tmp_path)
+    store.merge([entry('legacy', 1), {**entry('completed', 3), 'unreadCompletion': True}])
+    reopened = ChatHistoryStore(tmp_path)
+    sessions = {session['id']: session for session in reopened.sessions()}
+    assert 'unreadCompletion' not in sessions['legacy']
+    assert sessions['completed']['unreadCompletion'] is True
+    reopened.merge([{**entry('completed', 4), 'unreadCompletion': False}])
+    reopened.merge([{**entry('completed', 3), 'unreadCompletion': True}])
+    assert reopened.sessions()[0]['unreadCompletion'] is False
+
+
+@pytest.mark.parametrize('invalid', [None, 0, 1, 'false', []])
+def test_catalog_rejects_nonboolean_unread_completion_without_partial_merge(tmp_path, invalid):
+    from web.chat_history import ChatHistoryStore
+    store = ChatHistoryStore(tmp_path)
+    with pytest.raises(ValueError):
+        store.merge([entry('good', 1), {**entry('bad', 2), 'unreadCompletion': invalid}])
+    assert store.sessions() == []
