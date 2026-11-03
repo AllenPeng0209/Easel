@@ -8126,12 +8126,34 @@
     "reuse_kind": "adapted",
     "changes": "迁移左右差异行配对，接入 Easel 固定快照的文本投影。",
     "verification_status": "D07_frozen_turn_diff_and_exact_media_pairs_verified"
+  },
+  {
+    "feature_id": "D09",
+    "upstream_path": "packages/client/ui-sidebar-documentpreview/src/client/TextPreview.tsx",
+    "upstream_sha256": "7ca521c3dcee0b00a843fb9c9f0aabe684f7635acf09d56fe473b2c7763a1384",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/DraftSnapshotPreview.tsx",
+    "destination_sha256": "fa84217629c775b0f5730c2e41c6f4187cdf57126afdd324cdadfc3a0beab4bc",
+    "reuse_kind": "adapted",
+    "changes": "适配同一固定版本重读、加载中与失败后保留内容及明确恢复入口。",
+    "verification_status": "D09_retained_fixed_preview_and_explicit_zip_recovery_verified"
+  },
+  {
+    "feature_id": "D09",
+    "upstream_path": "packages/client/ui-sidebar-documentpreview/src/client/store.ts",
+    "upstream_sha256": "b5419a6a83615baf7b4ae5df021590babbf5d9dd3e4eacd8175f8b5618929457",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/DeliverableVersionNotice.tsx",
+    "destination_sha256": "f0002c6d0990ab3c00882f18b7532dc7dd0240842f9f67b2a9516c062fee6fb3",
+    "reuse_kind": "adapted",
+    "changes": "适配独立元数据检查状态，标记更新并保留当前固定版本。",
+    "verification_status": "D09_retained_fixed_preview_and_explicit_zip_recovery_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 112,
+    "source_migration_files": 114,
     "verbatim_original_bodies": 14,
-    "adapted_upstream_files": 98,
+    "adapted_upstream_files": 100,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

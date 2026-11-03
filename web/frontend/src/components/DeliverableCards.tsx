@@ -28,14 +28,15 @@ function t(key: string, params?: Record<string, string | number>): string {
   return key === 'presented.previewCard' ? `查看文件：${params?.name || ''}` : labels[key] || key;
 }
 
-type VersionHistory = 'loading' | 'error' | { versions: ChatDeliverable[] };
+type VersionHistory = 'loading' | 'error' | 'unavailable' | { versions: ChatDeliverable[] };
 
 /** The upstream read cache supplies request deduplication, retry and cancellation. */
 class ArtifactVersionStore extends HostReadStore<VersionHistory> {
   private readonly anchor: ChatDeliverable;
   constructor(anchor: ChatDeliverable) {
-    super({ loading: 'loading', failed: 'error', retryable: state => state === 'error',
+    super({ loading: 'loading', failed: 'error', retryable: state => state === 'error' || state === 'unavailable',
       decode: async response => {
+        if ([401, 403, 404, 410].includes(response.status)) return 'unavailable';
         if (!response.ok) return 'error';
         const data: unknown = await response.json();
         if (!data || typeof data !== 'object' || !('versions' in data) || !Array.isArray(data.versions)) return 'error';
@@ -50,6 +51,7 @@ class ArtifactVersionStore extends HostReadStore<VersionHistory> {
 function DeliverableVersionDetails({ file }: { file: ChatDeliverable }) {
   const snapshot = file.storageMode === 'snapshot';
   const [open, setOpen] = useState(false);
+  const [retained, setRetained] = useState<ChatDeliverable[]>();
   const [store] = useState(() => new ArtifactVersionStore(file));
   const states = useSyncExternalStore(store.state.subscribe, store.state.getSnapshot, store.state.getSnapshot);
   const url = deliverableVersionsUrl(file);
@@ -58,7 +60,10 @@ function DeliverableVersionDetails({ file }: { file: ChatDeliverable }) {
   // Reset the request generation on unmount; unlike terminal dispose this also
   // permits React StrictMode's setup/cleanup/setup sequence safely.
   useEffect(() => () => store.reset(), [store]);
-  const versions = history && typeof history === 'object' ? history.versions : [];
+  useEffect(() => { if (history === 'unavailable') setRetained(undefined); }, [history]);
+  const current = history && typeof history === 'object' ? history.versions : undefined;
+  const previous = (history === 'loading' || history === 'error') ? retained : undefined;
+  const versions = current ?? previous ?? [];
   const latest = versions.reduce((value, item) => Math.max(value, item.revision || 0), 0);
   return <div className="deliverable-version" data-storage-mode={file.storageMode}>
     <div className="deliverable-version__heading">
@@ -75,8 +80,12 @@ function DeliverableVersionDetails({ file }: { file: ChatDeliverable }) {
       aria-label={`查看历史交付版本：${file.name}`} onClick={() => setOpen(value => !value)}>历史版本</button>
     {open && <div className="deliverable-history">
       {history === 'loading' && <p role="status">正在读取历史交付…</p>}
-      {history === 'error' && <p role="alert">历史版本读取失败。<button type="button" onClick={() => void store.load()}>重试</button></p>}
-      {history && typeof history === 'object' && <>
+      {(history === 'error' || history === 'unavailable') && <p role="alert">
+        {history === 'error' ? '历史版本读取失败。' : '历史版本暂不可用。'}
+        <button type="button" onClick={() => void store.load()}>重试</button>
+      </p>}
+      {previous && <p role="status">保留上次成功读取的交付记录。</p>}
+      {(current || previous) && <>
         <p className="deliverable-history__note">按本次查询列出交付记录；本卡预览和下载不会自动切换。</p>
         <ul>{versions.map(item => {
           const href = safeDeliverableHref(item);
@@ -90,7 +99,11 @@ function DeliverableVersionDetails({ file }: { file: ChatDeliverable }) {
           </li>;
         })}</ul>
         <FixedVersionComparison anchor={file} versions={versions} />
-        <button type="button" onClick={() => { store.reset(); void store.load(); }}>刷新历史列表</button>
+        {current && <button type="button" onClick={() => {
+          setRetained(current);
+          store.reset();
+          void store.load();
+        }}>刷新历史列表</button>}
       </>}
     </div>}
   </div>;

@@ -6672,8 +6672,8 @@ def api_artifact_archive(path: str):
                 artifacts.append(relative)
                 if len(artifacts) >= 100:
                     break
-    except (OSError, zipfile.BadZipFile):
-        raise HTTPException(400, '无法读取压缩包索引')
+    except (OSError, ValueError, zipfile.BadZipFile, EOFError):
+        raise HTTPException(400, '无法读取压缩包索引') from None
     return {'paths': artifacts}
 
 

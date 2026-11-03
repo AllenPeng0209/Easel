@@ -96,8 +96,8 @@ function gallery() {
     exports: module,
     require: id => id === 'react' ? {
       useState: initial => typeof initial === 'number' ? [selected, value => { selected = value; }] : [[], () => {}],
-      useEffect: () => {},
-    } : id === 'react/jsx-runtime' ? { jsx, jsxs: jsx }
+      useEffect: () => {}, useRef: current => ({ current }), useCallback: callback => callback,
+    } : id === 'react/jsx-runtime' ? { jsx, jsxs: jsx, Fragment: 'fragment' }
       : id.endsWith('/artifacts') ? exports : { IconChevron: 'chevron', IconOutputs: 'outputs' },
   });
   const artifacts = ['first', 'second', 'third'].map(name => ({

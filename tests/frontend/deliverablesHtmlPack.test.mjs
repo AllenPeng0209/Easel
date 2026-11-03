@@ -61,9 +61,14 @@ async function loadEffect(env) {
   const helperPath = new URL('../../web/frontend/src/lib/htmlPreview.ts', import.meta.url);
   const helpers = existsSync(helperPath) ? componentModule('lib/htmlPreview.ts', env.options) : {};
   return new Promise((resolve, reject) => {
+    let state;
     const execute = runInNewContext(code, { ...env.globals, ...helpers, ...artifact,
-      projectFetch: scope.projectFetch, previewBaseUrl, token: { current: 'preview-token' },
-      setSource: value => { if (value) resolve(value); }, setError: failed => { if (failed) reject(new Error('preview failed')); },
+      projectFetch: scope.projectFetch, previewBaseUrl, key: 'preview-resource', unavailableRead: () => false,
+      setState: update => {
+        state = typeof update === 'function' ? update(state) : update;
+        if (state.phase === 'ready') resolve(state.document.html);
+        if (state.phase === 'error' || state.phase === 'unavailable') reject(new Error(state.error));
+      },
     });
     execute();
   });
@@ -181,8 +186,10 @@ test('size reporting cannot proxy file requests and accepts failure only from it
   const current = {};
   const errors = [];
   const bounds = [];
-  const receive = runInNewContext(code, { frame: { current: { contentWindow: current } }, token: { current: 'own-token' },
-    setError: value => errors.push(value), setBounds: update => bounds.push(update({ width: 1, height: 1 })), Number,
+  const active = { token: 'own-token', html: '' };
+  const receive = runInNewContext(code, { frame: { current: { contentWindow: current } }, activeDocument: { current: active },
+    setState: update => errors.push(update({ key: 'preview-resource', phase: 'ready', document: active }).phase),
+    setBounds: update => bounds.push(update({ width: 1, height: 1 })), Number,
   });
   receive({ source: current, data: { type: 'read-file', token: 'own-token', path: '_login/secret/cookies' } });
   receive({ source: {}, data: { type: 'easel-artifact-preview-error', token: 'own-token' } });
@@ -191,5 +198,5 @@ test('size reporting cannot proxy file requests and accepts failure only from it
   assert.equal(errors.length, 0);
   assert.equal(bounds.length, 0);
   receive({ source: current, data: { type: 'easel-artifact-preview-error', token: 'own-token' } });
-  assert.deepEqual(errors, [true]);
+  assert.deepEqual(errors, ['error']);
 });

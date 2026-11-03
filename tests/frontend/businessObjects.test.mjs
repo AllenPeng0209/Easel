@@ -357,3 +357,41 @@ test('workshop attempt history shows safe errors and verifies which exact render
     assert.doesNotMatch(card.body.textContent, /forged-task|raw engine diagnostic|unverified-task-from-mismatched-receipt/);
   });
 });
+
+test('refreshing the same fixed text keeps the last successful content through failure',async()=>{
+  const requests=[];
+  let settle;
+  await cardDOM({record:draft()},async({expand,card})=>{
+    await expand();
+    const open=[...card().querySelectorAll('button')].find(item=>item.textContent==='查看稿件内容');
+    await React.act(async()=>open.click());
+    const panel=card().querySelector('.business-object__draft-preview');
+    const reload=panel.querySelector('[data-reload-fixed-text]');
+    assert.ok(reload);
+    await React.act(async()=>reload.click());
+    assert.equal(panel.querySelector('pre').textContent,'固定文本');
+    assert.match(panel.textContent,/保留.*固定版本/);
+    await React.act(async()=>settle(new Response('',{status:503})));
+    assert.equal(panel.querySelector('pre').textContent,'固定文本');
+    assert.match(panel.querySelector('[role=alert]').textContent,/失败/);
+    await React.act(async()=>panel.querySelector('[data-retry-fixed-text]').click());
+    assert.equal(panel.querySelector('pre').textContent,'固定文本');
+    assert.equal(panel.querySelector('[role=alert]'),null);
+    assert.equal(new Set(requests).size,1);
+    assert.equal(requests.length,3);
+  },{globals:{fetch:async url=>{
+    requests.push(url);
+    return requests.length===2 ? new Promise(resolve=>{settle=resolve;}) : new Response('固定文本');
+  }}});
+});
+
+test('an invalid UTF-8 fixed preview reports failure and keeps its download',async()=>{
+  await cardDOM({record:draft()},async({expand,card})=>{
+    await expand();
+    await React.act(async()=>[...card().querySelectorAll('button')].find(item=>item.textContent==='查看稿件内容').click());
+    const panel=card().querySelector('.business-object__draft-preview');
+    assert.equal(panel.querySelector('pre'),null);
+    assert.match(panel.querySelector('[role=alert]').textContent,/读取失败/);
+    assert.match(panel.querySelector('a').getAttribute('href'),/\/content\?download=1$/);
+  },{globals:{fetch:async()=>new Response(new Uint8Array([0xff]))}});
+});

@@ -63,7 +63,7 @@ test('archive requests only the fixed current-IP ZIP ID and reports HTTP failure
   assert.equal(requests.length, 1);
 });
 
-async function mountArchive({ files = [], responseStatus = 200, error, relatedStatus = 200, galleryArtifact, artifact = snapshot(), html = '<!doctype html><html><head></head><body><img src="cover.png"></body></html>' } = {}) {
+async function mountArchive({ files = [], responseStatus = 200, error, relatedStatus = 200, galleryArtifact, legacyPath, archiveResponse, htmlResponse, artifact = snapshot(), html = '<!doctype html><html><head></head><body><img src="cover.png"></body></html>' } = {}) {
   const { window } = parseHTML('<!doctype html><html><head></head><body><div id="root"></div></body></html>');
   window.location = { pathname: '/', origin: 'http://127.0.0.1:7860' };
   const previous = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -71,17 +71,19 @@ async function mountArchive({ files = [], responseStatus = 200, error, relatedSt
   const { createRoot } = require('react-dom/client');
   const root = createRoot(window.document.getElementById('root'));
   const requests = [];
-  const Component = componentModule(galleryArtifact ? 'components/ArtifactGallery.tsx' : 'components/SnapshotArchivePreview.tsx', { user: 'owner', project: 'ip-one', globals: {
+  const Component = componentModule(galleryArtifact || legacyPath ? 'components/ArtifactGallery.tsx' : 'components/SnapshotArchivePreview.tsx', { user: 'owner', project: 'ip-one', globals: {
     ...globals, window, document: window.document, ResizeObserver: class { observe() {} disconnect() {} },
     fetch: async (url, options) => {
       requests.push({ url, options });
+      if (archiveResponse && (url.endsWith('/archive') || url.includes('/artifacts/archive?'))) return archiveResponse(url, options);
       if (url.endsWith('/archive')) return new Response(JSON.stringify(error ? { error } : { files }), { status: responseStatus, headers: { 'Content-Type': 'application/json' } });
+      if (htmlResponse && url.endsWith('/content')) return htmlResponse(url, options);
       if (url.endsWith('/content')) return new Response(html, { headers: { 'Content-Type': 'text/html' } });
       if (url.includes('/related?')) return new Response(new Uint8Array([137, 80, 78, 71]), { status: relatedStatus });
       throw new Error(`unexpected request ${url}`);
     },
   } }).default;
-  const render = async next => { await React.act(async () => { root.render(React.createElement(Component, galleryArtifact ? { artifacts: [next] } : { artifact: next })); }); };
+  const render = async next => { await React.act(async () => { root.render(React.createElement(Component, legacyPath ? { artifacts: [], archives: [legacyPath] } : galleryArtifact ? { artifacts: [next] } : { artifact: next })); }); };
   await render(galleryArtifact || artifact);
   return { window, requests, render, async close() {
     await React.act(async () => root.unmount());
@@ -235,4 +237,107 @@ test('captured root HTML may use ordinary nested underscore assets without grant
   await assert.rejects(read('_sessions/state.js', signal));
   await assert.rejects(read('../../_other/cover.png', signal));
   assert.equal(env.requests.length, 2);
+});
+
+
+test('fixed ZIP keeps exact member links while a refresh fails and can retry', async () => {
+  let calls = 0;
+  let fail;
+  const view = await mountArchive({ archiveResponse: () => {
+    calls++;
+    if (calls === 2) return new Promise(resolve => { fail = resolve; });
+    return Response.json({ files: [member(7, 'site/cover.png')] });
+  } });
+  try {
+    const { document } = view.window;
+    const memberLink = document.querySelector('[data-archive-member] a').getAttribute('href');
+    const reload = () => document.querySelector('[data-snapshot-archive-retry]');
+    await React.act(async () => reload().click());
+    assert.match(document.body.textContent, /正在重新读取/);
+    assert.equal(document.querySelector('[data-archive-member] a').getAttribute('href'), memberLink);
+    await React.act(async () => fail(Response.json({ error: 'temporary' }, { status: 503 })));
+    assert.match(document.querySelector('[role="alert"]').textContent, /保留上次/);
+    assert.equal(document.querySelector('[data-archive-member] a').getAttribute('href'), memberLink);
+    await React.act(async () => reload().click());
+    assert.match(document.body.textContent, /已重新读取/);
+    assert.deepEqual(view.requests.map(item => item.url), Array(3).fill(`/api/projects/ip-one/chat/artifacts/${id}/archive`));
+  } finally { await view.close(); }
+});
+
+test('legacy ZIP index errors stay visible with an exact retry even without initial previews', async () => {
+  let calls = 0;
+  const view = await mountArchive({ legacyPath: 'reports/old.zip', archiveResponse: () =>
+    ++calls === 1 ? Response.json({ detail: 'not available' }, { status: 404 })
+      : Response.json({ paths: ['reports/cover.png'] }),
+  });
+  try {
+    const { document } = view.window;
+    assert.match(document.querySelector('[data-legacy-archive-status]').textContent, /old\.zip.*暂不可用/s);
+    const retry = () => document.querySelector('[data-legacy-archive-retry]');
+    await React.act(async () => retry().click());
+    assert.match(document.querySelector('[data-legacy-archive-status]').textContent, /已重新读取/);
+    assert.ok(document.querySelector('.artifact-gallery img').getAttribute('src').endsWith('/media/reports/cover.png'));
+    assert.equal(view.requests.length, 2);
+  } finally { await view.close(); }
+});
+
+
+test('HTML refresh keeps the same rendered frame on a transient failure and retries the exact source', async () => {
+  let reads = 0;
+  const url = `/api/projects/ip-one/chat/artifacts/${id}/content`;
+  const view = await mountArchive({ galleryArtifact: { kind: 'html', name: 'index.html', url,
+    storageMode: 'snapshot', sourcePath: 'site/index.html' }, htmlResponse: () => {
+    reads++;
+    if (reads === 2) return new Response('', { status: 503 });
+    return new Response('<!doctype html><html><body>旧版本</body></html>', { headers: { 'Content-Type': 'text/html' } });
+  } });
+  try {
+    const { document } = view.window;
+    const frame = document.querySelector('iframe');
+    const retry = () => document.querySelector('[data-html-preview-retry]');
+    assert.ok(frame);
+    await React.act(async () => retry().click());
+    assert.equal(document.querySelector('iframe'), frame);
+    assert.match(document.querySelector('[data-html-preview-status]').textContent, /保留上次/);
+    await React.act(async () => retry().click());
+    assert.match(document.querySelector('[data-html-preview-status]').textContent, /已重新读取/);
+    assert.deepEqual(view.requests.map(item => item.url), [url, url, url]);
+  } finally { await view.close(); }
+});
+
+test('image failure offers a retry of the same immutable resource', async () => {
+  const url = `/api/projects/ip-one/chat/artifacts/${id}/content`;
+  const view = await mountArchive({ galleryArtifact: { kind: 'image', name: 'cover.png', url,
+    storageMode: 'snapshot', sourcePath: 'site/cover.png' } });
+  try {
+    const { document } = view.window;
+    const first = document.querySelector('.artifact-stage img');
+    await React.act(async () => first.dispatchEvent(new view.window.Event('error')));
+    assert.equal(document.querySelector('[data-artifact-preview-status]').dataset.artifactPreviewStatus, 'error');
+    await React.act(async () => document.querySelector('[data-artifact-preview-retry]').click());
+    const retry = document.querySelector('.artifact-stage img');
+    assert.notEqual(retry, first);
+    assert.equal(retry.getAttribute('src'), url);
+    await React.act(async () => retry.dispatchEvent(new view.window.Event('load')));
+    assert.match(document.querySelector('[data-artifact-preview-status]').textContent, /已重新加载/);
+  } finally { await view.close(); }
+});
+
+test('fixed PDF waits for exact HEAD authorization and recovers without a wrong-route iframe', async () => {
+  const url = `/api/projects/ip-one/chat/artifacts/${id}/content`;
+  let checks = 0;
+  const view = await mountArchive({ galleryArtifact: { kind: 'pdf', name: 'review.pdf', url,
+    storageMode: 'snapshot', sourcePath: 'site/review.pdf' }, htmlResponse: (target, options) => {
+    assert.equal(target, url);
+    assert.equal(options.method, 'HEAD');
+    return new Response(null, { status: ++checks === 1 ? 404 : 200, headers: { 'Content-Type': 'application/pdf' } });
+  } });
+  try {
+    const { document } = view.window;
+    assert.ok(!document.querySelector('iframe'));
+    assert.equal(document.querySelector('[data-artifact-preview-status]').dataset.artifactPreviewStatus, 'unavailable');
+    await React.act(async () => document.querySelector('[data-artifact-preview-retry]').click());
+    assert.equal(document.querySelector('iframe').getAttribute('src'), url);
+    assert.equal(checks, 2);
+  } finally { await view.close(); }
 });

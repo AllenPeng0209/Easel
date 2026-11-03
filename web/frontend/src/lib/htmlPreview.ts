@@ -70,7 +70,7 @@ function sourceDirectory(source: HtmlArtifactSource, origin: string, document?: 
 
 /** Consume a finite response, including servers that omit or misstate Content-Length. */
 async function readBytes(response: Response, limit: number, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
-  if (!response.ok) throw new Error(`HTML 预览资源读取失败（${response.status}）`);
+  if (!response.ok) throw Object.assign(new Error(`HTML 预览资源读取失败（${response.status}）`), { status: response.status });
   const length = Number(response.headers.get('Content-Length'));
   if (Number.isFinite(length) && length > limit) throw new Error('HTML 预览资源超过大小限制');
   if (!response.body) return new Uint8Array();

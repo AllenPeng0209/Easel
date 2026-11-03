@@ -3,6 +3,7 @@ import { deliverablePreview, deliverablePreviewCapability, normalizeDeliverable,
 import ArtifactGallery from './ArtifactGallery';
 import SnapshotArchivePreview from './SnapshotArchivePreview';
 import DraftSnapshotPreview from './DraftSnapshotPreview';
+import DeliverableVersionNotice from './DeliverableVersionNotice';
 
 /** Resolve previews from the same authorized artifact ID as the delivery card. */
 export default function DeliverablePreviewBody({ file: input }: { file: ChatDeliverable }) {
@@ -14,11 +15,12 @@ export default function DeliverablePreviewBody({ file: input }: { file: ChatDeli
   const href = file && safeDeliverableHref(file);
   if (!file || !href || file.status !== 'available') return <p role="status">文件暂不可用。</p>;
   const capability = deliverablePreviewCapability(file);
-  if (capability === 'archive') return <SnapshotArchivePreview artifact={file} />;
-  if (capability === 'media' && media.length) return <ArtifactGallery artifacts={media} />;
-  if (capability === 'text') return <DraftSnapshotPreview key={file.artifactId} file={file} initialOpen />;
-  return <div className="deliverable-preview__fallback">
+  const viewer = capability === 'archive' ? <SnapshotArchivePreview artifact={file} />
+    : capability === 'media' && media.length ? <ArtifactGallery artifacts={media} />
+    : capability === 'text' ? <DraftSnapshotPreview key={file.artifactId} file={file} initialOpen />
+    : <div className="deliverable-preview__fallback">
     <p>此格式暂不支持预览，可下载查看。</p>
     <a href={`${href}?download=1`} download={file.name}>下载文件</a>
   </div>;
+  return <><DeliverableVersionNotice key={`version:${file.artifactId}`} file={file} />{viewer}</>;
 }

@@ -33,7 +33,11 @@ test('four mixed deliveries are scannable and preserve exact preview, download a
   try {
     const requests = [];
     const Cards = componentModule('components/DeliverableCards.tsx', { globals: { window, document, Response,
-      fetch: async url => { requests.push(url); return new Response(JSON.stringify({ versions: [artifacts[1]] })); },
+      fetch: async url => {
+        requests.push(url);
+        return requests.length === 2 ? new Response('', { status: 503 })
+          : new Response(JSON.stringify({ versions: [artifacts[1]] }));
+      },
     } }).default;
     const opened = [];
     await React.act(async () => root.render(React.createElement(Cards, {
@@ -75,6 +79,12 @@ test('four mixed deliveries are scannable and preserve exact preview, download a
     assert.equal(details.querySelector('[aria-label="查看历史交付版本：outline.json"]'), version);
     assert.equal(version.getAttribute('aria-expanded'), 'true');
     assert.deepEqual(requests, [`/api/chat/artifacts/${artifacts[1].artifactId}/versions`]);
+    const refresh = [...details.querySelectorAll('button')].find(item => item.textContent === '刷新历史列表');
+    await React.act(async () => refresh.click());
+    assert.match(details.querySelector('[role=alert]').textContent, /读取失败/);
+    assert.match(details.textContent, /保留上次.*记录/);
+    assert.ok(details.querySelector(`[data-history-artifact="${artifacts[1].artifactId}"]`));
+
   } finally {
     await React.act(() => root.unmount());
     for (const [name, descriptor] of Object.entries(descriptors)) {

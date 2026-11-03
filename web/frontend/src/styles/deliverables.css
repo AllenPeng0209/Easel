@@ -57,3 +57,6 @@
 .deliverable-overview__purpose { color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
 .deliverable-overview__row > :is(a, .deliverable-unavailable) { flex: none; }
 .deliverable-detail-cards[hidden] { display: none; }
+
+.deliverable-version-notice { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 10px; color: var(--text-secondary); font-size: 12px; }
+.deliverable-version-notice p { flex-basis: 100%; margin: 0; }

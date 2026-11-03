@@ -66,12 +66,13 @@ export async function loadSnapshotArchive(artifact: SnapshotArchiveSource, signa
   signal.throwIfAborted();
   let payload: unknown;
   try { payload = await response.json(); } catch {
-    throw new Error(`ZIP 索引读取失败（${response.status}）：响应格式无效`);
+    throw Object.assign(new Error(`ZIP 索引读取失败（${response.status}）：响应格式无效`), { status: response.status });
   }
   signal.throwIfAborted();
   if (!response.ok) {
     const detail = payload && typeof payload === 'object' ? (payload as { error?: unknown }).error : undefined;
-    throw new Error(typeof detail === 'string' && detail ? detail : `ZIP 索引读取失败（${response.status}）`);
+    throw Object.assign(new Error(typeof detail === 'string' && detail ? detail : `ZIP 索引读取失败（${response.status}）`),
+      { status: response.status });
   }
   return normalizeSnapshotArchiveFiles(artifact, payload);
 }
