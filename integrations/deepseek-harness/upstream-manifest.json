@@ -7475,12 +7475,34 @@
     "reuse_kind": "adapted",
     "changes": "适配上游受限文本投影和不可信参考边界，接入 Easel 认证目录及接纳快照。",
     "verification_status": "C31_verified_scoped_snapshot_and_isolated_browser"
+  },
+  {
+    "feature_id": "A23",
+    "upstream_path": "packages/client/ui-conversation/src/client/input/editor/command-chip-node.tsx",
+    "upstream_sha256": "59d6e4c2ccdcb16729701ae40ed71b505057b599cbc4d73747078ab2ce771d93",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/composer/command-chip.ts",
+    "destination_sha256": "f4e0018c473ed4f99ad5fe7852b45a507d189377ad836aa029b7329dc9a3a469",
+    "reuse_kind": "adapted",
+    "changes": "适配上游原子命令节点、规范 token 与正文约束。",
+    "verification_status": "A23_verified_command_editor_and_admission"
+  },
+  {
+    "feature_id": "A23",
+    "upstream_path": "packages/client/ui-input-trigger/README.md",
+    "upstream_sha256": "026cda4d928cb67120689fc8e686dfa0056d89bef2381ccfc25b22708214ca89",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ComposerCommandMenu.tsx",
+    "destination_sha256": "a3f6174d56fa6d9436554d0d8694121f7b757128ba26a9ce65982be085dedbc2",
+    "reuse_kind": "adapted",
+    "changes": "复用上游命令发现、键盘候选和选择状态，候选由 Easel 服务端提供。",
+    "verification_status": "A23_verified_command_editor_and_admission"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 55,
+    "source_migration_files": 57,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 40,
+    "adapted_upstream_files": 42,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

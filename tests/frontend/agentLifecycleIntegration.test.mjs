@@ -58,6 +58,7 @@ function helper(name, context = {}) {
 const { nextSessionRevision, mergeSessionCatalog } = helper('sessionSync');
 const { nextQueuedMessage, confirmChatStop } = helper('chatControl');
 const chatReferences = helper('chatReferences');
+const chatCommands = helper('chatCommands');
 const plain = value => JSON.parse(JSON.stringify(value));
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
@@ -77,7 +78,7 @@ function appBoundary(initial, overrides = {}) {
     streamCtl: { current: {} }, streamAcc: { current: {} }, typingBuf: { current: {} }, queueEdits: { current: {} },
     selectedPersona: 'another-brand-persona', historyReady: true, canOperate: true,
     projectStorageKey, localStorage, sessionStorage: { setItem() {}, getItem() { return null; }, removeItem() {} },
-    ...prompt, ...chatReferences, admissionFeedback: {},
+    ...prompt, ...chatReferences, ...chatCommands, admissionFeedback: {},
     loadChatDraft: () => ({ text: '', attachments: [] }), chatDraftOwner: () => 'composer',
     saveSessions: value => saved.push(plain(value)), updateSessionTitle() {},
     startTypingPump() {}, ensureTypingPump() {}, finalizeStream() {},
@@ -549,4 +550,19 @@ test('mixed draft sends rebased session references without trusting the local la
   payload[19]();
   assert.equal(await sent, true);
   assert.deepEqual(plain(ui.context.sessions[0].messages[0].sessionReferences), expected);
+});
+
+test('an explicit command claim follows the accepted turn and ordinary text stays unclaimed', async () => {
+  const ui = appBoundary([{ id: 'target', title: 'Chat', created: 1, messages: [] }]);
+  const command = { id: 'social-draft', token: '/文案' };
+  const sent = ui.callback('handleSendMessage')('target', '/文案 教育', [], undefined, undefined, command);
+  const payload = ui.requests[0];
+  assert.equal(payload[0], '/文案 教育');
+  assert.deepEqual(plain(payload[23]), command);
+  payload[19]();
+  assert.equal(await sent, true);
+  assert.deepEqual(plain(ui.context.sessions[0].messages[0].command), command);
+  const plainSend = appBoundary([{ id: 'plain', title: 'Chat', created: 1, messages: [] }]);
+  plainSend.callback('handleSendMessage')('plain', '/文案 教育');
+  assert.equal(plainSend.requests[0][23], undefined);
 });

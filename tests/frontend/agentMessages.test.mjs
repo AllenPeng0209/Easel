@@ -172,3 +172,14 @@ test('saved session references appear at their exact span without changing a typ
   assert.equal((html.match(/data-chat-session-reference="source-1"/g) || []).length, 1);
   assert.match(html, /<\/span> 与普通 @研究记录/);
 });
+
+test('only an explicitly saved command is shown as a command node in history', () => {
+  const MessageBubble = componentModule('components/MessageBubble.tsx').default;
+  const content = '/文案 教育';
+  const render = command => renderToStaticMarkup(React.createElement(MessageBubble, {
+    message: { role: 'user', content, command },
+  }));
+  assert.match(render({ id: 'social-draft', token: '/文案' }), /data-chat-command="social-draft"/);
+  assert.doesNotMatch(render(undefined), /data-chat-command/);
+  assert.doesNotMatch(render({ id: 'topic-ideas', token: '/选题' }), /data-chat-command/);
+});

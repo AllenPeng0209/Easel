@@ -4,6 +4,7 @@
  * ce7073d51254c26cd63b22a60835b8f948deb447. Raw File bytes are never persisted.
  */
 import { projectStorageKey } from './projectScope';
+import { chatCommandOverlapsReferences, validateChatCommand, type ChatCommand } from './chatCommands';
 import { validateChatReferences, validateChatSessionReferences, type ChatReference, type ChatDraftSessionReference } from './chatReferences';
 import type { UploadAttachment } from './uploadQueue';
 
@@ -14,6 +15,7 @@ export interface ChatDraft {
   interruptedFiles: InterruptedFile[];
   references?: ChatReference[];
   sessionReferences?: ChatDraftSessionReference[];
+  command?: ChatCommand;
 }
 
 const empty = (): ChatDraft => ({ text: '', attachments: [], interruptedFiles: [] });
@@ -41,8 +43,11 @@ export function loadChatDraft(sessionId: string): ChatDraft {
         mime: typeof file.mime === 'string' ? file.mime : '' }));
     const references = validateChatReferences(value.text, value.references, attachments.map(item => item.reference!));
     const sessionReferences = validateChatSessionReferences(value.text, value.sessionReferences, references ?? []);
+    const command = validateChatCommand(value.text, value.command);
     return { text: value.text, attachments, interruptedFiles, ...(references?.length ? { references } : {}),
-      ...(sessionReferences?.length ? { sessionReferences } : {}) };
+      ...(sessionReferences?.length ? { sessionReferences } : {}),
+      ...(command && !chatCommandOverlapsReferences(command, references ?? undefined, sessionReferences ?? undefined)
+        ? { command } : {}) };
   } catch { return empty(); }
 }
 
@@ -56,9 +61,12 @@ export function saveChatDraft(sessionId: string, draft: ChatDraft, composerId?: 
       .filter(item => item.status !== 'ready').map(item => ({ name: item.name, size: item.size, mime: item.mime }))];
     const references = validateChatReferences(draft.text, draft.references, attachments.map(item => item.reference));
     const sessionReferences = validateChatSessionReferences(draft.text, draft.sessionReferences, references ?? []);
+    const command = validateChatCommand(draft.text, draft.command);
     if (!draft.text && !attachments.length && !interruptedFiles.length) localStorage.removeItem(keyFor(sessionId));
     else localStorage.setItem(keyFor(sessionId), JSON.stringify({ version: 1, composerId, text: draft.text, attachments, interruptedFiles,
-      ...(references?.length ? { references } : {}), ...(sessionReferences?.length ? { sessionReferences } : {}) }));
+      ...(references?.length ? { references } : {}), ...(sessionReferences?.length ? { sessionReferences } : {}),
+      ...(command && !chatCommandOverlapsReferences(command, references ?? undefined, sessionReferences ?? undefined)
+        ? { command } : {}) }));
     return true;
   } catch { return false; }
 }

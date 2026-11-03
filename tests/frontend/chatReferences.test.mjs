@@ -156,3 +156,58 @@ test('trimming and restoring a mixed draft preserves independent file and sessio
   assert.equal(restored.sessionReferences, undefined);
   assert.deepEqual(plain(restored.references), mixedDraft.references);
 });
+
+const command = { id: 'creative-copy', token: '/文案' };
+
+test('command claims require an explicit leading token and a whitespace boundary', () => {
+  const model = load('chatCommands');
+  assert.equal(typeof model.validateChatCommand, 'function');
+  for (const text of ['/文案', '/文案 介绍', '/文案\n介绍', '/文案　介绍']) {
+    const result = model.validateChatCommand(text, command);
+    assert.deepEqual(plain(result), command);
+    assert.notEqual(result, command);
+  }
+  for (const text of [' /文案', '开头 /文案', '/文案模板', '/文案-模板', '/口播']) {
+    assert.equal(model.validateChatCommand(text, command), null);
+  }
+  assert.equal(model.validateChatCommand('/文案 介绍', undefined), null);
+});
+
+test('draft command validation rejects malformed or extra fields and overlapping reference spans', () => {
+  const model = load('chatCommands');
+  assert.equal(typeof model.validateChatCommand, 'function');
+  for (const invalid of [
+    { ...command, id: 'bad id' }, { ...command, token: '/文案 ' },
+    { ...command, token: '/文案\n' }, { ...command, token: '/文案/下一段' },
+    { ...command, token: '/文案;shell' }, { ...command, run: true },
+  ]) {
+    assert.equal(model.validateChatCommand(invalid.token, invalid), null);
+  }
+  assert.equal(model.chatCommandOverlapsReferences(command, [{ start: 2, end: 7 }]), true);
+  assert.equal(model.chatCommandOverlapsReferences(command, [], [{ start: 6, end: 9 }]), false);
+});
+
+test('only explicit valid command claims persist and a late receipt preserves a new owner', () => {
+  const local = storage();
+  const store = load('chatDrafts', local);
+  const prefix = '/文案 ';
+  const value = {
+    ...mixedDraft, text: prefix + mixedDraft.text, command,
+    references: mixedDraft.references.map(ref => ({ ...ref, start: ref.start + prefix.length, end: ref.end + prefix.length })),
+    sessionReferences: mixedDraft.sessionReferences.map(ref => ({ ...ref, start: ref.start + prefix.length, end: ref.end + prefix.length })),
+  };
+  assert.equal(store.saveChatDraft('session', value, 'new'), true);
+  assert.equal(store.consumeChatDraft('session', 'old'), true);
+  const restored = store.loadChatDraft('session');
+  assert.deepEqual(plain(restored.command ?? {}), command);
+  assert.deepEqual(plain(restored.references), value.references);
+  assert.deepEqual(plain(restored.sessionReferences), value.sessionReferences);
+  assert.equal(load('chatDrafts', local, 'user:a:ip:two').loadChatDraft('session').command, undefined);
+
+  const legacy = { text: '/文案 草稿', attachments: [], interruptedFiles: [] };
+  assert.equal(store.saveChatDraft('session', legacy, 'new'), true);
+  assert.equal(store.loadChatDraft('session').command, undefined);
+  assert.equal(store.saveChatDraft('session', { ...legacy, text: ' /文案 草稿', command }, 'new'), true);
+  assert.equal(store.loadChatDraft('session').text, ' /文案 草稿');
+  assert.equal(store.loadChatDraft('session').command, undefined);
+});

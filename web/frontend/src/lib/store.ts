@@ -2,6 +2,7 @@ import { ACTIVE_PROJECT_ID, ACTIVE_USER_ID, projectStorageKey } from './projectS
 import { loadPromptAttempt } from './promptAdmission';
 import type { UploadedFile, ChatQuestion } from './api';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
+import type { ChatCommand } from './chatCommands';
 import type { AgentEvent } from './agentEvents';
 import type { WorkshopReference } from './workshop';
 
@@ -11,6 +12,7 @@ export interface QueuedMessage {
   attachments?: UploadedFile[];
   references?: ChatReference[];
   sessionReferences?: ChatSessionReference[];
+  command?: ChatCommand;
   created: number;
   delivery?: 'sending' | 'rejected' | 'unconfirmed';
 }
@@ -22,6 +24,7 @@ export interface ChatMessage {
   attachments?: UploadedFile[];
   references?: ChatReference[];
   sessionReferences?: ChatSessionReference[];
+  command?: ChatCommand;
   topicRef?: { id: string; snapshotHash: string };
   workshopRef?: WorkshopReference;
   thinking?: string;   // 模型思考过程（隐思考），流式结束后持久保留

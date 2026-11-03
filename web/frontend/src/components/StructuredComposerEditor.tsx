@@ -1,8 +1,11 @@
-import { useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
-import { $getSelection, $isRangeSelection, type RangeSelection, CLEAR_HISTORY_COMMAND, COMMAND_PRIORITY_HIGH, createEditor, KEY_ENTER_COMMAND, PASTE_COMMAND } from 'lexical';
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
+import { $getSelection, $isRangeSelection, type RangeSelection, CLEAR_HISTORY_COMMAND, COMMAND_PRIORITY_HIGH, createEditor, KEY_DOWN_COMMAND, KEY_ENTER_COMMAND, PASTE_COMMAND } from 'lexical';
+import { fetchChatCommands } from '../lib/api';
+import type { ChatCommand } from '../lib/chatCommands';
+import { useComposerCommandMenu } from './ComposerCommandMenu';
 import { sessionReferenceLabel, type ChatDraftSessionReference, type ChatReference } from '../lib/chatReferences';
 import {
-  $projectReferenceDraft, $restoreReferenceDraft, insertReferenceChip, ReferenceChipNode,
+  $projectReferenceDraft, $restoreReferenceDraft, applyCommandChip, CommandChipNode, insertReferenceChip, ReferenceChipNode,
   registerReferenceEditing, detachReferenceChips, sameReferenceDraft,
 } from '../vendor/deepseek-harness/composer/reference-editor';
 import './StructuredComposerEditor.css';
@@ -10,6 +13,7 @@ import './StructuredComposerEditor.css';
 export interface StructuredEditorHandle {
   focus: () => void;
   rememberSelection: () => void;
+  openCommandMenu: () => void;
   insertSessionReference: (reference: Pick<ChatDraftSessionReference, 'sessionId' | 'label' | 'snapshotHash'>) => void;
   insertReference: (attachmentId: string, label: string) => void;
   removeReference: (attachmentId: string) => void;
@@ -20,32 +24,50 @@ interface EditorProps {
   value: string;
   references: ChatReference[];
   sessionReferences?: ChatDraftSessionReference[];
+  command?: ChatCommand;
   placeholder: string;
   disabled: boolean;
-  onChange: (text: string, references: ChatReference[], sessionReferences?: ChatDraftSessionReference[]) => void;
+  onChange: (text: string, references: ChatReference[], sessionReferences?: ChatDraftSessionReference[], command?: ChatCommand) => void;
   onSubmit: () => void;
   onPasteFiles: (files: FileList) => void;
 }
 
 /** React host for the pinned Harness plain-text editor and its atomic file references. */
-export default function StructuredComposerEditor({ ref, value, references, sessionReferences, placeholder, disabled,
+export default function StructuredComposerEditor({ ref, value, references, sessionReferences, command, placeholder, disabled,
   onChange, onSubmit, onPasteFiles }: EditorProps) {
   const root = useRef<HTMLDivElement>(null);
-  const projection = useRef({ text: value, references, sessionReferences });
+  const projection = useRef({ text: value, references, sessionReferences, command });
   const savedSelection = useRef<RangeSelection | null>(null);
   const current = useRef({ onChange, onSubmit, onPasteFiles, disabled });
   current.current = { onChange, onSubmit, onPasteFiles, disabled };
   const composing = useRef(false);
   const compositionEndedAt = useRef(0);
   const [editor] = useState(() => {
-    const instance = createEditor({ namespace: 'easel-composer', nodes: [ReferenceChipNode],
+    const instance = createEditor({ namespace: 'easel-composer', nodes: [ReferenceChipNode, CommandChipNode],
       onError(error) { throw error; } });
-    instance.update(() => $restoreReferenceDraft({ text: value, references, sessionReferences }), { discrete: true });
+    instance.update(() => $restoreReferenceDraft({ text: value, references, sessionReferences, command }), { discrete: true });
     return instance;
   });
 
+  const menu = useComposerCommandMenu({ value, command, disabled, load: fetchChatCommands,
+    onPick: (selected, trigger) => {
+      // The keyboard command runs inside a Lexical update. Apply the selection
+      // after it closes, so the pick cannot also reach the Enter-to-send handler.
+      queueMicrotask(() => {
+        if (!current.current.disabled && editor.getRootElement() && applyCommandChip(editor, selected, trigger)) editor.focus();
+      });
+    } });
+  const currentMenu = useRef(menu);
+  currentMenu.current = menu;
+
+
   useImperativeHandle(ref, () => ({
     focus: () => editor.focus(),
+    openCommandMenu() {
+      if (current.current.disabled) return;
+      currentMenu.current.openExplicitly();
+      editor.focus();
+    },
     rememberSelection() {
       savedSelection.current = editor.getEditorState().read(() => {
         const selection = $getSelection();
@@ -71,16 +93,21 @@ export default function StructuredComposerEditor({ ref, value, references, sessi
   }), [editor]);
 
   useLayoutEffect(() => {
+    const fromComposition = (event: KeyboardEvent) => composing.current || editor.isComposing() ||
+      event.isComposing || event.keyCode === 229 || Date.now() - compositionEndedAt.current < 60;
     const dispose = registerReferenceEditing(editor);
     const unregisterChange = editor.registerUpdateListener(({ editorState }) => {
       const updated = editorState.read($projectReferenceDraft);
       if (sameReferenceDraft(updated, projection.current)) return;
-      projection.current = { ...updated, sessionReferences: updated.sessionReferences };
-      current.current.onChange(updated.text, updated.references, updated.sessionReferences);
+      projection.current = { ...updated, sessionReferences: updated.sessionReferences, command: updated.command };
+      current.current.onChange(updated.text, updated.references, updated.sessionReferences, updated.command);
     });
+    const unregisterMenu = editor.registerCommand(KEY_DOWN_COMMAND, event => {
+      if (fromComposition(event) || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false;
+      return currentMenu.current.keyDown(event);
+    }, COMMAND_PRIORITY_HIGH);
     const unregisterEnter = editor.registerCommand(KEY_ENTER_COMMAND, event => {
-      if (!event || composing.current || editor.isComposing() || event.isComposing || event.keyCode === 229
-        || Date.now() - compositionEndedAt.current < 60
+      if (!event || event.defaultPrevented || fromComposition(event)
         || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false;
       event.preventDefault();
       if (!current.current.disabled) current.current.onSubmit();
@@ -96,6 +123,7 @@ export default function StructuredComposerEditor({ ref, value, references, sessi
     return () => {
       unregisterPaste();
       unregisterEnter();
+      unregisterMenu();
       unregisterChange();
       dispose();
       editor.setRootElement(null);
@@ -104,21 +132,30 @@ export default function StructuredComposerEditor({ ref, value, references, sessi
 
   useLayoutEffect(() => { editor.setEditable(!disabled); }, [editor, disabled]);
 
+  useEffect(() => {
+    if (!disabled && command && menu.commands &&
+        !menu.commands.some(row => row.id === command.id && row.token === command.token)) {
+      current.current.onChange(value, references, sessionReferences);
+    }
+  }, [command, disabled, menu.commands, references, sessionReferences, value]);
+
   useLayoutEffect(() => {
-    const next = { text: value, references, sessionReferences };
+    const next = { text: value, references, sessionReferences, command };
     if (sameReferenceDraft(next, projection.current)) return;
     projection.current = next;
     editor.update(() => $restoreReferenceDraft(next), { discrete: true });
     editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
-  }, [editor, value, references, sessionReferences, disabled]);
+  }, [editor, value, references, sessionReferences, command, disabled]);
 
   return <div className="structured-composer-editor" data-empty={!value || undefined}>
     <div ref={root} className="chat-input structured-composer-input" contentEditable={!disabled}
       suppressContentEditableWarning role="textbox" aria-label="给 AI 发送消息" aria-multiline="true"
       aria-disabled={disabled} aria-placeholder={placeholder} spellCheck={false}
+      aria-controls={menu.open ? menu.menuId : undefined} aria-activedescendant={menu.activeId}
       onCompositionStart={() => { composing.current = true; }}
       onCompositionEnd={() => { composing.current = false; compositionEndedAt.current = Date.now(); }}
       onBlur={() => { composing.current = false; }} />
     {!value && <span className="structured-composer-placeholder" aria-hidden="true">{placeholder}</span>}
+    {menu.content}
   </div>;
 }

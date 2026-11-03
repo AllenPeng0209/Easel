@@ -68,6 +68,7 @@ from easel.artifact_archives import ArchiveSnapshotReader
 from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
 from web.chat_history import ChatHistoryStore, validated_session
+from web.chat_commands import ChatCommand, chat_command_catalog, chat_command_message, validate_chat_command
 from web.chat_session_references import (
     ChatSessionReference, MAX_SESSION_REFERENCES, append_session_reference_context,
     freeze_session_references, resolve_session_reference_context, session_reference_snapshot,
@@ -3059,6 +3060,7 @@ class ChatRequest(BaseModel):
     autonomyMode: Literal["autonomous", "interactive"] = "autonomous"
     topicRef: ChatTopicRef | None = None
     workshopRef: ChatWorkshopRef | None = None
+    command: ChatCommand | None = None
 
 
 async def _resolve_chat_topic(ref: ChatTopicRef | None) -> dict | None:
@@ -3267,6 +3269,8 @@ def _attachment_context(req: ChatRequest, *, must_exist: bool = True, include_pa
 def _chat_message(req: ChatRequest) -> str:
     context = _attachment_context(req)
     message = req.message if req.references or req.sessionReferences else req.message.strip()
+    if req.command is not None:
+        message = chat_command_message(req.message, req.command)
     if context:
         message = f"{message}\n\n{context}" if message else context
     if not message:
@@ -3283,6 +3287,8 @@ def _chat_message(req: ChatRequest) -> str:
 def _direct_chat_content(req: ChatRequest) -> tuple[str | list, str]:
     references = _attachment_context(req, include_paths=False)
     message = req.message if req.references or req.sessionReferences else req.message.strip()
+    if req.command is not None:
+        message = chat_command_message(req.message, req.command)
     if not message and not req.attachments:
         raise HTTPException(400, "消息不能为空")
     system = SYSTEM_PROMPT
@@ -4483,6 +4489,12 @@ async def api_chat_subagent(session_id: str, handle: str, request: Request):
     return {"messages": result["messages"], "hasMore": result["hasMore"], "children": children}
 
 
+@app.get("/api/chat/commands")
+def api_chat_commands():
+    _require_operation()
+    return {"commands": chat_command_catalog()}
+
+
 @app.get("/api/chat/session-reference")
 def api_chat_session_reference(request: Request):
     _require_operation()
@@ -4517,18 +4529,22 @@ async def api_chat_sessions_merge(req: ChatSessionsRequest):
         # server-verified ownership check as a fresh chat submission.
         for session in sessions:
             for message in [*session["messages"], *session.get("queued", [])]:
-                if message.get("attachments") or "references" in message or "sessionReferences" in message:
+                if (message.get("attachments") or "references" in message
+                        or "sessionReferences" in message or "command" in message):
                     history_request = ChatRequest(
                         message=message.get("content", message.get("text", "")),
                         sessionId=session["id"], attachments=message.get("attachments", []),
                         references=message.get("references", []),
-                        sessionReferences=message.get("sessionReferences", []))
-                    if ((history_request.references or history_request.sessionReferences)
+                        sessionReferences=message.get("sessionReferences", []),
+                        command=message.get("command"))
+                    if ((history_request.references or history_request.sessionReferences or history_request.command)
                             and message.get("role") not in (None, "user")):
-                        raise ValueError("引用必须来自用户消息")
+                        raise ValueError("引用与对话命令必须来自用户消息")
                     _attachment_context(history_request, must_exist=False)
                     validate_session_reference_spans(history_request.message, session["id"],
                         history_request.sessionReferences, history_request.references)
+                    if history_request.command is not None:
+                        validate_chat_command(history_request.message, history_request.command)
         store = ChatHistoryStore(_sessions_dir())
         return {"sessions": await asyncio.to_thread(store.merge, sessions), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
     except (ValueError, TypeError):
@@ -4690,6 +4706,8 @@ async def api_chat_stream(req: ChatRequest):
         request_payload.pop("references")
     if not req.sessionReferences:
         request_payload.pop("sessionReferences")
+    if req.command is None:
+        request_payload.pop("command")
     payload_hash = hashlib.sha256(json.dumps({"request": request_payload, "runtime": runtime},
         sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
     catalog = ChatHistoryStore(_sessions_dir())

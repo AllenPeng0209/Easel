@@ -2,6 +2,7 @@ import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
 import type { ChatSession } from './store';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
+import type { ChatCommand, ChatCommandOption } from './chatCommands';
 import { mergeSessionCatalog } from './sessionSync';
 function getBasePath(): string {
   const path = window.location.pathname;
@@ -676,6 +677,7 @@ export function streamChat(
   requireAdmission = false,
   references?: ChatReference[],
   sessionReferences?: ChatSessionReference[],
+  command?: ChatCommand,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -818,7 +820,8 @@ export function streamChat(
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef,
                 ...(references?.length ? { references } : {}),
-                ...(sessionReferences?.length ? { sessionReferences } : {}) }),
+                ...(sessionReferences?.length ? { sessionReferences } : {}),
+                ...(command ? { command } : {}) }),
               signal: controller.signal,
             })
           : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {
@@ -882,6 +885,10 @@ export interface SessionReferencePreview {
 
 export function fetchSessionReference(sessionId: string, signal?: AbortSignal): Promise<SessionReferencePreview> {
   return request(`/api/chat/session-reference?sessionId=${encodeURIComponent(sessionId)}`, { signal });
+}
+
+export function fetchChatCommands(signal?: AbortSignal): Promise<{ commands: ChatCommandOption[] }> {
+  return request('/api/chat/commands', { signal });
 }
 
 export async function fetchChatSessions(signal?: AbortSignal): Promise<{ sessions: ChatSession[]; deletedIds: string[] }> {

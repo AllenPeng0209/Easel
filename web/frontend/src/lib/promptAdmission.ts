@@ -4,6 +4,7 @@
 import { projectStorageKey } from './projectScope';
 import type { UploadedFile } from './api';
 import type { ChatMessage, ChatSession } from './store';
+import type { ChatCommand } from './chatCommands';
 import { trimChatReferenceText, toWireSessionReferences, type ChatReference, type ChatSessionReference } from './chatReferences';
 
 export interface PromptAttempt {
@@ -54,18 +55,24 @@ export function forgetPromptAttempt(sessionId: string, turnId: string): void {
 
 const fileIdentity = (files: UploadedFile[] = []) => files.map(file => [file.id, file.name, file.path]);
 
-export function sameComposerDraft(attempt: PromptAttempt, text: string, files: UploadedFile[], references?: ChatReference[], sessionReferences?: ChatSessionReference[]): boolean {
+export function sameComposerDraft(attempt: PromptAttempt, text: string, files: UploadedFile[], references?: ChatReference[], sessionReferences?: ChatSessionReference[], command?: ChatCommand): boolean {
   const trimmed = trimChatReferenceText(text, references, sessionReferences);
   return attempt.composer && attempt.message.content === trimmed.text
+    && sameCommand(attempt.message.command, command)
     && JSON.stringify(attempt.message.references || []) === JSON.stringify(trimmed.references || [])
     && JSON.stringify(attempt.message.sessionReferences || []) === JSON.stringify(toWireSessionReferences(trimmed.sessionReferences) || [])
     && JSON.stringify(fileIdentity(attempt.message.attachments)) === JSON.stringify(fileIdentity(files));
 }
 
+function sameCommand(first?: ChatCommand, second?: ChatCommand): boolean {
+  return first?.id === second?.id && first?.token === second?.token;
+}
+
 function promptIdentity(attempt: PromptAttempt): string {
   const { topicRef, workshopRef, attachments } = attempt.message;
   return JSON.stringify([attempt.wireText, attempt.persona || null, attempt.message.content,
-    fileIdentity(attachments), attempt.message.references || [], attempt.message.sessionReferences || [], topicRef ? [topicRef.id, topicRef.snapshotHash] : null,
+    fileIdentity(attachments), attempt.message.references || [], attempt.message.sessionReferences || [],
+    attempt.message.command ? [attempt.message.command.id, attempt.message.command.token] : null, topicRef ? [topicRef.id, topicRef.snapshotHash] : null,
     workshopRef ? [workshopRef.id, workshopRef.revision, workshopRef.engineRevision,
       workshopRef.artifactId, workshopRef.artifactSha256] : null, attempt.truncateAt ?? null]);
 }

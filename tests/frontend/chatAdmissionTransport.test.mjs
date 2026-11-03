@@ -6,7 +6,7 @@ const frame = (id, event, value) => `id: ${id}\r\nevent: ${event}\r\ndata: ${JSO
 const admission = frame(1, 'admitted', { turnId: 'exact-turn', sessionId: 'session' });
 const done = frame(3, 'done', { outcome: 'completed' });
 
-async function scenario(responses, { requireAdmission = true, resumeOnly = false, shortAdmissionTimeout = false, references, sessionReferences, attachments = [] } = {}) {
+async function scenario(responses, { requireAdmission = true, resumeOnly = false, shortAdmissionTimeout = false, references, sessionReferences, command, attachments = [] } = {}) {
   const requests = [];
   const observed = [];
   let finish;
@@ -27,7 +27,7 @@ async function scenario(responses, { requireAdmission = true, resumeOnly = false
     token => observed.push(['token', token]), (_sessionKey, outcome) => { observed.push(['done', outcome]); finish(); },
     error => { observed.push(['error', error.status, error.message]); finish(); }, undefined, undefined,
     undefined, 'exact-turn', resumeOnly, undefined, attachments, undefined, undefined, undefined, undefined,
-    undefined, undefined, receipt => observed.push(['admitted', receipt.turnId, receipt.sessionId]), requireAdmission, references, sessionReferences);
+    undefined, undefined, receipt => observed.push(['admitted', receipt.turnId, receipt.sessionId]), requireAdmission, references, sessionReferences, command);
   let deadline;
   try {
     await Promise.race([terminal, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('No terminal event')), 250); })]);
@@ -150,4 +150,12 @@ test('typed session context is sent only on the original POST and omitted from l
   assert.deepEqual(JSON.parse(result.requests[0].body).sessionReferences, references);
   const plain = await scenario([admission + done], { sessionReferences: [] });
   assert.ok(!Object.hasOwn(JSON.parse(plain.requests[0].body), 'sessionReferences'));
+});
+
+test('explicit command claims are serialized, while ordinary prompts omit the field', async () => {
+  const command = { id: 'social-draft', token: '/文案' };
+  const typed = await scenario([admission + done], { command });
+  assert.deepEqual(JSON.parse(typed.requests[0].body).command, command);
+  const plain = await scenario([admission + done]);
+  assert.ok(!Object.hasOwn(JSON.parse(plain.requests[0].body), 'command'));
 });

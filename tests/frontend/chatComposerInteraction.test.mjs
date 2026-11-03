@@ -392,3 +392,19 @@ test('mixed session and file references stay separate through an unconfirmed sen
   assert.equal(JSON.stringify(editor(ui.render()).props.sessionReferences), JSON.stringify(sessionReferences));
   assert.equal(JSON.parse(sharedDrafts.get('scope:easel_chat_draft:s1')).sessionReferences[0].snapshotHash, 'b'.repeat(64));
 });
+
+test('only a selected command reaches admission as an explicit sidecar', async () => {
+  const calls = [];
+  const ui = view({ onSend: (...values) => { calls.push(values); return false; } });
+  const value = '/文案 写一条产品介绍';
+  editor(await ui.ready()).props.onChange(value, []);
+  await control(ui.render(), '发送').props.onClick();
+  assert.equal(calls[0].length, 2);
+  const command = { id: 'draft', token: '/文案' };
+  editor(ui.render()).props.onChange(value, [], [], command);
+  assert.equal(calls.length, 1, 'selecting does not send');
+  await control(ui.render(), '发送').props.onClick();
+  assert.equal(calls[1][0], value);
+  assert.equal(JSON.stringify(calls[1][4]), JSON.stringify(command));
+  assert.equal(JSON.stringify(editor(ui.render()).props.command), JSON.stringify(command));
+});

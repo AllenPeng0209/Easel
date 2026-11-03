@@ -8,7 +8,7 @@ const { $getRoot, $isRangeSelection, $getSelection, $setSelection, UNDO_COMMAND,
 
 function editorFixture() {
   const runtime = componentModule('vendor/deepseek-harness/composer/reference-editor.ts');
-  const editor = createEditor({ nodes: [runtime.ReferenceChipNode], onError(error) { throw error; } });
+  const editor = createEditor({ nodes: [runtime.ReferenceChipNode, runtime.CommandChipNode], onError(error) { throw error; } });
   const update = callback => editor.update(callback, { discrete: true });
   const snapshot = () => editor.getEditorState().read(runtime.$projectReferenceDraft);
   const dispose = runtime.registerReferenceEditing(editor);
@@ -104,5 +104,45 @@ test('session and attachment chips project independently and insert at the caret
     assert.equal(snapshot().sessionReferences[0].snapshotHash, selected.snapshotHash);
     update(() => runtime.$restoreReferenceDraft(inserted));
     assert.deepEqual(JSON.parse(JSON.stringify(snapshot())), JSON.parse(JSON.stringify(inserted)));
+  } finally { dispose(); }
+});
+
+test('explicit command selection leaves editable arguments and supports atomic deletion', async () => {
+  const { editor, runtime, update, snapshot, dispose } = editorFixture();
+  try {
+    update(() => runtime.$restoreReferenceDraft({ text: '/dr', references: [] }));
+    const command = { id: 'draft', token: '/draft' };
+    assert.equal(runtime.applyCommandChip(editor, command, '/dr'), true);
+    assert.equal(snapshot().text, '/draft ');
+    assert.equal(snapshot().command.id, 'draft');
+    update(() => $getSelection().insertText('用户参数'));
+    assert.equal(snapshot().text, '/draft 用户参数');
+    assert.equal(snapshot().command.id, 'draft');
+    update(() => runtime.$restoreReferenceDraft({ text: '/draft 保留此参数', references: [], command }));
+    assert.equal(snapshot().text, '/draft 保留此参数');
+    update(() => {
+      $getRoot().getFirstChild().getLastChild().select(0, 0);
+      assert.ok(editor.dispatchCommand(KEY_BACKSPACE_COMMAND, { preventDefault() {} }));
+    });
+    assert.equal(snapshot().text, ' 保留此参数');
+    assert.equal(snapshot().command, undefined);
+  } finally { dispose(); }
+});
+
+
+test('typing before a command converts its visible token back to plain text', () => {
+  const { runtime, update, snapshot, dispose } = editorFixture();
+  try {
+    update(() => runtime.$restoreReferenceDraft({
+      text: '/文案 参数', references: [], command: { id: 'draft', token: '/文案' },
+    }));
+    update(() => {
+      $getRoot().getFirstChild().selectStart();
+      $getSelection().insertText('普通文字 ');
+    });
+    assert.equal(snapshot().text, '普通文字 /文案 参数');
+    assert.equal(snapshot().command, undefined);
+    update(() => assert.equal($getRoot().getFirstChild().getChildren()
+      .some(node => node instanceof runtime.CommandChipNode), false));
   } finally { dispose(); }
 });

@@ -7,6 +7,7 @@ import type { AgentSubagent } from '../lib/agentEvents';
 import QuestionCards from './QuestionCards';
 import BrushEntry from './BrushEntry';
 import StructuredComposerEditor, { type StructuredEditorHandle } from './StructuredComposerEditor';
+import { chatCommandOverlapsReferences, validateChatCommand, type ChatCommand } from '../lib/chatCommands';
 import SessionReferencePicker, { type SessionReferenceCandidate } from './SessionReferencePicker';
 import {
   attachmentReferenceLabel, MAX_CHAT_REFERENCES, MAX_CHAT_SESSION_REFERENCES, validateChatReferences,
@@ -31,7 +32,7 @@ interface ChatPageProps {
   stream?: StreamState;          // 进行中的流式态（来自 App，切页也不丢）
   sessionReferenceCandidates?: readonly SessionReferenceCandidate[];
   onSend: (displayText: string, attachments?: UploadedFile[], references?: ChatReference[],
-    sessionReferences?: ChatDraftSessionReference[]) => boolean | Promise<boolean>;
+    sessionReferences?: ChatDraftSessionReference[], command?: ChatCommand) => boolean | Promise<boolean>;
   onSteer?: (text: string) => Promise<boolean>;
   onStop: () => void;
   onResend: (
@@ -88,13 +89,14 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const [restoreState, setRestoreState] = useState<'checking' | 'complete' | 'unconfirmed'>(
     restoredKeys.size ? 'checking' : 'complete');
   const [restoreAttempt, setRestoreAttempt] = useState(0);
-  const [{ text: input, references, sessionReferences }, setDraftContent] = useState(() => ({
+  const [{ text: input, references, sessionReferences, command }, setDraftContent] = useState(() => ({
     text: initialDraft.text, references: initialDraft.references ?? [], sessionReferences: initialDraft.sessionReferences ?? [],
+    command: initialDraft.command,
   }));
-  const draftContentRef = useRef({ text: input, references, sessionReferences });
+  const draftContentRef = useRef({ text: input, references, sessionReferences, command });
   const replaceInput = (text: string, nextReferences: ChatReference[] = [],
-    nextSessionReferences: ChatDraftSessionReference[] = []) => {
-    const next = { text, references: nextReferences, sessionReferences: nextSessionReferences };
+    nextSessionReferences: ChatDraftSessionReference[] = [], nextCommand?: ChatCommand) => {
+    const next = { text, references: nextReferences, sessionReferences: nextSessionReferences, command: nextCommand };
     draftContentRef.current = next;
     setDraftContent(next);
   };
@@ -149,7 +151,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const attachments = uploads.ready;
   const restorePending = restoreState !== 'complete' && uploadItems.some(item => restoredKeys.has(item.key));
   const canSend = (!!input.trim() || attachments.length > 0) && !uploading && !failedUploads && !restorePending && !sending;
-  const showSteer = isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0 && sessionReferences.length === 0;
+  const showSteer = isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0 && sessionReferences.length === 0 && !command;
   const waitingApproval = stream?.questions?.some(question => (!question.status || question.status === 'pending')
     && (question.requiresHuman || question.kind === 'approval' || question.publication));
   const lifecycleLabel = stream?.lifecycle === 'waiting_input' ? (waitingApproval ? '等待你批准' : '等待补充信息')
@@ -186,8 +188,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         return;
       }
     }
-    setDraftError(!saveChatDraft(session.id, { text: input, references, sessionReferences, attachments: uploadItems, interruptedFiles }, composerId));
-  }, [session.id, composerId, input, references, sessionReferences, uploadItems, interruptedFiles]);
+    setDraftError(!saveChatDraft(session.id, { text: input, references, sessionReferences, command, attachments: uploadItems, interruptedFiles }, composerId));
+  }, [session.id, composerId, input, references, sessionReferences, command, uploadItems, interruptedFiles]);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -207,19 +209,25 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   };
   const submitDraft = async (intent: 'send' | 'steer') => {
     const { text: submittedText, references: submittedReferences,
-      sessionReferences: submittedSessionReferences } = draftContentRef.current;
+      sessionReferences: submittedSessionReferences, command: submittedCommand } = draftContentRef.current;
     const trimmed = submittedText.trim();
     if (sendingRef.current) return;
-    if (intent === 'steer' && (!showSteer || !trimmed || uploads.snapshot.length > 0 || submittedSessionReferences.length > 0)) return;
+    if (intent === 'steer' && (!showSteer || !trimmed || uploads.snapshot.length > 0 || submittedSessionReferences.length > 0 || submittedCommand)) return;
     if ((!trimmed && attachments.length === 0) || uploading || failedUploads || restorePending) return;
     const exactReferences = validateChatReferences(submittedText, submittedReferences, attachments);
     if (!exactReferences) { setSubmitError('正文附件引用已变更，请重新插入后发送。'); return; }
     const exactSessions = validateChatSessionReferences(submittedText, submittedSessionReferences, exactReferences);
     if (!exactSessions) { setSubmitError('历史对话引用已变更，请重新预览后插入。'); return; }
+    const exactCommand = validateChatCommand(submittedText, submittedCommand);
+    if (submittedCommand && (!exactCommand || chatCommandOverlapsReferences(exactCommand, exactReferences, exactSessions))) {
+      setSubmitError('命令已变更，请重新选择后发送。');
+      return;
+    }
     sendingRef.current = true; setSending(true); setSubmitError('');
     try {
       const accepted = await (intent === 'steer' ? onSteer?.(trimmed)
-        : exactSessions.length ? onSend(submittedText, attachments, exactReferences, exactSessions)
+        : exactCommand ? onSend(submittedText, attachments, exactReferences, exactSessions, exactCommand)
+          : exactSessions.length ? onSend(submittedText, attachments, exactReferences, exactSessions)
           : exactReferences.length ? onSend(submittedText, attachments, exactReferences) : onSend(trimmed, attachments));
       if (accepted !== true) {
         if (mountedRef.current) setSubmitError(intent === 'steer'
@@ -302,16 +310,18 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
             requestAnimationFrame(() => editorRef.current?.focus());
           }} />}
         <StructuredComposerEditor ref={editorRef} value={input} references={references}
-          sessionReferences={sessionReferences} disabled={sending}
+          sessionReferences={sessionReferences} command={command} disabled={sending}
           placeholder={dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（可拖入图片/文档当素材）' : '发消息…（Enter 发送，Shift+Enter 换行，可拖入/粘贴素材）'}
-          onChange={(text, nextReferences, nextSessions) => {
+          onChange={(text, nextReferences, nextSessions, nextCommand) => {
             if (sendingRef.current) return;
             const receipts = uploads.ready;
             const valid = validateChatReferences(text, nextReferences, receipts) ??
               nextReferences.slice(0, MAX_CHAT_REFERENCES)
                 .filter(reference => validateChatReferences(text, [reference], receipts) !== null);
             const validSessions = validateChatSessionReferences(text, nextSessions, valid) ?? [];
-            replaceInput(text, valid, validSessions);
+            const claim = validateChatCommand(text, nextCommand);
+            replaceInput(text, valid, validSessions,
+              claim && !chatCommandOverlapsReferences(claim, valid, validSessions) ? claim : undefined);
           }}
           onSubmit={handleSend} onPasteFiles={doUpload}
         />
@@ -323,6 +333,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           disabled={sending} title={`添加图片或文档；超过 ${maxMb}MB 使用大文件上传通道`}>
           <IconPlus size={15} /> 添加素材
         </button>
+        <button type="button" className="composer-attach-btn" disabled={sending}
+          onMouseDown={event => event.preventDefault()} onClick={() => editorRef.current?.openCommandMenu()}>查看命令</button>
         {sessionReferenceCandidates && <button type="button" className="composer-attach-btn" disabled={sending}
           onMouseDown={event => event.preventDefault()} onClick={() => {
             if (sendingRef.current) return;

@@ -10,6 +10,7 @@ import DeliverableCards from './DeliverableCards';
 import { deliverablesFromEvents, legacyArchivesForDeliverables, omitDeclaredArtifacts,
   pinSnapshotLinks, rejectedSnapshotPaths } from '../lib/deliverables';
 import UserAttachments from './UserAttachments';
+import { validateChatCommand } from '../lib/chatCommands';
 import { validateChatReferences, validateChatSessionReferenceSpans } from '../lib/chatReferences';
 import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
 import AgentEventPanel from './AgentEventPanel';
@@ -59,9 +60,11 @@ function UserText({ message }: { message: ChatMessage }) {
   const fileReferences = validateChatReferences(content, message.references, attachments) || [];
   const sessionReferences = validateChatSessionReferenceSpans(content, message.sessionReferences, fileReferences) || [];
   const references = [...fileReferences, ...sessionReferences].sort((a, b) => a.start - b.start);
-  if (!references.length) return content;
+  const command = validateChatCommand(content, message.command);
+  const leadingCommand = command && !references.some(ref => ref.start < command.token.length) ? command : null;
+  if (!references.length && !leadingCommand) return content;
   const files = new Map(attachments.map(file => [file.id, file]));
-  let offset = 0;
+  let offset = leadingCommand?.token.length || 0;
   const parts = references.map(reference => {
     const prefix = content.slice(offset, reference.start);
     const text = content.slice(reference.start, reference.end);
@@ -79,7 +82,8 @@ function UserText({ message }: { message: ChatMessage }) {
         target="_blank" rel="noreferrer" aria-label={`打开正文附件：${file.name}`}>{text}</a> : text}
     </Fragment>;
   });
-  return <>{parts}{content.slice(offset)}</>;
+  return <>{leadingCommand && <span className="message-inline-reference" data-chat-command={leadingCommand.id}
+    title="已选命令">{leadingCommand.token}</span>}{parts}{content.slice(offset)}</>;
 }
 
 export default function MessageBubble({ message, sessionId, isStreaming, thinking, activity, stillWorking, events, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {

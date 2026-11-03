@@ -8,18 +8,22 @@
 import {
   $applyNodeReplacement, $createParagraphNode, $createTextNode, $getAdjacentNode, $getRoot, $getSelection, $getNodeByKey, $setSelection,
   $isElementNode, $isRangeSelection, COMMAND_PRIORITY_HIGH, DecoratorNode, HISTORY_PUSH_TAG,
-  KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND, type LexicalEditor, type LexicalNode, type NodeKey, type RangeSelection,
+  KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND, RootNode, type LexicalEditor, type LexicalNode, type NodeKey, type RangeSelection,
   type SerializedLexicalNode, type Spread,
 } from 'lexical';
 import { createEmptyHistoryState, registerHistory } from '@lexical/history';
 import { registerPlainText } from '@lexical/plain-text';
 import { mergeRegister } from '@lexical/utils';
+import { $createCommandChip, CommandChipNode } from './command-chip';
+export { CommandChipNode } from './command-chip';
+import type { ChatCommand } from '../../../lib/chatCommands';
 import type { ChatReference, ChatDraftSessionReference } from '../../../lib/chatReferences';
 
 export interface ReferenceDraft {
   text: string;
   references: ChatReference[];
   sessionReferences?: ChatDraftSessionReference[];
+  command?: ChatCommand;
 }
 
 type SessionChip = Pick<ChatDraftSessionReference, 'sessionId' | 'snapshotHash' | 'label'>;
@@ -75,7 +79,10 @@ function $createReferenceChip(attachmentId: string, label: string, session?: Ses
 export function $projectReferenceDraft(): ReferenceDraft {
   const result: ReferenceDraft = { text: '', references: [] };
   const visit = (node: LexicalNode) => {
-    if (node instanceof ReferenceChipNode) {
+    if (node instanceof CommandChipNode) {
+      if (!result.text) result.command = node.getCommand();
+      result.text += node.getTextContent();
+    } else if (node instanceof ReferenceChipNode) {
       const start = result.text.length;
       result.text += node.getTextContent();
       const session = node.getSession();
@@ -110,6 +117,10 @@ export function $restoreReferenceDraft(value: ReferenceDraft): void {
     });
   };
   let offset = 0;
+  if (value.command) {
+    paragraph.append($createCommandChip(value.command));
+    offset = value.command.token.length;
+  }
   const ordered = [...value.references, ...(value.sessionReferences ?? [])].sort((left, right) => left.start - right.start);
   for (const reference of ordered) {
     append(value.text.slice(offset, reference.start));
@@ -126,7 +137,8 @@ export function $restoreReferenceDraft(value: ReferenceDraft): void {
 export function sameReferenceDraft(left: ReferenceDraft, right: ReferenceDraft): boolean {
   const leftSessions = left.sessionReferences ?? [];
   const rightSessions = right.sessionReferences ?? [];
-  return left.text === right.text && left.references.length === right.references.length
+  return left.text === right.text && left.command?.id === right.command?.id && left.command?.token === right.command?.token
+    && left.references.length === right.references.length
     && leftSessions.length === rightSessions.length
     && leftSessions.every(({ start, end, sessionId, snapshotHash, label }, index) => {
       const other = rightSessions[index];
@@ -151,6 +163,26 @@ export function insertReferenceChip(editor: LexicalEditor, attachmentId: string,
   }, { discrete: true, tag: HISTORY_PUSH_TAG });
 }
 
+/** Replace an exact open slash query, or choose a leading command from the explicit menu. */
+export function applyCommandChip(editor: LexicalEditor, command: ChatCommand, trigger?: string): boolean {
+  let applied = false;
+  editor.update(() => {
+    const current = $projectReferenceDraft();
+    if (trigger !== undefined && (current.text !== trigger || current.command ||
+        current.references.length || current.sessionReferences?.length)) return;
+    const replaced = trigger?.length ?? current.command?.token.length ?? 0;
+    const rest = current.text.slice(replaced);
+    const prefix = command.token + (/^\s/u.test(rest) ? '' : ' ');
+    const delta = prefix.length - replaced;
+    $restoreReferenceDraft({ text: prefix + rest, command,
+      references: current.references.map(ref => ({ ...ref, start: ref.start + delta, end: ref.end + delta })),
+      sessionReferences: current.sessionReferences?.map(ref => ({ ...ref, start: ref.start + delta, end: ref.end + delta })),
+    });
+    applied = true;
+  }, { discrete: true, tag: HISTORY_PUSH_TAG });
+  return applied;
+}
+
 export function detachReferenceChips(editor: LexicalEditor, attachmentId: string): void {
   editor.update(() => {
     const visit = (node: LexicalNode) => {
@@ -168,7 +200,7 @@ export function registerReferenceEditing(editor: LexicalEditor): () => void {
     const selection = $getSelection();
     if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
     const adjacent = $getAdjacentNode(selection.anchor, backward);
-    if (!(adjacent instanceof ReferenceChipNode)) return false;
+    if (!(adjacent instanceof ReferenceChipNode) && !(adjacent instanceof CommandChipNode)) return false;
     event?.preventDefault();
     adjacent.remove();
     return true;
@@ -176,6 +208,15 @@ export function registerReferenceEditing(editor: LexicalEditor): () => void {
   return mergeRegister(
     registerPlainText(editor),
     registerHistory(editor, createEmptyHistoryState(), 1000),
+    editor.registerNodeTransform(RootNode, root => {
+      const first = root.getFirstChild();
+      const leading = $isElementNode(first) ? first.getFirstChild() : null;
+      const flattenNonLeading = (node: LexicalNode) => {
+        if (node instanceof CommandChipNode && node !== leading) node.replace($createTextNode(node.getTextContent()));
+        else if ($isElementNode(node)) node.getChildren().forEach(flattenNonLeading);
+      };
+      root.getChildren().forEach(flattenNonLeading);
+    }),
     editor.registerCommand(KEY_BACKSPACE_COMMAND, event => removeAdjacent(event, true), COMMAND_PRIORITY_HIGH),
     editor.registerCommand(KEY_DELETE_COMMAND, event => removeAdjacent(event, false), COMMAND_PRIORITY_HIGH),
   );
