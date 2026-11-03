@@ -7335,12 +7335,45 @@
     "reuse_kind": "adapted",
     "changes": "适配上游子调用缩进及边线，接入 Easel 主题和窄屏间距。",
     "verification_status": "B08_verified_isolated_browser_and_protocol_regressions"
+  },
+  {
+    "feature_id": "B07",
+    "upstream_path": "packages/client/ui-primitives/src/JsonTree.tsx",
+    "upstream_sha256": "8eaa0d93659dff1c8b8a738b225cb20c3adc4463f72c929f46b07417af4d8aaa",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/JsonTree.tsx",
+    "destination_sha256": "b70cbd1d8afda3d7da7061df45881f26e121e96aebbdece08b7775e634770842",
+    "reuse_kind": "adapted",
+    "changes": "适配上游递归 JSON 预览、类型标记和逐层展开。",
+    "verification_status": "B07_verified_isolated_browser_and_frontend_regressions"
+  },
+  {
+    "feature_id": "B07",
+    "upstream_path": "packages/client/ui-primitives/src/JsonTree.module.css",
+    "upstream_sha256": "e86389b13651dab7aacf883dfb02bd167fe6e189c8aa5e8682d4004de9501e14",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/JsonTree.module.css",
+    "destination_sha256": "3488fc8875076a4b7c0c5d62de83849450d365191fdc67bee222243b919740cb",
+    "reuse_kind": "adapted",
+    "changes": "适配上游 JSON 树语义配色及布局。",
+    "verification_status": "B07_verified_isolated_browser_and_frontend_regressions"
+  },
+  {
+    "feature_id": "B07",
+    "upstream_path": "packages/client/ui-trajectory/src/client/TrajectoryTable.tsx",
+    "upstream_sha256": "7a35f595a2ea61b6d7186f9d2b5039162940e9a9037d59cb56f763b52a96aa7f",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ToolValueInspector.tsx",
+    "destination_sha256": "6bbfb0e7e3099e5d71086435ad4e6c0ed21a18179737846e568b4fa75d187c60",
+    "reuse_kind": "adapted",
+    "changes": "复用上游输入与输出的 JSON、文本及缺失分流，接入 Easel 脱敏投影和剪贴板。",
+    "verification_status": "B07_verified_isolated_browser_and_frontend_regressions"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 43,
+    "source_migration_files": 46,
     "verbatim_original_bodies": 14,
-    "adapted_upstream_files": 29,
+    "adapted_upstream_files": 32,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

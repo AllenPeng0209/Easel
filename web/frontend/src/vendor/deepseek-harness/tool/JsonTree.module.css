@@ -1,0 +1,74 @@
+/*
+ * Copyright (c) 2026 DeepSeek. MIT License.
+ * Adapted from ui-primitives/src/JsonTree.module.css @ ce7073d51254c26cd63b22a60835b8f948deb447.
+ * Easel maps tokens to the app theme and uses native disclosure controls.
+ * License: integrations/deepseek-harness/LICENSE.
+ */
+.root {
+  --json-tree-property: var(--accent-end);
+  --json-tree-string: var(--text);
+  --json-tree-number: var(--accent-start);
+  --json-tree-keyword: var(--accent-start);
+  --json-tree-punctuation: var(--text-tertiary);
+  --json-tree-hover: var(--accent-soft);
+
+  max-height: 28rem;
+  min-width: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: 12px/1.5 var(--ds-font-family-code, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+  overscroll-behavior-x: contain;
+}
+
+.children {
+  margin: 0;
+  padding: 0 0 0 12px;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+  min-width: 0;
+  margin: 2px 0;
+  list-style: none;
+}
+
+.row:focus-within > .leaf,
+.branch > summary:hover {
+  background: var(--json-tree-hover);
+}
+
+.branch > summary {
+  overflow: hidden;
+  padding: 2px 0;
+  border-radius: 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.branch > summary:focus-visible {
+  outline: 2px solid var(--accent-start);
+  outline-offset: -1px;
+}
+
+.leaf {
+  display: block;
+  min-width: 0;
+  padding: 2px 0;
+  white-space: pre-wrap;
+}
+
+.label { color: var(--json-tree-property); }
+.stringValue { color: var(--json-tree-string); }
+.numberValue { color: var(--json-tree-number); }
+.keywordValue { color: var(--json-tree-keyword); }
+.punctuation, .previewEllipsis { color: var(--json-tree-punctuation); }

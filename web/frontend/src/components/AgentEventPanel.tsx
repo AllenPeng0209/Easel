@@ -2,6 +2,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
 import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
+import ToolValueInspector from './ToolValueInspector';
+import { inspectToolValue } from '../lib/toolValueInspection';
 import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
 import BusinessObjectCard from './BusinessObjectCard';
 import { fetchBusinessObject } from '../lib/businessObjectApi';
@@ -19,26 +21,6 @@ const names: Record<string, string> = {
   commandExecution: '运行命令', fileChange: '修改文件', mcpToolCall: '调用工具',
   webSearch: '搜索网页', reasoning: '整理信息', todo_write: '任务清单',
 };
-const sensitive = /(?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|cookie|credential)/i;
-
-function redact(value: unknown, depth = 0): unknown {
-  if (depth > 10) return '…';
-  if (Array.isArray(value)) return value.map(item => redact(item, depth + 1));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
-    .map(([key, item]) => [key, sensitive.test(key) ? '[已隐藏]' : redact(item, depth + 1)]));
-  if (typeof value === 'string') return value.replace(/\bBearer\s+[\w.+/=-]+/gi, 'Bearer [已隐藏]')
-    .replace(/\bsk-[\w-]{12,}/g, '[已隐藏]');
-  return value;
-}
-
-function detailText(value: unknown): string {
-  if (typeof value === 'string') {
-    try { return JSON.stringify(redact(JSON.parse(value)), null, 2); } catch { /* Plain tool text. */ }
-  }
-  const text = typeof value === 'string' ? String(redact(value)) : JSON.stringify(redact(value), null, 2) || '';
-  return text.length > 16000 ? `${text.slice(0, 16000)}\n… 内容较长，当前仅显示前 16000 个字符` : text;
-}
-
 function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
   const result: AgentEvent[] = [];
   const indexes = new Map<string, number>();
@@ -89,11 +71,10 @@ function ToolEvent({ event, open, settled, children, childCount, onToggle }: {
       {children}
       <div className="agent-tool__details">
         {unconfirmed && <p className="agent-event__note">本轮已结束，此工具的最终状态仍未确认。</p>}
-        {event.input !== undefined && <div><h4>输入</h4><pre>{detailText(event.input)}</pre></div>}
-        {event.output !== undefined && <div><h4>结果</h4><pre>{detailText(event.output)}</pre></div>}
+        <ToolValueInspector label="输入" value={event.input} />
+        <ToolValueInspector label="结果" value={event.output} />
         {event.exitCode !== undefined && <p className="agent-tool__exit">退出码：{event.exitCode === null ? '未提供' : event.exitCode}</p>}
         {event.truncated && <p className="agent-event__note">引擎输出已截断，以上不是完整日志。</p>}
-        {event.input === undefined && event.output === undefined && <p className="agent-event__note">引擎尚未提供调用详情。</p>}
       </div>
     </DisclosureRow>
   </div>;
@@ -126,15 +107,15 @@ function OtherEvent({ event }: { event: AgentEvent }) {
     : automatic ? '已按默认答案继续' : source === 'human' ? '已收到你的答复' : '决策已记录';
   if (event.kind === 'decision') return <details className="agent-decision" data-decision-source={String(source)}>
     <summary><span aria-hidden="true">✓</span> {decisionTitle}</summary>
-    <pre>{detailText(event.answers || event.output || event.input || {})}</pre>
+    <pre>{inspectToolValue(event.answers || event.output || event.input || {}).text}</pre>
   </details>;
   if (event.kind === 'plan') return typeof event.text === 'string' && event.text ? <details className="agent-event-generic">
-    <summary>计划说明</summary><pre>{detailText(event.text)}</pre>
+    <summary>计划说明</summary><pre>{inspectToolValue(event.text).text}</pre>
   </details> : null;
   const title = event.kind === 'usage' ? '本轮用量' : event.kind === 'context' ? '上下文已整理'
     : event.kind === 'artifact' ? '交付物信息' : '任务状态';
   return <details className="agent-event-generic"><summary>{title}</summary>
-    <pre>{detailText(event.output || event.input || event)}</pre>
+    <pre>{inspectToolValue(event.output || event.input || event).text}</pre>
   </details>;
 }
 
