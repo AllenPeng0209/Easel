@@ -8071,12 +8071,34 @@
     "reuse_kind": "adapted",
     "changes": "适配会话级输入区模型入口、目录可用性和下一轮选项；Easel 使用原生选择控件并分开标记当前请求模型。",
     "verification_status": "C28_scoped_next_turn_model_queue_native_reset_verified"
+  },
+  {
+    "feature_id": "C32",
+    "upstream_path": "packages/client/ui-conversation/src/client/skeleton/ContextMeter.tsx",
+    "upstream_sha256": "84e568164bb26fadc8cae50d82de7dbd4d14be0d957f5ae7fd9c4575a1f1568d",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ContextBudgetMeter.tsx",
+    "destination_sha256": "061eba7af6308d26995641cb0c57d7a0b1689486240bce49654174556e923cda",
+    "reuse_kind": "adapted",
+    "changes": "迁移占用圆环和读数，适配来源、未知状态与可执行的新对话入口。",
+    "verification_status": "C32_native_context_observation_and_browser_recovery_verified"
+  },
+  {
+    "feature_id": "C32",
+    "upstream_path": "packages/client/ui-conversation/src/client/context-occupancy.ts",
+    "upstream_sha256": "00f785594ab5a5fa75e10d0f9ddad781d49d0d550b8ecac12604010e275a80a8",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/lib/contextBudget.ts",
+    "destination_sha256": "65b1eb8fb9fade7ba41c128ea9ba0e7f919d9e4405a2c62acf557a518671b504",
+    "reuse_kind": "adapted",
+    "changes": "沿用占用计算，绑定同一条引擎实测事件，压缩后等待新读数。",
+    "verification_status": "C32_native_context_observation_and_browser_recovery_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 107,
+    "source_migration_files": 109,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 92,
+    "adapted_upstream_files": 94,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

@@ -48,6 +48,17 @@ _WEB_ACTION_TEXT_FIELDS = {
 _ACP_TOOL_STATUSES = {
     "pending": "preparing", "in_progress": "running", "completed": "completed", "failed": "failed",
 }
+_TOKEN_USAGE_FIELDS = ("inputTokens", "cachedInputTokens", "cacheWriteInputTokens", "outputTokens",
+                       "reasoningOutputTokens", "totalTokens")
+
+
+def _token_count(value, *, capacity=False) -> int | None:
+    return value if type(value) is int and (1 if capacity else 0) <= value < 2**53 else None
+
+
+def _token_breakdown(value: dict) -> dict:
+    return {key: count for key in _TOKEN_USAGE_FIELDS
+            if (count := _token_count(value.get(key))) is not None}
 
 _COLLAB_TOOLS = frozenset({
     "spawnAgent", "sendInput", "resumeAgent", "wait", "closeAgent",
@@ -191,6 +202,7 @@ class EventProjector:
     def __init__(self, emit: Callable, env: dict[str, str]):
         self.emit = emit
         self.calls: dict[str, dict] = {}
+        self.context_compactions: dict[str, str] = {}
         self.private_streams: dict[str, str] = {}
         self.secrets = sorted({value for key, value in env.items()
                                if re.search(r"KEY|TOKEN|SECRET|PASSWORD|COOKIE|CREDENTIAL", key, re.I) and isinstance(value, str)
@@ -310,8 +322,23 @@ class EventProjector:
                        steps=self._plan_steps(params.get("plan"), "step", "status"), explanation=params.get("explanation"))
             return
         if method == "thread/tokenUsage/updated":
-            usage = params.get("tokenUsage") or {}
-            self.event("usage", usage=usage, capacity=usage.get("modelContextWindow"))
+            raw = params.get("tokenUsage")
+            if not isinstance(raw, dict):
+                return
+            usage = {field: _token_breakdown(value) for field in ("total", "last")
+                     if isinstance(value := raw.get(field), dict)}
+            capacity = _token_count(raw.get("modelContextWindow"), capacity=True)
+            if "modelContextWindow" in raw:
+                usage["modelContextWindow"] = capacity
+            # Codex's own context meter uses last.totalTokens directly for the
+            # active context. The thread total is accumulated accounting only.
+            used = usage.get("last", {}).get("totalTokens")
+            self.event("usage", usage=usage, capacity=capacity, contextUsage={
+                "source": "codex", "usedTokens": used, "capacityTokens": capacity})
+            return
+        if method == "thread/compacted":
+            if not self.context_compactions:
+                self.event("context", status="completed", source="codex", contextReset=True, summary="上下文已整理")
             return
         if method in ("item/commandExecution/outputDelta", "item/fileChange/outputDelta"):
             command_output = method == "item/commandExecution/outputDelta"
@@ -361,7 +388,15 @@ class EventProjector:
                        status="completed" if completed else "running")
             return
         if kind == "contextCompaction":
-            self.event("context", callId=item.get("id"), status="completed" if completed else "running",
+            call_id = item.get("id")
+            status = "completed" if completed else "running"
+            if not isinstance(call_id, str) or not call_id or len(call_id) > 240:
+                return
+            if self.context_compactions.get(call_id) in (status, "completed"):
+                return
+            self.context_compactions[call_id] = status
+            self.event("context", callId=call_id, status=status,
+                       source="codex", contextReset=True,
                        summary="上下文已整理" if completed else "正在整理上下文")
             return
         identifier = item.get("id")
@@ -429,6 +464,12 @@ class EventProjector:
 
     def acp(self, update: dict):
         kind = update.get("sessionUpdate")
+        if kind == "usage_update":
+            used = _token_count(update.get("used"))
+            capacity = _token_count(update.get("size"), capacity=True)
+            self.event("usage", capacity=capacity, contextUsage={
+                "source": "acp", "usedTokens": used, "capacityTokens": capacity})
+            return
         if kind == "plan":
             self.event("plan", source="acp", steps=self._plan_steps(update.get("entries"), "content", "status", "priority"))
             return

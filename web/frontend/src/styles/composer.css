@@ -124,3 +124,13 @@
 .composer-model-choice { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .composer-model-choice select { max-width: min(220px, 52vw); border: 1px solid var(--border); border-radius: 6px; padding: 2px 5px; color: var(--text); background: var(--surface); font: inherit; }
 .composer-model-reason { overflow-wrap: anywhere; }
+
+.composer-context-budget { display: grid; gap: 4px; margin: 6px 0 0; color: var(--text-secondary); font-size: 11px; }
+.composer-context-reading, .composer-context-advice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.composer-context-meter { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.composer-context-meter circle { fill: none; stroke-width: 2px; }
+.composer-context-track { stroke: var(--border-strong); }
+.composer-context-fill { stroke: var(--accent-start); }
+.composer-context-source { color: var(--text-tertiary); }
+.composer-context-advice { color: var(--amber); }
+.composer-context-budget[data-context-warning] .composer-context-fill { stroke: var(--amber); }

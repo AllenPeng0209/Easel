@@ -29,6 +29,8 @@ import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-re
 import { fileSizeText } from '../vendor/deepseek-harness/composer/file-size';
 import { ImageLightbox } from '../vendor/deepseek-harness/composer/ImageLightbox';
 import SessionModelControl from './SessionModelControl';
+import ContextBudgetMeter from './ContextBudgetMeter';
+import { readContextBudget } from '../lib/contextBudget';
 import type { SessionModelCapability } from '../lib/api';
 import '../styles/composer.css';
 
@@ -41,6 +43,7 @@ interface ChatPageProps {
   onChangeModel?: (model: string | null) => void;
   modelLoading?: boolean;
   onReloadModels?: () => void;
+  onNewContextChat?: () => void;
   stream?: StreamState;          // 进行中的流式态（来自 App，切页也不丢）
   sessionReferenceCandidates?: readonly SessionReferenceCandidate[];
   onSend: (displayText: string, attachments?: UploadedFile[], references?: ChatReference[],
@@ -80,7 +83,7 @@ function greeting(): string {
 }
 
 export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onEditHistory, onLoadEarlier, onForkAnswer, onOpenFork, onQuestionAnswered,
-  sessionReferenceCandidates, modelCapability, nextModel, turnModel, onChangeModel, modelLoading, onReloadModels, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
+  sessionReferenceCandidates, modelCapability, nextModel, turnModel, onChangeModel, modelLoading, onReloadModels, onNewContextChat, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
   const [forkTarget, setForkTarget] = useState<{ sessionId: string; index: number; turnId: string; answer: string }>();
   useEffect(() => setForkTarget(undefined), [session.id]);
   const [historyEdit, setHistoryEdit] = useState<{ sessionId: string; index: number; pending: boolean; error?: string }>();
@@ -171,6 +174,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const admittedCleanup = useRef(false);
   const dragDepth = useRef(0);
 
+  const contextBudget = readContextBudget(session.messages, stream ? stream.events ?? [] : undefined);
   const isStreaming = !!stream;
   const isEmpty = session.messages.length === 0 && !isStreaming;
   const historyStart = session.historyWindow?.start ?? 0;
@@ -563,6 +567,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         if (admitted && mountedRef.current) setPlanOpen(false);
         return admitted;
       }} /> : inputBox(hero)}
+    <ContextBudgetMeter budget={contextBudget} onNewChat={onNewContextChat} />
   </>;
 
   const admissionBanner = admissionNotice && <div className="composer-notice">

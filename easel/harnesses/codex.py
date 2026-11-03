@@ -433,6 +433,12 @@ class CodexAdapter:
 
             if not turn_id or envelope_thread != thread_id or params.get("turnId", turn_id) != turn_id:
                 return
+            item = params.get("item")
+            context_notification = (method in ("thread/tokenUsage/updated", "thread/compacted")
+                                    or method in ("item/started", "item/completed")
+                                    and isinstance(item, dict) and item.get("type") == "contextCompaction")
+            if context_notification and (envelope_turn != turn_id or completion.done()):
+                return
             events.codex(method, params)
             if method == "item/agentMessage/delta":
                 streamed.add(params.get("itemId", ""))

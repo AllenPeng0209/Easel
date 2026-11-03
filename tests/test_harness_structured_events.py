@@ -356,7 +356,50 @@ def test_codex_plan_usage_and_compaction_are_not_misreported_as_tools(tmp_path):
     assert events[0]["turnId"] == "turn-1" and events[0]["source"] == "codex"
     assert events[1]["usage"]["total"]["inputTokens"] == 20
     assert events[1]["capacity"] == 1000
-    assert events[2]["status"] == "completed"
+    assert events[1]["contextUsage"] == {"source": "codex", "usedTokens": None, "capacityTokens": 1000}
+    assert events[2]["status"] == "completed" and events[2]["contextReset"] is True and events[2]["source"] == "codex"
+
+
+def test_codex_context_uses_exact_current_usage_and_never_cumulative_or_foreign_counts(tmp_path):
+    usage = {"last": {"totalTokens": 73, "inputTokens": 33, "outputTokens": 15, "arbitrary": "private"},
+             "total": {"totalTokens": 500000}, "modelContextWindow": 256}
+    unscoped = codex("thread/tokenUsage/updated", tokenUsage=usage)
+    del unscoped["params"]["turnId"]
+    known, partial = run_wire(tmp_path, "codex", [
+        unscoped,
+        codex("thread/tokenUsage/updated", threadId="wrong", tokenUsage=usage),
+        codex("thread/tokenUsage/updated", tokenUsage=usage),
+        codex("thread/tokenUsage/updated", tokenUsage={"last": {"totalTokens": True},
+              "total": {"totalTokens": 500000}, "modelContextWindow": None}),
+    ])
+    assert known["contextUsage"] == {"source": "codex", "usedTokens": 73, "capacityTokens": 256}
+    assert "private" not in json.dumps(known)
+    assert partial["contextUsage"] == {"source": "codex", "usedTokens": None, "capacityTokens": None}
+
+
+def test_acp_context_updates_use_exact_scope_and_preserve_independently_known_fields(tmp_path):
+    wrong = acp(sessionUpdate="usage_update", used=10, size=200)
+    wrong["params"]["sessionId"] = "other"
+    known, missing, invalid = run_wire(tmp_path, "acp", [
+        wrong, acp(sessionUpdate="usage_update", used=0, size=200, cost={"opaque": "private"}),
+        acp(sessionUpdate="usage_update", used=None, size=1000),
+        acp(sessionUpdate="usage_update", used=25, size=0),
+    ])
+    assert known["contextUsage"] == {"source": "acp", "usedTokens": 0, "capacityTokens": 200}
+    assert "private" not in json.dumps(known)
+    assert missing["contextUsage"] == {"source": "acp", "usedTokens": None, "capacityTokens": 1000}
+    assert invalid["contextUsage"] == {"source": "acp", "usedTokens": 25, "capacityTokens": None}
+
+
+def test_codex_duplicate_compaction_cannot_reset_new_measurement(tmp_path):
+    compacted = codex("item/completed", item={"id": "compaction", "type": "contextCompaction"})
+    reset, usage = run_wire(tmp_path, "codex", [
+        compacted,
+        codex("thread/tokenUsage/updated", tokenUsage={"last": {"totalTokens": 12}, "modelContextWindow": 100}),
+        compacted,
+        codex("thread/compacted"),
+    ])
+    assert reset["contextReset"] is True and usage["contextUsage"]["usedTokens"] == 12
 
 
 def test_acp_partial_updates_keep_tool_input_title_and_result(tmp_path):

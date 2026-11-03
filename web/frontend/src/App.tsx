@@ -1766,6 +1766,12 @@ export default function App() {
                 ? modelCatalog.capability?.lastRequestedModel : undefined)}
             onChangeModel={model => selectNextModel(activeSession.id, model)}
             onReloadModels={() => setModelReload(value => value + 1)}
+            onNewContextChat={canOperate ? () => {
+              businessNavigation.current += 1;
+              setBusinessNotice('');
+              setWorkshopPanel(null);
+              handleNewChat();
+            } : undefined}
             queue={activeSession.queued || []}
             queuePaused={activeSession.queuePaused}
             onRemoveQueued={id => removeQueued(activeSession.id, id)}
