@@ -68,6 +68,11 @@ from easel.artifact_archives import ArchiveSnapshotReader
 from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
 from web.chat_history import ChatHistoryStore, validated_session
+from web.chat_session_references import (
+    ChatSessionReference, MAX_SESSION_REFERENCES, append_session_reference_context,
+    freeze_session_references, resolve_session_reference_context, session_reference_snapshot,
+    valid_session_reference_id, validate_session_reference_spans,
+)
 from web.chat_subagents import ChatSubagentStore
 try:
     from easel.gateway_questions import (
@@ -3050,6 +3055,7 @@ class ChatRequest(BaseModel):
     turnId: str | None = None
     attachments: list[AttachmentRef] = Field(default_factory=list)
     references: list[ChatFileReference] = Field(default_factory=list, max_length=100)
+    sessionReferences: list[ChatSessionReference] = Field(default_factory=list, max_length=MAX_SESSION_REFERENCES)
     autonomyMode: Literal["autonomous", "interactive"] = "autonomous"
     topicRef: ChatTopicRef | None = None
     workshopRef: ChatWorkshopRef | None = None
@@ -3069,6 +3075,23 @@ async def _resolve_chat_references(req: ChatRequest) -> tuple[dict | None, dict 
     topic = await _resolve_chat_topic(req.topicRef)
     workshop = await asyncio.to_thread(_workshop_handoff, req.workshopRef) if req.workshopRef else None
     return topic, workshop
+
+
+def _read_session_reference(catalog: ChatHistoryStore, session_id: str) -> dict:
+    source = catalog.session(session_id)
+    if source is None or source.get("id") != session_id:
+        raise HTTPException(404, "来源会话不存在或无权访问")
+    return session_reference_snapshot(source, _scrub_secrets)
+
+
+def _capture_session_references(req: ChatRequest, catalog: ChatHistoryStore) -> list[dict]:
+    _require_operation()
+    captures = resolve_session_reference_context(
+        req.message, req.sessionId, req.sessionReferences, req.references,
+        lambda session_id: _read_session_reference(catalog, session_id),
+    )
+    _require_operation()
+    return captures
 
 
 def _with_chat_topic(content: str | list, topic: dict | None) -> str | list:
@@ -3243,7 +3266,7 @@ def _attachment_context(req: ChatRequest, *, must_exist: bool = True, include_pa
 
 def _chat_message(req: ChatRequest) -> str:
     context = _attachment_context(req)
-    message = req.message if req.references else req.message.strip()
+    message = req.message if req.references or req.sessionReferences else req.message.strip()
     if context:
         message = f"{message}\n\n{context}" if message else context
     if not message:
@@ -3259,7 +3282,7 @@ def _chat_message(req: ChatRequest) -> str:
 
 def _direct_chat_content(req: ChatRequest) -> tuple[str | list, str]:
     references = _attachment_context(req, include_paths=False)
-    message = req.message if req.references else req.message.strip()
+    message = req.message if req.references or req.sessionReferences else req.message.strip()
     if not message and not req.attachments:
         raise HTTPException(400, "消息不能为空")
     system = SYSTEM_PROMPT
@@ -4460,6 +4483,17 @@ async def api_chat_subagent(session_id: str, handle: str, request: Request):
     return {"messages": result["messages"], "hasMore": result["hasMore"], "children": children}
 
 
+@app.get("/api/chat/session-reference")
+def api_chat_session_reference(request: Request):
+    _require_operation()
+    entries = request.query_params.multi_items()
+    if len(entries) != 1 or entries[0][0] != "sessionId" or not valid_session_reference_id(entries[0][1]):
+        raise HTTPException(422, "无效的来源会话标识")
+    snapshot = _read_session_reference(ChatHistoryStore(_sessions_dir()), entries[0][1])
+    _require_operation()
+    return snapshot
+
+
 @app.get("/api/chat/sessions")
 async def api_chat_sessions(limit: int | None = None, cursor: str | None = None):
     _require_operation()
@@ -4483,14 +4517,18 @@ async def api_chat_sessions_merge(req: ChatSessionsRequest):
         # server-verified ownership check as a fresh chat submission.
         for session in sessions:
             for message in [*session["messages"], *session.get("queued", [])]:
-                if message.get("attachments") or "references" in message:
+                if message.get("attachments") or "references" in message or "sessionReferences" in message:
                     history_request = ChatRequest(
                         message=message.get("content", message.get("text", "")),
                         sessionId=session["id"], attachments=message.get("attachments", []),
-                        references=message.get("references", []))
-                    if history_request.references and message.get("role") not in (None, "user"):
-                        raise ValueError("附件引用必须来自用户消息")
+                        references=message.get("references", []),
+                        sessionReferences=message.get("sessionReferences", []))
+                    if ((history_request.references or history_request.sessionReferences)
+                            and message.get("role") not in (None, "user")):
+                        raise ValueError("引用必须来自用户消息")
                     _attachment_context(history_request, must_exist=False)
+                    validate_session_reference_spans(history_request.message, session["id"],
+                        history_request.sessionReferences, history_request.references)
         store = ChatHistoryStore(_sessions_dir())
         return {"sessions": await asyncio.to_thread(store.merge, sessions), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
     except (ValueError, TypeError):
@@ -4650,6 +4688,8 @@ async def api_chat_stream(req: ChatRequest):
         request_payload.pop("workshopRef")
     if not req.references:
         request_payload.pop("references")
+    if not req.sessionReferences:
+        request_payload.pop("sessionReferences")
     payload_hash = hashlib.sha256(json.dumps({"request": request_payload, "runtime": runtime},
         sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
     catalog = ChatHistoryStore(_sessions_dir())
@@ -4658,21 +4698,23 @@ async def api_chat_stream(req: ChatRequest):
         return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId)
     try:
         topic, workshop = await _resolve_chat_references(req)
+        captures = await asyncio.to_thread(_capture_session_references, req, catalog) if req.sessionReferences else []
+        if direct:
+            content, system = _direct_chat_content(req)
+            content = _with_chat_workshop(_with_chat_topic(content, topic), workshop)
+            content = append_session_reference_context(content, captures)
+            message = ""
+        else:
+            if req.sessionId and history_path(_sessions_dir(), req.sessionId).is_file():
+                raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
+            message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
+            message = append_session_reference_context(message, captures)
     except HTTPException:
         # Another identical POST may have been admitted during the scoped read.
         existing = catalog.turn_claim(req.turnId)
         if existing is not None:
             return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId)
         raise
-    if direct:
-        content, system = _direct_chat_content(req)
-        content = _with_chat_workshop(_with_chat_topic(content, topic), workshop)
-        message = ""
-    else:
-        if req.sessionId and history_path(_sessions_dir(), req.sessionId).is_file():
-            raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
-        message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
-
     event_path = _job_event_file(req.turnId)
     try:
         admitted, claim = catalog.claim_turn(req.turnId, req.sessionId, payload_hash, event_path)
@@ -4683,6 +4725,7 @@ async def api_chat_stream(req: ChatRequest):
     admission = _turn_admission_event(req.turnId, req.sessionId)
     try:
         # Commit admission before running the model or acknowledging the queue row.
+        freeze_session_references(event_path.with_suffix(".session-references.json"), captures)
         with event_path.open("a", encoding="utf-8") as journal:
             journal.write(json.dumps(admission, ensure_ascii=False) + "\n")
             journal.flush()
@@ -5596,8 +5639,10 @@ async def api_chat(req: ChatRequest):
     """非流式对话（备选）。"""
     runtime = _chat_backend(req.sessionId)
     topic, workshop = await _resolve_chat_references(req)
+    captures = await asyncio.to_thread(_capture_session_references, req, ChatHistoryStore(_sessions_dir())) if req.sessionReferences else []
     if runtime not in ("api", "openclaw"):
         message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
+        message = append_session_reference_context(message, captures)
         sk = req.sessionId or uuid.uuid4().hex
         errors = []
         def emit(kind, text):
@@ -5611,6 +5656,7 @@ async def api_chat(req: ChatRequest):
     if runtime == "api":
         content, system = _direct_chat_content(req)
         content = _with_chat_workshop(_with_chat_topic(content, topic), workshop)
+        content = append_session_reference_context(content, captures)
         errors = []
         def emit(kind, text):
             if kind == "error":
@@ -5624,6 +5670,7 @@ async def api_chat(req: ChatRequest):
         raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
     message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
+    message = append_session_reference_context(message, captures)
     loop = asyncio.get_event_loop()
     # chat 可能中途触发制作层长任务 → 用 TIMEOUT_CHAT，与流式 /api/chat/stream 一致（勿用 300s）
     result = await asyncio.to_thread(run_agent_sync, message, TIMEOUT_CHAT, req.sessionId)

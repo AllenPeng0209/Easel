@@ -160,3 +160,15 @@ test('an admitted file reference renders in place and a typed lookalike remains 
   } }));
   assert.doesNotMatch(forged, /data-chat-reference/);
 });
+
+test('saved session references appear at their exact span without changing a typed lookalike', () => {
+  const MessageBubble = componentModule('components/MessageBubble.tsx').default;
+  const content = '参照 @研究记录 与普通 @研究记录';
+  const start = content.indexOf('@');
+  const message = { role: 'user', content, sessionReferences: [{
+    start, end: start + '@研究记录'.length, sessionId: 'source-1', snapshotHash: 'a'.repeat(64),
+  }] };
+  const html = renderToStaticMarkup(React.createElement(MessageBubble, { message }));
+  assert.equal((html.match(/data-chat-session-reference="source-1"/g) || []).length, 1);
+  assert.match(html, /<\/span> 与普通 @研究记录/);
+});

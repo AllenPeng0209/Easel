@@ -533,3 +533,20 @@ test('inline references rebase through trimming and persist with the matching us
   assert.equal(await sent, true);
   assert.deepEqual(plain(ui.context.sessions[0].messages[0].references), plain(payload[21]));
 });
+
+test('mixed draft sends rebased session references without trusting the local label', async () => {
+  const ui = appBoundary([{ id: 'target', title: 'Chat', created: 1, messages: [] }]);
+  const text = '  🖼 @研究记录  ';
+  const start = text.indexOf('@');
+  const sessionReference = { start, end: start + '@研究记录'.length, sessionId: 'source',
+    snapshotHash: 'a'.repeat(64), label: '研究记录' };
+  const sent = ui.callback('handleSendMessage')('target', text, [], undefined, [sessionReference]);
+  const payload = ui.requests[0];
+  assert.equal(payload[0], '🖼 @研究记录');
+  const expected = [{ start: 3, end: 8, sessionId: 'source', snapshotHash: 'a'.repeat(64) }];
+  assert.deepEqual(plain(payload[22]), expected);
+  assert.equal(ui.context.sessions[0].messages.length, 0);
+  payload[19]();
+  assert.equal(await sent, true);
+  assert.deepEqual(plain(ui.context.sessions[0].messages[0].sessionReferences), expected);
+});

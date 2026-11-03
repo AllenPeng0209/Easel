@@ -24,7 +24,7 @@
   pointer-events: none;
 }
 
-.structured-composer-input [data-composer-chip="file"] {
+.structured-composer-input [data-composer-chip] {
   display: inline;
   padding: 1px 4px;
   border-radius: 4px;
@@ -34,3 +34,5 @@
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
+
+.structured-composer-input [data-composer-chip="session"] { border: 1px solid var(--border-strong); }

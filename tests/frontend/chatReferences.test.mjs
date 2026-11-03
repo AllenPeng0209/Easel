@@ -97,3 +97,62 @@ test('invalid stored references remain plain text and an old admission cannot er
   assert.equal(store.loadChatDraft('session').references, undefined);
   assert.deepEqual(plain(store.loadChatDraft('session').interruptedFiles), reminders);
 });
+
+const source = { start: 15, end: 20, sessionId: 'source-a', snapshotHash: 'a'.repeat(64), label: '计划🙂' };
+const mixedDraft = { ...draft, text: '  @first.txt 与 @计划🙂  ',
+  references: [{ start: 2, end: 12, attachmentId: 'one' }], sessionReferences: [source] };
+
+test('session reference validation preserves the canonical label and strips it from the wire', () => {
+  const model = load('chatReferences');
+  assert.equal(typeof model.validateChatSessionReferences, 'function');
+  assert.equal(model.sessionReferenceLabel(source.label), '@计划🙂');
+  const checked = model.validateChatSessionReferences(mixedDraft.text, [source], mixedDraft.references);
+  assert.deepEqual(plain(checked), [source]);
+  const { label, ...wire } = source;
+  assert.deepEqual(plain(model.toWireSessionReferences(checked)), [wire]);
+  assert.deepEqual(plain(model.validateChatSessionReferenceSpans(mixedDraft.text, [wire], mixedDraft.references)), [wire]);
+  assert.equal(model.toWireSessionReferences(undefined), undefined);
+});
+
+test('session references reject malformed IDs, split surrogate spans and overlap with files', () => {
+  const model = load('chatReferences');
+  assert.equal(typeof model.validateChatSessionReferences, 'function');
+  const overlap = { ...source, start: 2, end: 12, label: 'first.txt' };
+  assert.equal(model.validateChatSessionReferences(mixedDraft.text, [overlap], mixedDraft.references), null);
+  const { label, ...wireOverlap } = overlap;
+  assert.equal(model.validateChatSessionReferenceSpans(mixedDraft.text, [wireOverlap], mixedDraft.references), null);
+  for (const invalid of [
+    { ...source, end: 19, label: '计划\uD83D' },
+    { ...source, label: '其他' },
+    { ...source, sessionId: '\n' },
+    { ...source, snapshotHash: 'A'.repeat(64) },
+  ]) assert.equal(model.validateChatSessionReferences(mixedDraft.text, [invalid], mixedDraft.references), null);
+  assert.equal(model.validateChatSessionReferences(mixedDraft.text, [source, source], mixedDraft.references), null);
+  const longText = '@x @x @x @x';
+  const four = [0, 3, 6, 9].map(start => ({ ...source, label: 'x', start, end: start + 2 }));
+  assert.equal(model.validateChatSessionReferences(longText, four), null);
+});
+
+test('trimming and restoring a mixed draft preserves independent file and session offsets', () => {
+  const model = load('chatReferences');
+  assert.deepEqual(plain(model.trimChatReferenceText(mixedDraft.text, mixedDraft.references, [source])), {
+    text: '@first.txt 与 @计划🙂',
+    references: [{ start: 0, end: 10, attachmentId: 'one' }],
+    sessionReferences: [{ ...source, start: 13, end: 18 }],
+  });
+
+  const local = storage();
+  const store = load('chatDrafts', local);
+  assert.equal(store.saveChatDraft('session', mixedDraft, 'replacement'), true);
+  assert.deepEqual(plain(store.loadChatDraft('session').sessionReferences ?? []), [source]);
+  assert.equal(store.consumeChatDraft('session', 'old'), true);
+  assert.deepEqual(plain(store.loadChatDraft('session').sessionReferences ?? []), [source]);
+  assert.equal(load('chatDrafts', local, 'user:b:ip:one').loadChatDraft('session').sessionReferences, undefined);
+
+  const invalid = { ...mixedDraft, sessionReferences: [{ ...source, label: 'tampered' }] };
+  local.setItem('user:a:ip:one:easel_chat_draft:session', JSON.stringify(invalid));
+  const restored = store.loadChatDraft('session');
+  assert.equal(restored.text, mixedDraft.text);
+  assert.equal(restored.sessionReferences, undefined);
+  assert.deepEqual(plain(restored.references), mixedDraft.references);
+});

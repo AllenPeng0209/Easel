@@ -7453,12 +7453,34 @@
     "reuse_kind": "adapted",
     "changes": "接入上游编辑器运行、输入法提交及粘贴边界，保留 Easel 草稿和上传生命周期。",
     "verification_status": "A01_file_nodes_verified_in_isolated_browser"
+  },
+  {
+    "feature_id": "C31",
+    "upstream_path": "packages/client/ui-reference/src/client/index.ts",
+    "upstream_sha256": "c450a2f2a3f9b6e8054c85fbb4ed3b1f575590750c570c2f7e1698aa149c9b34",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/SessionReferencePicker.tsx",
+    "destination_sha256": "d37b58330ca806f4fc0ed86ad259ce2d79f0ea5f0ebd1c2cf062ccb62acc3302",
+    "reuse_kind": "adapted",
+    "changes": "复用上游按会话 ID 选择并插入引用的结构，增加明确预览。",
+    "verification_status": "C31_verified_scoped_snapshot_and_isolated_browser"
+  },
+  {
+    "feature_id": "C31",
+    "upstream_path": "packages/context/session-reference/src/projection.ts",
+    "upstream_sha256": "6f623036a0f3dbde87defe417f1f71a4ad7c88e4aff94f6e62df13461bf63426",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/chat_session_references.py",
+    "destination_sha256": "2cbbf2c37e9cef6faddf8f206bc7ec9cb77544a45ba3340fdb88fe0c86ab9116",
+    "reuse_kind": "adapted",
+    "changes": "适配上游受限文本投影和不可信参考边界，接入 Easel 认证目录及接纳快照。",
+    "verification_status": "C31_verified_scoped_snapshot_and_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 53,
+    "source_migration_files": 55,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 38,
+    "adapted_upstream_files": 40,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

@@ -10,7 +10,7 @@ import DeliverableCards from './DeliverableCards';
 import { deliverablesFromEvents, legacyArchivesForDeliverables, omitDeclaredArtifacts,
   pinSnapshotLinks, rejectedSnapshotPaths } from '../lib/deliverables';
 import UserAttachments from './UserAttachments';
-import { validateChatReferences } from '../lib/chatReferences';
+import { validateChatReferences, validateChatSessionReferenceSpans } from '../lib/chatReferences';
 import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
 import AgentEventPanel from './AgentEventPanel';
 import { UserMessageBubble } from '../vendor/deepseek-harness/message/UserMessageBubble';
@@ -56,14 +56,22 @@ function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) 
 
 function UserText({ message }: { message: ChatMessage }) {
   const { content, attachments = [] } = message;
-  const references = validateChatReferences(content, message.references, attachments);
-  if (!references?.length) return content;
+  const fileReferences = validateChatReferences(content, message.references, attachments) || [];
+  const sessionReferences = validateChatSessionReferenceSpans(content, message.sessionReferences, fileReferences) || [];
+  const references = [...fileReferences, ...sessionReferences].sort((a, b) => a.start - b.start);
+  if (!references.length) return content;
   const files = new Map(attachments.map(file => [file.id, file]));
   let offset = 0;
   const parts = references.map(reference => {
     const prefix = content.slice(offset, reference.start);
     const text = content.slice(reference.start, reference.end);
     offset = reference.end;
+    if ('sessionId' in reference) {
+      return <Fragment key={reference.start}>{prefix}
+        <span className="message-inline-reference" data-chat-session-reference={reference.sessionId}
+          title="引用的会话快照">{text}</span>
+      </Fragment>;
+    }
     const file = files.get(reference.attachmentId);
     const href = file ? attachmentHref(file.path) : null;
     return <Fragment key={reference.start}>{prefix}

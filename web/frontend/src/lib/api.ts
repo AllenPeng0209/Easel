@@ -1,7 +1,7 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
 import type { ChatSession } from './store';
-import type { ChatReference } from './chatReferences';
+import type { ChatReference, ChatSessionReference } from './chatReferences';
 import { mergeSessionCatalog } from './sessionSync';
 function getBasePath(): string {
   const path = window.location.pathname;
@@ -675,6 +675,7 @@ export function streamChat(
   onAdmitted?: (receipt: { turnId: string; sessionId: string }) => void,
   requireAdmission = false,
   references?: ChatReference[],
+  sessionReferences?: ChatSessionReference[],
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -816,7 +817,8 @@ export function streamChat(
           ? await projectFetch(projectUrl(`${BASE}/api/chat/stream`), {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef,
-                ...(references?.length ? { references } : {}) }),
+                ...(references?.length ? { references } : {}),
+                ...(sessionReferences?.length ? { sessionReferences } : {}) }),
               signal: controller.signal,
             })
           : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {
@@ -868,6 +870,18 @@ interface ChatSessionPage {
   sessions: ChatSession[];
   deletedIds?: string[];
   nextCursor?: string | null;
+}
+
+export interface SessionReferencePreview {
+  sessionId: string;
+  label: string;
+  snapshotHash: string;
+  preview: { role: 'user' | 'assistant'; content: string }[];
+  truncated: boolean;
+}
+
+export function fetchSessionReference(sessionId: string, signal?: AbortSignal): Promise<SessionReferencePreview> {
+  return request(`/api/chat/session-reference?sessionId=${encodeURIComponent(sessionId)}`, { signal });
 }
 
 export async function fetchChatSessions(signal?: AbortSignal): Promise<{ sessions: ChatSession[]; deletedIds: string[] }> {

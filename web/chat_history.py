@@ -75,6 +75,12 @@ class ChatHistoryStore:
             return [json.loads(row[0]) for row in connection.execute(
                 "SELECT payload FROM sessions WHERE deleted=0 ORDER BY updated DESC, id")]
 
+    def session(self, session_id: str) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM sessions WHERE id=? AND deleted=0", (session_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
     def sessions_page(self, limit: int, cursor: str | None = None) -> dict:
         """Read by stable session ID so recent activity cannot shift the page boundary."""
         with self._connect() as connection:

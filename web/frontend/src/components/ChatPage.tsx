@@ -7,9 +7,13 @@ import type { AgentSubagent } from '../lib/agentEvents';
 import QuestionCards from './QuestionCards';
 import BrushEntry from './BrushEntry';
 import StructuredComposerEditor, { type StructuredEditorHandle } from './StructuredComposerEditor';
-import { attachmentReferenceLabel, MAX_CHAT_REFERENCES, validateChatReferences, type ChatReference } from '../lib/chatReferences';
+import SessionReferencePicker, { type SessionReferenceCandidate } from './SessionReferencePicker';
+import {
+  attachmentReferenceLabel, MAX_CHAT_REFERENCES, MAX_CHAT_SESSION_REFERENCES, validateChatReferences,
+  validateChatSessionReferences, type ChatDraftSessionReference, type ChatReference,
+} from '../lib/chatReferences';
 import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from '../lib/store';
-import { uploadFiles, adoptOversize, mediaUrl } from '../lib/api';
+import { uploadFiles, adoptOversize, fetchSessionReference, mediaUrl } from '../lib/api';
 import type { UploadedFile } from '../lib/api';
 import type { ChatDeliverable } from '../lib/deliverables';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
@@ -25,7 +29,9 @@ interface ChatPageProps {
   apiDirect: boolean;
   session: ChatSession;
   stream?: StreamState;          // 进行中的流式态（来自 App，切页也不丢）
-  onSend: (displayText: string, attachments?: UploadedFile[], references?: ChatReference[]) => boolean | Promise<boolean>;
+  sessionReferenceCandidates?: readonly SessionReferenceCandidate[];
+  onSend: (displayText: string, attachments?: UploadedFile[], references?: ChatReference[],
+    sessionReferences?: ChatDraftSessionReference[]) => boolean | Promise<boolean>;
   onSteer?: (text: string) => Promise<boolean>;
   onStop: () => void;
   onResend: (
@@ -61,7 +67,7 @@ function greeting(): string {
 }
 
 export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onQuestionAnswered, onQuestionClosed,
-  queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice }: ChatPageProps) {
+  sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice }: ChatPageProps) {
   const [queueEdit, setQueueEdit] = useState<{ id: string; text: string } | null>(null);
   const queueEditChange = useRef(onQueueEditChange);
   queueEditChange.current = onQueueEditChange;
@@ -82,18 +88,20 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const [restoreState, setRestoreState] = useState<'checking' | 'complete' | 'unconfirmed'>(
     restoredKeys.size ? 'checking' : 'complete');
   const [restoreAttempt, setRestoreAttempt] = useState(0);
-  const [{ text: input, references }, setDraftContent] = useState(() => ({
-    text: initialDraft.text, references: initialDraft.references ?? [],
+  const [{ text: input, references, sessionReferences }, setDraftContent] = useState(() => ({
+    text: initialDraft.text, references: initialDraft.references ?? [], sessionReferences: initialDraft.sessionReferences ?? [],
   }));
-  const draftContentRef = useRef({ text: input, references });
-  const replaceInput = (text: string, nextReferences: ChatReference[] = []) => {
-    const next = { text, references: nextReferences };
+  const draftContentRef = useRef({ text: input, references, sessionReferences });
+  const replaceInput = (text: string, nextReferences: ChatReference[] = [],
+    nextSessionReferences: ChatDraftSessionReference[] = []) => {
+    const next = { text, references: nextReferences, sessionReferences: nextSessionReferences };
     draftContentRef.current = next;
     setDraftContent(next);
   };
   const [uploadItems, setUploadItems] = useState(initialDraft.attachments);
   const [interruptedFiles, setInterruptedFiles] = useState(initialDraft.interruptedFiles);
   const [sending, setSending] = useState(false);
+  const [pickingSession, setPickingSession] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [draftError, setDraftError] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
@@ -141,7 +149,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const attachments = uploads.ready;
   const restorePending = restoreState !== 'complete' && uploadItems.some(item => restoredKeys.has(item.key));
   const canSend = (!!input.trim() || attachments.length > 0) && !uploading && !failedUploads && !restorePending && !sending;
-  const showSteer = isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0;
+  const showSteer = isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0 && sessionReferences.length === 0;
   const waitingApproval = stream?.questions?.some(question => (!question.status || question.status === 'pending')
     && (question.requiresHuman || question.kind === 'approval' || question.publication));
   const lifecycleLabel = stream?.lifecycle === 'waiting_input' ? (waitingApproval ? '等待你批准' : '等待补充信息')
@@ -178,8 +186,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         return;
       }
     }
-    setDraftError(!saveChatDraft(session.id, { text: input, references, attachments: uploadItems, interruptedFiles }, composerId));
-  }, [session.id, composerId, input, references, uploadItems, interruptedFiles]);
+    setDraftError(!saveChatDraft(session.id, { text: input, references, sessionReferences, attachments: uploadItems, interruptedFiles }, composerId));
+  }, [session.id, composerId, input, references, sessionReferences, uploadItems, interruptedFiles]);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -198,17 +206,21 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     if (e.dataTransfer.files?.length) doUpload(e.dataTransfer.files);
   };
   const submitDraft = async (intent: 'send' | 'steer') => {
-    const { text: submittedText, references: submittedReferences } = draftContentRef.current;
+    const { text: submittedText, references: submittedReferences,
+      sessionReferences: submittedSessionReferences } = draftContentRef.current;
     const trimmed = submittedText.trim();
     if (sendingRef.current) return;
-    if (intent === 'steer' && (!showSteer || !trimmed || uploads.snapshot.length > 0)) return;
+    if (intent === 'steer' && (!showSteer || !trimmed || uploads.snapshot.length > 0 || submittedSessionReferences.length > 0)) return;
     if ((!trimmed && attachments.length === 0) || uploading || failedUploads || restorePending) return;
     const exactReferences = validateChatReferences(submittedText, submittedReferences, attachments);
     if (!exactReferences) { setSubmitError('正文附件引用已变更，请重新插入后发送。'); return; }
+    const exactSessions = validateChatSessionReferences(submittedText, submittedSessionReferences, exactReferences);
+    if (!exactSessions) { setSubmitError('历史对话引用已变更，请重新预览后插入。'); return; }
     sendingRef.current = true; setSending(true); setSubmitError('');
     try {
       const accepted = await (intent === 'steer' ? onSteer?.(trimmed)
-        : exactReferences.length ? onSend(submittedText, attachments, exactReferences) : onSend(trimmed, attachments));
+        : exactSessions.length ? onSend(submittedText, attachments, exactReferences, exactSessions)
+          : exactReferences.length ? onSend(submittedText, attachments, exactReferences) : onSend(trimmed, attachments));
       if (accepted !== true) {
         if (mountedRef.current) setSubmitError(intent === 'steer'
           ? '当前任务尚未确认接收指导，草稿已保留。' : '任务尚未接收，草稿已保留，请重试。');
@@ -289,15 +301,17 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
             replaceInput(t);
             requestAnimationFrame(() => editorRef.current?.focus());
           }} />}
-        <StructuredComposerEditor ref={editorRef} value={input} references={references} disabled={sending}
+        <StructuredComposerEditor ref={editorRef} value={input} references={references}
+          sessionReferences={sessionReferences} disabled={sending}
           placeholder={dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（可拖入图片/文档当素材）' : '发消息…（Enter 发送，Shift+Enter 换行，可拖入/粘贴素材）'}
-          onChange={(text, nextReferences) => {
+          onChange={(text, nextReferences, nextSessions) => {
             if (sendingRef.current) return;
             const receipts = uploads.ready;
             const valid = validateChatReferences(text, nextReferences, receipts) ??
               nextReferences.slice(0, MAX_CHAT_REFERENCES)
                 .filter(reference => validateChatReferences(text, [reference], receipts) !== null);
-            replaceInput(text, valid);
+            const validSessions = validateChatSessionReferences(text, nextSessions, valid) ?? [];
+            replaceInput(text, valid, validSessions);
           }}
           onSubmit={handleSend} onPasteFiles={doUpload}
         />
@@ -309,6 +323,12 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           disabled={sending} title={`添加图片或文档；超过 ${maxMb}MB 使用大文件上传通道`}>
           <IconPlus size={15} /> 添加素材
         </button>
+        {sessionReferenceCandidates && <button type="button" className="composer-attach-btn" disabled={sending}
+          onMouseDown={event => event.preventDefault()} onClick={() => {
+            if (sendingRef.current) return;
+            editorRef.current?.rememberSelection();
+            setPickingSession(true);
+          }}>引用历史对话</button>}
         <span className="composer-hint">{uploading ? '附件全部就绪后可发送' : sending ? '正在接收…'
           : isStreaming ? '继续输入，下一条会加入队列' : 'Enter 发送 · Shift+Enter 换行'}</span>
         <div className="composer-send-controls">
@@ -323,6 +343,17 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           </button>
         </div>
       </div>
+      {pickingSession && sessionReferenceCandidates && <SessionReferencePicker
+        candidates={sessionReferenceCandidates.filter(candidate => candidate.id !== session.id)}
+        inspect={fetchSessionReference} onClose={() => setPickingSession(false)}
+        onInsert={({ sessionId, label, snapshotHash }) => {
+          if (sendingRef.current || !editorRef.current ||
+              draftContentRef.current.sessionReferences.length >= MAX_CHAT_SESSION_REFERENCES) return false;
+          editorRef.current.insertSessionReference({ sessionId, label, snapshotHash });
+          setSubmitError('');
+          return true;
+        }}
+      />}
       {failedUploads && <div className="composer-feedback" role="alert">请重试或移除失败的附件后发送。</div>}
       {submitError && <div className="composer-feedback" role="alert">{submitError}</div>}
       {draftError && <div className="composer-feedback" role="alert">浏览器存储已满，当前草稿暂未保存。请保持本页打开。</div>}

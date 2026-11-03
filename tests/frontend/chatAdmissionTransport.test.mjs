@@ -6,7 +6,7 @@ const frame = (id, event, value) => `id: ${id}\r\nevent: ${event}\r\ndata: ${JSO
 const admission = frame(1, 'admitted', { turnId: 'exact-turn', sessionId: 'session' });
 const done = frame(3, 'done', { outcome: 'completed' });
 
-async function scenario(responses, { requireAdmission = true, resumeOnly = false, shortAdmissionTimeout = false, references, attachments = [] } = {}) {
+async function scenario(responses, { requireAdmission = true, resumeOnly = false, shortAdmissionTimeout = false, references, sessionReferences, attachments = [] } = {}) {
   const requests = [];
   const observed = [];
   let finish;
@@ -27,7 +27,7 @@ async function scenario(responses, { requireAdmission = true, resumeOnly = false
     token => observed.push(['token', token]), (_sessionKey, outcome) => { observed.push(['done', outcome]); finish(); },
     error => { observed.push(['error', error.status, error.message]); finish(); }, undefined, undefined,
     undefined, 'exact-turn', resumeOnly, undefined, attachments, undefined, undefined, undefined, undefined,
-    undefined, undefined, receipt => observed.push(['admitted', receipt.turnId, receipt.sessionId]), requireAdmission, references);
+    undefined, undefined, receipt => observed.push(['admitted', receipt.turnId, receipt.sessionId]), requireAdmission, references, sessionReferences);
   let deadline;
   try {
     await Promise.race([terminal, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('No terminal event')), 250); })]);
@@ -142,4 +142,12 @@ test('ordered typed inline occurrences are carried on POST, with old request bod
   assert.deepEqual(JSON.parse(result.requests[0].body).references, references);
   const plain = await scenario([admission + done], { references: [] });
   assert.ok(!Object.hasOwn(JSON.parse(plain.requests[0].body), 'references'));
+});
+
+test('typed session context is sent only on the original POST and omitted from legacy sends', async () => {
+  const references = [{ start: 1, end: 4, sessionId: 'source', snapshotHash: 'a'.repeat(64) }];
+  const result = await scenario([admission + done], { sessionReferences: references });
+  assert.deepEqual(JSON.parse(result.requests[0].body).sessionReferences, references);
+  const plain = await scenario([admission + done], { sessionReferences: [] });
+  assert.ok(!Object.hasOwn(JSON.parse(plain.requests[0].body), 'sessionReferences'));
 });

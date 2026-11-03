@@ -1,6 +1,6 @@
 import { useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
-import { CLEAR_HISTORY_COMMAND, COMMAND_PRIORITY_HIGH, createEditor, KEY_ENTER_COMMAND, PASTE_COMMAND } from 'lexical';
-import type { ChatReference } from '../lib/chatReferences';
+import { $getSelection, $isRangeSelection, type RangeSelection, CLEAR_HISTORY_COMMAND, COMMAND_PRIORITY_HIGH, createEditor, KEY_ENTER_COMMAND, PASTE_COMMAND } from 'lexical';
+import { sessionReferenceLabel, type ChatDraftSessionReference, type ChatReference } from '../lib/chatReferences';
 import {
   $projectReferenceDraft, $restoreReferenceDraft, insertReferenceChip, ReferenceChipNode,
   registerReferenceEditing, detachReferenceChips, sameReferenceDraft,
@@ -9,6 +9,8 @@ import './StructuredComposerEditor.css';
 
 export interface StructuredEditorHandle {
   focus: () => void;
+  rememberSelection: () => void;
+  insertSessionReference: (reference: Pick<ChatDraftSessionReference, 'sessionId' | 'label' | 'snapshotHash'>) => void;
   insertReference: (attachmentId: string, label: string) => void;
   removeReference: (attachmentId: string) => void;
 }
@@ -17,18 +19,20 @@ interface EditorProps {
   ref?: Ref<StructuredEditorHandle>;
   value: string;
   references: ChatReference[];
+  sessionReferences?: ChatDraftSessionReference[];
   placeholder: string;
   disabled: boolean;
-  onChange: (text: string, references: ChatReference[]) => void;
+  onChange: (text: string, references: ChatReference[], sessionReferences?: ChatDraftSessionReference[]) => void;
   onSubmit: () => void;
   onPasteFiles: (files: FileList) => void;
 }
 
 /** React host for the pinned Harness plain-text editor and its atomic file references. */
-export default function StructuredComposerEditor({ ref, value, references, placeholder, disabled,
+export default function StructuredComposerEditor({ ref, value, references, sessionReferences, placeholder, disabled,
   onChange, onSubmit, onPasteFiles }: EditorProps) {
   const root = useRef<HTMLDivElement>(null);
-  const projection = useRef({ text: value, references });
+  const projection = useRef({ text: value, references, sessionReferences });
+  const savedSelection = useRef<RangeSelection | null>(null);
   const current = useRef({ onChange, onSubmit, onPasteFiles, disabled });
   current.current = { onChange, onSubmit, onPasteFiles, disabled };
   const composing = useRef(false);
@@ -36,12 +40,24 @@ export default function StructuredComposerEditor({ ref, value, references, place
   const [editor] = useState(() => {
     const instance = createEditor({ namespace: 'easel-composer', nodes: [ReferenceChipNode],
       onError(error) { throw error; } });
-    instance.update(() => $restoreReferenceDraft({ text: value, references }), { discrete: true });
+    instance.update(() => $restoreReferenceDraft({ text: value, references, sessionReferences }), { discrete: true });
     return instance;
   });
 
   useImperativeHandle(ref, () => ({
     focus: () => editor.focus(),
+    rememberSelection() {
+      savedSelection.current = editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        return $isRangeSelection(selection) ? selection.clone() : null;
+      });
+    },
+    insertSessionReference(reference) {
+      if (current.current.disabled) return;
+      insertReferenceChip(editor, '', sessionReferenceLabel(reference.label), reference, savedSelection.current);
+      savedSelection.current = null;
+      requestAnimationFrame(() => editor.focus());
+    },
     insertReference(attachmentId, label) {
       if (current.current.disabled) return;
       insertReferenceChip(editor, attachmentId, label);
@@ -59,8 +75,8 @@ export default function StructuredComposerEditor({ ref, value, references, place
     const unregisterChange = editor.registerUpdateListener(({ editorState }) => {
       const updated = editorState.read($projectReferenceDraft);
       if (sameReferenceDraft(updated, projection.current)) return;
-      projection.current = updated;
-      current.current.onChange(updated.text, updated.references);
+      projection.current = { ...updated, sessionReferences: updated.sessionReferences };
+      current.current.onChange(updated.text, updated.references, updated.sessionReferences);
     });
     const unregisterEnter = editor.registerCommand(KEY_ENTER_COMMAND, event => {
       if (!event || composing.current || editor.isComposing() || event.isComposing || event.keyCode === 229
@@ -89,12 +105,12 @@ export default function StructuredComposerEditor({ ref, value, references, place
   useLayoutEffect(() => { editor.setEditable(!disabled); }, [editor, disabled]);
 
   useLayoutEffect(() => {
-    const next = { text: value, references };
+    const next = { text: value, references, sessionReferences };
     if (sameReferenceDraft(next, projection.current)) return;
     projection.current = next;
     editor.update(() => $restoreReferenceDraft(next), { discrete: true });
     editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
-  }, [editor, value, references, disabled]);
+  }, [editor, value, references, sessionReferences, disabled]);
 
   return <div className="structured-composer-editor" data-empty={!value || undefined}>
     <div ref={root} className="chat-input structured-composer-input" contentEditable={!disabled}

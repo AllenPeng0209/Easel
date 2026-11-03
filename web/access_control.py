@@ -128,7 +128,7 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return "operate"
     if re.fullmatch(r"chat/subagents/[^/]+/[^/]+", resource):
         return "operate" if read else None
-    if resource == 'chat/business-objects':
+    if resource in {'chat/business-objects', 'chat/session-reference'}:
         return 'operate' if read else None
     if resource == "upload/validate":
         return "operate" if method == "POST" else None

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { componentModule } from './agentMessagesHarness.mjs';
 
 const require = createRequire(new URL('../../web/frontend/package.json', import.meta.url));
-const { $getRoot, $isRangeSelection, $getSelection, UNDO_COMMAND, REDO_COMMAND, KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND, createEditor } = require('lexical');
+const { $getRoot, $isRangeSelection, $getSelection, $setSelection, UNDO_COMMAND, REDO_COMMAND, KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND, createEditor } = require('lexical');
 
 function editorFixture() {
   const runtime = componentModule('vendor/deepseek-harness/composer/reference-editor.ts');
@@ -73,5 +73,36 @@ test('forward Delete removes one chip and detaching a receipt removes all its oc
     runtime.detachReferenceChips(editor, 'x');
     assert.equal(snapshot().text, 'A  B @y.md C @x.md');
     assert.deepEqual(Array.from(snapshot().references, reference => reference.attachmentId), ['y']);
+  } finally { dispose(); }
+});
+
+
+test('session and attachment chips project independently and insert at the caret saved before modal focus', async () => {
+  const { editor, runtime, update, snapshot, dispose } = editorFixture();
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  const selected = { sessionId: 'source-session', label: '旧计划', snapshotHash: 'a'.repeat(64) };
+  try {
+    update(() => runtime.$restoreReferenceDraft({
+      text: 'AB @x.md', references: [{ start: 3, end: 8, attachmentId: 'x' }],
+    }));
+    let caret;
+    update(() => {
+      $getRoot().getFirstDescendant().select(1, 1);
+      caret = $getSelection().clone();
+      $setSelection(null);
+    });
+    runtime.insertReferenceChip(editor, '', '@旧计划', selected, caret);
+    const inserted = snapshot();
+    assert.equal(inserted.text, 'A@旧计划 B @x.md');
+    assert.deepEqual(JSON.parse(JSON.stringify(inserted.references)), [{ start: 8, end: 13, attachmentId: 'x' }]);
+    assert.deepEqual(JSON.parse(JSON.stringify(inserted.sessionReferences)), [{ start: 1, end: 5, ...selected }]);
+    editor.dispatchCommand(UNDO_COMMAND);
+    await flush();
+    assert.equal(snapshot().sessionReferences, undefined);
+    editor.dispatchCommand(REDO_COMMAND);
+    await flush();
+    assert.equal(snapshot().sessionReferences[0].snapshotHash, selected.snapshotHash);
+    update(() => runtime.$restoreReferenceDraft(inserted));
+    assert.deepEqual(JSON.parse(JSON.stringify(snapshot())), JSON.parse(JSON.stringify(inserted)));
   } finally { dispose(); }
 });

@@ -1,0 +1,69 @@
+.session-reference-overlay {
+  position: fixed;
+  z-index: 500;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgb(0 0 0 / 46%);
+}
+.session-reference-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: min(680px, 92vh);
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 16px 64px rgb(0 0 0 / 28%);
+}
+.session-reference-dialog header,
+.session-reference-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+}
+.session-reference-dialog footer { justify-content: flex-end; border-top: 1px solid var(--border); }
+.session-reference-dialog :is(h2, h3, p) { margin: 0; }
+.session-reference-dialog h2 { font-size: 18px; }
+.session-reference-dialog h3 { font-size: 15px; overflow-wrap: anywhere; }
+.session-reference-dialog p { color: var(--text-secondary); font-size: 13px; }
+.session-reference-dialog :is(button, input) {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.session-reference-dialog button { cursor: pointer; }
+.session-reference-dialog :is(button, input):focus-visible { outline: 2px solid var(--accent-start); outline-offset: 1px; }
+.session-reference-body {
+  display: grid;
+  grid-template-columns: minmax(145px, 1fr) minmax(0, 2fr);
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 16px 12px;
+}
+.session-reference-body input { width: 100%; }
+.session-reference-candidates,
+.session-reference-preview ol { list-style: none; padding: 0; margin: 7px 0 0; }
+.session-reference-candidates button {
+  width: 100%;
+  margin: 0 0 5px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.session-reference-candidates button[aria-pressed="true"],
+.session-reference-dialog .session-reference-insert { background: var(--accent-soft); }
+.session-reference-preview { min-height: 180px; border-left: 1px solid var(--border); padding-left: 12px; }
+.session-reference-preview li { margin: 8px 0; padding: 8px; border-radius: 6px; background: var(--surface); }
+.session-reference-preview li p { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .session-reference-body { grid-template-columns: 1fr; }
+  .session-reference-preview { min-height: 100px; border-left: 0; padding-left: 0; }
+}

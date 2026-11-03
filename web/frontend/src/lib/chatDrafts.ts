@@ -4,7 +4,7 @@
  * ce7073d51254c26cd63b22a60835b8f948deb447. Raw File bytes are never persisted.
  */
 import { projectStorageKey } from './projectScope';
-import { validateChatReferences, type ChatReference } from './chatReferences';
+import { validateChatReferences, validateChatSessionReferences, type ChatReference, type ChatDraftSessionReference } from './chatReferences';
 import type { UploadAttachment } from './uploadQueue';
 
 export interface InterruptedFile { name: string; size: number; mime: string; }
@@ -13,6 +13,7 @@ export interface ChatDraft {
   attachments: UploadAttachment[];
   interruptedFiles: InterruptedFile[];
   references?: ChatReference[];
+  sessionReferences?: ChatDraftSessionReference[];
 }
 
 const empty = (): ChatDraft => ({ text: '', attachments: [], interruptedFiles: [] });
@@ -39,7 +40,9 @@ export function loadChatDraft(sessionId: string): ChatDraft {
       .map((file: InterruptedFile) => ({ name: file.name, size: Number(file.size) || 0,
         mime: typeof file.mime === 'string' ? file.mime : '' }));
     const references = validateChatReferences(value.text, value.references, attachments.map(item => item.reference!));
-    return { text: value.text, attachments, interruptedFiles, ...(references?.length ? { references } : {}) };
+    const sessionReferences = validateChatSessionReferences(value.text, value.sessionReferences, references ?? []);
+    return { text: value.text, attachments, interruptedFiles, ...(references?.length ? { references } : {}),
+      ...(sessionReferences?.length ? { sessionReferences } : {}) };
   } catch { return empty(); }
 }
 
@@ -52,9 +55,10 @@ export function saveChatDraft(sessionId: string, draft: ChatDraft, composerId?: 
     const interruptedFiles = [...draft.interruptedFiles, ...draft.attachments
       .filter(item => item.status !== 'ready').map(item => ({ name: item.name, size: item.size, mime: item.mime }))];
     const references = validateChatReferences(draft.text, draft.references, attachments.map(item => item.reference));
+    const sessionReferences = validateChatSessionReferences(draft.text, draft.sessionReferences, references ?? []);
     if (!draft.text && !attachments.length && !interruptedFiles.length) localStorage.removeItem(keyFor(sessionId));
     else localStorage.setItem(keyFor(sessionId), JSON.stringify({ version: 1, composerId, text: draft.text, attachments, interruptedFiles,
-      ...(references?.length ? { references } : {}) }));
+      ...(references?.length ? { references } : {}), ...(sessionReferences?.length ? { sessionReferences } : {}) }));
     return true;
   } catch { return false; }
 }

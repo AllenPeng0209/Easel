@@ -369,3 +369,26 @@ test('attachment insertion reports a full reference list without discarding its 
   assert.equal(editor(updated).props.references.length, 100);
   assert.ok(updated.some(node => node.props?.role === 'alert' && /已达上限/.test(text(node))));
 });
+
+
+test('mixed session and file references stay separate through an unconfirmed send', async () => {
+  const calls = [];
+  const file = { key: 'file-key', name: 'brief.md', size: 1, mime: 'text/plain', status: 'ready',
+    reference: { id: 'receipt', path: '_inbox/scope/batch/brief.md', name: 'brief.md' } };
+  const sharedDrafts = new Map([['scope:easel_chat_draft:s1', JSON.stringify({
+    text: '', attachments: [file], interruptedFiles: [],
+  })]]);
+  const ui = view({ sharedDrafts, validate: async () => ({ ok: true, json: async () => ({ valid: [true] }) }),
+    onSend: (...values) => { calls.push(values); return false; } });
+  const value = ' @旧计划 然后 @brief.md ';
+  const references = [{ start: 9, end: 18, attachmentId: 'receipt' }];
+  const sessionReferences = [{ start: 1, end: 5, sessionId: 'source-session', snapshotHash: 'b'.repeat(64), label: '旧计划' }];
+  editor(await ui.ready()).props.onChange(value, references, sessionReferences);
+  await control(ui.render(), '发送').props.onClick();
+  assert.equal(calls[0][0], value);
+  assert.equal(calls[0][1][0].id, 'receipt');
+  assert.equal(JSON.stringify(calls[0][2]), JSON.stringify(references));
+  assert.equal(JSON.stringify(calls[0][3]), JSON.stringify(sessionReferences));
+  assert.equal(JSON.stringify(editor(ui.render()).props.sessionReferences), JSON.stringify(sessionReferences));
+  assert.equal(JSON.parse(sharedDrafts.get('scope:easel_chat_draft:s1')).sessionReferences[0].snapshotHash, 'b'.repeat(64));
+});
