@@ -36,9 +36,12 @@ def reply(message, result):
 
 def permission():
     if runtime == "codex":
-        send({"id": "permission-request", "method": "item/commandExecution/requestApproval",
-              "params": {"threadId": thread_id, "turnId": turn_id, "itemId": "tool",
-                         "command": os.environ.get("FAKE_HARNESS_COMMAND", "read public file")}})
+        kind = os.environ.get("FAKE_HARNESS_PERMISSION_KIND", "commandExecution")
+        params = {"threadId": thread_id, "itemId": "tool",
+                  "command": os.environ.get("FAKE_HARNESS_COMMAND", "read public file")}
+        if mode != "uncorrelated-permission":
+            params["turnId"] = turn_id
+        send({"id": "permission-request", "method": f"item/{kind}/requestApproval", "params": params})
     else:
         send({"id": "permission-request", "method": "session/request_permission",
               "params": {"sessionId": session_id, "toolCall": {"title": "read public file"},
@@ -89,7 +92,9 @@ while True:
         if "id" in message:
             reply(message, {})
     elif method in ("turn/start", "session/prompt"):
-        if mode == "permission":
+        if mode in ("permission", "native-auto-permission", "uncorrelated-permission"):
+            if mode != "permission" and runtime == "codex":
+                reply(message, {"turn": {"id": turn_id}})
             permission()
         if mode in ("hang", "slow-cancel", "ignore-cancel"):
             pending_prompt = message
@@ -138,7 +143,8 @@ while True:
             else:
                 send({"method": "turn/completed",
                       "params": {**common, "turn": {"id": turn_id, "status": "completed"}}})
-            reply(message, {"turn": {"id": turn_id}})
+            if mode not in ("native-auto-permission", "uncorrelated-permission"):
+                reply(message, {"turn": {"id": turn_id}})
         else:
             for update, text in (("agent_thought_chunk", "思考"), ("agent_message_chunk", "你好")):
                 send({"method": "session/update", "params": {

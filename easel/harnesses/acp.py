@@ -40,6 +40,13 @@ class ACPAdapter:
                 raise HarnessError("不支持的 ACP 客户端请求")
             options = params.get("options") or []
             allowed = [option for option in options if option.get("kind") in ("allow_once", "reject_once")]
+            if request.auto_allow_tools:
+                if active and session_id:
+                    for option in allowed:
+                        if option.get("kind") == "allow_once" and option.get("optionId"):
+                            emit("activity", "Agent：已自动允许本次工具执行")
+                            return {"outcome": {"outcome": "selected", "optionId": option["optionId"]}}
+                return {"outcome": {"outcome": "cancelled"}}
             if not allowed:
                 return {"outcome": {"outcome": "cancelled"}}
             labels = {f"{index + 1}. {option['name']}": option["optionId"]

@@ -404,6 +404,35 @@ def test_permissions_are_explicit_and_once_only(tmp_path, runtime, adapter, allo
         assert response["result"]["outcome"]["optionId"] == ("once" if allow else "deny")
 
 
+@pytest.mark.parametrize("runtime,adapter,kind,mode,decision", [
+    ("codex", CodexAdapter, "commandExecution", "native-auto-permission", "accept"),
+    ("codex", CodexAdapter, "fileChange", "native-auto-permission", "accept"),
+    ("codex", CodexAdapter, "commandExecution", "uncorrelated-permission", "decline"),
+    ("acp", ACPAdapter, "", "native-auto-permission", "once"),
+])
+def test_native_tool_approval_can_allow_once_without_user_input(tmp_path, runtime, adapter, kind, mode, decision):
+    from dataclasses import replace
+
+    request = request_for(tmp_path, runtime, mode)
+    request = replace(request, auto_allow_tools=True,
+                      env={**request.env, "FAKE_HARNESS_COMMAND": "curl http://127.0.0.1:3000",
+                           "FAKE_HARNESS_PERMISSION_KIND": kind})
+
+    async def unexpected(questions):
+        raise AssertionError("native permission should be automatic")
+
+    asyncio.run(adapter().run(request, lambda *args: None, unexpected, lambda identifier: None))
+    messages = audit(tmp_path)
+    response = next(message for message in messages if message.get("id") == "permission-request")
+    if runtime == "codex":
+        assert response["result"] == {"decision": decision}
+        turn = next(message["params"] for message in messages if message.get("method") == "turn/start")
+        assert turn["approvalPolicy"] == "on-request"
+        assert turn["sandboxPolicy"] == {"type": "readOnly"}
+    else:
+        assert response["result"] == {"outcome": {"outcome": "selected", "optionId": decision}}
+
+
 @pytest.mark.parametrize(("command", "expected"), [("ls -la", "accept"), ("sudo reboot", "decline")])
 def test_codex_auto_approval_still_asks_for_high_risk_commands(tmp_path, command, expected):
     from dataclasses import replace

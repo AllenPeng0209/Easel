@@ -57,6 +57,7 @@ class RunRequest:
     bind_steer: Callable[[Steer | None], None] | None = None
     record_subagent: Callable[[dict], None] | None = None
     publication_status_with_call: PublicationStatusWithCall | None = None
+    auto_allow_tools: bool = False
 
 
 class Adapter(Protocol):

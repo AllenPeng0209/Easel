@@ -620,8 +620,9 @@ class CodexAdapter:
                     {"answers": answers}, ensure_ascii=False)}]}
             if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
                 item_id = params.get("itemId")
-                if (turn_id and params.get("turnId") == turn_id and isinstance(item_id, str)
-                        and item_id not in events.calls):
+                correlated = (bool(turn_id) and params.get("turnId") == turn_id
+                              and isinstance(item_id, str) and bool(item_id.strip()))
+                if correlated and item_id not in events.calls:
                     # A correlated approval request is evidence of preparation.
                     # Leave a tool already reported by the engine in its observed phase.
                     command = method == "item/commandExecution/requestApproval"
@@ -630,6 +631,14 @@ class CodexAdapter:
                                 fileChangeApplied=False if not command else None,
                                 input={"command": params["command"]} if command and
                                 isinstance(params.get("command"), str) else None)
+                if request.auto_allow_tools:
+                    decisions = params.get("availableDecisions")
+                    if (not correlated or completion.done() or
+                            (decisions is not None and
+                             (not isinstance(decisions, list) or "accept" not in decisions))):
+                        return {"decision": "decline"}
+                    emit("activity", "Codex：已自动允许本次工具执行")
+                    return {"decision": "accept"}
                 if can_auto_approve(method, params, request):
                     emit("activity", "Codex：已自动通过普通操作授权")
                     return {"decision": "accept"}

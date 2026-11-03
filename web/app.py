@@ -4508,6 +4508,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         request = RunRequest(message, _workspace_root(), env, native_id,
                              model, config["sandbox"], timeout,
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
+                             auto_allow_tools=os.environ.get("EASEL_AUTO_ALLOW_AI_TOOLS") == "1",
                              autonomy_mode=req.autonomyMode, present=present, publish=publish,
                              publication_status=publication_status, publication_status_with_call=publication_status,
                              business_objects=business_objects,
