@@ -2,6 +2,14 @@ import { projectUrl, projectFetch } from './projectScope';
 export type ReviewKind = 'human' | 'simulated';
 export type ReviewDecision = 'approved' | 'changes_requested';
 
+export interface WorkshopReference {
+  id: string;
+  revision: number;
+  engineRevision?: number;
+  artifactId?: string;
+  artifactSha256?: string;
+}
+
 export interface WorkshopStatus {
   state: 'running' | 'unavailable' | 'starting';
   ui_url?: string;

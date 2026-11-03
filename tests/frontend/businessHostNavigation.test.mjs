@@ -39,3 +39,13 @@ test('a missing business object carries the real status to the historical card',
  const api=load(async()=>({ok:false,status:404}));
  await assert.rejects(api.fetchBusinessObject('idea',record.id),error=>error.status===404);
 });
+
+test('workshop deep links retain only a valid delivery ID in the current IP', () => {
+ const {parseBusinessHash}=load();
+ const project='a'.repeat(32), artifact='b'.repeat(32);
+ assert.deepEqual(JSON.parse(JSON.stringify(parseBusinessHash(`#/business/default/workshop/${project}/artifact/${artifact}`))),
+  {kind:'workshop',id:project,artifactId:artifact});
+ assert.equal(parseBusinessHash(`#/business/default/workshop/${project}/artifact/unknown`),null);
+ assert.equal(parseBusinessHash(`#/business/default/idea/idea-1/artifact/${artifact}`),null);
+ assert.equal(parseBusinessHash(`#/business/other/workshop/${project}/artifact/${artifact}`),null);
+});

@@ -89,7 +89,9 @@ function details(kind: BusinessObjectKind, value: unknown): Record<string, unkno
     if (Array.isArray(entries)) project[key] = entries.filter(isRecord).map(entry => ({ ...fields(entry, allowed),
       ...(key === 'reviews' && isRecord(entry.actor) ? { actor: fields(entry.actor, ['id', 'name', 'display_name']) } : {}) }));
   }
-  return { project, ...fields(value, VERIFICATION_FIELDS) };
+  return { project, ...fields(value, VERIFICATION_FIELDS),
+    ...(isRecord(value.handoff) ? { handoff: fields(value.handoff,
+      ['revision', 'engineRevision', 'artifactId', 'artifactSha256', 'artifactRevision', 'artifactEngineRevision']) } : {}) };
 }
 
 export function normalizeBusinessObject(value: unknown): BusinessObject | null {
@@ -145,7 +147,9 @@ export function businessObjectOpenHref(record: BusinessObject, action: BusinessO
   if (!businessObjectInScope(record) || record.kind !== 'idea' && record.kind !== 'workshop'
       || !id(record.projectId) || !entityId(record.kind, record.id) || action.kind !== 'open'
       || action.target !== TARGETS[record.kind] || action.entityId !== record.id) return null;
-  return `#/business/${encodeURIComponent(record.projectId)}/${record.kind}/${encodeURIComponent(record.id)}`;
+  const selected = record.kind === 'workshop' && isRecord(record.details.handoff) ? record.details.handoff.artifactId : null;
+  const suffix = typeof selected === 'string' && /^[a-f0-9]{32}$/.test(selected) ? `/artifact/${selected}` : '';
+  return `#/business/${encodeURIComponent(record.projectId)}/${record.kind}/${encodeURIComponent(record.id)}${suffix}`;
 }
 
 export function businessObjectDraftArtifact(record: BusinessObject): ChatDeliverable | null {

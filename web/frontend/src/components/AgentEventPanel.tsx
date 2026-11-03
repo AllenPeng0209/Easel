@@ -94,9 +94,11 @@ function OtherEvent({ event }: { event: AgentEvent }) {
       return <p className="agent-event__note" role="status">业务记录格式无效，未显示详情。</p>;
     }
     const isTopicSource = event.callId?.startsWith('host:topic:');
+    const isWorkshopSource = event.callId?.startsWith('host:workshop:');
     return <>
       {isTopicSource && <p className="agent-event__note">本轮创作的选题快照</p>}
-      <BusinessObjectCard record={event.business} onRefresh={isTopicSource ? undefined : fetchBusinessObject} />
+      {isWorkshopSource && <p className="agent-event__note">本轮引用的工坊快照</p>}
+      <BusinessObjectCard record={event.business} onRefresh={isTopicSource || isWorkshopSource ? undefined : fetchBusinessObject} />
     </>;
   }
   if (event.kind === 'publication' && event.publication) return <PublicationReceiptCard record={event.publication}

@@ -265,7 +265,7 @@ test('saved idea starts a conversation with the exact inspected snapshot and ret
   });
   await ui.callback('handleUseSavedIdea')(idea.id);
   const ref = { id: idea.id, snapshotHash: idea.snapshotHash };
-  assert.deepEqual(plain(ui.requests[0].at(-1)), ref);
+  assert.deepEqual(plain(ui.requests[0].at(-2)), ref);
   assert.deepEqual(plain(ui.saved.at(-1)[0].messages[0].topicRef), ref);
   assert.equal(ui.context.sessions[0].title, idea.title);
 
@@ -273,5 +273,31 @@ test('saved idea starts a conversation with the exact inspected snapshot and ret
   ui.context.streamAcc.current = {};
   ui.context.streamCtl.current = {};
   ui.callback('handleResend')('topic-chat', 0, '重新起草');
-  assert.deepEqual(plain(ui.requests[1].at(-1)), ref);
+  assert.deepEqual(plain(ui.requests[1].at(-2)), ref);
+});
+
+test('workshop handoff sends the selected delivery into its originating chat and keeps it on retry', () => {
+  const reference = { id: 'a'.repeat(32), revision: 9, artifactId: 'b'.repeat(32), artifactSha256: 'c'.repeat(64) };
+  const notices = [];
+  const ui = appBoundary([
+    { id: 'origin', title: 'Origin', created: 1, messages: [] },
+    { id: 'other', title: 'Other', created: 2, messages: [] },
+  ], { setBusinessNotice: value => notices.push(value), setWorkshopPanel() {}, setCurrentPage() {} });
+  const handoff = ui.callback('handleUseWorkshop');
+  ui.context.sessionsRef.current[0].pendingTurnId = 'running';
+  handoff(reference, 'origin');
+  assert.equal(ui.requests.length, 0);
+  assert.match(notices.at(-1), /原对话/);
+  delete ui.context.sessionsRef.current[0].pendingTurnId;
+  handoff(reference, 'origin');
+  assert.equal(ui.requests[0][2], 'origin');
+  assert.deepEqual(plain(ui.requests[0].at(-1)), reference);
+  assert.deepEqual(plain(ui.saved.at(-1)[0].messages[0].workshopRef), reference);
+  assert.deepEqual(plain(ui.saved.at(-1)[1].messages), []);
+
+  ui.context.sessionsRef.current = plain(ui.context.sessions);
+  ui.context.streamAcc.current = {};
+  ui.context.streamCtl.current = {};
+  ui.callback('handleResend')('origin', 0, '核对这个版本');
+  assert.deepEqual(plain(ui.requests[1].at(-1)), reference);
 });

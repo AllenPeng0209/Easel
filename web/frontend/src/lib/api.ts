@@ -659,6 +659,7 @@ export function streamChat(
   onQuestionClosed?: (q: ChatQuestionClosed) => void,
   onAgentEvent?: (event: AgentEvent) => void,
   topicRef?: { id: string; snapshotHash: string },
+  workshopRef?: import('./workshop').WorkshopReference,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -762,7 +763,7 @@ export function streamChat(
         const res = first
           ? await projectFetch(projectUrl(`${BASE}/api/chat/stream`), {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef }),
+              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef }),
               signal: controller.signal,
             })
           : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {

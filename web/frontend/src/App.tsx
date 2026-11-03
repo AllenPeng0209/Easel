@@ -22,6 +22,7 @@ import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed } from
 import { reduceAgentEvents } from './lib/agentEvents';
 import { fetchBusinessObject, parseBusinessHash } from './lib/businessObjectApi';
 import type { BusinessTarget } from './lib/businessObjectApi';
+import type { WorkshopReference } from './lib/workshop';
 import type { AgentEvent } from './lib/agentEvents';
 import { mergeSessionCatalog, nextSessionRevision } from './lib/sessionSync';
 import { confirmChatStop, enqueueMessage, nextQueuedMessage } from './lib/chatControl';
@@ -74,6 +75,9 @@ export default function App() {
   const [selectedPersona, setSelectedPersona] = useState('');
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [workshopPanel, setWorkshopPanel] = useState<{ id: string; sessionId: string; artifactId?: string } | null>(null);
+  const chatOrigin = useRef<string | null>(null);
+  chatOrigin.current = currentPage === 'chat' ? activeSessionId : null;
   const [gatewayStatus, setGatewayStatus] = useState('connecting');
   const [apiDirect, setApiDirect] = useState(false);
   const [agentRuntime, setAgentRuntime] = useState('openclaw');
@@ -124,6 +128,7 @@ export default function App() {
         return;
       }
       setBusinessNotice('正在核对业务对象…');
+      const origin = chatOrigin.current;
       try {
         const record = await fetchBusinessObject(target.kind, target.id, controller.signal);
         if (!mounted || generation !== businessNavigation.current || window.location.hash !== hash) return;
@@ -131,9 +136,13 @@ export default function App() {
         if (!record.actions.some(action => action.kind === 'open' && action.target === expected && action.entityId === target.id)) {
           throw new Error('No current navigation action');
         }
-        setBusinessEntry(target);
-        if (target.kind === 'workshop') setWorkshopEntry(value => value + 1);
-        setCurrentPage(expected);
+        if (target.kind === 'workshop' && origin && origin === chatOrigin.current) {
+          setWorkshopPanel({ id: target.id, sessionId: origin, artifactId: target.artifactId });
+        } else {
+          setBusinessEntry(target);
+          if (target.kind === 'workshop') setWorkshopEntry(value => value + 1);
+          setCurrentPage(expected);
+        }
         setBusinessNotice('');
       } catch {
         if (!mounted || generation !== businessNavigation.current) return;
@@ -489,6 +498,7 @@ export default function App() {
     attachments: UploadedFile[] = [],
     requestedTurnId?: string,
     topicRef?: ChatMessage['topicRef'],
+    workshopRef?: WorkshopReference,
   ) => {
     const turnId = requestedTurnId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try { sessionStorage.setItem(projectStorageKey(`easel_pending_turn:${sessionId}`), turnId); } catch { /* ignore */ }
@@ -551,6 +561,7 @@ export default function App() {
       (closed) => closeQuestion(sessionId, closed),
       (event) => receiveAgentEvent(sessionId, owner, event),
       topicRef,
+      workshopRef,
     );
   }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent]);
 
@@ -646,6 +657,7 @@ export default function App() {
     truncateAt?: number,
     requestedTurnId?: string,
     topicRef?: ChatMessage['topicRef'],
+    workshopRef?: WorkshopReference,
   ) => {
     const visible = displayText.trim();
     const agentMessage = (legacyAgentText || displayText).trim();
@@ -665,6 +677,7 @@ export default function App() {
             created: Date.now(),
             ...(attachments.length ? { attachments } : {}),
             ...(topicRef ? { topicRef } : {}),
+            ...(workshopRef ? { workshopRef } : {}),
             ...(legacyAgentText && legacyAgentText !== visible ? { agentContent: legacyAgentText } : {}),
           } as ChatMessage],
         };
@@ -674,7 +687,7 @@ export default function App() {
       saveSessions(next);
       return next;
     });
-    startStream(sessionId, agentMessage, persona, attachments, requestedTurnId, topicRef);
+    startStream(sessionId, agentMessage, persona, attachments, requestedTurnId, topicRef, workshopRef);
     return true;
   }, [selectedPersona, startStream]);
 
@@ -733,8 +746,9 @@ export default function App() {
     attachments?: UploadedFile[],
     legacyAgentText?: string,
   ) => {
-    const topicRef = sessionsRef.current.find(session => session.id === sessionId)?.messages[userIndex]?.topicRef;
-    sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, userIndex, undefined, topicRef);
+    const original = sessionsRef.current.find(session => session.id === sessionId)?.messages[userIndex];
+    sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, userIndex, undefined,
+      original?.topicRef, original?.workshopRef);
   }, [sendUserAndStream]);
 
   // 热点「一键做成内容」：新开会话，把选题作为指令发出去，跳到对话页。
@@ -785,6 +799,32 @@ export default function App() {
       businessNavigation.current += 1;
     };
   }, [handleUseSavedIdea]);
+
+  const handleUseWorkshop = useCallback((reference: WorkshopReference, origin?: string) => {
+    if (!canOperate) return;
+    const prompt = reference.artifactId ? '请根据本轮引用的工坊成片版本，核对交付状态并给出下一步建议。'
+      : '请根据本轮引用的工坊项目和已保存画布状态，给出下一步创作建议。';
+    if (origin) {
+      const target = sessionsRef.current.find(session => session.id === origin);
+      if (!target || target.archived || target.pendingTurnId || target.queued?.length ||
+          !sendUserAndStream(origin, prompt, [], undefined, undefined, undefined, undefined, reference)) {
+        setBusinessNotice('原对话不可用或还有任务，请完成后重试。');
+        return;
+      }
+    } else {
+      const session = createSession(selectedPersona || undefined);
+      setSessions(previous => {
+        const next = [session, ...previous];
+        saveSessions(next);
+        return next;
+      });
+      setActiveSessionId(session.id);
+      sendUserAndStream(session.id, prompt, [], undefined, undefined, undefined, undefined, reference);
+    }
+    setWorkshopPanel(null);
+    setCurrentPage('chat');
+    setBusinessNotice('');
+  }, [canOperate, selectedPersona, sendUserAndStream]);
 
   const handleStopStream = useCallback(async (sessionId: string) => {
     setSessions(previous => {
@@ -1030,7 +1070,9 @@ export default function App() {
         return <SkillPage persona={selectedPersona} />;
       case 'workshop':
         return <Suspense fallback={<div className="dash-empty">正在打开视频工坊…</div>}><VideoWorkshopPage key={workshopEntry}
-          initialProjectId={businessEntry?.kind === 'workshop' ? businessEntry.id : undefined} /></Suspense>;
+          initialProjectId={businessEntry?.kind === 'workshop' ? businessEntry.id : undefined}
+          initialArtifactId={businessEntry?.artifactId}
+          onUseWorkshop={handleUseWorkshop} /></Suspense>;
       case 'interactions':
         return <Suspense fallback={<div className="dash-empty">正在打开互动中心…</div>}><InteractionCenterPage key={interactionEntry} /></Suspense>;
       case 'outputs':
@@ -1066,12 +1108,14 @@ export default function App() {
     setActiveSessionId(newSession.id);
   }, [activeSessionId]);
 
+  const visibleWorkshop = canOperate && currentPage === 'chat' && workshopPanel?.sessionId === activeSessionId
+    ? workshopPanel : null;
   return (
     <div className="app-layout">
       <Sidebar
         currentPage={currentPage}
         onPageChange={page => {
-          businessNavigation.current += 1; setBusinessEntry(null); setBusinessNotice('');
+          businessNavigation.current += 1; setBusinessEntry(null); setBusinessNotice(''); setWorkshopPanel(null);
           if (page === 'workshop') setWorkshopEntry(entry => entry + 1);
           if (page === 'interactions') setInteractionEntry(entry => entry + 1);
           setCurrentPage(page);
@@ -1082,7 +1126,7 @@ export default function App() {
         onNewProfile={() => setShowWizard(true)}
         sessions={sessions}
         activeSessionId={activeSessionId}
-        onSessionSelect={id => { businessNavigation.current += 1; setBusinessNotice(''); handleSessionSelect(id); }}
+        onSessionSelect={id => { businessNavigation.current += 1; setBusinessNotice(''); setWorkshopPanel(null); handleSessionSelect(id); }}
         onSessionDelete={handleSessionDelete}
         onSessionRename={handleSessionRename}
         onSessionArchive={handleSessionArchive}
@@ -1093,7 +1137,7 @@ export default function App() {
             : unreadSessions[session.id] ? 'completed-unread' : session.messages.at(-1)?.status === 'failed' ? 'failed' : '';
           return [session.id, state];
         }))}
-        onNewChat={() => { businessNavigation.current += 1; setBusinessNotice(''); handleNewChat(); }}
+        onNewChat={() => { businessNavigation.current += 1; setBusinessNotice(''); setWorkshopPanel(null); handleNewChat(); }}
         gatewayStatus={gatewayStatus}
         apiDirect={apiDirect}
         agentRuntime={agentRuntime}
@@ -1106,8 +1150,20 @@ export default function App() {
           <SubNav current={currentPage} onNavigate={page => { businessNavigation.current += 1;
             setBusinessEntry(null); setBusinessNotice(''); setCurrentPage(page); }} />
         )}
-        <div className="page-host">
+        <div className={visibleWorkshop ? 'page-host workshop-chat-layout' : 'page-host'}>
           {renderPage()}
+          {visibleWorkshop && <aside className="workshop-chat-panel" aria-label="对话关联的视频工坊">
+            <div className="workshop-chat-panel-header">
+              <strong>视频工坊</strong>
+              <button className="btn btn-sm" type="button" onClick={() => setWorkshopPanel(null)}>关闭工坊</button>
+            </div>
+            <Suspense fallback={<div className="dash-empty">正在打开视频工坊…</div>}>
+              <VideoWorkshopPage key={visibleWorkshop.id + ':' + (visibleWorkshop.artifactId || '')}
+                initialProjectId={visibleWorkshop.id} initialArtifactId={visibleWorkshop.artifactId}
+                initialView={isPlatformAdmin && !visibleWorkshop.artifactId ? 'canvas' : 'review'}
+                onUseWorkshop={reference => handleUseWorkshop(reference, visibleWorkshop.sessionId)} />
+            </Suspense>
+          </aside>}
         </div>
       </main>
 

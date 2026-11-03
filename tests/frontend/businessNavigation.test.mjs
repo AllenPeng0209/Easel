@@ -28,7 +28,7 @@ function compile(path, dependencies, globals) {
   return exports;
 }
 
-async function mount(file, initialProps = {}, { ideas = [], projects = [], detail, role = 'operator', trends = [], saveIdea } = {}) {
+async function mount(file, initialProps = {}, { ideas = [], projects = [], detail, role = 'operator', isPlatformAdmin = false, trends = [], saveIdea } = {}) {
   const { window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   const document = window.document;
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
@@ -63,7 +63,7 @@ async function mount(file, initialProps = {}, { ideas = [], projects = [], detai
   const Component = compile(`components/${file}.tsx`, { react: React, 'react/jsx-runtime': require('react/jsx-runtime'),
     '../lib/api': componentApi, '../lib/workshop': workshopApi,
     './icons': new Proxy({}, { get: () => () => null }), './ProjectSpace': { useIpPermissions: () => ({
-      canOperate: role !== 'viewer', isPlatformAdmin: false, role }) } }, { window, document }).default;
+      canOperate: role !== 'viewer', isPlatformAdmin, role }) } }, { window, document }).default;
   const root = createRoot(document.getElementById('root'));
   const render = async props => { await act(async () => { root.render(React.createElement(Component, props)); await new Promise(resolve => setImmediate(resolve)); }); };
   const flush = async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); }); };
@@ -247,5 +247,71 @@ test('deep link observes a completed export without collecting until explicit us
     assert.ok(collect, 'completed export collection requires an explicit, correctly labelled control');
     await act(async () => collect.click()); await ui.flush();
     assert.equal(ui.writes.filter(row => row.options?.method === 'POST' && row.url.endsWith('/collect')).length, 1);
+  } finally { await ui.dispose(); }
+});
+
+test('linked workshop opens the exact historical delivery and explicitly sends that delivery to chat', async () => {
+  const refs = [];
+  const old = { id: 'old-artifact', path: 'old.mp4', sha256: 'c'.repeat(64), revision: 1, created_at: '' };
+  const newer = { ...old, id: 'new-artifact', path: 'new.mp4', sha256: 'd'.repeat(64), revision: 2 };
+  const ui = await mount('VideoWorkshopPage', {
+    initialProjectId: A, initialView: 'review', initialArtifactId: old.id, onUseWorkshop: value => refs.push({ ...value }),
+  }, { projects: [project(A, 'Deliveries', { revision: 2, deliverables: [old, newer] })] });
+  try {
+    assert.deepEqual(refs, []);
+    assert.match(ui.document.querySelector('video').getAttribute('src'), /old\.mp4$/);
+    const button = [...ui.document.querySelectorAll('button')].find(item => item.textContent === '将此成片带回聊天');
+    assert.ok(button);
+    await act(async () => button.click());
+    assert.deepEqual(refs, [{ id: A, revision: 2, artifactId: old.id, artifactSha256: old.sha256 }]);
+    assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('canvas share explicitly rereads the saved engine revision and rejects an unavailable revision', async () => {
+  const refs = [];
+  let engineRevision = 1;
+  const current = project(A);
+  const ui = await mount('VideoWorkshopPage', { initialProjectId: A, initialView: 'canvas',
+    onUseWorkshop: value => refs.push({ ...value }) }, { projects: [current], isPlatformAdmin: true,
+    detail: () => ({ ...current, engine_current_revision: engineRevision }),
+  });
+  try {
+    assert.equal(ui.document.querySelector('#workshop-canvas-tab')?.getAttribute('aria-selected'), 'true');
+    assert.deepEqual(refs, []);
+    const button = [...ui.document.querySelectorAll('button')].find(item => item.textContent === '将画布状态带回聊天');
+    assert.ok(button);
+    engineRevision = null;
+    await act(async () => button.click());
+    assert.match(ui.document.body.textContent, /画布.*版本.*无法|无法.*画布.*版本/);
+    assert.deepEqual(refs, []);
+    engineRevision = 9;
+    await act(async () => button.click());
+    assert.deepEqual(refs, [{ id: A, revision: 1, engineRevision: 9 }]);
+    assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('a pending canvas share is cancelled when the selected project changes', async () => {
+  const refs = [];
+  const delayed = deferred();
+  const first = project(A);
+  const second = project(B);
+  let hold = false;
+  const onUseWorkshop = value => refs.push(value);
+  const ui = await mount('VideoWorkshopPage', { initialProjectId: A, initialView: 'canvas', onUseWorkshop }, {
+    projects: [first, second], isPlatformAdmin: true, detail: id => id === B ? second : hold ? delayed.promise : first,
+  });
+  try {
+    hold = true;
+    const button = [...ui.document.querySelectorAll('button')].find(item => item.textContent === '将画布状态带回聊天');
+    assert.ok(button);
+    await act(async () => button.click());
+    const request = ui.reads.filter(read => Array.isArray(read) && read[0] === 'detail').at(-1)[2];
+    await ui.render({ initialProjectId: B, initialView: 'canvas', onUseWorkshop });
+    assert.equal(request.aborted, true);
+    await act(async () => delayed.resolve(first));
+    assert.deepEqual(refs, []);
+    assert.deepEqual(ui.writes, []);
   } finally { await ui.dispose(); }
 });

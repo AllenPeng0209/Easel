@@ -3,16 +3,17 @@ import { ACTIVE_PROJECT_ID, projectFetch, projectUrl } from './projectScope';
 import { businessObjectInScope, normalizeBusinessObject } from './businessObjects';
 import type { BusinessObject } from './businessObjects';
 
-export type BusinessTarget = {kind: 'idea' | 'workshop'; id: string};
+export type BusinessTarget = {kind: 'idea' | 'workshop'; id: string; artifactId?: string};
 export function parseBusinessHash(hash: string, projectId = ACTIVE_PROJECT_ID): BusinessTarget | null {
-  const match = /^#\/business\/([^/]+)\/(idea|workshop)\/([A-Za-z0-9_-]{1,160})$/.exec(hash);
+  const match = /^#\/business\/([^/]+)\/(idea|workshop)\/([A-Za-z0-9_-]{1,160})(?:\/artifact\/([a-f0-9]{32}))?$/.exec(hash);
   if (!match) return null;
   let scope: string;
   try { scope = decodeURIComponent(match[1]); } catch { return null; }
   if (scope !== projectId) return null;
   const kind = match[2] as BusinessTarget['kind'];
   if (kind === 'workshop' && !/^[a-f0-9]{32}$/.test(match[3])) return null;
-  return {kind, id: match[3]};
+  if (match[4] && kind !== 'workshop') return null;
+  return {kind, id: match[3], ...(match[4] ? { artifactId: match[4] } : {})};
 }
 
 export async function fetchBusinessObject(kind: BusinessObject['kind'], id: string,

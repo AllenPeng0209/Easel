@@ -1,6 +1,7 @@
 import { ACTIVE_PROJECT_ID, ACTIVE_USER_ID, projectStorageKey } from './projectScope';
 import type { UploadedFile, ChatQuestion } from './api';
 import type { AgentEvent } from './agentEvents';
+import type { WorkshopReference } from './workshop';
 
 export interface QueuedMessage {
   id: string;
@@ -15,6 +16,7 @@ export interface ChatMessage {
   agentContent?: string; // 仅发给 Agent 的增强消息（如附件路径），不在对话页面展示
   attachments?: UploadedFile[];
   topicRef?: { id: string; snapshotHash: string };
+  workshopRef?: WorkshopReference;
   thinking?: string;   // 模型思考过程（隐思考），流式结束后持久保留
   activity?: string;   // 工具/执行活动步骤（换行分隔），持久保留
   questions?: ChatQuestion[];

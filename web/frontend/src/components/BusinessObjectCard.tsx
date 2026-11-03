@@ -64,10 +64,16 @@ function VersionRelation({ current, observed }: { current: number | null; observ
 }
 function WorkshopDetails({ record }: { record: BusinessObject }) {
   const project = isRecord(record.details.project) ? record.details.project : {};
+  const handoff = isRecord(record.details.handoff) ? record.details.handoff : null;
   const deliverables = entries(project.deliverables), renders = entries(project.renders), reviews = entries(project.reviews), publications = entries(project.publications);
   return <div className="business-object__workshop">
     <dl className="business-object__fields"><dt>工程 ID</dt><dd>{valueText(project.id)}</dd>
       <dt>保存工程版本</dt><dd>{revision(project.revision)}</dd><dt>保存阶段</dt><dd>{valueText(project.stage)}</dd>
+      {handoff && typeof handoff.engineRevision === 'number' && <><dt>本轮画布版本</dt><dd>{revision(handoff.engineRevision)}</dd></>}
+      {handoff && typeof handoff.artifactId === 'string' && <>
+        <dt>本轮引用成片</dt><dd><code>{handoff.artifactId}</code> · {revision(handoff.artifactRevision)}</dd>
+        <dt>成片校验值</dt><dd><code>{valueText(handoff.artifactSha256)}</code></dd>
+      </>}
       {!!project.archived_at && <><dt>归档记录</dt><dd>历史工程 · {valueText(project.archived_at)}</dd></>}
       {VERIFICATION.map(({ key, title, labels }) => {
         const value = record.details[key];

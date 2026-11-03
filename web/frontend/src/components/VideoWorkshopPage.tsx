@@ -1,5 +1,5 @@
 import { useIpPermissions } from './ProjectSpace';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { IconVideo, IconRefresh, IconChevron, IconCheck } from './icons';
 import {
@@ -10,7 +10,7 @@ import {
 } from '../lib/workshop';
 import type {
   ReviewDecision, ReviewKind, WorkshopDeliverable, WorkshopProject,
-  WorkshopProjectInput, WorkshopStatus, WorkshopLifecycleKey,
+  WorkshopProjectInput, WorkshopStatus, WorkshopLifecycleKey, WorkshopReference,
 } from '../lib/workshop';
 import '../styles/workshop.css';
 
@@ -186,9 +186,52 @@ function ExportControls({ project, connected, onUpdate, onOpenReview, observeOnl
   </section>;
 }
 
-function ReviewPanel({ project, onUpdate }: { project: WorkshopProject; onUpdate: (project: WorkshopProject) => void }) {
+type UseWorkshop = (reference: WorkshopReference) => void | Promise<void>;
+
+function CanvasChatReference({ project, onUseWorkshop }: { project: WorkshopProject; onUseWorkshop: UseWorkshop }) {
+  const pending = useRef<AbortController | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useLayoutEffect(() => () => pending.current?.abort(), []);
+
+  const share = async () => {
+    if (pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
+    setBusy(true); setError('');
+    try {
+      const current = await fetchWorkshopProject(project.id, controller.signal);
+      if (controller.signal.aborted) return;
+      if (current.id !== project.id || current.revision !== project.revision || current.beeftv_canvas_id !== project.beeftv_canvas_id) {
+        throw new Error('工程版本或关联画布已变化，请刷新后再带回聊天。');
+      }
+      const engine = current.engine_current_revision;
+      if (current.beeftv_canvas_id && (typeof engine !== 'number' || !Number.isSafeInteger(engine) || engine < 0)) {
+        throw new Error('无法核对已保存的画布版本，请保存画布后重试。');
+      }
+      await onUseWorkshop({ id: current.id, revision: current.revision,
+        ...(current.beeftv_canvas_id && typeof engine === 'number' ? { engineRevision: engine } : {}) });
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(errorMessage(cause));
+    } finally {
+      if (pending.current === controller) pending.current = null;
+      if (!controller.signal.aborted) setBusy(false);
+    }
+  };
+
+  return <div><button type="button" className="btn btn-sm" disabled={busy}
+    onClick={() => void share()}>{busy ? '核对画布版本…' : '将画布状态带回聊天'}</button>
+    {error && <p className="workshop-error" role="alert">{error}</p>}</div>;
+}
+
+function ReviewPanel({ project, onUpdate, initialArtifactId, onUseWorkshop }: {
+  project: WorkshopProject;
+  onUpdate: (project: WorkshopProject) => void;
+  initialArtifactId?: string;
+  onUseWorkshop?: UseWorkshop;
+}) {
   const { canOperate } = useIpPermissions();
-  const [artifactId, setArtifactId] = useState('');
+  const [artifactId, setArtifactId] = useState(initialArtifactId || '');
   const [kind, setKind] = useState<ReviewKind>('human');
   const [notes, setNotes] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
@@ -199,7 +242,7 @@ function ReviewPanel({ project, onUpdate }: { project: WorkshopProject; onUpdate
   const [notice, setNotice] = useState('');
   const player = useRef<HTMLVideoElement>(null);
   const artifacts = project.deliverables || [];
-  const artifact = artifacts.find(item => item.id === artifactId) || artifacts.at(-1);
+  const artifact = artifactId ? artifacts.find(item => item.id === artifactId) : artifacts.at(-1);
   const media = artifact ? workshopMediaUrl(artifact.path) : null;
   const summary = reviewSummary(project, artifact);
   const eligibility = deliveryReviewState(project, artifact);
@@ -207,6 +250,14 @@ function ReviewPanel({ project, onUpdate }: { project: WorkshopProject; onUpdate
   const target = artifact ? `${project.revision}:${artifact.id}:${artifact.sha256}` : '';
   const checked = !!target && checkedFor === target;
   const setArtifact = (id: string) => { setArtifactId(id); setCheckedFor(''); setNotice(''); setError(''); };
+  const canShare = canOperate && !!onUseWorkshop && !!artifact?.id && /^[a-f0-9]{64}$/.test(artifact.sha256);
+  const share = async () => {
+    if (!canShare || !onUseWorkshop || !artifact) return;
+    setError('');
+    try {
+      await onUseWorkshop({ id: project.id, revision: project.revision, artifactId: artifact.id, artifactSha256: artifact.sha256 });
+    } catch (cause) { setError(errorMessage(cause)); }
+  };
 
   const comment = async (event: FormEvent) => {
     event.preventDefault();
@@ -237,19 +288,23 @@ function ReviewPanel({ project, onUpdate }: { project: WorkshopProject; onUpdate
     <section className="workshop-panel workshop-delivery">
       <div className="workshop-section-title"><h2>成片预览</h2>
         <span className={`workshop-pill ${summary.humanApproved ? 'ok' : ''}`}>{summary.label}</span></div>
-      {artifact ? <>
+      {!!artifacts.length && (
         <label className="workshop-version-select"><span>交付版本</span>
-          <select className="field" aria-label="交付版本" value={artifact.id} onChange={event => setArtifact(event.target.value)}>
+          <select className="field" aria-label="交付版本" value={artifact?.id || ''} onChange={event => setArtifact(event.target.value)}>
+            {!artifact && <option value="" disabled>指定成片不可用，请选择其他版本</option>}
             {[...artifacts].reverse().map((item: WorkshopDeliverable) => <option key={item.id} value={item.id}>
               {`V${item.revision} · ${dateLabel(item.created_at)}${item.id === artifacts.at(-1)?.id ? ' · 最新' : ''}`}
             </option>)}
-          </select></label>
+          </select></label>)}
+      {artifact ? <>
         {media ? <video key={media} ref={player} className="workshop-player" src={media} controls preload="metadata"
           onLoadedMetadata={() => setCheckedFor('')} /> : <p className="workshop-error">交付文件路径不可用，请重新检查导出结果。</p>}
         <div className="workshop-delivery-foot"><span>工程 V{artifact.revision}</span>
-          {media && <a className="btn btn-sm" href={`${media}?download=1`} download>下载成片</a>}</div>
+          {media && <a className="btn btn-sm" href={`${media}?download=1`} download>下载成片</a>}
+          {canShare && <button type="button" className="btn btn-sm" onClick={() => void share()}>将此成片带回聊天</button>}</div>
         {!current && <p className="workshop-hint" role="status">{eligibility.message}</p>}
-      </> : <div className="workshop-empty-inline"><IconVideo size={32} /><h3>等待第一版成片</h3>
+      </> : artifactId ? <p className="workshop-error" role="alert">指定成片不可用，可能已移除。</p>
+        : <div className="workshop-empty-inline"><IconVideo size={32} /><h3>等待第一版成片</h3>
         <p>在画布中完成分镜和素材，剪辑导出后，成片及其版本会出现在这里。</p></div>}
       <div className="workshop-history"><h3>审阅记录</h3>
         {(project.reviews || []).length === 0 ? <p className="workshop-hint">尚未记录审阅结论。</p>
@@ -305,9 +360,14 @@ function ReviewPanel({ project, onUpdate }: { project: WorkshopProject; onUpdate
   </div>;
 }
 
-interface VideoWorkshopPageProps { initialProjectId?: string }
+interface VideoWorkshopPageProps {
+  initialProjectId?: string;
+  initialView?: 'canvas' | 'review';
+  initialArtifactId?: string;
+  onUseWorkshop?: UseWorkshop;
+}
 
-export default function VideoWorkshopPage({ initialProjectId }: VideoWorkshopPageProps = {}) {
+export default function VideoWorkshopPage({ initialProjectId, initialView, initialArtifactId, onUseWorkshop }: VideoWorkshopPageProps = {}) {
   const { canOperate, isPlatformAdmin } = useIpPermissions();
   const canEditCanvas = canOperate && isPlatformAdmin;
   const [status, setStatus] = useState<WorkshopStatus>({ state: 'starting', message: '正在检查创作服务…' });
@@ -438,9 +498,9 @@ export default function VideoWorkshopPage({ initialProjectId }: VideoWorkshopPag
     formSession.current += 1;
     selectedProjectId.current = initialTarget;
     setSelectedId(initialTarget); setVerifiedSelectedId(''); setAppliedNavigationId(requestedNavigationId);
-    setViewChoice(initialTarget ? { projectId: initialTarget, tab: 'review' } : null);
+    setViewChoice(initialTarget ? { projectId: initialTarget, tab: initialView || 'review' } : null);
     setCanvasSession(null); setExpanded(false); setForm(null); setCanvasError(''); setMetadataError(''); setLoading(true);
-  }, [initialTarget, requestedNavigationId]);
+  }, [initialTarget, requestedNavigationId, initialView]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -449,7 +509,7 @@ export default function VideoWorkshopPage({ initialProjectId }: VideoWorkshopPag
     const timer = window.setInterval(refresh, 5000);
     window.addEventListener('focus', refresh);
     return () => { controller.abort(); window.clearInterval(timer); window.removeEventListener('focus', refresh); };
-  }, [load, requestedNavigationId]);
+  }, [load, requestedNavigationId, initialView]);
 
   useEffect(() => {
     if (!initialTarget || project?.id !== initialTarget) return;
@@ -641,6 +701,8 @@ export default function VideoWorkshopPage({ initialProjectId }: VideoWorkshopPag
           <div><button className="btn btn-sm btn-ghost" disabled={!running} onClick={() => setFrameVersion(value => value + 1)}>重新载入画布</button>
             <button className="btn btn-sm btn-ghost" onClick={() => setExpanded(value => !value)}>{expanded ? '收起大画布' : '展开大画布'}</button>
             {activeCanvas && <a className="btn btn-sm" href={activeCanvas.url} target="_blank" rel="noopener noreferrer">新窗口打开 ↗</a>}</div></div>
+        {tab === 'canvas' && onUseWorkshop && <CanvasChatReference key={JSON.stringify([project.id, project.revision, project.beeftv_canvas_id])}
+          project={project} onUseWorkshop={onUseWorkshop} />}
         {project.runtime_message && !project.beeftv_canvas_id && <p className="workshop-canvas-message" role="status">项目画布尚未关联：{project.runtime_message}</p>}
         {activeCanvas && !running && <p className="workshop-canvas-message" role="status">创作服务暂时连接失败，当前画布保持打开。连接恢复后请确认保存状态。</p>}
         {activeCanvas ? <iframe key={activeCanvas.key} src={activeCanvas.url} title="BeefTV 视频创作画布"
@@ -652,7 +714,9 @@ export default function VideoWorkshopPage({ initialProjectId }: VideoWorkshopPag
             {canvasError && <p className="workshop-error" role="alert">{canvasError}</p>}</div>}
       </section>}
       <section id="workshop-review-panel" role="tabpanel" aria-labelledby="workshop-review-tab" hidden={tab !== 'review'} className="workshop-review-scroll">
-        <ReviewPanel key={project.id} project={project} onUpdate={update} />
+        <ReviewPanel key={JSON.stringify([project.id, project.id === initialTarget ? initialArtifactId : undefined])}
+          initialArtifactId={project.id === initialTarget ? initialArtifactId : undefined}
+          project={project} onUpdate={update} onUseWorkshop={onUseWorkshop} />
       </section>
     </>}
   </div>;
