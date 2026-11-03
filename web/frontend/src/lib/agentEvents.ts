@@ -51,6 +51,7 @@ export interface AgentEvent {
   outputStream?: 'merged';
   fileChangeApplied?: boolean;
   nativeWebSearch?: true;
+  nativePublicationTool?: true;
   exitCode?: number | null;
   durationMs?: number;
   signal?: string;
@@ -182,7 +183,22 @@ export function normalizeAgentEvent(value: unknown): AgentEvent | null {
   return candidate as AgentEvent;
 }
 
+/** A typed native publication observation belongs to one exact tool name and call. */
+export function publicationCallKey(event: AgentEvent): string | undefined {
+  if ((event.name !== 'easel_publish' && event.name !== 'easel_publication_status') ||
+      typeof event.runId !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(event.runId) ||
+      typeof event.callId !== 'string' || !event.callId.trim() || event.callId.length > 256 ||
+      /\p{Cc}/u.test(event.callId)) return undefined;
+  return JSON.stringify([event.runId, event.callId, event.name]);
+}
+
+export function nativePublicationToolKey(event: AgentEvent): string | undefined {
+  return event.kind === 'tool' && event.nativePublicationTool === true ? publicationCallKey(event) : undefined;
+}
+
 export function agentEventKey(event: AgentEvent): string {
+  const publicationCall = event.kind === 'publication' ? publicationCallKey(event) : undefined;
+  if (publicationCall) return JSON.stringify([publicationCall, event.id]);
   return event.kind === 'tool' && !event.runId && event.turnId
     ? JSON.stringify([null, event.turnId, event.id])
     : JSON.stringify([event.runId ?? null, event.id]);
@@ -217,8 +233,10 @@ export function mergeToolSnapshots(previous: AgentEvent, incoming: AgentEvent): 
 
 export function publicationEventKey(event: AgentEvent): string | null {
   const value = event.kind === 'publication' ? event.publication : undefined;
-  return value && [value.id, value.actorId, value.projectId, value.payloadHash].every(part => typeof part === 'string')
-    ? JSON.stringify([value.id, value.actorId, value.projectId, value.payloadHash, value.operationId || null]) : null;
+  if (!value || ![value.id, value.actorId, value.projectId, value.payloadHash].every(part => typeof part === 'string')) return null;
+  const durable = [value.id, value.actorId, value.projectId, value.payloadHash, value.operationId || null];
+  const correlation = publicationCallKey(event);
+  return JSON.stringify(correlation ? [correlation, ...durable] : durable);
 }
 
 export function businessEventKey(event: AgentEvent): string | null {

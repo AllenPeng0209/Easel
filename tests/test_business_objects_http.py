@@ -114,6 +114,35 @@ def test_business_native_callback_emits_typed_entity_and_survives_snapshot(busin
     assert any(event.get('business',{}).get('id')==idea['id'] for event in snapshot.json().get('events',[]))
 
 
+def test_publication_queries_keep_distinct_tool_receipts_after_snapshot(business_http, monkeypatch):
+    from types import SimpleNamespace
+
+    _, owner, *_ = business_http
+    record = {'id': 'a' * 32, 'state': 'rejected'}
+    monkeypatch.setattr(web, '_publication_workflow', lambda: SimpleNamespace(get=lambda _: record))
+    monkeypatch.setattr(web, '_chat_backend', lambda _: 'codex')
+    monkeypatch.setattr(web, '_harness_settings', lambda: {'runtime': 'codex', 'models': {}, 'sandbox': 'read-only'})
+
+    class Adapter:
+        async def run(self, request, emit, ask, bind):
+            bind('native-publication-fixture')
+            for call_id in ('first-lookup', 'second-lookup'):
+                assert await request.publication_status_with_call(record['id'], call_id) == record
+            emit('token', '已核对发布状态。')
+
+    monkeypatch.setattr(web.harnesses, 'adapter', lambda _: Adapter())
+    response = owner.post('/api/chat/stream', json={'message': '核对状态', 'sessionId': 'publication-chat',
+                                                   'turnId': 'publication-turn'})
+    assert response.status_code == 200, response.text
+    snapshot = owner.get('/api/chat/last/publication-chat')
+    assert snapshot.status_code == 200, snapshot.text
+    receipts = [event for event in snapshot.json()['events'] if event['kind'] == 'publication']
+    assert [event['callId'] for event in receipts] == ['first-lookup', 'second-lookup']
+    assert {event['name'] for event in receipts} == {'easel_publication_status'}
+    assert receipts[0]['runId'] and receipts[0]['runId'] == receipts[1]['runId']
+    assert receipts[0]['id'] != receipts[1]['id']
+
+
 @pytest.mark.parametrize('channel',['http','native'])
 def test_business_projection_redacts_known_configuration_before_every_delivery(business_http,monkeypatch,channel):
     import secrets

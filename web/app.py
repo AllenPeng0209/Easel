@@ -3785,17 +3785,20 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 'artifacts': artifacts, 'status': 'available', 'completedAt': int(time.time() * 1000)})
         return artifacts
 
-    def publication_event(record):
-        digest = hashlib.sha256(json.dumps(record, sort_keys=True, ensure_ascii=False,
+    def publication_event(record, *, call_id=None, tool_name=None):
+        correlation = {'callId': call_id, 'name': tool_name} if call_id and tool_name else {}
+        identity = [correlation, record] if correlation else record
+        digest = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False,
             allow_nan=False, separators=(',', ':')).encode()).hexdigest()
         receive('agent_event', {'id': 'publication_' + digest, 'kind': 'publication',
-            'publication': record, 'completedAt': int(time.time() * 1000)})
+            'publication': record, 'completedAt': int(time.time() * 1000), **correlation})
         return record
 
-    async def publication_status(approval_id: str) -> dict:
+    async def publication_status(approval_id: str, call_id: str | None = None) -> dict:
         _require_host_tools()
         try:
-            return publication_event(_publication_workflow().get(approval_id))
+            return publication_event(_publication_workflow().get(approval_id), call_id=call_id,
+                                     tool_name='easel_publication_status')
         except HTTPException as error:
             raise HarnessError(_scrub_secrets(str(error.detail))) from None
 
@@ -3826,7 +3829,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             record = await workflow.prepare(payload['platform'], payload,
                 idempotency_key=f'{sk}:{turn_id}:{call_id}')
             if record.get('operationId'):
-                return publication_event(record)
+                return publication_event(record, call_id=call_id, tool_name='easel_publish')
             if record['state'] == 'pending':
                 allow = '批准此版本并创建草稿' if record['subject']['mode'] == 'create_draft' else '批准此版本并发布'
                 answers = await _harness_ask(sk, [{'questionId': 'publication', 'kind': 'approval',
@@ -3835,7 +3838,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                     mode=req.autonomyMode, publication=record)
                 record = workflow.decide(record['id'], answers.get('publication') == [allow], record['payloadHash'])
             if record['state'] != 'approved':
-                return publication_event({**record, 'message': '此版本未获发布批准；保留草稿并继续其它可完成工作，未公开发布。'})
+                return publication_event({**record, 'message': '此版本未获发布批准；保留草稿并继续其它可完成工作，未公开发布。'},
+                                         call_id=call_id, tool_name='easel_publish')
             subject = record['subject']
             record = await workflow.start(subject['platform']['id'], {**{key: subject[key]
                 for key in ('title', 'body', 'tags', 'persona')}, 'media': [],
@@ -3847,7 +3851,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 await asyncio.sleep(.5)
                 _require_host_tools()
                 record = workflow.get(record['id'])
-            return publication_event(record)
+            return publication_event(record, call_id=call_id, tool_name='easel_publish')
         except HTTPException as error:
             raise HarnessError(_scrub_secrets(str(error.detail))) from None
 
@@ -3900,7 +3904,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                              config["models"].get(runtime, ""), config["sandbox"], timeout,
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
                              autonomy_mode=req.autonomyMode, present=present, publish=publish,
-                             publication_status=publication_status, business_objects=business_objects,
+                             publication_status=publication_status, publication_status_with_call=publication_status,
+                             business_objects=business_objects,
                              bind_steer=bind_steer if runtime == "codex" and interactive else None,
                              record_subagent=record_subagent if runtime == "codex" and interactive else None)
         await asyncio.wait_for(harnesses.adapter(runtime).run(

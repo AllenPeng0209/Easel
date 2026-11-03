@@ -5,12 +5,16 @@
  */
 import { createElement, type ReactNode } from 'react';
 import {
-  agentToolKey, commandStatus, fileMutationLabel, fileMutationState, isCommandExecution, type AgentEvent,
+  agentToolKey, commandStatus, fileMutationLabel, fileMutationState, isCommandExecution, nativePublicationToolKey, type AgentEvent,
 } from '../lib/agentEvents';
 import { WebBlock } from '../vendor/deepseek-harness/tool/WebBlock';
 import { webActionTitle, webCardModel } from '../vendor/deepseek-harness/tool/web-card-model';
 import { businessObjectIdentity, type BusinessObject } from '../lib/businessObjects';
 import { fetchBusinessObject } from '../lib/businessObjectApi';
+import { fetchPublicationApproval } from '../lib/api';
+import type { PublicationApprovalRecord } from '../lib/publicationApproval';
+import { publicationReceiptIdentity } from '../lib/publicationReceipt';
+import PublicationReceiptCard from './PublicationReceiptCard';
 import BusinessObjectCard from './BusinessObjectCard';
 import CommandExecutionCard from './CommandExecutionCard';
 import FileMutationCard from './FileMutationCard';
@@ -25,8 +29,13 @@ export interface ToolRendererView {
   details: (showTerminalFacts: boolean) => ReactNode;
 }
 
+export interface ToolRendererRecords {
+  workshops?: BusinessObject[];
+  publications?: PublicationApprovalRecord[];
+}
+
 type ProjectToolRenderer = (
-  event: AgentEvent, settled: boolean, workshopRecords?: readonly BusinessObject[],
+  event: AgentEvent, settled: boolean, records?: ToolRendererRecords,
 ) => ToolRendererView | undefined;
 
 export function businessToolCallKey(event: AgentEvent): string | undefined {
@@ -55,11 +64,11 @@ export function createToolRendererRegistry(renderers: readonly ToolRenderer[]) {
   for (const renderer of renderers) {
     for (const name of renderer.names) byName.set(name, renderer);
   }
-  return (event: AgentEvent, settled: boolean, workshopRecords?: readonly BusinessObject[]): ToolRendererResolution => {
+  return (event: AgentEvent, settled: boolean, records?: ToolRendererRecords): ToolRendererResolution => {
     try {
       if (event.kind === 'tool' && typeof event.name === 'string') {
         const renderer = byName.get(event.name);
-        const view = renderer?.project(event, settled, workshopRecords);
+        const view = renderer?.project(event, settled, records);
         if (renderer && view) return { kind: 'specialized', key: renderer.key, view };
       }
       return { kind: 'generic', failed: false };
@@ -101,10 +110,26 @@ export const resolveToolRenderer = createToolRendererRegistry([
   },
   {
     key: 'workshop', names: ['easel_business_objects'],
-    project: (event, _settled, records) => !nativeBusinessToolKey(event) || !records?.length ? undefined : {
-      title: '视频工坊',
-      details: () => createElement('div', { 'data-tool-workshop-records': true }, records.map(record =>
-        createElement(BusinessObjectCard, { key: businessObjectIdentity(record), record, onRefresh: fetchBusinessObject }))),
+    project: (event, _settled, records) => {
+      const workshops = records?.workshops;
+      return !nativeBusinessToolKey(event) || !workshops?.length ? undefined : {
+        title: '视频工坊',
+        details: () => createElement('div', { 'data-tool-workshop-records': true }, workshops.map(record =>
+          createElement(BusinessObjectCard, { key: businessObjectIdentity(record), record, onRefresh: fetchBusinessObject }))),
+      };
+    },
+  },
+  {
+    key: 'publication', names: ['easel_publish', 'easel_publication_status'],
+    project: (event, _settled, records) => {
+      const publications = records?.publications;
+      return !nativePublicationToolKey(event) || !publications?.length ? undefined : {
+        title: event.name === 'easel_publish' ? '发布调用' : '查询发布状态',
+        details: () => createElement('div', { 'data-tool-publication-receipts': true }, publications.map(record =>
+          createElement(PublicationReceiptCard, {
+            key: JSON.stringify([publicationReceiptIdentity(record), record.operationId]), record, onRefresh: fetchPublicationApproval,
+          }))),
+      };
     },
   },
 ]);

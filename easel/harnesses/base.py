@@ -24,6 +24,7 @@ Present = Callable[[list[dict], str], Awaitable[list[dict] | None]]
 Publish = Callable[[dict, str], Awaitable[dict]]
 # Read an existing scoped approval/operation; never create or execute one.
 PublicationStatus = Callable[[str], Awaitable[dict]]
+PublicationStatusWithCall = Callable[[str, str], Awaitable[dict]]
 # Typed, read-only business queries; actor/IP scope and DTOs remain host-owned.
 BusinessObjects = Callable[[dict, str], Awaitable[dict]]
 
@@ -55,6 +56,7 @@ class RunRequest:
     business_objects: BusinessObjects | None = None
     bind_steer: Callable[[Steer | None], None] | None = None
     record_subagent: Callable[[dict], None] | None = None
+    publication_status_with_call: PublicationStatusWithCall | None = None
 
 
 class Adapter(Protocol):

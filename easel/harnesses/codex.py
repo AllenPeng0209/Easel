@@ -473,7 +473,8 @@ class CodexAdapter:
                     outcome.set_result(result)
                     return result
                 if params.get('tool') == 'easel_publication_status':
-                    if request.publication_status is None or params.get('namespace') not in (None, ''):
+                    if (not (request.publication_status_with_call or request.publication_status)
+                            or params.get('namespace') not in (None, '')):
                         return _publication_status_failure()
                     if not turn_id or params.get('turnId') != turn_id:
                         raise HarnessError('发布状态请求不属于当前回合')
@@ -487,7 +488,10 @@ class CodexAdapter:
                         if (not isinstance(call_id, str) or not call_id.strip() or len(call_id) > 256
                                 or any(ord(character) < 32 for character in call_id)):
                             raise ValueError('invalid status call identity')
-                        status = await request.publication_status(arguments['approvalId'])
+                        if request.publication_status_with_call is not None:
+                            status = await request.publication_status_with_call(arguments['approvalId'], call_id)
+                        else:
+                            status = await request.publication_status(arguments['approvalId'])
                         if not isinstance(status, dict) or not status:
                             raise ValueError('invalid host status result')
                         text = json.dumps(status, ensure_ascii=False, allow_nan=False)
@@ -595,7 +599,7 @@ class CodexAdapter:
                        "sandbox": request.sandbox,
                        "developerInstructions": harness_instructions(request) + _publication_instructions(
                            request.publish is not None) + _publication_status_instructions(
-                           request.publication_status is not None) + _business_objects_instructions(
+                           bool(request.publication_status_with_call or request.publication_status)) + _business_objects_instructions(
                            request.business_objects is not None)}
             if request.model:
                 options["model"] = request.model
@@ -609,7 +613,7 @@ class CodexAdapter:
                     tools.append(EASEL_PRESENT_TOOL)
                 if request.publish is not None:
                     tools.append(EASEL_PUBLISH_TOOL)
-                if request.publication_status is not None:
+                if request.publication_status_with_call or request.publication_status:
                     tools.append(EASEL_PUBLICATION_STATUS_TOOL)
                 if request.business_objects is not None:
                     tools.append(EASEL_BUSINESS_OBJECTS_TOOL)

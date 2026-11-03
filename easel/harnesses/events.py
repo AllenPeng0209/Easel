@@ -383,6 +383,9 @@ class EventProjector:
             if (kind == "dynamicToolCall" and item.get("namespace") in (None, "")
                     and item.get("tool") == "easel_business_objects"):
                 fields["nativeBusinessTool"] = True
+            if (kind == "dynamicToolCall" and item.get("namespace") in (None, "")
+                    and item.get("tool") in ("easel_publish", "easel_publication_status")):
+                fields["nativePublicationTool"] = True
             error, result = item.get("error"), item.get("result")
             if error:
                 fields["error"] = error

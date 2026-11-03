@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import replace
 
 import pytest
 
@@ -45,6 +46,8 @@ for line in sys.stdin:
   if os.environ.get("STATUS_NO_CALL") or not registered:completed()
   else:call()
  elif str(m.get("id","")).startswith("status-reverse-"):
+  send({"method":"item/completed","params":{"threadId":thread,"turnId":turn,"item":{
+   "id":"status-call-"+str(index),"type":"dynamicToolCall","tool":"easel_publication_status","status":"completed"}}})
   if index<remaining:call()
   else:completed()
  elif method=="turn/interrupt":send({"id":m["id"],"result":{}})
@@ -92,6 +95,25 @@ def run_status(tmp_path, arguments, callback, **options):
 def results(value):
     return [message['result'] for message in value['messages']
             if str(message.get('id','')).startswith('status-reverse-') and 'result' in message]
+
+
+def test_scoped_status_callback_matches_native_tool_event_call_id(tmp_path):
+    calls, events = [], []
+
+    async def read(approval_id, call_id):
+        calls.append((approval_id, call_id))
+        return STATUS
+
+    async def no_questions(*args):
+        pytest.fail('Status lookup must not ask for approval')
+
+    request = replace(request_for(tmp_path, {'approvalId': APPROVAL_ID}, None),
+                      publication_status_with_call=read)
+    asyncio.run(CodexAdapter().run(request, lambda kind, data: events.append((kind, data)),
+                                  no_questions, lambda _: None))
+    [tool] = [data for kind, data in events if kind == 'agent_event' and data.get('kind') == 'tool']
+    assert tool['nativePublicationTool'] is True
+    assert calls == [(APPROVAL_ID, tool['callId'])]
 
 
 @pytest.mark.parametrize('enabled',[True,False])
