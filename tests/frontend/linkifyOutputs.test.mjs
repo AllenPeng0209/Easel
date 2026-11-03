@@ -17,7 +17,7 @@ function load(name, imports = {}) {
   return exports;
 }
 const api = load('api');
-const { linkifyOutputs } = load('linkifyOutputs', { './api': api });
+const { linkifyOutputs } = load('linkifyOutputs', { './api': api, marked: require('marked') });
 
 test('absolute Markdown report links retain their label and open the content preview', () => {
   const input = '[查看复盘](/Users/example/Easel/outputs/示例项目/报告.md)';
@@ -60,4 +60,30 @@ test('multiple previewable Markdown output links resolve as media for gallery de
     '[卡片](/api/media/cards/one.png) [网页](/api/media/cards/two.html) [视频](/api/media/cards/three.mp4)');
   assert.equal(linkifyOutputs('[PDF](</data/project/Easel/outputs/a b/card.pdf>)'),
     '[PDF](/api/media/a%20b/card.pdf)');
+});
+
+test('settlement preserves tilde, long, and unfinished fenced code byte-for-byte', () => {
+  for (const fence of [
+    '~~~bash\nls outputs/demo/a.png\n~~~',
+    '````bash\n```\nls outputs/demo/a.png\n````',
+    '   ~~~~~bash\r\n   ls outputs/demo/a.png\r\n  ~~~~~~ \r\n',
+  ]) {
+    assert.equal(linkifyOutputs(`outputs/demo/b.png\n\n${fence}\n\noutputs/demo/c.png`),
+      `![b.png](/api/media/demo/b.png)\n\n${fence}\n\n![c.png](/api/media/demo/c.png)`);
+  }
+  for (const open of ['```bash\nls outputs/demo/a.png', '~~~~\n```\nls outputs/demo/a.png']) {
+    assert.equal(linkifyOutputs(`outputs/demo/b.png\n\n${open}`), `![b.png](/api/media/demo/b.png)\n\n${open}`);
+  }
+});
+
+test('settlement leaves fences inside quotes and lists intact, preserving adjacent prose links', () => {
+  for (const nested of [
+    '> ~~~bash\n> ls outputs/demo/a.png\n> ~~~',
+    '- ````bash\n  ```\n  ls outputs/demo/a.png\n  ````',
+    '> 1. ~~~bash\r\n>    ls outputs/demo/a.png\r\n>    ~~~',
+    '- example\n\n  ~~~bash\n  ls outputs/demo/a.png',
+  ]) {
+    assert.equal(linkifyOutputs(`outputs/demo/b.png\n\n${nested}\n\noutputs/demo/c.png`),
+      `![b.png](/api/media/demo/b.png)\n\n${nested}\n\n![c.png](/api/media/demo/c.png)`);
+  }
 });

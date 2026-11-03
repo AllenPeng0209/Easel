@@ -2,14 +2,11 @@ import { Fragment, useMemo, useRef } from 'react';
 import type { AnswerCompletion, ChatMessage, ReasoningSummary, StreamState } from '../lib/store';
 import type { AgentTimelineObservation } from '../lib/agentTimeline';
 import type { AgentEvent, AgentSubagent } from '../lib/agentEvents';
-import { renderMarkdown } from '../lib/sanitize';
-import { linkifyOutputs, externalizeMediaLinks } from '../lib/linkifyOutputs';
 import { IconCopy, IconCheck, IconRetry } from './icons';
-import { extractArtifacts } from '../lib/artifacts';
 import ArtifactGallery from './ArtifactGallery';
 import DeliverableCards from './DeliverableCards';
 import { deliverablesFromEvents, legacyArchivesForDeliverables, omitDeclaredArtifacts,
-  pinSnapshotLinks, rejectedSnapshotPaths } from '../lib/deliverables';
+  rejectedSnapshotPaths } from '../lib/deliverables';
 import UserAttachments from './UserAttachments';
 import { validateChatCommand } from '../lib/chatCommands';
 import { validateChatReferences, validateChatSessionReferenceSpans } from '../lib/chatReferences';
@@ -17,6 +14,7 @@ import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-re
 import AgentEventPanel, { type AgentToolLocator } from './AgentEventPanel';
 import AgentTimeline from './AgentTimeline';
 import AnswerQuoteSelection from './AnswerQuoteSelection';
+import { useAnswerMarkdown } from './answerMarkdown';
 import { formatQuoteText, messageQuoteRanges, quoteTextOf } from '../vendor/deepseek-harness/composer/quote-text';
 import quoteCss from './AnswerQuoteSelection.module.css';
 import ReasoningSummaryDisclosure from './ReasoningSummaryDisclosure';
@@ -130,16 +128,8 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
   const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
   const assistantContent = visibleAssistantContent(message);
   const rejectedPaths = useMemo(() => rejectedSnapshotPaths(effEvents), [effEvents]);
-  const rendered = useMemo(() => {
-    if (message.role === 'user' || !assistantContent) return { html: '', artifacts: [], archives: [] };
-    // 助手正文里裸露的产物路径先转成前端可用链接（文件直开、图片内联、目录跳内容库）。
-    // 流式中不转换：路径/围栏代码块可能被 SSE token 从中间切开（扩展名没收全会被
-    // 误判成目录、未闭合的 ``` 会误伤命令示例里的 outputs/），转换只在流式结束后
-    // 对完整正文做一次，避免闪烁成错误链接再跳变。
-    const body = isStreaming ? assistantContent : linkifyOutputs(assistantContent);
-    const html = pinSnapshotLinks(externalizeMediaLinks(renderMarkdown(body)), declared, rejectedPaths, !isStreaming);
-    return isStreaming ? { html, artifacts: [], archives: [] } : extractArtifacts(html);
-  }, [assistantContent, message.role, isStreaming, declared, rejectedPaths]);
+  const rendered = useAnswerMarkdown(message.role === 'assistant' ? assistantContent : '',
+    isStreaming === true, declared, rejectedPaths);
   const legacyArtifacts = useMemo(() => omitDeclaredArtifacts(rendered.artifacts, declared, rejectedPaths), [rendered.artifacts, declared, rejectedPaths]);
   // Legacy ZIPs retain D22's current-file index. Snapshots use their bound member API.
   const legacyArchives = useMemo(() => legacyArchivesForDeliverables(rendered.archives, declared, rejectedPaths), [rendered.archives, declared, rejectedPaths]);
@@ -222,7 +212,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
           {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions}
             onLocateTool={(runId, callId) => toolLocator.current?.locate(runId, callId) ?? false} /> : null}
           <AgentEventPanel toolLocatorRef={toolLocator} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
-          {assistantContent && <AnswerQuoteSelection html={rendered.html} highlightCode={!isStreaming} settled={!isStreaming}
+          {assistantContent && <AnswerQuoteSelection blocks={rendered.blocks} highlightCode={!isStreaming} settled={!isStreaming}
             onQuoteAnswer={isStreaming ? undefined : onQuoteAnswer} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
           <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />

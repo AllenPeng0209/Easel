@@ -1,3 +1,4 @@
+import { marked } from 'marked';
 import { mediaUrl } from './api';
 
 /**
@@ -112,10 +113,8 @@ function transformLink(seg: string): string {
   }
 }
 
-/** 入口：整段 markdown 先按受保护区切开；普通文本段做变换，
- *  行内代码仅在「整体就是产物路径」时整体替换为链接。 */
-export function linkifyOutputs(md: string): string {
-  if (!md || !md.includes('outputs')) return md;
+/** Transform only prose and the existing inline path/link forms. */
+function linkifyProse(md: string): string {
   return md
     .split(PROTECT)
     .map((seg, i) => {
@@ -127,6 +126,40 @@ export function linkifyOutputs(md: string): string {
       return transformLink(seg);
     })
     .join('');
+}
+
+/** Keep code source intact. Marked owns the same block/container grammar as rendering. */
+export function linkifyOutputs(md: string): string {
+  if (!md || !md.includes('outputs')) return md;
+  const normalized = md.replace(/\r\n?/g, '\n');
+  const crlfPositions = Array.from(md.matchAll(/\r\n/g), (match, index) => match.index - index);
+  let crlfCursor = 0;
+  function originalOffset(position: number) {
+    while (crlfCursor < crlfPositions.length && crlfPositions[crlfCursor] < position) crlfCursor++;
+    return position + crlfCursor;
+  }
+  const parts: string[] = [];
+  let offset = 0;
+  let position = 0;
+  for (const token of marked.lexer(normalized)) {
+    // Marked strips container prefixes in nested token.raw. Preserve the
+    // containing source span when the child cannot be mapped back literally.
+    let hasCode = token.type === 'code';
+    if (token.type === 'blockquote' || token.type === 'list') {
+      marked.walkTokens([token], child => { if (child.type === 'code') hasCode = true; });
+    }
+    if (!normalized.startsWith(token.raw, position)) return md;
+    const start = position;
+    position += token.raw.length;
+    if (!hasCode) continue;
+    const from = originalOffset(start);
+    const to = originalOffset(position);
+    parts.push(linkifyProse(md.slice(offset, from)), md.slice(from, to));
+    offset = to;
+  }
+  if (position !== normalized.length) return md;
+  parts.push(linkifyProse(md.slice(offset)));
+  return parts.join('');
 }
 
 /** 渲染后的 HTML 里，把指向 /api/media 的链接改为新标签打开（点文件不离开工作台）。 */

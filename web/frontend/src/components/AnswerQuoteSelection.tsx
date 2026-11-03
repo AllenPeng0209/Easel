@@ -4,6 +4,8 @@
  * A rendered answer owns its visible selection and explicit quote action.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MarkdownBlock } from '../vendor/deepseek-harness/markdown/incremental';
+import AnswerMarkdownBlock from './AnswerMarkdownBlock';
 import { bindAnswerCodeCopy } from './answerCodeCopy';
 import { highlightSettledAnswer } from './highlightAnswerCode';
 import { readTextSelection, selectedText, type TextSelection } from './answerTextSelection';
@@ -22,8 +24,9 @@ interface ActiveQuote {
   left: number;
 }
 
-export default function AnswerQuoteSelection({ html, onQuoteAnswer, highlightCode, settled }: {
-  html: string;
+export default function AnswerQuoteSelection({ html, blocks, onQuoteAnswer, highlightCode, settled }: {
+  html?: string;
+  blocks?: readonly MarkdownBlock[];
   highlightCode?: boolean;
   settled?: boolean;
   onQuoteAnswer?: (text: string) => boolean;
@@ -35,15 +38,15 @@ export default function AnswerQuoteSelection({ html, onQuoteAnswer, highlightCod
   const [active, setActive] = useState<ActiveQuote | null>(null);
   const enabled = onQuoteAnswer !== undefined;
   // Reusing the html object keeps React from replacing live DOM Range endpoints.
-  const body = useMemo(() => ({ __html: html }), [html]);
+  const body = useMemo(() => html === undefined ? undefined : { __html: html }, [html]);
   useEffect(() => {
     if (highlightCode && answer.current) return highlightSettledAnswer(answer.current);
-  }, [html, highlightCode]);
+  }, [blocks, html, highlightCode]);
   useEffect(() => {
     if (settled && answer.current) return bindAnswerCodeCopy(answer.current, {
       toolbar: css.codeCopyToolbar, button: css.codeCopyButton, status: css.codeCopyStatus,
     });
-  }, [html, settled]);
+  }, [blocks, html, settled]);
 
   useEffect(() => {
     const source = answer.current;
@@ -95,7 +98,7 @@ export default function AnswerQuoteSelection({ html, onQuoteAnswer, highlightCod
       document.removeEventListener('scroll', update, true);
       view?.removeEventListener('resize', update);
     };
-  }, [enabled, html]);
+  }, [blocks, enabled, html]);
 
   const quote = () => {
     const source = answer.current;
@@ -119,7 +122,9 @@ export default function AnswerQuoteSelection({ html, onQuoteAnswer, highlightCod
   };
   return <div className={css.root}>
     <div ref={answer} data-assistant-answer data-text-interaction-source={enabled || undefined}
-      tabIndex={enabled ? 0 : undefined} dangerouslySetInnerHTML={body} />
+      tabIndex={enabled ? 0 : undefined} dangerouslySetInnerHTML={blocks ? undefined : body}>
+      {blocks?.map(block => <AnswerMarkdownBlock key={block.key} html={block.html} />)}
+    </div>
     {enabled && active && <button type="button" ref={action} className={css.action} data-answer-quote-action
       style={{ top: active.top, left: active.left }} onPointerDown={event => event.preventDefault()}
       onMouseDown={event => event.preventDefault()} onClick={quote}>引用这段答复</button>}

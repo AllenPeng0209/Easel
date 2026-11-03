@@ -68,3 +68,5 @@
 .codeCopyButton[data-code-copy-state="failed"] { color: var(--red); }
 .codeCopyButton[data-code-copy-state="copied"] { color: var(--green); }
 .codeCopyStatus { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+.markdownBlock { display: contents; }

@@ -7829,12 +7829,34 @@
     "reuse_kind": "adapted",
     "changes": "复用独立代码块工具栏和剪贴板回执，读取已显示的代码原文并隔离按钮状态。",
     "verification_status": "A28_individual_code_clipboard_verified"
+  },
+  {
+    "feature_id": "A32",
+    "upstream_path": "packages/client/ui-primitives/src/markdown/incremental.ts",
+    "upstream_sha256": "eaa266bb77dfb646738d0fdd79be4f1c4bc5490f7bf3f4127f9ffb72ef741ff8",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/markdown/incremental.ts",
+    "destination_sha256": "7829e2b75724b9ffd247c23aec79e4eb58680353a21b6cd29e5c67e5b68a2443",
+    "reuse_kind": "adapted",
+    "changes": "复用稳定区块边界与 generation，接现有 Marked 和 HTML 消毒策略。",
+    "verification_status": "A32_streaming_markdown_block_identity_verified"
+  },
+  {
+    "feature_id": "A32",
+    "upstream_path": "packages/client/ui-primitives/src/markdown/MarkdownText.tsx",
+    "upstream_sha256": "b6b379f01951bfbeb1cc452059ea821458f8bb17e17c1b6af3a7c7248b0a46e7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/AnswerMarkdownBlock.tsx",
+    "destination_sha256": "9e5fc9348363982c80fc51bfe069773a2b0ef90fe59c4b87990dd32e39b4dbcb",
+    "reuse_kind": "adapted",
+    "changes": "复用按块键与缓存，保留已稳定的答复节点和选区。",
+    "verification_status": "A32_streaming_markdown_block_identity_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 85,
+    "source_migration_files": 87,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 70,
+    "adapted_upstream_files": 72,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",
