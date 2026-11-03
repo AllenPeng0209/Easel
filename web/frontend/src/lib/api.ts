@@ -1,6 +1,6 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
-import type { ChatMessage, ChatSession, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef } from './store';
+import type { ChatMessage, ChatSession, ChatHistoryWindow, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef } from './store';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
 import type { ChatCommand, ChatCommandOption } from './chatCommands';
 import { mergeSessionCatalog } from './sessionSync';
@@ -990,7 +990,7 @@ export function fetchChatCommands(signal?: AbortSignal): Promise<{ commands: Cha
   return request('/api/chat/commands', { signal });
 }
 
-export async function fetchChatSessions(signal?: AbortSignal): Promise<{ sessions: ChatSession[]; deletedIds: string[] }> {
+export async function fetchChatSessions(signal?: AbortSignal, windowed = false): Promise<{ sessions: ChatSession[]; deletedIds: string[] }> {
   const sessions: ChatSession[] = [];
   const deleted = new Set<string>();
   const seenCursors = new Set<string>();
@@ -998,7 +998,7 @@ export async function fetchChatSessions(signal?: AbortSignal): Promise<{ session
   while (true) {
     signal?.throwIfAborted();
     const query = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-    const page = await request<ChatSessionPage>(`/api/chat/sessions?limit=50${query}`, { signal });
+    const page = await request<ChatSessionPage>(`/api/chat/sessions?limit=50${windowed ? '&windowed=true' : ''}${query}`, { signal });
     if (!Array.isArray(page?.sessions) || (page.deletedIds !== undefined
       && (!Array.isArray(page.deletedIds) || page.deletedIds.some(id => typeof id !== 'string')))) {
       throw new Error('服务器会话目录回执无效');
@@ -1017,8 +1017,18 @@ export async function fetchChatSessions(signal?: AbortSignal): Promise<{ session
   }
 }
 export function syncChatSessions(sessions: ChatSession[]): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
-  return request('/api/chat/sessions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions }) });
+  return request('/api/chat/sessions?windowed=true', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions }) });
 }
+export function fetchEarlierChatTurns(sessionId: string, before: string, signal?: AbortSignal): Promise<{
+  messages: ChatMessage[]; historyWindow: ChatHistoryWindow;
+}> {
+  return request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/history?before=${encodeURIComponent(before)}`, { signal });
+}
+
+export function fetchCompleteChatSession(sessionId: string, signal?: AbortSignal): Promise<ChatSession> {
+  return request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/history?full=true`, { signal });
+}
+
 export async function forkPrefixHash(messages: readonly ChatMessage[], cutoffIndex: number): Promise<string> {
   const prefix = messages.slice(0, cutoffIndex + 1).map(message => [message.role, message.content]);
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(prefix)));

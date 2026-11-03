@@ -36,12 +36,12 @@ async function chatDOM(run) {
       return editor;
     };
     const ChatPage = componentModule('components/ChatPage.tsx', { externals: { lexical: { ...lexical, createEditor } }, globals: { window, document: window.document, DOMParser: window.DOMParser,
-      navigator: { platform: 'MacIntel', userAgent: 'test' }, crypto, queueMicrotask,
+      navigator: { platform: 'MacIntel', userAgent: 'test' }, crypto, queueMicrotask, Error,
       fetch: async url => new Response(String(url).endsWith('/content') ? '固定版本内容' : JSON.stringify({ max_mb: 50 })), Response, TextDecoder,
     } }).default;
-    const render = (stream, history = messages) => React.act(async () => root.render(React.createElement(ChatPage, {
-      apiDirect: true, session: { id: 'reading-one', title: '测试会话', created: 1, messages: history },
-      stream, onSend: () => true, onStop() {}, onResend() {},
+    const render = (stream, history = messages, extras = {}) => React.act(async () => root.render(React.createElement(ChatPage, {
+      apiDirect: true, session: { id: 'reading-one', title: '测试会话', created: 1, messages: history, historyWindow: extras.historyWindow },
+      stream, onLoadEarlier: extras.onLoadEarlier, onSend: () => true, onStop() {}, onResend() {},
     })));
     await render(initial);
     const scroller = window.document.querySelector('.chat-messages');
@@ -153,5 +153,61 @@ test('opening a delivery keeps the original chat and returns focus to its card',
     assert.equal(document.querySelector('.chat-input'), composer);
     assert.equal(chat.scrollTop, 150);
     assert.equal(restored, true);
+  });
+});
+
+
+test('older turn paging preserves the existing message node and scroll anchor on prepend', async () => {
+  await chatDOM(async ({ window, render, scroller, scroll, jump }) => {
+    const latest = [{ role: 'user', content: '当前阅读位置' }, { role: 'assistant', content: '最新答复' }];
+    const calls = [];
+    let complete;
+    const onLoadEarlier = (id, cursor) => {
+      calls.push([id, cursor]);
+      return new Promise(resolve => { complete = resolve; });
+    };
+    const options = { historyWindow: { start: 2, before: 'cursor-2' }, onLoadEarlier };
+    await render(undefined, latest, options);
+    const document = window.document;
+    const load = document.querySelector('[data-load-earlier-turns]');
+    assert.ok(load);
+    const row = document.querySelector('[data-chat-message-index="2"]');
+    assert.ok(row);
+    scroller.getBoundingClientRect = () => ({ top: 0, bottom: 200, height: 200 });
+    row.getBoundingClientRect = () => {
+      const offset = [...document.querySelectorAll('[data-chat-message]')].indexOf(row) * 80 + 50 - scroller.scrollTop;
+      return { top: offset, bottom: offset + 80, height: 80 };
+    };
+    await scroll(4);
+    await React.act(async () => load.click());
+    assert.deepEqual(calls, [['reading-one', 'cursor-2']]);
+    assert.match(load.textContent, /正在加载/);
+    await scroll(12);
+    await render(undefined, [{ role: 'user', content: '旧问题' }, { role: 'assistant', content: '旧答复' }, ...latest],
+      { ...options, historyWindow: { start: 0, before: null } });
+    await React.act(async () => complete());
+    assert.equal(document.querySelector('[data-chat-message-index="2"]'), row);
+    assert.equal(scroller.scrollTop, 172);
+    assert.doesNotMatch(jump()?.textContent ?? '', /有新内容/);
+    assert.equal(document.querySelector('[data-load-earlier-turns]'), null);
+  });
+});
+
+test('scrolling near top requests a cursor once and leaves a retry after a failure', async () => {
+  await chatDOM(async ({ window, render, scroll }) => {
+    const calls = [];
+    const onLoadEarlier = async (id, cursor) => {
+      calls.push([id, cursor]);
+      throw new Error('旧消息暂时不可用');
+    };
+    await render(undefined, messages, { historyWindow: { start: 2, before: 'cursor-2' }, onLoadEarlier });
+    await scroll(200);
+    await scroll(4);
+    await scroll(3);
+    assert.deepEqual(calls, [['reading-one', 'cursor-2']]);
+    const document = window.document;
+    assert.match(document.querySelector('[data-history-page-error]').textContent, /暂时不可用/);
+    await React.act(async () => document.querySelector('[data-load-earlier-turns]').click());
+    assert.equal(calls.length, 2);
   });
 });

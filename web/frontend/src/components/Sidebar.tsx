@@ -12,7 +12,7 @@ import {
 import { IconGear } from './settingsIcons';
 import ThemeToggle from './ThemeToggle';
 import SessionLogExportDialog from './SessionLogExportDialog';
-import { fetchSessionLogZip } from '../lib/api';
+import { fetchCompleteChatSession, fetchSessionLogZip } from '../lib/api';
 import { downloadSessionMarkdown, navigationSessions, visibleHistoryCount } from '../lib/sessionNavigation';
 import type { ArchiveFilter } from '../lib/sessionNavigation';
 import { useModalLayer } from '../vendor/deepseek-harness/navigation/useModalLayer';
@@ -170,8 +170,14 @@ export default function Sidebar({
   const attentionTotal = [...attentionCounts.values()].reduce((total, count) => total + count, 0);
   const attentionBadge = attentionTotal > 0 && <span aria-hidden="true"
     className={`session-attention-count state-${attention[0].key}`}>{attentionTotal}</span>;
-  const exportSession = (session: ChatSession) => {
-    try { downloadSessionMarkdown(session); setExportError(''); }
+  const exportSession = async (session: ChatSession) => {
+    try {
+      const start = session.historyWindow?.start ?? 0;
+      const complete = start > 0 ? await fetchCompleteChatSession(session.id) : session;
+      if (complete.id !== session.id || complete.messages.length < start) throw new Error('历史回执无效');
+      downloadSessionMarkdown(complete);
+      setExportError('');
+    }
     catch { setExportError('导出未成功，请稍后重试。'); }
   };
 
@@ -253,7 +259,7 @@ export default function Sidebar({
           </button>
           <button className="session-act" type="button" aria-label="导出 Markdown"
             title="导出 Markdown" aria-description="可见对话，不含工具日志"
-            onClick={(e) => { e.stopPropagation(); exportSession(s); }}>↓</button>
+            onClick={(e) => { e.stopPropagation(); void exportSession(s); }}>↓</button>
           {canExportLogs && <button className="session-act" type="button" aria-label="导出技术日志 ZIP"
             title="导出技术日志 ZIP（平台管理员）" data-session-log-export
             onClick={event => { event.stopPropagation(); setLogSessionId(s.id); }}>ZIP</button>}

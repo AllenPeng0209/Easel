@@ -19,7 +19,7 @@ import BreakdownPage from './components/BreakdownPage';
 import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
 import SettingsPanel from './components/SettingsPanel';
-import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession, forkChatSession, forkPrefixHash } from './lib/api';
+import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession, forkChatSession, forkPrefixHash, fetchEarlierChatTurns, fetchCompleteChatSession } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed, ChatTurnOutcome } from './lib/api';
 import { reduceAgentEvents } from './lib/agentEvents';
 import { observeAgentTimeline, recoverAgentTimeline, type AgentTimelineObservation } from './lib/agentTimeline';
@@ -29,7 +29,7 @@ import type { WorkshopReference } from './lib/workshop';
 import type { AgentEvent } from './lib/agentEvents';
 import { validateChatCommand, type ChatCommand } from './lib/chatCommands';
 import { trimChatReferenceText, toWireSessionReferences, type ChatReference, type ChatSessionReference } from './lib/chatReferences';
-import { mergeSessionCatalog, nextSessionRevision } from './lib/sessionSync';
+import { mergeWindowedCatalog, nextSessionRevision } from './lib/sessionSync';
 import { sessionAttentionState } from './lib/sessionNavigation';
 import { confirmChatStop, enqueueMessage, nextQueuedMessage } from './lib/chatControl';
 import { chatDraftOwner, loadChatDraft, saveChatDraft, clearChatDraft } from './lib/chatDrafts';
@@ -335,11 +335,11 @@ export default function App() {
     if (!canOperate || !navigationReady) return;
     let cancelled = false;
     const controller = new AbortController();
-    void fetchChatSessions(controller.signal).then(result => {
+    void fetchChatSessions(controller.signal, true).then(result => {
       if (cancelled) return;
       const remote = Array.isArray(result.sessions) ? result.sessions : [];
       setSessions(previous => {
-        const merged = mergeSessionCatalog(previous, remote, result.deletedIds);
+        const merged = mergeWindowedCatalog(previous, remote, result.deletedIds);
         saveSessions(merged);
         return merged;
       });
@@ -354,28 +354,70 @@ export default function App() {
     return () => { cancelled = true; controller.abort(); };
   }, [canOperate, navigationReady]);
 
+  const catalogBusy = useRef(false);
+  const catalogMounted = useRef(false);
+  useEffect(() => {
+    catalogMounted.current = true;
+    return () => { catalogMounted.current = false; };
+  }, []);
+
   useEffect(() => {
     if (!historyReady || !canOperate) return;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      void syncChatSessions(sessions).then(result => {
-        if (cancelled) return;
+    let scheduled: ReturnType<typeof setTimeout>;
+    let current = true;
+    const sync = () => {
+      if (catalogBusy.current) {
+        scheduled = setTimeout(sync, 150);
+        return;
+      }
+      catalogBusy.current = true;
+      const submitted = sessionsRef.current;
+      void syncChatSessions(submitted).then(result => {
+        if (!catalogMounted.current) return;
         setHistoryNotice('');
         setSessions(previous => {
-          const merged = mergeSessionCatalog(previous, result.sessions || [], result.deletedIds);
+          const merged = mergeWindowedCatalog(previous, result.sessions || [], result.deletedIds, submitted);
           if (merged.length === previous.length && merged.every((item, index) => item === previous[index])) return previous;
           saveSessions(merged);
           return merged;
         });
-      }).catch(() => {
-        if (cancelled) return;
-        setHistoryNotice('历史尚未同步到服务器，请保留此浏览器；稍后会重新尝试。');
-        retryTimer = setTimeout(() => setHistoryRetry(value => value + 1), 5000);
-      });
-    }, 500);
-    return () => { cancelled = true; clearTimeout(timer); if (retryTimer) clearTimeout(retryTimer); };
+      }).catch(error => {
+        if (!catalogMounted.current) return;
+        setHistoryNotice(error?.status === 409
+          ? '服务器历史已在其他页面更新，本地改动已保留。'
+          : '历史尚未同步到服务器，请保留此浏览器；稍后会重新尝试。');
+        if (current && error?.status !== 409) scheduled = setTimeout(() => setHistoryRetry(value => value + 1), 5000);
+      }).finally(() => { catalogBusy.current = false; });
+    };
+    scheduled = setTimeout(sync, 500);
+    return () => { current = false; clearTimeout(scheduled); };
   }, [sessions, historyReady, canOperate, historyRetry]);
+
+  const handleLoadEarlier = useCallback(async (sessionId: string, before: string) => {
+    const source = sessionsRef.current.find(session => session.id === sessionId);
+    const current = source?.historyWindow;
+    if (!canOperate || !current || current.before !== before) return;
+    if (catalogBusy.current) throw new Error('正在同步对话，请稍后重试加载。');
+    catalogBusy.current = true;
+    try {
+      const page = await fetchEarlierChatTurns(sessionId, before);
+      const next = page.historyWindow;
+      if (!next || !Array.isArray(page.messages) || !Number.isSafeInteger(next.start) || next.start < 0
+          || !page.messages.length || next.start + page.messages.length !== current.start
+          || !next.base || (next.start > 0 ? !next.before || next.before === before : next.before !== null)) {
+        throw new Error('历史页回执不完整，请重试。');
+      }
+      if (!catalogMounted.current) return;
+      setSessions(previous => {
+        const updated = previous.map(session => session.id === sessionId && session.historyWindow?.before === before
+          ? { ...session, historyWindow: next, messages: [...page.messages, ...session.messages] } : session);
+        saveSessions(updated);
+        return updated;
+      });
+    } finally {
+      catalogBusy.current = false;
+    }
+  }, [canOperate]);
 
   useEffect(() => {
     const storageFailure = () => setHistoryNotice('浏览器存储已满，内容暂保留在本页内存，正在尝试服务器同步；请勿关闭页面。');
@@ -1177,7 +1219,7 @@ export default function App() {
   const handleResend = useCallback((sessionId: string, userIndex: number) => {
     const source = sessionsRef.current.find(session => session.id === sessionId);
     if (!canOperate || !source || source.pendingTurnId || streamAcc.current[sessionId]
-        || userIndex <= (source.fork?.cutoffIndex ?? -1)) return;
+        || userIndex + (source.historyWindow?.start ?? 0) <= (source.fork?.cutoffIndex ?? -1)) return;
     const original = source.messages[userIndex];
     const last = source.messages.at(-1);
     const latestUserIndex = source.messages.length - (last?.role === 'assistant' ? 2 : 1);
@@ -1457,7 +1499,16 @@ export default function App() {
     if (!canOperate || !source || message?.role !== 'assistant' || message.status !== 'completed'
         || !message.clientTurnId) return null;
     try {
-      const prefixHash = await forkPrefixHash(source.messages, cutoffIndex);
+      let sourceMessages = source.messages;
+      const start = source.historyWindow?.start ?? 0;
+      if (start > 0) {
+        const full = await fetchCompleteChatSession(sessionId);
+        cutoffIndex += start;
+        const confirmed = full.messages[cutoffIndex];
+        if (full.id !== sessionId || confirmed?.clientTurnId !== message.clientTurnId || confirmed.content !== message.content) return null;
+        sourceMessages = full.messages;
+      }
+      const prefixHash = await forkPrefixHash(sourceMessages, cutoffIndex);
       const key = JSON.stringify([sessionId, message.clientTurnId, cutoffIndex, prefixHash]);
       const requestId = forkRequests.current.get(key) ?? crypto.randomUUID();
       forkRequests.current.set(key, requestId);
@@ -1503,9 +1554,12 @@ export default function App() {
   const handleEditHistory = useCallback(async (sessionId: string, userIndex: number) => {
     const source = sessionsRef.current.find(session => session.id === sessionId);
     const original = source?.messages[userIndex];
-    if (!canOperate || !source || original?.role !== 'user' || userIndex <= (source.fork?.cutoffIndex ?? -1)
+    if (!canOperate || !source || original?.role !== 'user' || userIndex + (source.historyWindow?.start ?? 0) <= (source.fork?.cutoffIndex ?? -1)
         || !source.messages.slice(userIndex + 1).some(message => message.role === 'user')) {
       throw new Error('这条消息无法从历史记录中修订。');
+    }
+    if (userIndex === 0 && source.historyWindow?.before) {
+      throw new Error('请先加载更早的对话，再从这条消息创建修订分支。');
     }
     const cutoff = source.messages[userIndex - 1];
     if (cutoff?.role !== 'assistant' || cutoff.status !== 'completed' || !cutoff.clientTurnId) {
@@ -1682,6 +1736,7 @@ export default function App() {
             onExecutePlan={canOperate ? plan => handleExecutePlan(activeSession.id, plan) : undefined}
             onForkAnswer={canOperate ? index => handleForkAnswer(activeSession.id, index) : undefined}
             onOpenFork={handleSessionSelect}
+            onLoadEarlier={canOperate ? handleLoadEarlier : undefined}
             onEditHistory={canOperate ? handleEditHistory : undefined}
             onSend={(displayText, attachments, references, sessionReferences, command) =>
               handleSendMessage(activeSession.id, displayText, attachments, references, sessionReferences, command)}

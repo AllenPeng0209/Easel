@@ -55,7 +55,7 @@ function helper(name, context = {}) {
   return exports;
 }
 
-const { nextSessionRevision, mergeSessionCatalog } = helper('sessionSync');
+const { nextSessionRevision, mergeWindowedCatalog } = helper('sessionSync');
 const { nextQueuedMessage, confirmChatStop } = helper('chatControl');
 const chatReferences = helper('chatReferences');
 const chatCommands = helper('chatCommands');
@@ -118,7 +118,7 @@ function appBoundary(initial, overrides = {}) {
   const projectStorageKey = value => `scope:${value}`;
   const prompt = helper('promptAdmission', { localStorage, require: name => name === './chatReferences' ? chatReferences : { projectStorageKey } });
   const context = vm.createContext({
-    Date, Math, Error, Boolean, Array, AbortController, AbortSignal, undefined, nextSessionRevision, mergeSessionCatalog, nextQueuedMessage,
+    Date, Math, Error, Boolean, Array, AbortController, AbortSignal, undefined, nextSessionRevision, mergeWindowedCatalog, nextQueuedMessage,
     sessions: plain(initial), sessionsRef: { current: plain(initial) }, streams: {},
     streamCtl: { current: {} }, streamAcc: { current: {} }, typingBuf: { current: {} }, queueEdits: { current: {} },
     selectedPersona: 'another-brand-persona', historyReady: true, canOperate: true,

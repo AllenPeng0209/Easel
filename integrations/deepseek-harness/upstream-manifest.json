@@ -8038,12 +8038,34 @@
     "reuse_kind": "adapted",
     "changes": "适配下载准备、交给浏览器、失败的状态呈现，加入范围确认、取消及重试。",
     "verification_status": "C17_scoped_markdown_and_redacted_journal_zip_verified"
+  },
+  {
+    "feature_id": "C23",
+    "upstream_path": "packages/api/session-controller/src/history/controller.ts",
+    "upstream_sha256": "329f25631247533b4dd4b373776be8fcb29f5f4599207410d3a79aa54b1bc71d",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/chat_history_window.py",
+    "destination_sha256": "60ab539140b0e1014015a187600f5e410020265bfd077ccae50e00d53e336db9",
+    "reuse_kind": "adapted",
+    "changes": "适配按完整轮次查询历史及向前分页，并以目录快照绑定 Easel 局部写入。",
+    "verification_status": "C23_bounded_turn_window_anchor_and_full_export_verified"
+  },
+  {
+    "feature_id": "C23",
+    "upstream_path": "packages/client/ui-chat/src/client/chat/use-chat-navigation.ts",
+    "upstream_sha256": "46ccb074aee0453e2f7541638caf1b6fa19c1d58c4f30f949975db20a69ab3a5",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ChatPage.tsx",
+    "destination_sha256": "b2323ddeb9437036d69eac6c8051af4a89536e5a864daa643a7c5aa591615f6a",
+    "reuse_kind": "adapted",
+    "changes": "适配向上载入、稳定消息定位与分页时暂停跟随，保持 Easel 阅读锚点。",
+    "verification_status": "C23_bounded_turn_window_anchor_and_full_export_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 104,
+    "source_migration_files": 106,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 89,
+    "adapted_upstream_files": 91,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

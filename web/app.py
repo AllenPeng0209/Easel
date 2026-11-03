@@ -71,6 +71,7 @@ from easel.artifact_archives import ArchiveSnapshotReader
 from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
 from web.chat_history import ChatHistoryStore, ChatSessionDeletedError, validated_session
+from web.chat_history_window import ChatHistoryWindowConflict
 from web.chat_artifact_compare import compare_artifact_snapshots
 from web.chat_commands import ChatCommand, chat_command_catalog, chat_command_message, validate_chat_command
 from web.chat_session_references import (
@@ -4928,7 +4929,7 @@ def api_chat_session_reference(request: Request):
 
 
 @app.get("/api/chat/sessions")
-async def api_chat_sessions(limit: int | None = None, cursor: str | None = None):
+async def api_chat_sessions(limit: int | None = None, cursor: str | None = None, windowed: bool = False):
     _require_operation()
     if limit is not None and not 1 <= limit <= 100:
         raise HTTPException(422, "会话分页每次仅支持 1 至 100 条")
@@ -4937,10 +4938,27 @@ async def api_chat_sessions(limit: int | None = None, cursor: str | None = None)
         raise HTTPException(422, "无效的会话分页游标")
     store = ChatHistoryStore(_sessions_dir())
     if limit is not None:
-        result = await asyncio.to_thread(store.sessions_page, limit, cursor)
+        result = await asyncio.to_thread(store.sessions_page, limit, cursor, windowed=windowed)
     else:
-        result = {"sessions": await asyncio.to_thread(store.sessions), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
+        result = {"sessions": await asyncio.to_thread(store.sessions, windowed=windowed), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
     _strip_catalog_thinking(result['sessions'])
+    return result
+
+
+@app.get("/api/chat/sessions/{session_id}/history")
+async def api_chat_session_history(session_id: str, before: str | None = None, full: bool = False):
+    _require_operation()
+    if full == (before is not None) or (before is not None and (not before or len(before) > 256)):
+        raise HTTPException(422, "请选择旧历史游标或完整会话")
+    store = ChatHistoryStore(_sessions_dir())
+    try:
+        result = (await asyncio.to_thread(store.session, session_id) if full
+                  else await asyncio.to_thread(store.older_messages, session_id, before))
+    except ChatHistoryWindowConflict as error:
+        raise HTTPException(409, str(error)) from None
+    if result is None:
+        raise HTTPException(404, "会话不存在或无权访问")
+    _strip_catalog_thinking([result])
     return result
 
 
@@ -4952,7 +4970,7 @@ def _strip_catalog_thinking(sessions):
 
 
 @app.put("/api/chat/sessions")
-async def api_chat_sessions_merge(req: ChatSessionsRequest):
+async def api_chat_sessions_merge(req: ChatSessionsRequest, windowed: bool = False):
     _require_operation()
     try:
         sessions = [validated_session(session) for session in req.sessions]
@@ -4989,9 +5007,11 @@ async def api_chat_sessions_merge(req: ChatSessionsRequest):
                     if history_request.command is not None:
                         validate_chat_command(history_request.message, history_request.command)
         store = ChatHistoryStore(_sessions_dir())
-        merged = await asyncio.to_thread(store.merge, sessions)
+        merged = await asyncio.to_thread(store.merge, sessions, windowed=windowed)
         _strip_catalog_thinking(merged)
         return {"sessions": merged, "deletedIds": await asyncio.to_thread(store.deleted_ids)}
+    except ChatHistoryWindowConflict as error:
+        raise HTTPException(409, str(error)) from None
     except (ValueError, TypeError):
         raise HTTPException(400, "会话数据或附件引用无效") from None
 

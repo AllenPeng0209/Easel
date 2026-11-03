@@ -114,3 +114,6 @@
 @media (prefers-reduced-motion: reduce) { .composer-upload-progress::after { animation: none; width: 100%; opacity: .5; } }
 
 .msg-action-error { color: var(--danger); font-size: .82rem; overflow-wrap: anywhere; }
+
+.chat-history-page { display: grid; justify-items: center; gap: 6px; margin-bottom: 14px; }
+.chat-history-page [role="alert"] { margin: 0; color: var(--danger); font-size: 12px; }

@@ -32,7 +32,7 @@ function nestedScrollConsumes(target: EventTarget, scrollport: HTMLElement, dire
 }
 
 /** Easel binding for the upstream follow controller; only reader intent releases the tail. */
-export function useChatReading(sessionId: string, messages: readonly ChatMessage[], stream: StreamState | undefined, enabled: boolean) {
+export function useChatReading(sessionId: string, messages: readonly ChatMessage[], stream: StreamState | undefined, enabled: boolean, historyStart = 0) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const follow = useScrollFollow(true, 25);
@@ -45,6 +45,7 @@ export function useChatReading(sessionId: string, messages: readonly ChatMessage
     [content, reasoningSummary, questions, events]);
   const transcript = useMemo(() => live === null ? history : [...history, live], [history, live]);
   const lastTranscript = useRef(transcript);
+  const lastHistoryStart = useRef(historyStart);
   const key = projectStorageKey(`easel_chat_reading:${sessionId}`);
 
   const remember = useCallback(() => {
@@ -75,9 +76,17 @@ export function useChatReading(sessionId: string, messages: readonly ChatMessage
     const element = scrollRef.current;
     if (!enabled || !element) return;
     if (follow.active) backToBottom();
-    else if (transcript.some((item, index) => item !== lastTranscript.current[index])) setUnread(true);
+    else {
+      // A historical prepend is not a new response. Compare the previously
+      // visible range, including genuine live updates that landed alongside it.
+      const prepended = Math.max(0, lastHistoryStart.current - historyStart);
+      const previousRange = prepended > 0 ? messages.slice(prepended).map(messageContent)
+        .filter(token => token !== null).concat(live === null ? [] : [live]) : transcript;
+      if (previousRange.some((item, index) => item !== lastTranscript.current[index])) setUnread(true);
+    }
     lastTranscript.current = transcript;
-  }, [enabled, transcript, follow, backToBottom]);
+    lastHistoryStart.current = historyStart;
+  }, [enabled, transcript, messages, live, historyStart, follow, backToBottom]);
   useEffect(() => {
     const element = scrollRef.current;
     if (!enabled || !element) return;
@@ -94,6 +103,14 @@ export function useChatReading(sessionId: string, messages: readonly ChatMessage
     if (threadRef.current) observer?.observe(threadRef.current);
     return () => { remember(); release(); element.removeEventListener('scrollend', settle); observer?.disconnect(); };
   }, [enabled, follow, remember, backToBottom]);
+
+  const pauseFollowing = () => {
+    const viewport = scrollRef.current;
+    if (viewport) follow.interrupt(viewport, scrollMetrics(viewport));
+    follow.setFollowing(false);
+    setFollowing(false);
+    remember();
+  };
 
   const captureReadingAnchor = (): (() => void) | undefined => {
     const viewport = scrollRef.current;
@@ -147,5 +164,5 @@ export function useChatReading(sessionId: string, messages: readonly ChatMessage
       interrupt(); follow.setFollowing(false); setFollowing(false);
     }
   };
-  return { scrollRef, threadRef, following, unread, backToBottom, captureReadingAnchor, onScroll, onWheel, onKeyDown, interrupt };
+  return { scrollRef, threadRef, following, unread, backToBottom, pauseFollowing, captureReadingAnchor, onScroll, onWheel, onKeyDown, interrupt };
 }

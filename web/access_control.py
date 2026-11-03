@@ -126,6 +126,8 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return "view" if read else "manage_ip"
     if resource == "chat/sessions" or re.fullmatch(r"chat/sessions/[^/]+", resource):
         return "operate"
+    if re.fullmatch(r"chat/sessions/[^/]+/history", resource):
+        return "operate" if read else None
     if re.fullmatch(r"chat/sessions/[^/]+/export/logs", resource):
         return "export_chat_logs" if read else None
     if re.fullmatch(r"chat/sessions/[^/]+/fork", resource):

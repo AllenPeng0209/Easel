@@ -18,3 +18,28 @@ export function mergeSessionCatalog(local: ChatSession[], remote: ChatSession[],
   }
   return [...byId.values()].sort((a, b) => (b.updated ?? b.created ?? 0) - (a.updated ?? a.created ?? 0));
 }
+
+
+/** Keep local edits made during a PUT and advance the write base only for the acknowledged snapshot. */
+export function mergeWindowedCatalog(
+  local: ChatSession[], remote: ChatSession[], deletedIds: string[] = [], submitted?: ChatSession[],
+): ChatSession[] {
+  const server = new Map(remote.map(session => [session.id, session]));
+  const sent = new Map(submitted?.map(session => [session.id, session]));
+  return mergeSessionCatalog(local, remote, deletedIds).map(session => {
+    const saved = server.get(session.id);
+    const window = saved?.historyWindow;
+    if (!saved || !window || session === saved || session.historyWindow?.base === window.base) return session;
+    const base = sent.get(session.id) ?? session;
+    const start = base.historyWindow?.start ?? 0;
+    const offset = window.start - start;
+    if (saved.updated !== base.updated || offset < 0
+        || JSON.stringify(saved.messages) !== JSON.stringify(base.messages.slice(offset))) return session;
+    if (session === base && !session.pendingTurnId && (!submitted || !session.historyWindow)) return saved;
+    if (offset === 0 && (session.historyWindow?.start ?? 0) === start
+        && session.historyWindow?.base === base.historyWindow?.base) {
+      return { ...session, historyWindow: window };
+    }
+    return session;
+  });
+}

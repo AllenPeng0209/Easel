@@ -73,10 +73,17 @@ export interface ChatFork {
   contextTruncated?: boolean;
 }
 
+export interface ChatHistoryWindow {
+  start: number;
+  before: string | null;
+  base: string;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
   messages: ChatMessage[];
+  historyWindow?: ChatHistoryWindow;
   persona?: string;
   created: number;
   sessionKey?: string;  // OpenClaw 的 session key，用于后端删除

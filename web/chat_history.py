@@ -13,6 +13,14 @@ import sqlite3
 import time
 from pathlib import Path
 
+from web.chat_history_window import (
+    HISTORY_WINDOW_TURNS,
+    ChatHistoryWindowConflict,
+    merge_history_window,
+    older_history_window,
+    project_history_window,
+    validate_history_window,
+)
 
 class ChatSessionDeletedError(ValueError):
     """The current scoped catalog retired this session before admission."""
@@ -53,6 +61,8 @@ def validated_session(value: dict) -> dict:
         "id", "title", "messages", "persona", "created", "updated", "sessionKey", "pendingTurnId",
         "archived", "pinned", "autonomyMode", "queued", "queuePaused", "unreadCompletion"}}
     result.update(title=title, updated=updated)
+    if "historyWindow" in value:
+        result["historyWindow"] = validate_history_window(value["historyWindow"])
     # Round-trip validates nested event values, rejects NaN, and prevents callers
     # retaining mutable references to the catalog transaction's input.
     return json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False))
@@ -74,10 +84,11 @@ class ChatHistoryStore:
         # not depend on repeatedly negotiating WAL during concurrent startup.
         return sqlite3.connect(self.path, timeout=10)
 
-    def sessions(self) -> list[dict]:
+    def sessions(self, *, windowed: bool = False) -> list[dict]:
         with self._connect() as connection:
-            return [json.loads(row[0]) for row in connection.execute(
+            sessions = [json.loads(row[0]) for row in connection.execute(
                 "SELECT payload FROM sessions WHERE deleted=0 ORDER BY updated DESC, id")]
+        return [project_history_window(session) for session in sessions] if windowed else sessions
 
     def session(self, session_id: str) -> dict | None:
         with self._connect() as connection:
@@ -85,7 +96,11 @@ class ChatHistoryStore:
                 "SELECT payload FROM sessions WHERE id=? AND deleted=0", (session_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
-    def sessions_page(self, limit: int, cursor: str | None = None) -> dict:
+    def older_messages(self, session_id: str, before: str, turns: int = HISTORY_WINDOW_TURNS) -> dict | None:
+        session = self.session(session_id)
+        return older_history_window(session, before, turns) if session is not None else None
+
+    def sessions_page(self, limit: int, cursor: str | None = None, *, windowed: bool = False) -> dict:
         """Read by stable session ID so recent activity cannot shift the page boundary."""
         with self._connect() as connection:
             connection.execute("BEGIN")
@@ -97,7 +112,8 @@ class ChatHistoryStore:
             # Read tombstones in the same snapshot as the final page.
             deleted = [] if next_cursor is not None else [row[0] for row in connection.execute(
                 "SELECT id FROM sessions WHERE deleted=1 ORDER BY id")]
-        return {"sessions": [json.loads(row[1]) for row in rows[:limit]],
+        sessions = [json.loads(row[1]) for row in rows[:limit]]
+        return {"sessions": [project_history_window(session) for session in sessions] if windowed else sessions,
                 "deletedIds": deleted, "nextCursor": next_cursor}
 
     def deleted_ids(self) -> list[str]:
@@ -162,23 +178,46 @@ class ChatHistoryStore:
             if result.rowcount != 1:
                 raise sqlite3.IntegrityError("steer reservation is no longer available")
 
-    def merge(self, values: list[dict]) -> list[dict]:
+    def merge(self, values: list[dict], *, windowed: bool = False) -> list[dict]:
         from web.chat_session_forks import has_forks, preserve_fork_prefix
 
         if not isinstance(values, list):
             raise ValueError("会话列表无效")
         sessions = [validated_session(value) for value in values]
+        requested_starts = {}
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             fork_metadata_exists = has_forks(connection)
             for session in sessions:
+                window = session.pop("historyWindow", None)
+                if window is not None:
+                    requested_starts[session["id"]] = window["start"]
+                if window is not None or windowed:
+                    row = connection.execute("SELECT updated,payload,deleted FROM sessions WHERE id=?",
+                                             (session["id"],)).fetchone()
+                    if row is not None:
+                        updated, payload, deleted = row
+                        if deleted or session["updated"] <= updated:
+                            continue
+                        current = json.loads(payload)
+                        if window is not None:
+                            candidate = merge_history_window(current, session, window)
+                            if candidate is None:
+                                continue
+                            session = candidate
+                        elif len(session["messages"]) < len(current["messages"]):
+                            raise ChatHistoryWindowConflict("缺少原有历史，请刷新后再保存")
+                    elif window is not None:
+                        raise ChatHistoryWindowConflict("会话历史已不存在，请刷新后再保存")
                 if fork_metadata_exists:
                     preserve_fork_prefix(connection, session)
                 connection.execute("INSERT INTO sessions(id,updated,payload) VALUES(?,?,?) "
                     "ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,payload=excluded.payload "
                     "WHERE sessions.deleted=0 AND excluded.updated>sessions.updated",
                     (session["id"], session["updated"], json.dumps(session, ensure_ascii=False)))
-        return self.sessions()
+        saved = self.sessions()
+        return ([project_history_window(session, start=requested_starts.get(session["id"])) for session in saved]
+                if windowed else saved)
 
     def delete(self, identifier: str) -> str:
         if (not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 256

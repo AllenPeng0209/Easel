@@ -41,6 +41,7 @@ interface ChatPageProps {
   onStop: () => void;
   onResend: (userIndex: number) => void; // 仅最后一轮，追加新请求
   onEditHistory?: (sessionId: string, userIndex: number) => Promise<void>;
+  onLoadEarlier?: (sessionId: string, before: string) => Promise<void>;
   onForkAnswer?: (messageIndex: number) => Promise<CreatedChatFork | null>;
   onOpenFork?: (id: string) => void;
   onQuestionAnswered?: (receipt: ChatQuestionClosed) => void;
@@ -70,7 +71,7 @@ function greeting(): string {
   return `${g}，想创作点什么？`;
 }
 
-export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onEditHistory, onForkAnswer, onOpenFork, onQuestionAnswered,
+export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onEditHistory, onLoadEarlier, onForkAnswer, onOpenFork, onQuestionAnswered,
   sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
   const [forkTarget, setForkTarget] = useState<{ sessionId: string; index: number; turnId: string; answer: string }>();
   useEffect(() => setForkTarget(undefined), [session.id]);
@@ -164,7 +165,68 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
 
   const isStreaming = !!stream;
   const isEmpty = session.messages.length === 0 && !isStreaming;
-  const reading = useChatReading(session.id, session.messages, stream, !isEmpty);
+  const historyStart = session.historyWindow?.start ?? 0;
+  const historyBefore = session.historyWindow?.before;
+  const reading = useChatReading(session.id, session.messages, stream, !isEmpty, historyStart);
+  const [historyLoad, setHistoryLoad] = useState<{ key: string; pending: boolean; error?: string }>();
+  const historyRequest = useRef<object | null>(null);
+  const automaticHistoryAttempt = useRef<string | undefined>(undefined);
+  const nearTopArmed = useRef(false);
+  const historyAnchor = useRef<{ sessionId: string; start: number; restore?: () => void } | undefined>(undefined);
+  const historyKey = historyBefore ? JSON.stringify([session.id, historyBefore]) : '';
+  const currentHistoryKey = useRef(historyKey);
+  currentHistoryKey.current = historyKey;
+  useEffect(() => () => {
+    historyRequest.current = null;
+    historyAnchor.current = undefined;
+    nearTopArmed.current = false;
+    automaticHistoryAttempt.current = undefined;
+  }, [session.id]);
+  useLayoutEffect(() => {
+    const anchor = historyAnchor.current;
+    if (anchor?.sessionId !== session.id || anchor.start === historyStart) return;
+    historyAnchor.current = undefined;
+    if (historyStart < anchor.start) anchor.restore?.();
+  }, [historyStart, session.id]);
+
+  // Upstream use-chat-navigation: begin paging without following the tail,
+  // then keep the reader's current anchor when the older page commits.
+  const loadEarlier = async (automatic: boolean) => {
+    if (!onLoadEarlier || !historyBefore || !historyKey || historyRequest.current
+      || (automatic && automaticHistoryAttempt.current === historyKey)) return;
+    const request = {};
+    historyRequest.current = request;
+    automaticHistoryAttempt.current = historyKey;
+    reading.pauseFollowing();
+    historyAnchor.current = { sessionId: session.id, start: historyStart, restore: reading.captureReadingAnchor() };
+    setHistoryLoad({ key: historyKey, pending: true });
+    try {
+      await onLoadEarlier(session.id, historyBefore);
+      if (historyRequest.current === request) setHistoryLoad(undefined);
+    } catch (error) {
+      if (historyRequest.current === request && currentHistoryKey.current === historyKey) {
+        historyAnchor.current = undefined;
+        setHistoryLoad({ key: historyKey, pending: false, error:
+          error instanceof Error && error.message ? error.message : '较早消息暂时无法加载，请重试。' });
+      }
+    } finally {
+      if (historyRequest.current === request) historyRequest.current = null;
+    }
+  };
+
+  const onHistoryScroll = () => {
+    reading.onScroll();
+    if (historyRequest.current && historyAnchor.current?.start === historyStart) {
+      historyAnchor.current.restore = reading.captureReadingAnchor();
+    }
+    const viewport = reading.scrollRef.current;
+    if (!viewport || !historyBefore) return;
+    if (viewport.scrollTop > 72) nearTopArmed.current = true;
+    else if (nearTopArmed.current) {
+      nearTopArmed.current = false;
+      void loadEarlier(true);
+    }
+  };
   const [workDetails, setWorkDetails] = useState(loadWorkDetailsPreferences);
   const restoreReadingAnchor = useRef<(() => void) | undefined>(undefined);
   useLayoutEffect(() => {
@@ -540,7 +602,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const forkDialog = forkTarget && forkMessage?.status === 'completed' && forkMessage.clientTurnId === forkTarget.turnId
     && forkMessage.content === forkTarget.answer && onForkAnswer && onOpenFork
     ? <ForkChatDialog key={forkTarget.turnId} sourceTitle={session.title} answerText={forkTarget.answer}
-      messageCount={forkTarget.index + 1} onFork={() => onForkAnswer(forkTarget.index)}
+      messageCount={historyStart + forkTarget.index + 1} onFork={() => onForkAnswer(forkTarget.index)}
       onOpen={onOpenFork} onClose={() => setForkTarget(undefined)} /> : null;
   // ---- 对话态 ----
   const lastUserIndex = session.messages.findLastIndex(message => message.role === 'user');
@@ -580,14 +642,25 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
             <i />{lifecycleLabel}</span>
         </div>
       </div>
-      <div className="chat-messages" data-reading-detached={!reading.following || undefined} ref={reading.scrollRef} onScroll={reading.onScroll} onWheel={reading.onWheel}
+      <div className="chat-messages" data-reading-detached={!reading.following || undefined} ref={reading.scrollRef} onScroll={onHistoryScroll} onWheel={reading.onWheel}
         onTouchStart={reading.interrupt} onPointerDown={reading.interrupt} onKeyDown={reading.onKeyDown} tabIndex={0} aria-label="对话消息">
         <div className="chat-thread" ref={reading.threadRef}>
+          {onLoadEarlier && historyBefore && <div className="chat-history-page">
+            <button type="button" className="btn" data-load-earlier-turns
+              disabled={historyLoad?.key === historyKey && historyLoad.pending}
+              onClick={() => void loadEarlier(false)}>
+              {historyLoad?.key === historyKey && historyLoad.pending ? '正在加载较早轮次…'
+                : historyLoad?.key === historyKey && historyLoad.error ? '重试加载较早轮次' : '加载较早轮次'}
+            </button>
+            {historyLoad?.key === historyKey && historyLoad.error &&
+              <p role="alert" data-history-page-error>{historyLoad.error}</p>}
+          </div>}
           {displayMessages.map((msg, i) => {
             const isLast = i === displayMessages.length - 1;
             const live = isStreaming && isLast && msg.role === 'assistant';
             const isFinal = !live && i < session.messages.length;
-            const inherited = isFinal && !!hasLineage && i <= lineage.cutoffIndex;
+            const absoluteIndex = historyStart + i;
+            const inherited = isFinal && !!hasLineage && absoluteIndex <= lineage.cutoffIndex;
             let actions;
             if (isFinal) {
               const copy = () => navigator.clipboard?.writeText(msg.content);
@@ -625,9 +698,9 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
               }
             }
             return (
-              <div key={`${i}-${msg.role}`} data-chat-message>
+              <div key={`${absoluteIndex}-${msg.role}`} data-chat-message data-chat-message-index={absoluteIndex}>
               <MessageBubble
-                key={`${i}-${msg.role}`}
+                key={`${absoluteIndex}-${msg.role}`}
                 sessionId={session.id}
                 message={msg}
                 isStreaming={live}
