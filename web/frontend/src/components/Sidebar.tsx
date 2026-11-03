@@ -19,7 +19,7 @@ import { useModalLayer } from '../vendor/deepseek-harness/navigation/useModalLay
 import '../styles/sidebar.css';
 import '../styles/session-navigation.css';
 
-export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'outputs' | 'accounts' | 'profile' | 'workshop' | 'interactions';
+export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'outputs' | 'accounts' | 'profile' | 'workshop' | 'interactions' | 'superagent';
 
 interface SidebarProps {
   currentPage: Page;
@@ -55,6 +55,7 @@ const PRODUCTION_NAV: NavigationItem[] = [
 
 const OPERATIONS_NAV: NavigationItem[] = [
   { page: 'dashboard', Icon: IconDashboard, label: '运营总览' },
+  { page: 'superagent', Icon: IconOutputs, label: 'Super Agent 任务' },
   { page: 'accounts', Icon: IconAccounts, label: '账号管理' },
   { page: 'publish', Icon: IconPublish, label: '发布中心' },
   { page: 'calendar', Icon: IconCalendar, label: '内容日历' },

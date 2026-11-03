@@ -1,0 +1,39 @@
+.superagent-panel { width: min(980px, 100%); margin-inline: auto; padding: 22px; color: var(--text); }
+.superagent-header, .superagent-task header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.superagent-header { align-items: center; margin-bottom: 14px; }
+.superagent-header h1, .superagent-panel h2, .superagent-panel h3 { margin: 0; }
+.superagent-header h1 { font-size: 26px; }
+.superagent-header p, .superagent-panel p { margin: 4px 0; }
+.superagent-header p, .superagent-task header div > span { color: var(--text-secondary); font-size: 12px; }
+.superagent-create, .superagent-task { border: 1px solid var(--border); border-radius: 11px; padding: 12px; background: var(--bg-elev); }
+.superagent-create, .superagent-create label { display: grid; gap: 6px; }
+.superagent-create h2, .superagent-project h2 { font-size: 15px; }
+.superagent-create label { color: var(--text-secondary); font-size: 12px; }
+.superagent-create-fields { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(0, 1.3fr); gap: 8px; }
+.superagent-create .field { width: 100%; }
+.superagent-project { display: grid; gap: 8px; margin-top: 18px; }
+.superagent-task h3 { font-size: 15px; overflow-wrap: anywhere; }
+.superagent-brief { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary); }
+.superagent-badge { flex: none; border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; font-size: 11px; }
+.superagent-badge[data-status="waiting_input"], .superagent-badge[data-status="unconfirmed"] { color: var(--amber); }
+.superagent-badge[data-status="failed"], .superagent-error { color: var(--danger); }
+.superagent-badge[data-status="completed"] { color: var(--green); }
+.superagent-question { margin: 8px 0; padding: 9px; border-inline-start: 2px solid var(--amber); border-radius: 6px; background: var(--surface-2); }
+.superagent-question p, .superagent-resolution { font-size: 12px; overflow-wrap: anywhere; }
+.superagent-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.superagent-actions > span { color: var(--text-secondary); font-size: 12px; }
+.superagent-steps { margin-top: 6px; font-size: 12px; }
+.superagent-steps summary { cursor: pointer; }
+.superagent-steps ol { margin: 6px 0 0; padding-inline-start: 20px; }
+.superagent-steps li { padding: 4px 0; }
+.superagent-step-line { display: flex; flex-wrap: wrap; gap: 5px 10px; }
+.superagent-step-line span { color: var(--text-secondary); }
+@media (max-width: 520px) {
+  .superagent-panel { padding: 12px; }
+  .superagent-create-fields { grid-template-columns: 1fr; }
+}
+.superagent-publication { margin-top: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.superagent-publication summary { cursor: pointer; font-size: 13px; }
+.superagent-publication p, .superagent-publication label { color: var(--text-secondary); font-size: 12px; }
+.superagent-publication label { display: grid; gap: 4px; }
+.superagent-publication .field { width: 100%; }
