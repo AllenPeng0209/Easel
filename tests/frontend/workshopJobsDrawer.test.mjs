@@ -31,6 +31,7 @@ async function fixture(run) {
   const requests = [];
   const timers = new Map();
   const opens = [];
+  const closes = [];
   const root = require('react-dom/client').createRoot(document.getElementById('root'));
   try {
     const Drawer = componentModule('components/WorkshopJobsDrawer.tsx', { user: 'viewer', project: 'scoped', globals: {
@@ -39,8 +40,8 @@ async function fixture(run) {
       clearTimeout(id) { timers.delete(id); },
       fetch: (url, options) => new Promise(resolve => requests.push({ url, options, resolve })),
     } }).default;
-    const update = open => React.act(() => root.render(React.createElement(Drawer, {
-      open, onClose() {}, onOpenWorkshop: (...args) => opens.push(args),
+    const update = (open, canOperate = false) => React.act(() => root.render(React.createElement(Drawer, {
+      open, canOperate, onClose() { closes.push('closed'); }, onOpenWorkshop: (...args) => opens.push(args),
     })));
     const resolve = (index, jobs, projectId = 'scoped') => React.act(async () =>
       requests[index].resolve(Response.json({ projectId, jobs })));
@@ -48,7 +49,7 @@ async function fixture(run) {
       visibility = value;
       document.dispatchEvent(new window.Event('visibilitychange'));
     });
-    await run({ document, update, requests, resolve, visibilityTo, timers, opens });
+    await run({ document, update, requests, resolve, visibilityTo, timers, opens, closes });
   } finally {
     await React.act(() => root.unmount());
     if (matchesDescriptor) Object.defineProperty(window.HTMLElement.prototype, 'matches', matchesDescriptor);
@@ -141,5 +142,82 @@ test('visible cycles observe only exact active jobs in bounded fair rotation, th
     await update(false);
     assert.ok(requests.slice(6).every(request => request.options.signal.aborted));
     assert.equal(timers.size, 0);
+  });
+});
+
+
+test('only an operator can confirm cancellation, and the exact task stays pending until a server receipt', async () => {
+  await fixture(async ({ document, update, requests, resolve, closes }) => {
+    const row = job('1', { status: 'running', taskId: 'provider-task', canCancel: true });
+    await update(true);
+    await resolve(0, [row]);
+    assert.equal(document.querySelector('[data-cancel-workshop-job]'), null);
+    await update(true, true);
+    const action = document.querySelector('[data-cancel-workshop-job]');
+    assert.ok(action);
+    await React.act(() => action.click());
+    const confirm = document.querySelector('[data-workshop-cancel-confirmation]');
+    assert.match(confirm.textContent, /scoped.*BeefTV.*provider-task/s);
+    assert.equal(requests.filter(request => request.options.method === 'POST').length, 0);
+    await React.act(() => confirm.querySelector('[data-confirm-workshop-cancel]').click());
+    const submitted = requests.filter(request => request.options.method === 'POST');
+    assert.equal(submitted.length, 1);
+    assert.equal(submitted[0].url, `/api/projects/scoped/workshop/projects/${workshop}/renders/${row.id}/cancel`);
+    assert.deepEqual(JSON.parse(submitted[0].options.body), { taskId: 'provider-task' });
+    assert.equal(confirm.querySelector('[data-confirm-workshop-cancel]').hasAttribute('disabled'), true);
+    assert.equal(document.querySelector('[aria-label="关闭工坊任务"]').hasAttribute('disabled'), true);
+    const view = document.defaultView;
+    await React.act(() => document.querySelector('.workshop-jobs-overlay')
+      .dispatchEvent(new view.Event('mousedown', { bubbles: true })));
+    assert.deepEqual(closes, []);
+    assert.equal(document.querySelector('[data-workshop-job-status]').dataset.workshopJobStatus, 'running');
+    await React.act(async () => submitted[0].resolve(Response.json({ status: 'pending', taskId: row.taskId, renderId: row.id,
+      jobStatus: 'running', requestedAt: 100, updatedAt: 100 })));
+    assert.equal(document.querySelector('[data-workshop-job-status]').dataset.workshopJobStatus, 'stopping');
+    assert.equal(document.querySelector('[data-workshop-cancel-confirmation]'), null);
+    assert.equal(requests.filter(request => request.options.method === 'POST').length, 1);
+  });
+});
+
+test('an ambiguous cancellation transport leaves the task unconfirmed and offers no blind retry', async () => {
+  await fixture(async ({ document, update, requests, resolve }) => {
+    const row = job('1', { status: 'queued', taskId: 'provider-task', canCancel: true });
+    await update(true, true);
+    await resolve(0, [row]);
+    await React.act(() => document.querySelector('[data-cancel-workshop-job]').click());
+    await React.act(() => document.querySelector('[data-confirm-workshop-cancel]').click());
+    const request = requests.find(value => value.options.method === 'POST');
+    await React.act(async () => request.resolve(Response.json({}, { status: 502 })));
+    assert.match(document.querySelector('[data-workshop-cancel-result]').textContent, /未确认/);
+    assert.equal(document.querySelector('[data-workshop-job-status=cancelled]'), null);
+    assert.equal(document.querySelector('[data-cancel-workshop-job]'), null);
+    assert.equal(requests.filter(value => value.options.method === 'POST').length, 1);
+  });
+});
+
+
+test('durable unconfirmed state offers explicit lookup and confirmed cancellation survives drawer reopen', async () => {
+  await fixture(async ({ document, update, requests, resolve }) => {
+    const active = job('1', { status: 'running', taskId: 'provider-task', canCancel: true });
+    const cancellation = { status: 'unconfirmed', taskId: active.taskId, renderId: active.id,
+      jobStatus: 'running', requestedAt: 100, updatedAt: 200 };
+    await update(true, true);
+    await resolve(0, [{ ...active, cancellation }]);
+    assert.equal(document.querySelector('[data-workshop-job-status]').dataset.workshopJobStatus, 'unconfirmed');
+    const verify = document.querySelector('[data-cancel-workshop-job=verify]');
+    assert.equal(verify.textContent, '核对取消状态');
+    await React.act(() => verify.click());
+    assert.equal(requests.filter(request => request.options.method === 'POST').length, 0);
+    await React.act(() => document.querySelector('[data-confirm-workshop-cancel]').click());
+    const post = requests.find(request => request.options.method === 'POST');
+    const completed = { ...cancellation, status: 'cancelled', jobStatus: 'cancelled', updatedAt: 300 };
+    await React.act(async () => post.resolve(Response.json(completed)));
+    assert.equal(document.querySelector('[data-workshop-job-status]').dataset.workshopJobStatus, 'cancelled');
+    await update(false, true);
+    await update(true, true);
+    await resolve(requests.length - 1, [{ ...active, status: 'cancelled', canCancel: false, cancellation: completed }]);
+    assert.equal(document.querySelector('[data-workshop-job-status]').dataset.workshopJobStatus, 'cancelled');
+    assert.equal(document.querySelector('[data-cancel-workshop-job]'), null);
+    assert.equal(requests.filter(request => request.options.method === 'POST').length, 1);
   });
 });

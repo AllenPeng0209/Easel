@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from easel.video_workshop import WorkshopError, WorkshopStore
+from easel.video_workshop import WorkshopCancelAuthorizationError, WorkshopError, WorkshopStore
 from easel.projects import project_id
 from web.workshop_jobs import workshop_jobs
 
@@ -87,6 +87,12 @@ class Archive(Versioned):
     archived: bool = Field(strict=True)
 
 
+class CancelRender(RequestModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    taskId: str = Field(pattern=r"^[A-Za-z0-9:_-]{1,160}$")
+
+
 class Publication(Versioned):
     artifact_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     platform: str = Field(min_length=1, max_length=80)
@@ -109,7 +115,8 @@ class Publication(Versioned):
 
 
 def create_router(outputs_provider: Callable[[], Path], runtime_status=None, canvas_creator=None, canvas_state=None,
-                  *, render_start=None, render_status=None, render_collect=None) -> APIRouter:
+                  *, render_start=None, render_status=None, render_collect=None, render_cancel=None,
+                  render_cancel_status=None) -> APIRouter:
     router = APIRouter(prefix="/api/workshop", tags=["video-workshop"])
 
     def store(http_request: Request) -> WorkshopStore:
@@ -139,7 +146,10 @@ def create_router(outputs_provider: Callable[[], Path], runtime_status=None, can
 
     @router.get("/jobs")
     def jobs(http_request: Request):
-        return {"projectId": project_id(), "jobs": perform(workshop_jobs, store(http_request))}
+        role = getattr(http_request.state, "project_role", None)
+        can_operate = (role in ("owner", "operator") or not isinstance(getattr(http_request.state, "user", None), dict))
+        return {"projectId": project_id(), "jobs": perform(workshop_jobs, store(http_request),
+                can_operate=can_operate, cancel_supported=render_cancel is not None and render_cancel_status is not None)}
 
     @router.post("/projects", status_code=201)
     def create(http_request: Request, request: NewProject):
@@ -190,7 +200,23 @@ def create_router(outputs_provider: Callable[[], Path], runtime_status=None, can
 
     @router.get("/projects/{project_id}/renders/{render_id}")
     def get_render(http_request: Request, project_id: str, render_id: str):
-        return perform(store(http_request).render_status, project_id, render_id, render_status=render_status)
+        return perform(store(http_request).render_status, project_id, render_id, render_status=render_status,
+                       render_cancel_status=render_cancel_status)
+
+    @router.post("/projects/{project_id}/renders/{render_id}/cancel")
+    def cancel(http_request: Request, project_id: str, render_id: str, request: CancelRender):
+        authorize = getattr(http_request.state, "workshop_cancel_authorized", None)
+
+        def require_operation():
+            if authorize is not None and not authorize():
+                raise WorkshopCancelAuthorizationError("当前权限已变更，未发送取消操作", 403)
+
+        def dispatch(project, receipt):
+            return render_cancel(project, receipt, before_post=require_operation)
+
+        return perform(store(http_request).cancel_render, project_id, render_id, request.taskId,
+                       render_cancel=dispatch if render_cancel is not None else None,
+                       render_cancel_status=render_cancel_status, authorize=require_operation)
 
     @router.post("/projects/{project_id}/renders/{render_id}/collect")
     def collect_render(http_request: Request, project_id: str, render_id: str, request: Versioned):

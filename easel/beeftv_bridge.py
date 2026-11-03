@@ -202,14 +202,52 @@ def render_start(project: dict, operation_id: str) -> dict:
             'status': result.get('status', 'queued'), **_render_progress(result)}
 
 
-def render_status(project: dict, receipt: dict) -> dict:
-    task = configured_client().request('GET', '/tasks/' + _task_id(receipt))
+def _render_task_observation(task: dict) -> dict:
     state = task.get('status')
     if state in ('in_progress', 'processing'):
         state = 'running'
     if state not in ('queued', 'running', 'succeeded', 'failed', 'cancelled'):
         raise BeefTVError('渲染状态无法确认，请查询原任务', 503)
     return {'status': state, **_render_progress(task)}
+
+
+def render_status(project: dict, receipt: dict) -> dict:
+    task = configured_client().request('GET', '/tasks/' + _task_id(receipt))
+    return _render_task_observation(task)
+
+
+def _bound_cancel_observation(task, project: dict, receipt: dict, task_id: str) -> dict:
+    # canvas.timeline.render stores this operation prefix on its local task.
+    canvas_id = project.get('beeftv_canvas_id')
+    operation = receipt.get('operation_id')
+    if (not isinstance(task, dict) or not canvas_id or canvas_id != receipt.get('canvas_id')
+            or not isinstance(operation, str) or not operation or task.get('id') != task_id
+            or task.get('type') != 'timeline_render' or task.get('projectId') != canvas_id
+            or task.get('clientOperationId') != 'assistant-render:' + operation):
+        raise BeefTVError('无法确认原渲染任务身份', 409)
+    return {'task_id': task_id, **_render_task_observation(task)}
+
+
+def render_cancel_status(project: dict, receipt: dict) -> dict:
+    """Read back one verified local render after an uncertain cancellation."""
+    task_id = _task_id(receipt)
+    task = configured_client().request('GET', '/tasks/' + task_id)
+    return _bound_cancel_observation(task, project, receipt, task_id)
+
+
+def render_cancel(project: dict, receipt: dict, *, before_post=None) -> dict:
+    """Request cancellation once for the exact bound active timeline task."""
+    client = configured_client()
+    task_id = _task_id(receipt)
+    path = '/tasks/' + task_id
+    current = _bound_cancel_observation(client.request('GET', path), project, receipt, task_id)
+    if current['status'] not in ('queued', 'running'):
+        # BeefTV's cancel endpoint can pause delivery of a succeeded task.
+        return current
+    if before_post is not None:
+        before_post()
+    result = client.request('POST', path + '/cancel', body={})
+    return _bound_cancel_observation(result, project, receipt, task_id)
 
 
 def render_collect(project: dict, receipt: dict, outputs_root: Path | None = None) -> dict:

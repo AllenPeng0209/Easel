@@ -127,3 +127,15 @@ test('only confirmed provider progress is displayed, including a real zero', () 
   assert.equal(workshopProgress(receipt({ progress: 0.35 })), null);
   assert.equal(workshopProgress(receipt({ progress: 2, progress_known: true })), null);
 });
+
+test('workshop chat only shows cancellation receipts bound to its exact render and task', () => {
+  const { workshopCancellationLabel } = load();
+  const cancellation = { status: 'pending', taskId: 'original-task', renderId, jobStatus: 'running' };
+  assert.equal(workshopCancellationLabel(receipt({ cancellation })), '正在停止');
+  assert.equal(workshopCancellationLabel(receipt({ cancellation: { ...cancellation, taskId: 'different-task' } })), null);
+  assert.equal(workshopCancellationLabel(receipt({ cancellation: { ...cancellation, status: 'unconfirmed' } })), '停止结果待核对');
+  assert.equal(workshopCancellationLabel(receipt({ cancellation: { ...cancellation, status: 'cancelled', jobStatus: 'cancelled' } })), null);
+  assert.equal(workshopCancellationLabel(receipt({ status: 'cancelled', cancellation: {
+    ...cancellation, status: 'cancelled', jobStatus: 'cancelled',
+  } })), '已确认停止');
+});

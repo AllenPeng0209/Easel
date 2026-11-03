@@ -126,6 +126,8 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return "view" if read else "manage_ip"
     if resource == "chat/sessions" or re.fullmatch(r"chat/sessions/[^/]+", resource):
         return "operate"
+    if re.fullmatch(r"workshop/projects/[a-f0-9]{32}/renders/[a-f0-9]{32}/cancel", resource):
+        return "operate" if method == "POST" else None
     if re.fullmatch(r"chat/subagents/[^/]+/[^/]+", resource):
         return "operate" if read else None
     if resource in {'chat/business-objects', 'chat/session-reference', 'chat/commands', 'chat/attachment-search'}:
@@ -281,6 +283,8 @@ class AccessControlMiddleware:
             return True
 
         live_access = still_authorized
+        if method == "POST" and re.fullmatch(r"workshop/projects/[a-f0-9]{32}/renders/[a-f0-9]{32}/cancel", resource):
+            scope["state"]["workshop_cancel_authorized"] = still_authorized
         from easel.request_identity import actor_context
         with actor_context(user):
             await self.app(scope, receive, protected_send)

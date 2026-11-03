@@ -6,10 +6,22 @@ import { ACTIVE_PROJECT_ID, projectFetch } from './projectScope';
 
 export const WORKSHOP_JOB_LABELS = {
   queued: '排队中', running: '运行中', awaiting_collection: '待收集成片', awaiting_review: '待审核',
-  changes_requested: '待修改', failed: '失败', completed: '已完成', cancelled: '已取消', unconfirmed: '状态未确认',
+  changes_requested: '待修改', stopping: '正在取消', failed: '失败', completed: '已完成', cancelled: '已取消', unconfirmed: '状态未确认',
 } as const;
 
 type WorkshopJobStatus = keyof typeof WORKSHOP_JOB_LABELS;
+
+const cancellationStatuses = ['pending', 'unconfirmed', 'cancelled', 'already_finished'] as const;
+const renderStatuses = ['queued', 'running', 'succeeded', 'failed', 'cancelled'] as const;
+
+export interface WorkshopJobCancellation {
+  status: typeof cancellationStatuses[number];
+  taskId: string;
+  renderId: string;
+  jobStatus: typeof renderStatuses[number];
+  requestedAt: number | null;
+  updatedAt: number | null;
+}
 
 export interface WorkshopJob {
   id: string;
@@ -26,6 +38,8 @@ export interface WorkshopJob {
   artifactSha256: string | null;
   contentRevision: number | null;
   engineRevision: number | null;
+  canCancel: boolean;
+  cancellation?: WorkshopJobCancellation;
 }
 
 export interface WorkshopJobRoster {
@@ -39,14 +53,25 @@ const boundedText = (value: unknown, max: number): value is string => typeof val
   && value.length <= max && !/\p{Cc}/u.test(value);
 const integer = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 
+function normalizeCancellation(value: unknown, renderId: string, taskId: string | null): WorkshopJobCancellation | undefined {
+  if (!value || typeof value !== 'object' || !taskId) return undefined;
+  const row = value as Record<string, unknown>;
+  const status = cancellationStatuses.find(candidate => candidate === row.status);
+  const jobStatus = renderStatuses.find(candidate => candidate === row.jobStatus);
+  if (!status || !jobStatus || row.renderId !== renderId || row.taskId !== taskId
+      || status === 'cancelled' && jobStatus !== 'cancelled'
+      || status === 'already_finished' && (jobStatus === 'queued' || jobStatus === 'running')) return undefined;
+  return { status, jobStatus, renderId, taskId, requestedAt: integer(row.requestedAt), updatedAt: integer(row.updatedAt) };
+}
+
 function normalizeJob(value: unknown): WorkshopJob | null {
   if (!value || typeof value !== 'object') return null;
   const row = value as Record<string, unknown>;
   if (typeof row.id !== 'string' || !ID.test(row.id) || typeof row.workshopProjectId !== 'string' || !ID.test(row.workshopProjectId)
       || !boundedText(row.title, 1024) || typeof row.status !== 'string' || !Object.hasOwn(WORKSHOP_JOB_LABELS, row.status)) return null;
+  const taskId = boundedText(row.taskId, 256) ? row.taskId : null;
   return {
-    id: row.id, workshopProjectId: row.workshopProjectId, title: row.title,
-    taskId: boundedText(row.taskId, 256) ? row.taskId : null,
+    id: row.id, workshopProjectId: row.workshopProjectId, title: row.title, taskId,
     status: row.status as WorkshopJobStatus,
     progress: typeof row.progress === 'number' && Number.isFinite(row.progress) && row.progress >= 0 && row.progress <= 1
       ? row.progress : null,
@@ -55,6 +80,8 @@ function normalizeJob(value: unknown): WorkshopJob | null {
     artifactId: typeof row.artifactId === 'string' && ID.test(row.artifactId) ? row.artifactId : null,
     artifactSha256: typeof row.artifactSha256 === 'string' && HASH.test(row.artifactSha256) ? row.artifactSha256 : null,
     contentRevision: integer(row.contentRevision), engineRevision: integer(row.engineRevision),
+    canCancel: row.canCancel === true && taskId !== null,
+    cancellation: normalizeCancellation(row.cancellation, row.id, taskId),
   };
 }
 
@@ -114,4 +141,27 @@ export async function observeWorkshopJob(job: WorkshopJob, signal: AbortSignal):
   const response = await projectFetch(`/api/workshop/projects/${job.workshopProjectId}/renders/${job.id}`,
     { signal, cache: 'no-store' });
   if (!response.ok) throw new WorkshopJobsReadError(false);
+}
+
+
+export class WorkshopCancelRequestError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super('Workshop cancellation was not confirmed');
+    this.status = status;
+  }
+}
+
+export async function requestWorkshopJobCancellation(job: WorkshopJob, signal: AbortSignal): Promise<WorkshopJobCancellation> {
+  if (!job.canCancel || !ID.test(job.workshopProjectId) || !ID.test(job.id) || !job.taskId) {
+    throw new WorkshopCancelRequestError(409);
+  }
+  const response = await projectFetch(`/api/workshop/projects/${job.workshopProjectId}/renders/${job.id}/cancel`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+    body: JSON.stringify({ taskId: job.taskId }),
+  });
+  if (!response.ok) throw new WorkshopCancelRequestError(response.status);
+  const result = normalizeCancellation(await response.json(), job.id, job.taskId);
+  if (!result) throw new WorkshopCancelRequestError(502);
+  return result;
 }

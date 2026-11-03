@@ -18,7 +18,7 @@ import DraftSnapshotPreview from './DraftSnapshotPreview';
 import { useIpPermissions } from './ProjectSpace';
 import { IconIdea, IconOutputs, IconVideo } from './icons';
 import '../styles/businessObjects.css';
-import { normalizeWorkshopSubmissionAttempts, workshopProgress, workshopSubmissionErrors } from '../lib/workshop';
+import { normalizeWorkshopSubmissionAttempts, workshopCancellationLabel, workshopProgress, workshopSubmissionErrors } from '../lib/workshop';
 
 interface Props {
   record: BusinessObject;
@@ -97,6 +97,9 @@ function WorkshopDetails({ record }: { record: BusinessObject }) {
       <code>{valueText(item.sha256)}</code></li>)}</ul> : <p>没有保存成片记录。</p>}</section>
     <section><h4>渲染记录 · {renders.length}</h4>{renders.length ? <ul>{renders.map((item, index) => {
       const progress = workshopProgress({ progress: item.progress, progress_known: item.progress_known });
+      const cancellation = workshopCancellationLabel({
+        id: item.id, task_id: item.task_id, status: item.status, cancellation: item.cancellation,
+      });
       const adopted = typeof item.artifact_id === 'string' && typeof item.collected_revision === 'number'
         && deliverables.find(file => file.id === item.artifact_id && file.render_id === item.id
           && file.revision === item.collected_revision && file.engine_revision === item.engine_revision
@@ -111,6 +114,7 @@ function WorkshopDetails({ record }: { record: BusinessObject }) {
       {item.submission_state !== 'unconfirmed' && typeof item.task_id === 'string' && item.task_id
         && <span>渲染任务：<code>{item.task_id}</code></span>}
       {typeof item.submission_state === 'string' && <span>提交记录：{item.submission_state}</span>}
+      {cancellation && <span>{cancellation}</span>}
       {adopted ? <span data-adopted-render-artifact>已收取成片：<code>{valueText(adopted.id)}</code> · {revision(adopted.revision)}</span>
         : typeof item.artifact_id === 'string' && <span>回执关联成片：<code>{item.artifact_id}</code></span>}
       <WorkshopRenderAttempts value={item.submission_attempts} />

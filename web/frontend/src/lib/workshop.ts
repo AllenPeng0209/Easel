@@ -101,6 +101,30 @@ export function workshopProgress(receipt?: { progress?: unknown; progress_known?
     ? progress : null;
 }
 
+export interface WorkshopCancellation {
+  status: 'pending' | 'unconfirmed' | 'cancelled' | 'already_finished';
+  taskId: string;
+  renderId: string;
+  jobStatus: WorkshopRenderReceipt['status'];
+  requestedAt: number | null;
+  updatedAt: number | null;
+}
+
+export function workshopCancellationLabel(receipt: {
+  id?: unknown; task_id?: unknown; status?: unknown; cancellation?: unknown;
+}): string | null {
+  if (!receipt.cancellation || typeof receipt.cancellation !== 'object') return null;
+  const detail = receipt.cancellation as Partial<WorkshopCancellation>;
+  if (typeof detail.taskId !== 'string' || !detail.taskId || detail.taskId !== receipt.task_id
+      || typeof detail.renderId !== 'string' || !detail.renderId || detail.renderId !== receipt.id
+      || detail.jobStatus !== receipt.status) return null;
+  if (detail.status === 'pending') return '正在停止';
+  if (detail.status === 'unconfirmed') return '停止结果待核对';
+  if (detail.status === 'cancelled' && receipt.status === 'cancelled') return '已确认停止';
+  if (detail.status === 'already_finished' && (receipt.status === 'succeeded' || receipt.status === 'failed')) return '任务已先结束';
+  return null;
+}
+
 export interface WorkshopRenderReceipt {
   id: string;
   operation_id: string;
@@ -112,6 +136,7 @@ export interface WorkshopRenderReceipt {
   submission_attempts?: WorkshopSubmissionAttempt[];
   progress: number;
   progress_known?: boolean;
+  cancellation?: WorkshopCancellation;
   completed_at?: string;
   message?: string;
   created_at: string;

@@ -24,9 +24,9 @@ def seed(root, title='Private project'):
               'operation_id': 'private-operation-id', 'message': 'private diagnostic',
               'canvas_id': project['beeftv_canvas_id']}
     project['renders'] = [
-        {**common, 'id': '1' * 32, 'task_id': 'task-adopted', 'status': 'succeeded',
+        {**common, 'id': '1' * 32, 'task_id': 'a' * 32, 'status': 'succeeded',
          'artifact_id': artifact['id'], 'collected_revision': 2, 'completed_at': '2026-11-03T00:00:10+00:00'},
-        {**common, 'id': '2' * 32, 'task_id': 'task-live', 'status': 'running', 'progress': .4, 'progress_known': True},
+        {**common, 'id': '2' * 32, 'task_id': 'b' * 32, 'status': 'running', 'progress': .4, 'progress_known': True},
         {**common, 'id': '3' * 32, 'task_id': 'task-unconfirmed', 'status': 'failed', 'progress': 0,
          'submission_state': 'unconfirmed'},
         {**common, 'id': '4' * 32, 'task_id': 'task-rendered', 'status': 'succeeded', 'progress': 1},

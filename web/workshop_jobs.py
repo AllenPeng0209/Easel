@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from easel.video_workshop import WorkshopError, WorkshopStore
+from easel.video_workshop import WorkshopError, WorkshopStore, public_render_cancellation, supports_render_cancellation
 
 _IDENTIFIER = re.compile(r"[a-f0-9]{32}")
 _TASK_IDENTIFIER = re.compile(r"[A-Za-z0-9:_-]{1,160}")
@@ -70,7 +70,7 @@ def _job_status(project, receipt, artifact, confirmed):
     return "awaiting_review"
 
 
-def workshop_jobs(store: WorkshopStore) -> list[dict]:
+def workshop_jobs(store: WorkshopStore, *, can_operate: bool = False, cancel_supported: bool = False) -> list[dict]:
     jobs = []
     for project in store.list():
         workshop_project_id = project["id"]
@@ -96,6 +96,12 @@ def workshop_jobs(store: WorkshopStore) -> list[dict]:
             progress = receipt.get("progress")
             progress_known = (confirmed and receipt.get("progress_known") is True and type(progress) in (int, float)
                               and 0 <= progress <= 1)
+            cancellation = public_render_cancellation(receipt) if confirmed else None
+            cancel_reason = ("unconfirmed" if not confirmed or ("cancellation" in receipt and cancellation is None)
+                             else "terminal" if status not in ("queued", "running")
+                             else "read_only" if not can_operate
+                             else "unsupported" if not cancel_supported or not supports_render_cancellation(project, receipt)
+                             else None)
             jobs.append({
                 "id": render_id, "workshopProjectId": workshop_project_id, "title": title or "未命名工坊",
                 "taskId": task_id if confirmed else None, "status": _job_status(project, receipt, artifact, confirmed),
@@ -105,5 +111,7 @@ def workshop_jobs(store: WorkshopStore) -> list[dict]:
                               and finished_at >= created_at else None),
                 "artifactId": artifact["id"] if artifact else None, "artifactSha256": artifact["sha256"] if artifact else None,
                 "contentRevision": _integer(receipt.get("content_revision")), "engineRevision": _integer(receipt.get("engine_revision")),
+                "canCancel": cancel_reason is None, "cancelReason": cancel_reason,
+                **({"cancellation": cancellation} if cancellation is not None else {}),
             })
     return sorted(jobs, key=lambda job: (-(job["updatedAt"] or 0), job["workshopProjectId"], job["id"]))

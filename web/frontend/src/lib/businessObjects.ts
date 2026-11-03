@@ -89,6 +89,8 @@ function details(kind: BusinessObjectKind, value: unknown): Record<string, unkno
     const entries = value.project[key];
     if (Array.isArray(entries)) project[key] = entries.filter(isRecord).map(entry => ({ ...fields(entry, allowed),
       ...(key === 'reviews' && isRecord(entry.actor) ? { actor: fields(entry.actor, ['id', 'name', 'display_name']) } : {}),
+      ...(key === 'renders' && isRecord(entry.cancellation) ? { cancellation: fields(entry.cancellation,
+        ['status', 'taskId', 'renderId', 'jobStatus', 'requestedAt', 'updatedAt']) } : {}),
       ...(key === 'renders' && Array.isArray(entry.submission_attempts)
         ? { submission_attempts: normalizeWorkshopSubmissionAttempts(entry.submission_attempts) } : {}) }));
   }

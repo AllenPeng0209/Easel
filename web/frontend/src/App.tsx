@@ -1643,7 +1643,7 @@ export default function App() {
       </main>
 
       {workshopJobsOpen && <Suspense fallback={null}>
-        <WorkshopJobsDrawer open onClose={closeWorkshopJobs} onOpenWorkshop={openWorkshopJob} />
+        <WorkshopJobsDrawer open canOperate={canOperate} onClose={closeWorkshopJobs} onOpenWorkshop={openWorkshopJob} />
       </Suspense>}
 
       {/* 首次使用：推荐配置画像 */}

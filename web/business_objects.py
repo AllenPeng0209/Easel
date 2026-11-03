@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from easel.chat_artifacts import ArtifactError
 from easel.projects import project_id
 from easel.request_identity import current_user
-from easel.video_workshop import WorkshopError, WorkshopStore, public_render_submission_attempts
+from easel.video_workshop import WorkshopError, WorkshopStore, public_render_cancellation, public_render_submission_attempts
 
 
 class IdeaProvenance(BaseModel):
@@ -194,6 +194,9 @@ class BusinessObjectService:
                     attempts = public_render_submission_attempts(source)
                     if attempts is not None:
                         projected['submission_attempts'] = attempts
+                    cancellation = public_render_cancellation(source)
+                    if cancellation is not None:
+                        projected['cancellation'] = cancellation
         details = {'project': safe, 'engineVerification': 'not_checked', 'publishEligibility': 'unverified',
                    'deliveryVerification': 'not_available', 'publicationEvidence': 'stored_records_only'}
         try:

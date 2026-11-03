@@ -164,3 +164,97 @@ def test_render_status_does_not_invent_missing_progress(monkeypatch, reported, e
     client = module.BeefTVClient('http://127.0.0.1:8842/api', 'client', 'private', transport=httpx.MockTransport(remote))
     monkeypatch.setattr(module, 'configured_client', lambda: client)
     assert module.render_status({}, {'task_id': 'a' * 32}) == {'status': 'running', **expected}
+
+
+def _cancel_fixture(monkeypatch, respond):
+    module = bridge()
+    task_id = 'b' * 32
+    canvas = {'beeftv_canvas_id': 'canvas-test'}
+    receipt = {'task_id': task_id, 'canvas_id': 'canvas-test', 'operation_id': 'easel-operation'}
+    task = {'id': task_id, 'type': 'timeline_render', 'projectId': 'canvas-test',
+            'clientOperationId': 'assistant-render:easel-operation'}
+    calls = []
+
+    def remote(request):
+        calls.append((request.method, request.url.path))
+        data = respond(request, task)
+        return httpx.Response(200, json={'code': 0, 'data': data})
+
+    client = module.BeefTVClient('http://127.0.0.1:8842/api', 'client', 'private',
+                                 transport=httpx.MockTransport(remote))
+    monkeypatch.setattr(module, 'configured_client', lambda: client)
+    return module, task_id, canvas, receipt, calls
+
+
+def test_render_cancel_checks_bound_task_then_sends_only_one_targeted_post(monkeypatch):
+    def respond(request, task):
+        return {**task, 'status': 'running' if request.method == 'GET' else 'cancelled',
+                'progress': 41, 'error': 'private provider error'}
+
+    module, task_id, canvas, receipt, calls = _cancel_fixture(monkeypatch, respond)
+    assert module.render_cancel(canvas, receipt) == {'task_id': task_id, 'status': 'cancelled', 'progress': .41}
+    assert calls == [('GET', f'/api/tasks/{task_id}'), ('POST', f'/api/tasks/{task_id}/cancel')]
+
+
+@pytest.mark.parametrize('state', ['succeeded', 'cancelled', 'failed'])
+def test_render_cancel_never_posts_for_a_known_terminal_task(monkeypatch, state):
+    module, task_id, canvas, receipt, calls = _cancel_fixture(
+        monkeypatch, lambda _request, task: {**task, 'status': state})
+    assert module.render_cancel(canvas, receipt) == {'task_id': task_id, 'status': state}
+    assert calls == [('GET', f'/api/tasks/{task_id}')]
+
+
+@pytest.mark.parametrize('field,foreign', [('id', 'c' * 32), ('type', 'video'), ('projectId', 'other-canvas'),
+                                            ('clientOperationId', 'assistant-render:other-operation')])
+def test_render_cancel_refuses_foreign_preflight_identity(monkeypatch, field, foreign):
+    module, task_id, canvas, receipt, calls = _cancel_fixture(
+        monkeypatch, lambda _request, task: {**task, field: foreign, 'status': 'running'})
+    with pytest.raises(module.BeefTVError):
+        module.render_cancel(canvas, receipt)
+    assert calls == [('GET', f'/api/tasks/{task_id}')]
+
+
+def test_render_cancel_returns_real_completed_race_instead_of_cancelled(monkeypatch):
+    module, task_id, canvas, receipt, calls = _cancel_fixture(monkeypatch,
+        lambda request, task: {**task, 'status': 'running' if request.method == 'GET' else 'succeeded'})
+    assert module.render_cancel(canvas, receipt) == {'task_id': task_id, 'status': 'succeeded'}
+    assert calls == [('GET', f'/api/tasks/{task_id}'), ('POST', f'/api/tasks/{task_id}/cancel')]
+
+
+def test_ambiguous_cancel_does_not_repeat_post_and_can_query_the_original_task(monkeypatch):
+    def respond(request, task):
+        if request.method == 'POST':
+            raise httpx.ReadTimeout('upstream response unavailable')
+        return {**task, 'status': 'running'}
+
+    module, task_id, canvas, receipt, calls = _cancel_fixture(monkeypatch, respond)
+    with pytest.raises(module.BeefTVError):
+        module.render_cancel(canvas, receipt)
+    assert module.render_cancel_status(canvas, receipt) == {'task_id': task_id, 'status': 'running'}
+    assert calls == [('GET', f'/api/tasks/{task_id}'), ('POST', f'/api/tasks/{task_id}/cancel'),
+                     ('GET', f'/api/tasks/{task_id}')]
+
+
+def test_render_cancel_does_not_accept_a_different_task_in_post_receipt(monkeypatch):
+    def respond(request, task):
+        if request.method == 'GET':
+            return {**task, 'status': 'queued'}
+        return {**task, 'id': 'd' * 32, 'status': 'cancelled'}
+
+    module, task_id, canvas, receipt, calls = _cancel_fixture(monkeypatch, respond)
+    with pytest.raises(module.BeefTVError, match='无法确认原渲染任务身份'):
+        module.render_cancel(canvas, receipt)
+    assert calls == [('GET', f'/api/tasks/{task_id}'), ('POST', f'/api/tasks/{task_id}/cancel')]
+
+
+def test_render_cancel_reauthorizes_after_preflight_before_provider_write(monkeypatch):
+    module, task_id, canvas, receipt, calls = _cancel_fixture(
+        monkeypatch, lambda _request, task: {**task, 'status': 'running'})
+
+    def revoked():
+        assert calls == [('GET', f'/api/tasks/{task_id}')]
+        raise PermissionError('revoked')
+
+    with pytest.raises(PermissionError, match='revoked'):
+        module.render_cancel(canvas, receipt, before_post=revoked)
+    assert calls == [('GET', f'/api/tasks/{task_id}')]

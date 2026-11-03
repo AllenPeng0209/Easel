@@ -761,11 +761,15 @@ from easel.beeftv_bridge import (runtime_status as _beeftv_status,
                                canvas_state as _beeftv_canvas_state,
                                render_start as _beeftv_render_start,
                                render_status as _beeftv_render_status,
+                               render_cancel as _beeftv_render_cancel,
+                               render_cancel_status as _beeftv_render_cancel_status,
                                render_collect as _beeftv_render_collect)
 
 app.include_router(_workshop_router(lambda: _outputs_dir(), _beeftv_status, _beeftv_canvas,
                                    _beeftv_canvas_state, render_start=_beeftv_render_start,
                                    render_status=_beeftv_render_status,
+                                   render_cancel=_beeftv_render_cancel,
+                                   render_cancel_status=_beeftv_render_cancel_status,
                                    render_collect=lambda project, receipt: _beeftv_render_collect(
                                        project, receipt, _outputs_dir())))
 

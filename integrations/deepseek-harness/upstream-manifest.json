@@ -7895,12 +7895,34 @@
     "reuse_kind": "adapted",
     "changes": "接入 Easel 持久名单与准确任务状态查询，限制每轮观察并保留未知进度。",
     "verification_status": "B19_workshop_roster_progress_and_scope_verified"
+  },
+  {
+    "feature_id": "B21",
+    "upstream_path": "packages/client/ui-jobs/src/client/JobListAction.tsx",
+    "upstream_sha256": "ae1b9aac19c1d50cfc915c909edfefd07ff54371a26af43ecc2e323d253914d7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/WorkshopJobsDrawer.tsx",
+    "destination_sha256": "3089503756b825a1e76d85e18b7717ccee883eea7c4adeb3422a83808728ed35",
+    "reuse_kind": "adapted",
+    "changes": "适配单任务取消确认和结果展示，绑定 IP、平台、工坊和任务 ID。",
+    "verification_status": "B21_single_bound_task_cancel_and_chat_receipt_verified"
+  },
+  {
+    "feature_id": "B21",
+    "upstream_path": "packages/client/ui-jobs/src/client/JobListAction.tsx",
+    "upstream_sha256": "ae1b9aac19c1d50cfc915c909edfefd07ff54371a26af43ecc2e323d253914d7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/lib/workshopJobs.ts",
+    "destination_sha256": "f3a7d936a94706e790da68c5e1adebf1fdc1cdd583384c0dc26004144e01444b",
+    "reuse_kind": "adapted",
+    "changes": "适配取消动作的明确请求和精确状态查询，接 Easel 权限及持久回执。",
+    "verification_status": "B21_single_bound_task_cancel_and_chat_receipt_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 91,
+    "source_migration_files": 93,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 76,
+    "adapted_upstream_files": 78,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

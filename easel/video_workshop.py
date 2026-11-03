@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 
 
@@ -22,12 +23,18 @@ class WorkshopError(Exception):
         self.status = status
 
 
+class WorkshopCancelAuthorizationError(WorkshopError):
+    """A Host authorization check failed before the provider mutation."""
+
+
 _PROJECT_ID = re.compile(r"[a-f0-9]{32}")
 _CANVAS_ID = re.compile(r"[A-Za-z0-9:_-]{1,160}")
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 _LOCKS: dict[str, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
 _RENDER_TERMINAL = {"succeeded", "failed", "cancelled"}
+_RENDER_ACTIVE = {"queued", "running"}
+_CANCEL_STATES = ("pending", "unconfirmed", "cancelled", "already_finished")
 _RENDER_SUBMISSION_ERRORS = {
     "submission_unconfirmed", "submission_timeout", "invalid_receipt",
     "source_revision_mismatch", "submission_interrupted",
@@ -57,6 +64,42 @@ def public_render_submission_attempts(receipt: dict) -> list[dict] | None:
             observation["error_code"] = code
         safe.append(observation)
     return safe
+
+
+def public_render_cancellation(receipt: dict) -> dict | None:
+    value = receipt.get("cancellation")
+    if not isinstance(value, dict):
+        return None
+    state, job_state = value.get("status"), value.get("jobStatus")
+    task, render = value.get("taskId"), value.get("renderId")
+    requested, updated = value.get("requestedAt"), value.get("updatedAt")
+    if (state not in _CANCEL_STATES or job_state not in ("queued", "running", "succeeded", "failed", "cancelled")
+            or job_state != receipt.get("status")
+            or state in ("pending", "unconfirmed") and (job_state not in _RENDER_ACTIVE or requested is None)
+            or state == "cancelled" and job_state != "cancelled"
+            or state == "already_finished" and job_state not in ("succeeded", "failed")
+            or not isinstance(task, str) or not _CANVAS_ID.fullmatch(task) or task != receipt.get("task_id")
+            or not isinstance(render, str) or not _PROJECT_ID.fullmatch(render) or render != receipt.get("id")
+            or type(updated) is not int or not 0 <= updated < 2**53
+            or requested is not None and (type(requested) is not int or not 0 <= requested <= updated)):
+        return None
+    return {"status": state, "taskId": task, "renderId": render, "jobStatus": job_state,
+            "requestedAt": requested, "updatedAt": updated}
+
+
+def supports_render_cancellation(project: dict, receipt: dict) -> bool:
+    task_id, operation_id = receipt.get("task_id"), receipt.get("operation_id")
+    canvas_id = project.get("beeftv_canvas_id")
+    return (isinstance(task_id, str) and bool(_PROJECT_ID.fullmatch(task_id))
+            and isinstance(operation_id, str) and len(operation_id) <= 128 and bool(_CANVAS_ID.fullmatch(operation_id))
+            and isinstance(canvas_id, str) and bool(_CANVAS_ID.fullmatch(canvas_id))
+            and receipt.get("canvas_id") == canvas_id)
+
+
+def _cancel_receipt(render: dict, state: str, requested: int | None, *, updated: int | None = None) -> dict:
+    return {"status": state, "taskId": render["task_id"], "renderId": render["id"],
+            "jobStatus": render["status"], "requestedAt": requested,
+            "updatedAt": updated if updated is not None else max(requested or 0, time.time_ns() // 1_000_000)}
 
 
 
@@ -596,11 +639,85 @@ class WorkshopStore:
             self._write(project)
             return saved
 
-    def render_status(self, identifier: str, render_id: str, render_status=None) -> dict:
+    def _bound_cancel_target(self, project: dict, render_id: str, task_id: str) -> dict:
+        receipt = self._render_entry(project, render_id)
+        self._assert_canvas_binding(project, receipt)
+        if (not isinstance(task_id, str) or not _CANVAS_ID.fullmatch(task_id) or receipt.get("task_id") != task_id
+                or receipt.get("status") not in (*_RENDER_ACTIVE, *_RENDER_TERMINAL)
+                or not self._submission_confirmed(receipt)):
+            raise WorkshopError("任务编号或渲染回执无法确认，请刷新任务名单", 409)
+        if "cancellation" in receipt and public_render_cancellation(receipt) is None:
+            raise WorkshopError("原取消回执无法确认，不会重复发送取消", 409)
+        return receipt
+
+    def cancel_render(self, identifier: str, render_id: str, task_id: str, *, render_cancel=None,
+                      render_cancel_status=None, authorize=None) -> dict:
+        self._path(identifier)
+        if not isinstance(render_id, str) or not _PROJECT_ID.fullmatch(render_id):
+            raise WorkshopError("渲染回执编号无效")
+        lock_path = self.directory.parent / "renders" / f"{render_id}-cancel.lock"
+        with _file_lock(lock_path, blocking=False) as acquired:
+            with self._locked():
+                project = self._read(identifier)
+                render = self._bound_cancel_target(project, render_id, task_id)
+                prior = public_render_cancellation(render)
+                if prior and prior["status"] in ("cancelled", "already_finished"):
+                    return prior
+                if not acquired:
+                    return prior or _cancel_receipt(render, "pending", None)
+                if authorize is not None:
+                    authorize()
+                if render["status"] in _RENDER_TERMINAL:
+                    state = "cancelled" if render["status"] == "cancelled" else "already_finished"
+                    value = render["cancellation"] = _cancel_receipt(render, state, prior["requestedAt"] if prior else None)
+                    self._write(project)
+                    return value
+                if not supports_render_cancellation(project, render):
+                    raise WorkshopError("当前回执缺少可取消的任务身份", 409)
+                operation = render_cancel_status if prior else render_cancel
+                if operation is None:
+                    raise WorkshopError("当前渲染取消能力尚未接通", 503)
+                if prior is None:
+                    now = time.time_ns() // 1_000_000
+                    prior = render["cancellation"] = _cancel_receipt(render, "pending", now, updated=now)
+                    self._write(project)
+                bound_render = dict(render)
+            # Exactly one provider POST per durable intent, including after a
+            # restart. Later calls use the provider's exact task read only.
+            observed = None
+            revoked = False
+            try:
+                result = operation(project, bound_render)
+                if isinstance(result, dict) and result.get("task_id") == task_id:
+                    observed = self._render_result(result)
+            except WorkshopCancelAuthorizationError:
+                revoked = True
+            except Exception:
+                pass  # Provider failures are ambiguous; do not replay the POST.
+            with self._locked():
+                project = self._read(identifier)
+                render = self._bound_cancel_target(project, render_id, task_id)
+                if observed is not None and render["status"] not in _RENDER_TERMINAL:
+                    self._observe_confirmed_render(render, observed)
+                state = ("cancelled" if render["status"] == "cancelled" else "already_finished"
+                         if render["status"] in _RENDER_TERMINAL else "unconfirmed")
+                value = render["cancellation"] = _cancel_receipt(render, state, prior["requestedAt"])
+                self._write(project)
+            if revoked:
+                raise WorkshopError("当前权限已变更，未发送取消操作", 403)
+            return value
+
+    def render_status(self, identifier: str, render_id: str, render_status=None, render_cancel_status=None) -> dict:
         with self._locked():
             project = self._read(identifier)
             receipt = dict(self._render_entry(project, render_id))
             self._assert_canvas_binding(project, receipt)
+        if "cancellation" in receipt and receipt["status"] not in _RENDER_TERMINAL:
+            if render_cancel_status is None:
+                return receipt
+            self.cancel_render(identifier, render_id, receipt["task_id"], render_cancel_status=render_cancel_status)
+            with self._locked():
+                return self._render_entry(self._read(identifier), render_id)
         if not self._submission_confirmed(receipt):
             # A lost process can leave a queued intent with no response. Report
             # it as retryable only when no live submitter owns the lock. This
@@ -631,7 +748,7 @@ class WorkshopStore:
         with self._locked():
             project = self._read(identifier)
             saved = self._render_entry(project, render_id)
-            if saved["status"] not in _RENDER_TERMINAL:
+            if saved["status"] not in _RENDER_TERMINAL and "cancellation" not in saved:
                 self._observe_confirmed_render(saved, update)
                 self._write(project)
             return saved

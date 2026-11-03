@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { canRetryChatWorkshopObservation, chatWorkshopRenderState, observeChatWorkshopRender, workshopProgress, type WorkshopRenderReceipt } from '../lib/workshop';
+import { canRetryChatWorkshopObservation, chatWorkshopRenderState, observeChatWorkshopRender, workshopCancellationLabel, workshopProgress, type WorkshopRenderReceipt } from '../lib/workshop';
 
 // Visibility-owned observation adapted from DeepSeek Harness JobListAction.tsx
 // (ui-jobs @ ce7073d, MIT). Easel polls only the exact persisted render receipt.
@@ -59,9 +59,11 @@ export default function WorkshopRenderObservation({ projectId, initial }: {
   }, [seed, projectId]);
   const state = chatWorkshopRenderState(latest);
   const progress = workshopProgress(latest);
+  const cancellation = workshopCancellationLabel(latest);
   return <span className="agent-tool__workshop-render" role="status"
     data-render-observation={latest.id} data-render-state={state.code}>
      · {state.label}{state.active && <> · {progress === null ? '进度未知' : `${Math.round(progress * 100)}%`}</>}
+    {cancellation && <span data-render-cancellation={latest.cancellation?.status}> · {cancellation}</span>}
     {unavailable && <> · 暂时无法更新，显示上次记录</>}
   </span>;
 }
