@@ -20,7 +20,8 @@
   min-width: 0;
 }
 .deliverable-actions { display: flex; align-items: center; gap: 10px; }
-.deliverable-size { color: var(--text-tertiary); font-size: 10px; white-space: nowrap; }
+.deliverable-meta { display: flex; flex-wrap: wrap; gap: 2px 6px; color: var(--text-tertiary); font-size: 10px; }
+.deliverable-size { white-space: nowrap; }
 .deliverable-download { padding: 5px 7px; border-radius: 6px; font-size: 11px; color: var(--accent-start); text-decoration: none; }
 .deliverable-download:hover { background: var(--accent-soft); text-decoration: none; }
 .deliverable-download:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }
@@ -29,7 +30,6 @@
 .deliverable-preview__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: var(--text-secondary); font-size: 12px; }
 .deliverable-preview__heading button { padding: 4px 7px; border: 0; border-radius: 5px; background: transparent; color: var(--text-tertiary); cursor: pointer; font: inherit; }
 .deliverable-preview__heading button:hover { background: var(--surface-hover); }
-@media (max-width: 480px) { .deliverable-size { display: none; } }
 .deliverable-version { margin: 7px 2px 10px; min-width: 0; }
 .deliverable-version__heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; color: var(--text-secondary); font-size: 11px; }
 .deliverable-review-state { padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-tertiary); font-size: 10px; }

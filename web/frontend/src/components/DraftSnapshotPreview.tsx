@@ -1,8 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { draftSnapshotHref, type ChatDeliverable } from '../lib/deliverables';
+import { draftSnapshotHref, MAX_DELIVERABLE_TEXT_PREVIEW_BYTES, type ChatDeliverable } from '../lib/deliverables';
 import { HostReadStore } from '../vendor/deepseek-harness/deliverables/HostReadStore';
 
-const MAX_BYTES = 1024 * 1024;
 type DraftRead = { state: 'loading' | 'missing' | 'failed' | 'too-large' } | { state: 'ready'; text: string };
 
 async function decode(response: Response): Promise<DraftRead> {
@@ -17,7 +16,7 @@ async function decode(response: Response): Promise<DraftRead> {
       const chunk = await reader.read();
       if (chunk.done) return { state: 'ready', text: text + decoder.decode() };
       size += chunk.value.byteLength;
-      if (size > MAX_BYTES) {
+      if (size > MAX_DELIVERABLE_TEXT_PREVIEW_BYTES) {
         await reader.cancel().catch(() => {});
         return { state: 'too-large' };
       }

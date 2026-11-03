@@ -161,10 +161,14 @@ test('drafts reuse the real fixed-snapshot deliverable card and preview route, n
     assert.match(window.document.body.textContent,/本卡交付 V2/);
     assert.equal(window.document.querySelector('.deliverable-download').getAttribute('href'),`/api/chat/artifacts/${'a'.repeat(32)}/content?download=1`);
     await React.act(async()=>window.document.querySelector('[aria-label="查看文件：reports/draft.md"]').click());
-    assert.deepEqual(opened,[[`/api/chat/artifacts/${'a'.repeat(32)}/content`,'_blank','noopener,noreferrer']]);
+    assert.deepEqual(opened,[]);
+    assert.equal(window.document.querySelector('.deliverable-preview pre').textContent,'固定稿件正文');
     assert.ok(![...window.document.querySelectorAll('a')].some(link=>(link.getAttribute('href')||'').includes('/api/media/')));
     assert.ok(![...window.document.querySelectorAll('a')].some(link=>(link.getAttribute('href')||'').startsWith('#/business/')));
-  });
+  },{globals:{fetch:async url=>{
+    assert.equal(url,`/api/chat/artifacts/${'a'.repeat(32)}/content`);
+    return new Response('固定稿件正文');
+  }}});
 });
 
 test('查看稿件内容 reads the authenticated fixed Markdown snapshot inside the same card',async()=>{

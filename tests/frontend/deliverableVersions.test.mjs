@@ -478,3 +478,28 @@ test('closing history aborts the comparison request and never opens a current fi
     assert.ok(requests.every(url => url.startsWith('/api/chat/artifacts/')));
   });
 });
+
+test('generic deliverables retain type, size and exact downloads independently of preview support', () => {
+  const { parseHTML } = require('linkedom');
+  const formats = [
+    ['a', 'captions.srt', 'application/x-subrip', 'SRT', false],
+    ['b', 'data.json', 'application/json', 'JSON', true],
+    ['c', 'report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'DOCX', false],
+    ['d', 'result.custom', 'application/octet-stream', 'CUSTOM', false],
+  ];
+  const files = formats.map(([id, name, mime]) => snapshot({ artifactId: id.repeat(32), name, mime,
+    path: `reports/${name}`, size: 1536, url: `/api/chat/artifacts/${id.repeat(32)}/content` }));
+  const document = parseHTML(cards(files)).document;
+  for (const [id, name, _mime, type, preview] of formats) {
+    const card = document.querySelector(`[data-artifact-id="${id.repeat(32)}"] [data-presented-file]`);
+    assert.ok(card);
+    assert.match(card.textContent, new RegExp(name.replace('.', '\\.')));
+    assert.equal(card.querySelector('[data-deliverable-type]').textContent, type);
+    assert.match(card.querySelector('.deliverable-size').textContent, /1\.5\s*(KB|KiB)/i);
+    assert.equal(!!card.querySelector('button[aria-label^="查看文件"]'), preview);
+    assert.equal(!!card.querySelector('[data-deliverable-download-only]'), !preview);
+    const download = card.querySelector('.deliverable-download');
+    assert.equal(download.getAttribute('href'), `/api/chat/artifacts/${id.repeat(32)}/content?download=1`);
+    assert.equal(download.getAttribute('download'), name);
+  }
+});

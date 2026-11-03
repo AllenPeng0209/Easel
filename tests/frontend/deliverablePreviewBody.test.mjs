@@ -65,8 +65,8 @@ test('the message card opens its exact delivery and passes the actual preview bu
     await React.act(async () => render(onOpen));
     const preview = window.document.querySelector('[aria-label="查看文件：deliveries/report.png"]');
     const unavailable = window.document.querySelector('[aria-label="查看文件：deliveries/missing.png"]');
-    assert.equal(unavailable.disabled, true);
-    await React.act(async () => { unavailable.click(); preview.click(); });
+    assert.equal(unavailable, null);
+    await React.act(async () => preview.click());
     assert.equal(openings.length, 1);
     assert.deepEqual(openings[0].slice(0, 2), [artifactId, 2]);
     assert.ok(openings[0][2] === preview, 'Restore focus to the button that opened this preview');

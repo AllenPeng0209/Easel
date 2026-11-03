@@ -6717,14 +6717,14 @@
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "upstream_sha256": "c7d3ac8539b549f49f5c356c56fd9e673486ad98e44c44dd42ab8f69bfbb2f6b",
       "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/Deliverables.module.css",
-      "destination_sha256": "bfc14bf3d7e1d524b343a781b160be01f1ef0366a977a52bfef826d48c680f20",
-      "reuse_kind": "verbatim",
-      "verbatim_scope": "entire original body; added provenance header only",
-      "body_matches_upstream_after_provenance_header": true,
-      "necessary_changes": "上游原始CSS正文逐字保留；新增MIT/固定提交来源头。",
+      "destination_sha256": "6b981eb43b35d0f5da65410d7fe5db66134b9932583b260238e4306211d22105",
+      "reuse_kind": "adapted",
+      "verbatim_scope": "原始文件样式加预览可用性条件",
+      "body_matches_upstream_after_provenance_header": false,
+      "necessary_changes": "保留上游原始文件卡样式；按 D02 预览能力约束提示。",
       "license_path": "integrations/deepseek-harness/LICENSE",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser",
-      "verification_scope": "Source provenance only. D01 still fails HTML relative-resource runtime acceptance; no feature commit yet."
+      "verification_status": "verified_D02_download_and_preview_are_independent",
+      "verification_scope": "D02 fixed-version binary, SRT, JSON and DOCX downloads; JSON preview checked in isolated browser."
     },
     {
       "feature_id": "D01",
@@ -6762,14 +6762,14 @@
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "upstream_sha256": "7e9440610e6d62d6eb0f564850cb2eaceef9ec75b4c40a92424d2c97f6136815",
       "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/PresentedFileCard.tsx",
-      "destination_sha256": "27bc1bbe2bf4c24cfa2d5ad7fed6168d1bdcec44d7d1f2a8119d5a5d1c57c799",
+      "destination_sha256": "7c264ca025f1c150c6daffad74a2a4a84952310d8420bf9a4a2ae6c85e25f7dd",
       "reuse_kind": "adapted",
       "verbatim_scope": "selected implementation or types with local Host/dependency adaptation",
       "body_matches_upstream_after_provenance_header": false,
       "necessary_changes": "保留上游文件卡主体，替换Cordis/Host依赖为本地类型、locale、路径和图标桥接；文件访问仍受Easel认证路由控制。",
       "license_path": "integrations/deepseek-harness/LICENSE",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser",
-      "verification_scope": "Source provenance only. D01 still fails HTML relative-resource runtime acceptance; no feature commit yet."
+      "verification_status": "verified_D02_download_and_preview_are_independent",
+      "verification_scope": "D02 fixed-version binary, SRT, JSON and DOCX downloads; JSON preview checked in isolated browser."
     },
     {
       "feature_id": "D01",
@@ -7107,38 +7107,38 @@
     {
       "feature_id": "D01",
       "destination_path": "web/frontend/src/lib/deliverables.ts",
-      "destination_sha256": "d7c5b167463fa61b1e809f4e6b774271f4a832a420601c4533d94a92cdabe367",
+      "destination_sha256": "377966e29fa058e825c16d241b048dc09a4aac74eeeb90781e0601f43bb19033",
       "source_reference": "packages/client/ui-deliverables/src/client/turn-deliverables.ts",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
       "changes": "结构化artifact事件到Easel授权文件卡的映射、路径校验与旧画廊去重。",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser",
-      "prior_feature_sha256": "f1292eba4b8d2253dd02031b69b6a88d41529b23c4ebeeecf31523ba204b3de6",
-      "current_feature": "D08"
+      "verification_status": "verified_D02_download_and_preview_are_independent",
+      "prior_feature_sha256": "d7c5b167463fa61b1e809f4e6b774271f4a832a420601c4533d94a92cdabe367",
+      "current_feature": "D02"
     },
     {
       "feature_id": "D01",
       "destination_path": "web/frontend/src/components/DeliverableCards.tsx",
-      "destination_sha256": "749a5a06c6ac60a50620e152e457bb9e9dec5ec5664d2ebbabf6d3fc562e2404",
+      "destination_sha256": "1716a68b469daea984be90c46da6628e7eaa650466a4f42f933cb27fc48003ca",
       "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.tsx",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
       "changes": "组合已迁移PresentedFileCard/PresentRow与Easel受控资源访问/预览；组件Host适配，不登记成原样复制。",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser",
-      "prior_feature_sha256": "24771378fa1d2b78a12a7d72e9b6e5807571915f31095dd26ca2bba8e712bbc6",
-      "current_feature": "D08"
+      "verification_status": "verified_D02_download_and_preview_are_independent",
+      "prior_feature_sha256": "749a5a06c6ac60a50620e152e457bb9e9dec5ec5664d2ebbabf6d3fc562e2404",
+      "current_feature": "D02"
     },
     {
       "feature_id": "D01",
       "destination_path": "web/frontend/src/styles/deliverables.css",
-      "destination_sha256": "f4729b3e0da21e774865bf62b5444d4bbb2b0a80c1ee927278173865a0457d33",
+      "destination_sha256": "234f179df557f274c554235a0c3701325145359267f373724f92d0c9689ef1e8",
       "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.module.css",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
       "changes": "Easel主题token和容器样式适配。",
-      "verification_status": "verified_D01_code_snapshot_and_real_browser",
-      "prior_feature_sha256": "54e19c5bd0e2bd23d551fc2674beeae6ce2d441d095706fe2ab100ab660a0bab",
-      "current_feature": "D08"
+      "verification_status": "verified_D02_download_and_preview_are_independent",
+      "prior_feature_sha256": "f4729b3e0da21e774865bf62b5444d4bbb2b0a80c1ee927278173865a0457d33",
+      "current_feature": "D02"
     },
     {
       "feature_id": "D01",
@@ -8097,8 +8097,8 @@
   ],
   "migration_summary": {
     "source_migration_files": 109,
-    "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 94,
+    "verbatim_original_bodies": 14,
+    "adapted_upstream_files": 95,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

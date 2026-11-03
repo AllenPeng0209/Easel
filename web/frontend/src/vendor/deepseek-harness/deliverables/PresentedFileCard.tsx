@@ -26,7 +26,7 @@ function cardDescription(description: string | undefined, fallback: string): str
  * @param props - durable file metadata, Sidebar preview, Host capabilities, gesture status, and localized copy.
  * @returns the file card and its anchored action menu.
  */
-export function PresentedFileCard({ file, cwd, phase, host, onPreview, contextMenuProps, actions, disabled = false, t }: {
+export function PresentedFileCard({ file, cwd, phase, host, onPreview, contextMenuProps, actions, metadata, previewAvailable = true, disabled = false, t }: {
   file: PresentedPath
   cwd: string | undefined
   phase: PresentedOpenPhase | undefined
@@ -34,31 +34,35 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, contextMe
   onPreview: () => void
   contextMenuProps: ContextMenuTriggerProps
   actions: ReactNode
+  /** Easel separates the presentation metadata from the download affordance. */
+  metadata?: ReactNode
+  previewAvailable?: boolean
   /** Easel's persisted declaration can outlive the current file. */
   disabled?: boolean
 } & PropsLocale) {
   const reveal = host?.fileManager ?? 'directory'
   const name = basename(file.path)
-  const metadata = fileExtension(name).toUpperCase() || t('presented.file')
+  const typeHint = fileExtension(name).toUpperCase() || t('presented.file')
   const status = phase === undefined
-    ? cardDescription(file.description, metadata)
+    ? cardDescription(file.description, metadata ? '' : typeHint)
     : t(reveal === 'directory' && phase === 'revealing' ? 'presented.directoryOpening'
       : reveal === 'directory' && phase === 'revealError' ? 'presented.directoryError' : `presented.${phase}`)
-  return <div className={css.file} data-presented-file>
-    <button type="button" disabled={disabled} className={css.cardPreview} title={resolveWorkspacePath(cwd, file.path)}
+  return <div className={css.file} data-presented-file data-preview-available={previewAvailable && !disabled || undefined}>
+    {previewAvailable && <button type="button" disabled={disabled} className={css.cardPreview} title={resolveWorkspacePath(cwd, file.path)}
       aria-label={t('presented.previewCard', { name: file.path })} onClick={onPreview}
-      {...contextMenuProps} />
+      {...contextMenuProps} />}
     <span className={css.fileIcon}><FileTypeIcon path={file.path} size={20} /></span>
     <div className={css.fileBody}>
       <div className={css.details}>
-        <span className={css.fileName}>{name}</span>
+        <span className={css.fileName} title={name}>{name}</span>
         <span className={css.description} data-presented-description role={phase === undefined ? undefined : 'status'}
           data-error={phase === 'error' || phase === 'revealError' || phase === 'nativeUnavailable' ? true : undefined}>
           <span className={css.secondaryText}>
             {status}
           </span>
-          <span className={css.previewHint}>{t('presented.preview')}</span>
+          {previewAvailable && <span className={css.previewHint}>{t('presented.preview')}</span>}
         </span>
+        {metadata}
       </div>
       <div className={css.actions}>{actions}</div>
     </div>

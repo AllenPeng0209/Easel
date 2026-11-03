@@ -2,6 +2,7 @@ import type { AgentArtifact, AgentEvent } from './agentEvents';
 import type { Artifact } from './artifacts';
 import { artifactFromUrl } from './artifacts';
 import { ACTIVE_PROJECT_ID, projectUrl } from './projectScope';
+import { fileExtension } from '../vendor/deepseek-harness/deliverables/file-metadata';
 import { basename, isPresentedFile } from '../vendor/deepseek-harness/deliverables/presented';
 import { presentedForClosing } from '../vendor/deepseek-harness/deliverables/turn-deliverables';
 
@@ -93,6 +94,21 @@ export function deliverablePreview(file: ChatDeliverable): Artifact | null {
   return { ...classified, name: file.name, url: href, storageMode: 'legacy-current',
     ...(classified.kind === 'html' ? { baseUrl: projectUrl(`/api/media/${directory ? `${directory}/` : ''}`) } : {}),
   };
+}
+
+export const MAX_DELIVERABLE_TEXT_PREVIEW_BYTES = 1024 * 1024;
+
+export function deliverableTypeLabel(file: ChatDeliverable): string {
+  const extension = fileExtension(file.name);
+  return /^[a-z0-9][a-z0-9_-]{0,23}$/i.test(extension) ? extension.toUpperCase() : '文件';
+}
+
+/** Download remains available independently of a supported, authorized viewer. */
+export function deliverablePreviewCapability(file: ChatDeliverable): 'media' | 'archive' | 'text' | null {
+  if (file.status !== 'available' || !safeDeliverableHref(file)) return null;
+  if (file.storageMode === 'snapshot' && /\.zip$/i.test(file.path)) return 'archive';
+  if (deliverablePreview(file)) return 'media';
+  return file.size <= MAX_DELIVERABLE_TEXT_PREVIEW_BYTES && draftSnapshotHref(file) ? 'text' : null;
 }
 
 /** Only legacy ZIPs may still resolve their archive members from current source paths. */

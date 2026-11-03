@@ -5,7 +5,7 @@
  */
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { MouseEvent } from 'react';
-import { deliverablePreview, deliverableVersionsUrl, normalizeDeliverable, normalizeDeliverableVersions,
+import { deliverablePreviewCapability, deliverableTypeLabel, deliverableVersionsUrl, normalizeDeliverable, normalizeDeliverableVersions,
   safeDeliverableHref, type ChatDeliverable } from '../lib/deliverables';
 import { PresentedFileCard } from '../vendor/deepseek-harness/deliverables/PresentedFileCard';
 import { PresentRow } from '../vendor/deepseek-harness/deliverables/PresentRow';
@@ -108,14 +108,9 @@ export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
   const collapsible = files.length > 4;
   const presented = collapsible && !expanded ? files.slice(0, 4) : files;
   const openFile = (file: ChatDeliverable, trigger?: HTMLElement) => {
-    const href = safeDeliverableHref(file);
-    if (!href || file.status !== 'available') return;
-    if (onOpenDeliverable && trigger) {
-      onOpenDeliverable(file, trigger);
-      return;
-    }
-    if (deliverablePreview(file) || file.storageMode === 'snapshot' && /\.zip$/i.test(file.path)) setSelectedId(file.artifactId);
-    else window.open(href, '_blank', 'noopener,noreferrer');
+    if (!deliverablePreviewCapability(file)) return;
+    if (onOpenDeliverable && trigger) onOpenDeliverable(file, trigger);
+    else setSelectedId(file.artifactId);
   };
   return <section className="deliverable-section" aria-label="交付文件">
     <PresentRow phase="started" t={t} block={{ kind: 'result',
@@ -127,12 +122,17 @@ export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
         {presented.map((file, index) => {
           const href = safeDeliverableHref(file);
           const available = file.status === 'available' && !!href;
+          const previewAvailable = !!deliverablePreviewCapability(file);
           return <div key={`${file.turnId}:${file.path}`} data-artifact-id={file.artifactId}>
             <PresentedFileCard file={{ path: file.path, description: file.description, seq: file.createdAt, index }}
               cwd={undefined} phase={available ? undefined : 'error'} host={null} t={t} disabled={!available}
-              onPreview={(event?: MouseEvent<HTMLButtonElement>) => openFile(file, event?.currentTarget)} contextMenuProps={{}}
+              previewAvailable={previewAvailable} onPreview={(event?: MouseEvent<HTMLButtonElement>) => openFile(file, event?.currentTarget)}
+              contextMenuProps={{}} metadata={<span className="deliverable-meta">
+                <span data-deliverable-type>{deliverableTypeLabel(file)}</span>
+                <span className="deliverable-size" title={`${file.size.toLocaleString('zh-CN')} 字节`}>{fileSizeText(file.size)}</span>
+                {available && !previewAvailable && <span data-deliverable-download-only>不支持预览</span>}
+              </span>}
               actions={<div className="deliverable-actions">
-                <span className="deliverable-size">{fileSizeText(file.size)}</span>
                 {available ? <a className="deliverable-download" href={`${href}?download=1`}
                   download={file.name} aria-label={`下载：${file.name}`}>下载</a>
                   : <span className="deliverable-unavailable" role="status">暂不可用</span>}

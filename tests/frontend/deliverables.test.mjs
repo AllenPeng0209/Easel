@@ -127,7 +127,7 @@ test('unavailable declarations stay readable but cannot open or download a file'
   const html = renderToStaticMarkup(React.createElement(DeliverableCards, { artifacts: [artifact({ status: 'unavailable' })] }));
   assert.match(html, /运营方案\.docx/);
   assert.match(html, /暂不可用/);
-  assert.match(html, /<button[^>]*disabled=""/);
+  assert.doesNotMatch(html, /aria-label="查看文件：/);
   assert.doesNotMatch(html, /download="/);
 });
 
@@ -186,4 +186,29 @@ test('a declared ZIP keeps the real legacy archive-index request and member gall
       else delete globalThis[key];
     }
   }
+});
+
+test('delivery format and preview support are independent of authenticated download', () => {
+  const { deliverablePreviewCapability, deliverableTypeLabel, normalizeDeliverable, safeDeliverableHref } = readers();
+  const cases = [
+    ['archive.custom', 'application/octet-stream', 'CUSTOM', null],
+    ['captions.srt', 'application/x-subrip', 'SRT', null],
+    ['payload.json', 'application/json', 'JSON', 'text'],
+    ['report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'DOCX', null],
+    ['cover.png', 'image/png', 'PNG', 'media'],
+    ['bundle.zip', 'application/zip', 'ZIP', 'archive'],
+    ['no-extension', 'application/octet-stream', '文件', null],
+  ];
+  for (const [name, mime, label, capability] of cases) {
+    const file = normalizeDeliverable(artifact({ path: 'reports/' + name, mime,
+      storageMode: 'snapshot', revision: 1, sha256: 'b'.repeat(64) }));
+    assert.equal(file.name, name);
+    assert.equal(deliverableTypeLabel(file), label);
+    assert.equal(deliverablePreviewCapability(file), capability);
+    assert.equal(safeDeliverableHref(file), file.url);
+  }
+  const text = artifact({ path: 'reports/large.json', mime: 'application/json',
+    storageMode: 'snapshot', revision: 1, sha256: 'b'.repeat(64), size: 1024 * 1024 + 1 });
+  assert.equal(deliverablePreviewCapability(text), null);
+  assert.equal(deliverablePreviewCapability({ ...text, size: 12, status: 'unavailable' }), null);
 });
