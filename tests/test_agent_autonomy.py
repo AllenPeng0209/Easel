@@ -242,22 +242,25 @@ def test_native_structured_events_survive_live_sse_replay_and_snapshot(tmp_path,
     monkeypatch.setattr(web, '_harness_settings', lambda: {'runtime': 'codex', 'models': {}, 'sandbox': 'read-only'})
     event = {'id': 'tool-result', 'kind': 'tool', 'callId': 'cmd', 'name': 'bash', 'status': 'completed',
              'input': {'command': 'pwd'}, 'output': 'workspace', 'exitCode': 0}
+    plan = {'id': 'plan-update', 'kind': 'plan', 'turnId': 'native-turn', 'source': 'codex',
+            'steps': [{'step': '检查素材', 'status': 'inProgress'}]}
     class Adapter:
         async def run(self, request, emit, ask, bind):
             bind('native-fixture')
+            emit('agent_event', plan)
             emit('agent_event', event)
             emit('token', 'done')
     monkeypatch.setattr(web.harnesses, 'adapter', lambda _: Adapter())
     async def scenario():
         response = await web.api_chat_stream(web.ChatRequest(message='run', sessionId='structured-session', turnId='structured-turn'))
         received = [item async for item in response.body_iterator]
-        assert [json.loads(item['data']) for item in received if item['event'] == 'agent_event'] == [event]
+        assert [json.loads(item['data']) for item in received if item['event'] == 'agent_event'] == [plan, event]
         replay = await web.api_chat_job_stream('structured-turn')
         replayed = [item async for item in replay.body_iterator]
-        assert [json.loads(item['data']) for item in replayed if item['event'] == 'agent_event'] == [event]
+        assert [json.loads(item['data']) for item in replayed if item['event'] == 'agent_event'] == [plan, event]
         snapshot = await web.api_chat_last('structured-session', 'structured-turn')
         assert snapshot['text'] == 'done'
-        assert snapshot['events'] == [event]
+        assert snapshot['events'] == [plan, event]
     asyncio.run(scenario())
 
 

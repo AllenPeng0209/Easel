@@ -108,3 +108,39 @@ test('a settled turn with no tool terminal event shows an unconfirmed result wit
   assert.doesNotMatch(html, /data-shimmer="true"/);
   assert.doesNotMatch(html, /已完成|已取消|执行中/);
 });
+
+test('recorded plan snapshots retain a single checklist and auditable revision history after replay', () => {
+  const MessageBubble = componentModule('components/MessageBubble.tsx', {
+    globals: { DOMParser: class { parseFromString(html) { return { body: { innerHTML: html }, querySelectorAll: () => [] }; } } },
+    externals: { dompurify: { sanitize: value => value } },
+  }).default;
+  const step = (step, status, assignee) => ({ step, status, assignee });
+  const events = [
+    { id: 'p1', kind: 'plan', steps: [step('选题', 'inProgress'), step('脚本', 'pending'), step('审核', 'pending')] },
+    { id: 'p2', kind: 'plan', steps: [step('脚本', 'inProgress', '创作 Agent'), step('选题', 'completed'), step('成片', 'pending')] },
+    { id: 'p3', kind: 'plan', truncated: true, steps: [step('成片', 'completed')] },
+    { id: 'prose', kind: 'plan', callId: 'prose', status: 'completed', text: '任务都已完成' },
+  ];
+  const html = renderToStaticMarkup(React.createElement(MessageBubble, {
+    message: { role: 'assistant', content: '成片已完成', events },
+  }));
+  assert.equal((html.match(/aria-label="任务清单"/g) || []).length, 1);
+  assert.match(html, /1\/3 已完成/);
+  assert.doesNotMatch(html, /创作 Agent/);
+  assert.match(html, /执行者未报告/);
+  assert.match(html, /变更记录/);
+  for (const label of ['顺序调整', '状态变更', '新增', '移除', '清单更新不完整']) assert.ok(html.includes(label), label);
+});
+
+test('plan history never borrows baselines across turns or treats an empty snapshot as missing', () => {
+  const Panel = componentModule('components/AgentEventPanel.tsx').default;
+  const html = renderToStaticMarkup(React.createElement(Panel, { events: [
+    { id: 'a', kind: 'plan', turnId: 'a', steps: [{ step: '旧任务', status: 'completed' }] },
+    { id: 'b', kind: 'plan', turnId: 'b', steps: [{ step: '新任务', status: 'pending' }] },
+    { id: 'c', kind: 'plan', turnId: 'b', steps: [] },
+  ] }));
+  assert.equal((html.match(/aria-label="任务清单"/g) || []).length, 2);
+  assert.match(html, /清单已清空/);
+  assert.match(html, /移除[^<]*新任务/);
+  assert.doesNotMatch(html, /移除[^<]*旧任务/);
+});

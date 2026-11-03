@@ -15,7 +15,8 @@
       "composer",
       "message",
       "navigation",
-      "deliverables"
+      "deliverables",
+      "todo"
     ],
     "managed_clone_is_gitignored": true
   },
@@ -7245,12 +7246,34 @@
       "reuse_kind": "easel_integration_adapter",
       "changes": "认证业务批准/原有交互中心持久intent/D08版本媒体/现有公众号renderer必要适配；非上游Python原样迁移。",
       "verification_status": "B30_exact_approval_foundation_verified"
-    }
+    },
+  {
+    "feature_id": "B24",
+    "upstream_path": "packages/client/ui-tool/src/client/tool/toolviews/plan-summary.ts",
+    "upstream_sha256": "6496022aaacc6f1d2eacc4b0f9f7f55006c20b8b445835d752aac07f628b0cfa",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/todo/plan-summary.ts",
+    "destination_sha256": "6496022aaacc6f1d2eacc4b0f9f7f55006c20b8b445835d752aac07f628b0cfa",
+    "reuse_kind": "verbatim",
+    "changes": "原样复制上游清单计数。",
+    "verification_status": "B24_engine_snapshot_slice_verified"
+  },
+  {
+    "feature_id": "B24",
+    "upstream_path": "packages/client/ui-tool/src/client/tool/models/todo-diff-model.ts",
+    "upstream_sha256": "b64cfd7af2c6e81aa6c9ad9991e258fbfdf0ab636a10566b2131775eb106a342",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/todo/plan-diff.ts",
+    "destination_sha256": "7410efd4492db25c83f028acad4dc99df0ec6a9448ae6f95ccaa88bb3b07bf62",
+    "reuse_kind": "adapted",
+    "changes": "保留新增、移除、相对顺序和状态比对，接入逐轮 Easel 计划快照。",
+    "verification_status": "B24_engine_snapshot_slice_verified"
+  }
   ],
   "migration_summary": {
-    "source_migration_files": 36,
-    "verbatim_original_bodies": 13,
-    "adapted_upstream_files": 23,
+    "source_migration_files": 38,
+    "verbatim_original_bodies": 14,
+    "adapted_upstream_files": 24,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

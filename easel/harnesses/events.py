@@ -138,9 +138,17 @@ class EventProjector:
             return "preparing"
         return "completed" if completed else "running"
 
+    @staticmethod
+    def _plan_steps(items, *fields):
+        if not isinstance(items, list):
+            return None
+        return [{field: item[field] for field in fields if field in item}
+                if isinstance(item, dict) else None for item in items[:101]]
+
     def codex(self, method: str, params: dict):
         if method == "turn/plan/updated":
-            self.event("plan", steps=params.get("plan") or [], explanation=params.get("explanation"))
+            self.event("plan", turnId=params.get("turnId"), source="codex",
+                       steps=self._plan_steps(params.get("plan"), "step", "status"), explanation=params.get("explanation"))
             return
         if method == "thread/tokenUsage/updated":
             usage = params.get("tokenUsage") or {}
@@ -228,7 +236,7 @@ class EventProjector:
     def acp(self, update: dict):
         kind = update.get("sessionUpdate")
         if kind == "plan":
-            self.event("plan", steps=update.get("entries") or [])
+            self.event("plan", source="acp", steps=self._plan_steps(update.get("entries"), "content", "status", "priority"))
             return
         if kind not in ("tool_call", "tool_call_update"):
             return

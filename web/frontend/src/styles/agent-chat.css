@@ -41,11 +41,16 @@
 .agent-decision summary > span { color: #6baf91; margin-right: 4px; }
 .agent-decision pre, .agent-event-generic pre { margin-top: 8px !important; }
 .agent-plan { display: grid; gap: 8px; border-left: 2px solid var(--accent-start, #7389df); padding: 6px 14px; }
-.agent-plan > strong { font-size: 12px; font-weight: 600; }
+.agent-plan header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.agent-plan header span, .agent-plan p, .agent-plan small { font-size: 11px; color: var(--text-secondary); }
+.agent-plan p { margin: 0; }
+.agent-plan small { display: block; margin-top: 2px; }
+.agent-plan details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; }
+.agent-plan details ol { padding-top: 8px; }
 .agent-plan ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .agent-plan li { display: flex; gap: 10px; font-size: 12px; color: var(--text-secondary); }
 .agent-plan li > span { color: var(--text-tertiary); min-width: 42px; flex: none; font-size: 11px; }
-.agent-plan li[data-state='completed'] { opacity: .65; }
+.agent-plan li[data-state='in_progress'] > span { color: var(--accent-start, #7389df); }
 .question-card-column { max-width: min(620px, 100%); width: 100%; }
 .question-card__mode { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-tertiary); margin-bottom: 2px; }
 .question-card__default { padding: 9px 11px; font-size: 12px; line-height: 1.6; border-radius: 8px; color: var(--text-secondary); background: var(--accent-soft); }

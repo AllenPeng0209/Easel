@@ -102,13 +102,14 @@ def test_codex_preserves_file_diff_and_mcp_parent_but_filters_foreign_thread(tmp
 
 def test_codex_plan_usage_and_compaction_are_not_misreported_as_tools(tmp_path):
     events = run_wire(tmp_path, "codex", [
-        codex("turn/plan/updated", explanation="先验证输入", plan=[{"step": "检查素材", "status": "in_progress"}]),
+        codex("turn/plan/updated", explanation="先验证输入", plan=[{"step": "检查素材", "status": "inProgress", "assignee": "未验证身份"}]),
         codex("thread/tokenUsage/updated", tokenUsage={"total": {"inputTokens": 20, "outputTokens": 4},
               "last": {"inputTokens": 10, "outputTokens": 4}, "modelContextWindow": 1000}),
         codex("item/completed", item={"id": "compact-1", "type": "contextCompaction"}),
     ])
     assert [event["kind"] for event in events] == ["plan", "usage", "context"]
-    assert events[0]["steps"] == [{"step": "检查素材", "status": "in_progress"}]
+    assert events[0]["steps"] == [{"step": "检查素材", "status": "inProgress"}]
+    assert events[0]["turnId"] == "turn-1" and events[0]["source"] == "codex"
     assert events[1]["usage"]["total"]["inputTokens"] == 20
     assert events[1]["capacity"] == 1000
     assert events[2]["status"] == "completed"
@@ -243,3 +244,13 @@ def test_private_key_continuation_chunks_remain_redacted_until_the_end_marker(tm
     assert "first-private-chunk" not in rendered
     assert "second-private-chunk" not in rendered
     assert "public tail" in events[-1]["output"]
+
+
+def test_codex_plan_distinguishes_missing_snapshot_from_explicit_reset(tmp_path):
+    events = run_wire(tmp_path, "codex", [
+        codex("turn/plan/updated"),
+        codex("item/completed", item={"id": "plan-text", "type": "plan", "text": "全部完成"}),
+        codex("turn/plan/updated", plan=[]),
+    ])
+    assert [event.get("steps") for event in events] == [None, None, []]
+    assert events[1]["text"] == "全部完成"

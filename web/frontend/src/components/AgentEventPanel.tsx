@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
 import { publicationEventKey, businessEventKey } from '../lib/agentEvents';
+import AgentTodoChecklist from './AgentTodoChecklist';
 import BusinessObjectCard from './BusinessObjectCard';
 import { fetchBusinessObject } from '../lib/businessObjectApi';
 import PublicationReceiptCard from './PublicationReceiptCard';
@@ -117,18 +118,9 @@ function OtherEvent({ event }: { event: AgentEvent }) {
     <summary><span aria-hidden="true">✓</span> {decisionTitle}</summary>
     <pre>{detailText(event.answers || event.output || event.input || {})}</pre>
   </details>;
-  if (event.kind === 'plan') {
-    const steps = Array.isArray(event.plan) ? event.plan : Array.isArray(event.steps) ? event.steps : [];
-    return <div className="agent-plan" aria-label="任务计划">
-      <strong>任务计划</strong>
-      {steps.length ? <ol>{steps.map((step, index) => {
-        const item: Record<string, unknown> = step && typeof step === 'object' ? step as Record<string, unknown> : { step };
-        const label = item.step || item.content || item.title || item.description;
-        const status = String(item.status || 'pending');
-        return <li key={index} data-state={status}><span>{statusText[status] || (status === 'pending' ? '待处理' : status)}</span>{String(label || `步骤 ${index + 1}`)}</li>;
-      })}</ol> : <pre>{detailText(event.output || event.input || event.explanation || '')}</pre>}
-    </div>;
-  }
+  if (event.kind === 'plan') return typeof event.text === 'string' && event.text ? <details className="agent-event-generic">
+    <summary>计划说明</summary><pre>{detailText(event.text)}</pre>
+  </details> : null;
   const title = event.kind === 'usage' ? '本轮用量' : event.kind === 'context' ? '上下文已整理'
     : event.kind === 'artifact' ? '交付物信息' : '任务状态';
   return <details className="agent-event-generic"><summary>{title}</summary>
@@ -142,9 +134,20 @@ export default function AgentEventPanel({ events, expandedCallId, settled = fals
 }) {
   const snapshots = toolSnapshots(events);
   if (!snapshots.length) return null;
+  const plans = new Map<string | undefined, AgentEvent[]>();
+  for (const event of snapshots) {
+    if ((event.kind !== 'plan' || typeof event.text === 'string')) continue;
+    const revisions = plans.get(event.turnId) || [];
+    revisions.push(event);
+    plans.set(event.turnId, revisions);
+  }
   return <div className="agent-events" role="region" aria-label="任务执行记录">
-    {snapshots.map(event => event.kind === 'tool'
-      ? <ToolEvent key={`tool:${event.callId || event.id}`} event={event} expanded={event.callId === expandedCallId} settled={settled} />
-      : <OtherEvent key={event.id} event={event} />)}
+    {snapshots.map(event => {
+      if (event.kind === 'tool') return <ToolEvent key={`tool:${event.callId || event.id}`}
+        event={event} expanded={event.callId === expandedCallId} settled={settled} />;
+      if ((event.kind !== 'plan' || typeof event.text === 'string')) return <OtherEvent key={event.id} event={event} />;
+      const revisions = plans.get(event.turnId)!;
+      return revisions[0] === event ? <AgentTodoChecklist key={event.id} events={revisions} /> : null;
+    })}
   </div>;
 }
