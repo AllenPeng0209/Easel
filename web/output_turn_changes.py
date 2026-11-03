@@ -238,14 +238,20 @@ class OutputTurnRecorder:
                     _OBSERVATIONS.pop(self.outputs, None)
 
     def finish(self) -> dict | None:
+        summary, _ = self.finish_with_comparisons()
+        return summary
+
+    def finish_with_comparisons(self) -> tuple[dict | None, dict]:
+        """Return the summary plus private bytes from the same observation cut."""
         before = self.before
         try:
             if before is None:
-                return {"files": [], "total": 0, "coverage": "partial", "warnings": ["shared_workspace", "unreadable"]}
+                return {"files": [], "total": 0, "coverage": "partial", "warnings": ["shared_workspace", "unreadable"]}, {}
             after = _snapshot(self.outputs)
         finally:
             self.close()
         files = []
+        comparisons = {}
         total = 0
         diff_budget = _MAX_REPORT_DIFF_PAIRS
         warnings = before.warnings | after.warnings
@@ -276,10 +282,18 @@ class OutputTurnRecorder:
                 details, pairs = _diff_counts(old, new, diff_budget)
                 diff_budget -= pairs
                 files.append({"path": path, "kind": kind, **details})
+                if details["diffStatus"] == "text":
+                    comparisons[path] = {"before": _comparison_side(old), "after": _comparison_side(new)}
         if total > _MAX_SUMMARY_FILES:
             warnings.add("summary_limit")
         if not files and not warnings:
-            return None
+            return None, {}
         return {"files": files, "total": total,
                 "coverage": "partial" if warnings else "complete",
-                "warnings": ["shared_workspace", *sorted(warnings)]}
+                "warnings": ["shared_workspace", *sorted(warnings)]}, comparisons
+
+
+def _comparison_side(file: _File | None) -> dict | None:
+    if file is None:
+        return None
+    return {"sha256": file.digest.hex(), "size": file.size, "text": file.text}

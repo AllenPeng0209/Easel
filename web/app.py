@@ -83,6 +83,7 @@ from web.chat_session_references import (
 )
 from web.chat_turn_evidence import valid_catalog_turn_id
 from web.output_turn_changes import OutputTurnRecorder
+from web.turn_output_compare import compare_turn_output_snapshots, freeze_turn_output_comparisons, valid_comparison_path
 from web.chat_subagents import ChatSubagentStore
 try:
     from easel.gateway_questions import (
@@ -4185,13 +4186,15 @@ async def _begin_output_turn_changes() -> OutputTurnRecorder | None:
     return recorder
 
 
-async def _finish_output_turn_changes(recorder: OutputTurnRecorder, turn_id: str, outcome: str | None, emit) -> None:
+async def _finish_output_turn_changes(recorder: OutputTurnRecorder, session_id: str, turn_id: str,
+                                      outcome: str | None, emit) -> None:
     try:
         _require_host_tools()
         try:
-            summary = await asyncio.to_thread(recorder.finish)
+            summary, comparisons = await asyncio.to_thread(recorder.finish_with_comparisons)
         except Exception:
             summary = {"files": [], "total": 0, "coverage": "partial", "warnings": ["shared_workspace", "unreadable"]}
+            comparisons = {}
         _require_host_tools()
         if summary is not None:
             safe_files = [file for file in summary["files"] if _scrub_secrets(file["path"]) == file["path"]]
@@ -4201,6 +4204,23 @@ async def _finish_output_turn_changes(recorder: OutputTurnRecorder, turn_id: str
                 summary["coverage"] = "partial"
                 if "unreadable" not in summary["warnings"]:
                     summary["warnings"].append("unreadable")
+            if safe_files:
+                def freeze():
+                    catalog = ChatHistoryStore(_sessions_dir())
+                    claim = catalog.turn_claim(turn_id)
+                    if not claim or claim["sessionId"] != session_id:
+                        return set()
+                    return freeze_turn_output_comparisons(_job_event_file(turn_id).with_suffix(".changes.json"),
+                                                          session_id, turn_id, safe_files, comparisons)
+
+                try:
+                    available = await asyncio.to_thread(freeze)
+                except Exception:
+                    available = set()  # The observed summary remains useful without a comparison.
+                _require_host_tools()
+                for file in safe_files:
+                    if file["path"] in available:
+                        file["compareAvailable"] = True
             emit("agent_event", {"id": f"changes:{turn_id}", "kind": "changes", "source": "outputs_snapshot",
                                  "turnId": turn_id, "status": outcome or "unconfirmed", "changes": summary})
     except (Exception, asyncio.CancelledError):
@@ -4518,7 +4538,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             outcome = _chat_snapshot_outcome(stopped=reason == "stopped", failed=failure is not None or permission_revoked,
                                              completed=clean_end)
             if output_changes is not None:
-                await _finish_output_turn_changes(output_changes, turn_id, outcome.get("outcome"), receive)
+                await _finish_output_turn_changes(output_changes, sk, turn_id, outcome.get("outcome"), receive)
             _save_turn(pk, "done", snapshot, {
                 "turn_id": turn_id, "stop_turn_id": stop_turn_id, "runtime": runtime,
                 "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
@@ -4730,6 +4750,37 @@ async def api_chat_artifact_compare(artifact_id: str, request: Request):
         raise HTTPException(error.status_code, str(error)) from None
     _require_operation()
     return comparison
+
+
+@app.get('/api/chat/turn-changes/{turn_id}/compare')
+async def api_chat_turn_changes_compare(turn_id: str, request: Request):
+    _require_operation()
+    query = request.query_params.multi_items()
+    if (not valid_catalog_turn_id(turn_id) or len(query) != 1 or query[0][0] != "path"
+            or not valid_comparison_path(query[0][1])):
+        raise HTTPException(422, "必须提供有效的回合和比较路径")
+
+    def compare():
+        catalog = ChatHistoryStore(_sessions_dir())
+        claim = catalog.turn_claim(turn_id)
+        if claim is None or catalog.is_deleted(claim["sessionId"]):
+            raise ArtifactError("此回合未保留文件比较", 404)
+        result = compare_turn_output_snapshots(_job_event_file(turn_id).with_suffix(".changes.json"),
+                                               claim["sessionId"], turn_id, query[0][1])
+        if catalog.is_deleted(claim["sessionId"]):
+            raise ArtifactError("此回合未保留文件比较", 404)
+        return result
+
+    try:
+        result = await asyncio.to_thread(compare)
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    _require_operation()
+    if isinstance(result.get("diff"), str):
+        redacted = _scrub_secrets(result["diff"])
+        if redacted != result["diff"]:
+            result.update(diff=redacted, redacted=True)
+    return result
 
 
 def _html_related_response(content: bytes, mime: str) -> Response:
@@ -6065,7 +6116,7 @@ async def api_chat_stream(req: ChatRequest):
                 to_client("error", chat_failure(phase="finalization"))
             if output_changes is not None:
                 if final_rc is not None:
-                    await _finish_output_turn_changes(output_changes, turn_id, outcome.get("outcome"), to_client)
+                    await _finish_output_turn_changes(output_changes, sk, turn_id, outcome.get("outcome"), to_client)
                 else:
                     output_changes.close()
             _save_turn(pk, "done", "".join(full_text), {

@@ -3,8 +3,9 @@
  * ui-deliverables/src/client/ChangedFiles.tsx @ ce7073d (MIT).
  * Easel lists scoped snapshot evidence without implying file-opening authority.
  */
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import type { AgentFileChanges } from '../lib/agentEvents';
+import TurnChangeComparison from './TurnChangeComparison';
 import './TurnFileChanges.css';
 
 const COLLAPSED_ROWS = 4;
@@ -34,12 +35,17 @@ function FileChangeCounts({ row }: { row: AgentFileChanges['files'][number] }) {
   </span>;
 }
 
-export default function TurnFileChanges({ changes, status }: {
+export default function TurnFileChanges({ changes, status, sessionId, turnId }: {
   changes: AgentFileChanges;
   status: keyof typeof turnLabels;
+  sessionId?: string;
+  turnId?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
+  const [selectedPath, setSelectedPath] = useState<string>();
+  const comparisonTrigger = useRef<HTMLButtonElement>(null);
+  const selected = changes.files.find(row => row.path === selectedPath && row.compareAvailable);
   if (!changes.total && changes.coverage === 'complete') return null;
   const visible = expanded ? changes.files : changes.files.slice(0, COLLAPSED_ROWS);
   const limitations = changes.warnings.map(warning => limitLabels.get(warning)).filter(Boolean);
@@ -57,8 +63,17 @@ export default function TurnFileChanges({ changes, status }: {
         <code title={row.path}>{row.path}</code>
         <span className="turn-change-kind">{changeLabels[row.kind]}</span>
         <FileChangeCounts row={row} />
+        {row.compareAvailable && sessionId && turnId && <button type="button" className="btn btn-sm"
+          data-compare-turn-file aria-label={`比较本轮文件：${row.path}`}
+          onClick={event => { comparisonTrigger.current = event.currentTarget; setSelectedPath(row.path); }}>前后对比</button>}
       </li>)}
     </ul>}
+    {selected && sessionId && turnId && <TurnChangeComparison key={`${turnId}:${selected.path}`}
+      sessionId={sessionId} turnId={turnId} path={selected.path} kind={selected.kind}
+      onClose={() => {
+        setSelectedPath(undefined);
+        if (comparisonTrigger.current?.isConnected) comparisonTrigger.current.focus({ preventScroll: true });
+      }} />}
     {changes.files.length > COLLAPSED_ROWS && <button type="button" className="btn btn-sm"
       aria-expanded={expanded} aria-controls={listId} onClick={() => setExpanded(value => !value)}>
       {expanded ? '收起文件清单' : `查看已列出的 ${format.format(changes.files.length)} 个文件`}

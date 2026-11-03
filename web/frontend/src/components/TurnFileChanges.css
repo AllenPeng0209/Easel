@@ -12,3 +12,8 @@
 .turn-change-counts [data-change-added] { color: var(--green); }
 .turn-change-counts [data-change-deleted] { color: var(--red); }
 .turn-file-changes > button { margin: 5px 10px 8px; }
+
+.turn-change-comparison { min-width: 0; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.turn-change-comparison header { display: flex; justify-content: space-between; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.turn-change-comparison dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 8px; font-size: 11px; }
+.turn-change-comparison dd { margin: 0; overflow-wrap: anywhere; }

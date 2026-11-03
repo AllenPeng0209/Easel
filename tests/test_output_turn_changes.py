@@ -148,7 +148,7 @@ def test_turn_summary_survives_live_replay_and_cold_snapshot(sandbox, monkeypatc
     assert event['source'] == 'outputs_snapshot' and event['status'] == 'completed'
     assert event['turnId'] == 'changes-turn'
     assert event['changes']['files'] == [{'path': 'script.txt', 'kind': 'modified', 'diffStatus': 'text',
-                                          'added': 1, 'deleted': 1}]
+                                          'added': 1, 'deleted': 1, 'compareAvailable': True}]
     file.write_text('later edit\n')
     assert _change_events(sandbox.get('/api/chat/jobs/changes-turn/stream').text) == [event]
     assert sandbox.get('/api/chat/last/changes-chat').json()['events'] == [event]
@@ -232,6 +232,6 @@ def test_only_embedded_openclaw_cli_observes_local_scope(artifact_http_environme
         assert len(events) == 1, response.text
         [event] = events
         assert event['changes']['files'] == [{'path': 'local.txt', 'kind': 'added', 'diffStatus': 'text',
-                                              'added': 1, 'deleted': 0}]
+                                              'added': 1, 'deleted': 0, 'compareAvailable': True}]
     else:
         assert events == []

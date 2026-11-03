@@ -16,3 +16,6 @@
 .version { display: grid; gap: 3px; padding: 5px; border: 1px solid var(--border); border-radius: 5px; min-width: 0; }
 .version code { display: block; overflow-wrap: anywhere; color: var(--text); }
 @media (max-width: 460px) { .versions { grid-template-columns: 1fr; } }
+.media { display: block; width: 100%; max-height: 260px; object-fit: contain; border-radius: 4px; background: var(--surface-2); }
+.generation { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin: 3px 0; font-size: 11px; }
+.generation dd { margin: 0; overflow-wrap: anywhere; color: var(--text); }

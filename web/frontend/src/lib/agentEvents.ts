@@ -46,6 +46,7 @@ export interface AgentFileChanges {
     diffStatus: typeof changeDiffStates[number];
     added?: number;
     deleted?: number;
+    compareAvailable?: true;
   }[];
   coverage: 'complete' | 'partial';
   warnings: (typeof changeWarnings[number])[];
@@ -86,18 +87,19 @@ export function normalizeAgentFileChanges(value: unknown): AgentFileChanges | nu
   const rows: AgentFileChanges['files'] = [];
   for (const file of files) {
     if (!file || typeof file !== 'object') return null;
-    const { path, kind, diffStatus, added, deleted } = file;
+    const { path, kind, diffStatus, added, deleted, compareAvailable } = file;
     if (!validChangePath(path) || paths.has(path) || !enumValue(changeKinds, kind)
         || !enumValue(changeDiffStates, diffStatus)) return null;
     paths.add(path);
     if (diffStatus === 'text' && (!nonnegativeCount(added) || !nonnegativeCount(deleted))) return null;
-    rows.push({ path, kind, diffStatus, ...(diffStatus === 'text' ? { added, deleted } : {}) });
+    rows.push({ path, kind, diffStatus, ...(diffStatus === 'text' ? { added, deleted,
+      ...(compareAvailable === true ? { compareAvailable: true as const } : {}) } : {}) });
   }
   return { files: rows, coverage, warnings: [...new Set(warnings)], total };
 }
 
 export function latestAgentFileChanges(events: readonly unknown[]): {
-  status: AgentFileChangeOutcome; changes: AgentFileChanges;
+  status: AgentFileChangeOutcome; changes: AgentFileChanges; turnId?: string;
 } | null {
   for (let index = events.length - 1; index >= 0; index--) {
     const candidate = events[index];
@@ -105,7 +107,7 @@ export function latestAgentFileChanges(events: readonly unknown[]): {
     const event = normalizeAgentEvent(candidate);
     if (event?.kind === 'changes' && event.changes && enumValue(changeOutcomes, event.status)) {
       return event.changes.files.length || event.changes.coverage === 'partial'
-        ? { status: event.status, changes: event.changes } : null;
+        ? { status: event.status, changes: event.changes, ...(event.turnId ? { turnId: event.turnId } : {}) } : null;
     }
   }
   return null;

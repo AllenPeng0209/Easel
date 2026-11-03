@@ -32,3 +32,11 @@ test('complete empty observations are omitted and incomplete observations retain
   assert.deepEqual(plain(latestAgentFileChanges([{ ...event, status: 'stopped', changes: partial }])),
     { status: 'stopped', changes: partial });
 });
+
+test('only committed text comparison evidence supplies a turn-bound action', () => {
+  const exact = { ...event, turnId: 'turn-a', changes: { ...report, files: [{ ...file, compareAvailable: true }] } };
+  assert.equal(latestAgentFileChanges([exact]).turnId, 'turn-a');
+  assert.equal(latestAgentFileChanges([exact]).changes.files[0].compareAvailable, true);
+  const binary = { path: 'cover.png', kind: 'added', diffStatus: 'binary', compareAvailable: true };
+  assert.equal(normalizeAgentEvent({ ...event, changes: { ...report, files: [binary] } }).changes.files[0].compareAvailable, undefined);
+});

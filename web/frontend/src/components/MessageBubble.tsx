@@ -250,7 +250,8 @@ export default function MessageBubble({ message, sessionId, isStreaming, inherit
           {assistantContent && <AnswerQuoteSelection blocks={rendered.blocks} highlightCode={!isStreaming} settled={!isStreaming}
             onQuoteAnswer={isStreaming ? undefined : onQuoteAnswer} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
-          {fileChanges && <TurnFileChanges changes={fileChanges.changes} status={fileChanges.status} />}
+          {fileChanges && <TurnFileChanges changes={fileChanges.changes} status={fileChanges.status} sessionId={sessionId}
+            turnId={fileChanges.turnId === message.clientTurnId ? fileChanges.turnId : undefined} />}
           <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />
           {!isStreaming && (legacyArtifacts.length > 0 || legacyArchives.length > 0) && (
             <ArtifactGallery artifacts={legacyArtifacts} archives={legacyArchives} />
