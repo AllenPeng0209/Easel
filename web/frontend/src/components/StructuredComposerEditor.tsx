@@ -9,13 +9,14 @@ import {
 } from './fileReferenceTrigger';
 import { attachmentReferenceLabel, sessionReferenceLabel, type ChatDraftSessionReference, type ChatReference } from '../lib/chatReferences';
 import {
-  $projectReferenceDraft, $restoreReferenceDraft, applyCommandChip, CommandChipNode, insertReferenceChip, ReferenceChipNode,
+  $projectReferenceDraft, $restoreReferenceDraft, applyCommandChip, CommandChipNode, insertAnswerQuote, insertReferenceChip, QuoteNode, ReferenceChipNode,
   registerReferenceEditing, detachReferenceChips, sameReferenceDraft,
 } from '../vendor/deepseek-harness/composer/reference-editor';
 import './StructuredComposerEditor.css';
 
 export interface StructuredEditorHandle {
   focus: () => void;
+  insertAnswerQuote: (text: string) => boolean;
   rememberSelection: () => void;
   openCommandMenu: () => void;
   insertSessionReference: (reference: Pick<ChatDraftSessionReference, 'sessionId' | 'label' | 'snapshotHash'>) => void;
@@ -50,7 +51,7 @@ export default function StructuredComposerEditor({ ref, value, references, sessi
   const composing = useRef(false);
   const compositionEndedAt = useRef(0);
   const [editor] = useState(() => {
-    const instance = createEditor({ namespace: 'easel-composer', nodes: [ReferenceChipNode, CommandChipNode],
+    const instance = createEditor({ namespace: 'easel-composer', nodes: [ReferenceChipNode, CommandChipNode, QuoteNode],
       onError(error) { throw error; } });
     instance.update(() => $restoreReferenceDraft({ text: value, references, sessionReferences, command }), { discrete: true });
     return instance;
@@ -92,6 +93,14 @@ export default function StructuredComposerEditor({ ref, value, references, sessi
 
   useImperativeHandle(ref, () => ({
     focus: () => editor.focus(),
+    insertAnswerQuote(text) {
+      if (current.current.disabled || composing.current) return false;
+      currentMenu.current.keyDown({ key: 'Escape', preventDefault() {} });
+      currentFileMenu.current.close();
+      const inserted = insertAnswerQuote(editor, text);
+      if (inserted) editor.focus();
+      return inserted;
+    },
     openCommandMenu() {
       if (current.current.disabled) return;
       currentFileMenu.current.close();

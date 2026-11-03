@@ -45,7 +45,8 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
           ? validate(options) : ({ json: async () => ({ max_mb: 50 }) }) };
       if (name.endsWith('/api')) return { uploadFiles: async () => [], adoptOversize: async () => [], mediaUrl: path => `/api/media/${path}` };
       if (name === './StructuredComposerEditor') return { __esModule: true, default: 'structured-editor' };
-      if (name.includes('MessageBubble') || name.includes('QuestionCards') || name.includes('BrushEntry')) return { default: () => null };
+      if (name === './MessageBubble') return { __esModule: true, default: 'message-bubble' };
+      if (name.includes('QuestionCards') || name.includes('BrushEntry')) return { default: () => null };
       if (name === './AgentSubagentLineage') return { SubagentTranscript: () => null };
       if (name.endsWith('icons')) return new Proxy({}, { get: (_target, key) => String(key) });
       if (name.startsWith('.')) {
@@ -433,4 +434,25 @@ test('adopting a scoped receipt makes its preview and exact file reference avail
   await control(ready, '发送').props.onClick();
   assert.equal(calls[0][1][0].id, 'adopted');
   assert.equal(calls[0][2][0].attachmentId, 'adopted');
+});
+
+
+test('quoting a settled answer inserts into the current draft without sending', async () => {
+  const sends = [], quotes = [];
+  const ui = view({ onSend: (...args) => { sends.push(args); return true; }, queueProps: {
+    session: { id: 's1', title: 'Draft', created: 1, messages: [
+      { role: 'user', content: '原提问' }, { role: 'assistant', content: '用于引用的回答' },
+    ] },
+  } });
+  const nodes = await ui.ready();
+  const editor = nodes.find(node => node.type === 'structured-editor');
+  editor.props.ref.current = { insertAnswerQuote: text => { quotes.push(text); return true; } };
+  const messages = nodes.filter(node => node.type === 'message-bubble');
+  assert.equal(messages[0].props.onQuoteAnswer, undefined);
+  assert.equal(messages[1].props.onQuoteAnswer('引用的文字'), true);
+  assert.deepEqual(quotes, ['引用的文字']);
+  assert.deepEqual(sends, []);
+  editor.props.onFileSelectionPending(true);
+  assert.equal(messages[1].props.onQuoteAnswer('插入被阻止'), false);
+  assert.equal(quotes.length, 1);
 });

@@ -253,6 +253,11 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   };
   const handleSend = () => submitDraft('send');
 
+  const quoteAnswer = useCallback((text: string): boolean => {
+    if (sendingRef.current || selectingFileRef.current) return false;
+    return editorRef.current?.insertAnswerQuote(text) ?? false;
+  }, []);
+
   const inputBox = (hero: boolean) => (
     <div className={`composer ${hero ? 'composer-hero' : ''} ${dragOver ? 'composer-drag' : ''}`}>
       {uploadItems.length > 0 && (
@@ -539,6 +544,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                   ? stream!.questions?.filter(question => !question.status || question.status === 'pending').length : undefined}
                 actions={actions}
                 onOpenFailureSettings={onOpenFailureSettings}
+                onQuoteAnswer={isFinal && msg.role === 'assistant' ? quoteAnswer : undefined}
                 onOpenDeliverable={openDeliverable}
                 onOpenSubagent={openSubagent}
               />

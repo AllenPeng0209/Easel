@@ -36,3 +36,22 @@
 }
 
 .structured-composer-input [data-composer-chip="session"] { border: 1px solid var(--border-strong); }
+
+.structured-composer-input [data-composer-quote] {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-inline-start: 2px solid var(--accent-end);
+  border-radius: 4px;
+  background: var(--accent-soft);
+}
+
+.structured-composer-input [data-composer-quote] button {
+  border: 0;
+  padding: 0 4px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}

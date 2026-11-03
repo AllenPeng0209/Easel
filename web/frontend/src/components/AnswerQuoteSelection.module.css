@@ -1,0 +1,27 @@
+/* Adapted from DeepSeek Harness QuoteSelection.module.css @ ce7073d (MIT). */
+.root { position: relative; }
+.action {
+  position: absolute;
+  z-index: 3;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--bg-elev);
+  box-shadow: 0 5px 18px rgb(0 0 0 / 16%);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.action:hover { background: var(--surface-hover); }
+.action:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }
+
+.savedQuote {
+  display: block;
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--accent-start);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

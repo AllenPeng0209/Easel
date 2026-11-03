@@ -6,7 +6,7 @@
  * License: integrations/deepseek-harness/LICENSE.
  */
 import {
-  $applyNodeReplacement, $createParagraphNode, $createTextNode, $getAdjacentNode, $getRoot, $getSelection, $getNodeByKey, $setSelection,
+  $addUpdateTag, $applyNodeReplacement, $createParagraphNode, $createTextNode, $getAdjacentNode, $getRoot, $getSelection, $getNodeByKey, $setSelection,
   $isElementNode, $isRangeSelection, COMMAND_PRIORITY_HIGH, DecoratorNode, HISTORY_PUSH_TAG,
   KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND, RootNode, type LexicalEditor, type LexicalNode, type NodeKey, type RangeSelection,
   type SerializedLexicalNode, type Spread,
@@ -16,6 +16,9 @@ import { registerPlainText } from '@lexical/plain-text';
 import { mergeRegister } from '@lexical/utils';
 import { $createCommandChip, CommandChipNode } from './command-chip';
 export { CommandChipNode } from './command-chip';
+import { QuoteNode, REMOVE_QUOTE_COMMAND } from './quote-node';
+import { formatQuoteText, MAX_ANSWER_QUOTE_LENGTH, messageQuoteRanges, quoteTextOf } from './quote-text';
+export { QuoteNode, REMOVE_QUOTE_COMMAND } from './quote-node';
 import type { ChatCommand } from '../../../lib/chatCommands';
 import type { ChatReference, ChatDraftSessionReference } from '../../../lib/chatReferences';
 
@@ -121,11 +124,18 @@ export function $restoreReferenceDraft(value: ReferenceDraft): void {
     paragraph.append($createCommandChip(value.command));
     offset = value.command.token.length;
   }
-  const ordered = [...value.references, ...(value.sessionReferences ?? [])].sort((left, right) => left.start - right.start);
+  const references = [...value.references, ...(value.sessionReferences ?? [])];
+  const quotes = messageQuoteRanges(value.text).flatMap(range => {
+    if (range.start < offset || references.some(ref => ref.start < range.end && range.start < ref.end)) return [];
+    const literal = value.text.slice(range.start, range.end);
+    const quote = quoteTextOf(literal);
+    return formatQuoteText(quote) === literal ? [{ ...range, quote }] : [];
+  });
+  const ordered = [...references, ...quotes].sort((left, right) => left.start - right.start);
   for (const reference of ordered) {
     append(value.text.slice(offset, reference.start));
     const label = value.text.slice(reference.start, reference.end);
-    paragraph.append('sessionId' in reference
+    paragraph.append('quote' in reference ? new QuoteNode(reference.quote) : 'sessionId' in reference
       ? $createReferenceChip('', label, { sessionId: reference.sessionId, snapshotHash: reference.snapshotHash, label: reference.label })
       : $createReferenceChip(reference.attachmentId, label));
     offset = reference.end;
@@ -161,6 +171,38 @@ export function insertReferenceChip(editor: LexicalEditor, attachmentId: string,
     if (!$isRangeSelection(selection)) selection = $getRoot().selectEnd();
     selection.insertNodes([$createReferenceChip(attachmentId, label, session), $createTextNode(' ')]);
   }, { discrete: true, tag: HISTORY_PUSH_TAG });
+}
+
+/** Append a whole quote block and leave the caret in a new question paragraph. */
+export function insertAnswerQuote(editor: LexicalEditor, excerpt: string): boolean {
+  if (excerpt.length > MAX_ANSWER_QUOTE_LENGTH || !excerpt.trim() || !editor.isEditable()) return false;
+  const text = excerpt.replace(/\r\n?/gu, '\n');
+  editor.update(() => {
+    const root = $getRoot();
+    const last = root.getLastChild();
+    const paragraph = $isElementNode(last) && last.getChildrenSize() === 0 ? last : $createParagraphNode();
+    if (paragraph !== last) {
+      // Separate adjacent quotes so the literal block boundaries survive draft restore.
+      if ($isElementNode(last) && last.getFirstChild() instanceof QuoteNode) root.append($createParagraphNode());
+      root.append(paragraph);
+    } else {
+      const previous = paragraph.getPreviousSibling();
+      if ($isElementNode(previous) && previous.getFirstChild() instanceof QuoteNode) paragraph.insertBefore($createParagraphNode());
+    }
+    paragraph.append(new QuoteNode(text));
+    root.append($createParagraphNode(), $createParagraphNode()).selectEnd();
+  }, { discrete: true, tag: HISTORY_PUSH_TAG });
+  return true;
+}
+
+function $removeQuote(quote: QuoteNode): void {
+  const paragraph = quote.getParent();
+  if (paragraph && paragraph.getChildrenSize() === 1) {
+    const target = paragraph.getNextSibling() ?? paragraph.getPreviousSibling();
+    paragraph.remove();
+    if (target) target.selectStart();
+    else $getRoot().append($createParagraphNode()).selectEnd();
+  } else quote.remove();
 }
 
 /** Replace an exact open slash query, or choose a leading command from the explicit menu. */
@@ -200,6 +242,12 @@ export function registerReferenceEditing(editor: LexicalEditor): () => void {
     const selection = $getSelection();
     if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
     const adjacent = $getAdjacentNode(selection.anchor, backward);
+    const quote = $isElementNode(adjacent) && adjacent.getChildrenSize() === 1 ? adjacent.getFirstChild() : adjacent;
+    if (quote instanceof QuoteNode) {
+      event?.preventDefault();
+      $removeQuote(quote);
+      return true;
+    }
     if (!(adjacent instanceof ReferenceChipNode) && !(adjacent instanceof CommandChipNode)) return false;
     event?.preventDefault();
     adjacent.remove();
@@ -217,6 +265,13 @@ export function registerReferenceEditing(editor: LexicalEditor): () => void {
       };
       root.getChildren().forEach(flattenNonLeading);
     }),
+    editor.registerCommand(REMOVE_QUOTE_COMMAND, key => {
+      const quote = $getNodeByKey(key);
+      if (!editor.isEditable() || !(quote instanceof QuoteNode)) return false;
+      $addUpdateTag(HISTORY_PUSH_TAG);
+      $removeQuote(quote);
+      return true;
+    }, COMMAND_PRIORITY_HIGH),
     editor.registerCommand(KEY_BACKSPACE_COMMAND, event => removeAdjacent(event, true), COMMAND_PRIORITY_HIGH),
     editor.registerCommand(KEY_DELETE_COMMAND, event => removeAdjacent(event, false), COMMAND_PRIORITY_HIGH),
   );

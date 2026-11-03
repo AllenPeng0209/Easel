@@ -16,6 +16,9 @@ import { validateChatReferences, validateChatSessionReferenceSpans } from '../li
 import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
 import AgentEventPanel, { type AgentToolLocator } from './AgentEventPanel';
 import AgentTimeline from './AgentTimeline';
+import AnswerQuoteSelection from './AnswerQuoteSelection';
+import { formatQuoteText, messageQuoteRanges, quoteTextOf } from '../vendor/deepseek-harness/composer/quote-text';
+import quoteCss from './AnswerQuoteSelection.module.css';
 import ReasoningSummaryDisclosure from './ReasoningSummaryDisclosure';
 import AnswerTurnPhase from './AnswerTurnPhase';
 import ChatFailureNotice from './ChatFailureNotice';
@@ -45,6 +48,7 @@ interface MessageBubbleProps {
   pendingTimelineQuestions?: number;
   actions?: BubbleActions;
   onOpenFailureSettings?: () => void;
+  onQuoteAnswer?: (text: string) => boolean;
   onOpenSubagent?: (child: AgentSubagent, trigger: HTMLElement) => void;
   onOpenDeliverable?: (file: import('../lib/deliverables').ChatDeliverable, trigger: HTMLElement) => void;
 }
@@ -72,13 +76,24 @@ function UserText({ message }: { message: ChatMessage }) {
   const references = [...fileReferences, ...sessionReferences].sort((a, b) => a.start - b.start);
   const command = validateChatCommand(content, message.command);
   const leadingCommand = command && !references.some(ref => ref.start < command.token.length) ? command : null;
-  if (!references.length && !leadingCommand) return content;
+  const quotes = messageQuoteRanges(content).flatMap(range => {
+    if (range.start < (leadingCommand?.token.length ?? 0) ||
+        references.some(reference => reference.start < range.end && range.start < reference.end)) return [];
+    const raw = content.slice(range.start, range.end);
+    const quoteText = quoteTextOf(raw);
+    return formatQuoteText(quoteText) === raw ? [{ ...range, quoteText }] : [];
+  });
+  const spans = [...references, ...quotes].sort((left, right) => left.start - right.start);
+  if (!spans.length && !leadingCommand) return content;
   const files = new Map(attachments.map(file => [file.id, file]));
   let offset = leadingCommand?.token.length || 0;
-  const parts = references.map(reference => {
+  const parts = spans.map(reference => {
     const prefix = content.slice(offset, reference.start);
     const text = content.slice(reference.start, reference.end);
     offset = reference.end;
+    if ('quoteText' in reference) return <Fragment key={reference.start}>{prefix}
+      <span className={quoteCss.savedQuote} data-chat-quote>{reference.quoteText}</span>
+    </Fragment>;
     if ('sessionId' in reference) {
       return <Fragment key={reference.start}>{prefix}
         <span className="message-inline-reference" data-chat-session-reference={reference.sessionId}
@@ -105,7 +120,7 @@ function visibleAssistantContent(message: ChatMessage): string {
   return error === -1 ? message.content : message.content.slice(0, error);
 }
 
-export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenFailureSettings, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
+export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenFailureSettings, onQuoteAnswer, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const toolLocator = useRef<AgentToolLocator>(null);
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const recordedTimeline = isStreaming ? timeline : message.timeline;
@@ -207,7 +222,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
           {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions}
             onLocateTool={(runId, callId) => toolLocator.current?.locate(runId, callId) ?? false} /> : null}
           <AgentEventPanel toolLocatorRef={toolLocator} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
-          {assistantContent && <div data-assistant-answer dangerouslySetInnerHTML={{ __html: rendered.html }} />}
+          {assistantContent && <AnswerQuoteSelection html={rendered.html} onQuoteAnswer={isStreaming ? undefined : onQuoteAnswer} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
           <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />
           {!isStreaming && (legacyArtifacts.length > 0 || legacyArchives.length > 0) && (

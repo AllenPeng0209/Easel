@@ -8,7 +8,7 @@ const { $getRoot, $isRangeSelection, $getSelection, $setSelection, UNDO_COMMAND,
 
 function editorFixture() {
   const runtime = componentModule('vendor/deepseek-harness/composer/reference-editor.ts');
-  const editor = createEditor({ nodes: [runtime.ReferenceChipNode, runtime.CommandChipNode], onError(error) { throw error; } });
+  const editor = createEditor({ nodes: [runtime.ReferenceChipNode, runtime.CommandChipNode, runtime.QuoteNode], onError(error) { throw error; } });
   const update = callback => editor.update(callback, { discrete: true });
   const snapshot = () => editor.getEditorState().read(runtime.$projectReferenceDraft);
   const dispose = runtime.registerReferenceEditing(editor);
@@ -144,5 +144,52 @@ test('typing before a command converts its visible token back to plain text', ()
     assert.equal(snapshot().command, undefined);
     update(() => assert.equal($getRoot().getFirstChild().getChildren()
       .some(node => node instanceof runtime.CommandChipNode), false));
+  } finally { dispose(); }
+});
+
+test('answer quote round-trips as literal Markdown and leaves typed spans unchanged', () => {
+  const { editor, runtime, update, snapshot, dispose } = editorFixture();
+  const draft = { text: '@x.md', references: [{ start: 0, end: 5, attachmentId: 'x' }] };
+  try {
+    update(() => runtime.$restoreReferenceDraft(draft));
+    assert.equal(runtime.insertAnswerQuote(editor, ' 🎬 **literal**\r\nsecond line '), true);
+    const withQuote = snapshot();
+    assert.equal(withQuote.text, '@x.md\n>  🎬 **literal**\n> second line \n\n');
+    assert.deepEqual(Array.from(withQuote.references, ({ start, end }) => [start, end]), [[0, 5]]);
+    update(() => runtime.$restoreReferenceDraft(withQuote));
+    assert.equal(snapshot().text, withQuote.text);
+    update(() => assert.ok($getRoot().getChildren()[1].getFirstChild() instanceof runtime.QuoteNode));
+    assert.equal(runtime.insertAnswerQuote(editor, ' \n '), false);
+    assert.equal(runtime.insertAnswerQuote(editor, 'x'.repeat(12_001)), false);
+  } finally { dispose(); }
+});
+
+test('removing an atomic quote preserves the question, rebases file spans, and supports undo', async () => {
+  const { editor, runtime, update, snapshot, dispose } = editorFixture();
+  try {
+    const text = '> quoted\nAsk @x.md';
+    update(() => runtime.$restoreReferenceDraft({ text, references: [{ start: 13, end: 18, attachmentId: 'x' }] }));
+    update(() => {
+      const quote = $getRoot().getFirstDescendant();
+      assert.ok(quote instanceof runtime.QuoteNode);
+      assert.equal(editor.dispatchCommand(runtime.REMOVE_QUOTE_COMMAND, quote.getKey()), true);
+    });
+    assert.equal(snapshot().text, 'Ask @x.md');
+    assert.deepEqual(Array.from(snapshot().references, ({ start, end }) => [start, end]), [[4, 9]]);
+    editor.dispatchCommand(UNDO_COMMAND);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(snapshot().text, text);
+    assert.deepEqual(Array.from(snapshot().references, ({ start, end }) => [start, end]), [[13, 18]]);
+  } finally { dispose(); }
+});
+
+
+test('a manually authored quote containing a typed reference preserves the reference node', () => {
+  const { runtime, update, snapshot, dispose } = editorFixture();
+  try {
+    const value = { text: '> @x.md', references: [{ start: 2, end: 7, attachmentId: 'x' }] };
+    update(() => runtime.$restoreReferenceDraft(value));
+    assert.deepEqual(JSON.parse(JSON.stringify(snapshot())), value);
+    update(() => assert.equal($getRoot().getFirstChild().getLastChild() instanceof runtime.ReferenceChipNode, true));
   } finally { dispose(); }
 });

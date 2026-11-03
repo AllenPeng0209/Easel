@@ -7730,12 +7730,56 @@
     "reuse_kind": "adapted",
     "changes": "适配候选列表及明确选择逻辑，增加授权素材检索和当前会话回执接入。",
     "verification_status": "A21_scoped_file_selection_verified_in_browser"
+  },
+  {
+    "feature_id": "A24",
+    "upstream_path": "packages/client/ui-chat/src/client/chat/text-selection.ts",
+    "upstream_sha256": "b739f3f8b4d96929bab81ecc8ea5755ea569c434fa3ca7b32fa4276a7e5266ab",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/answerTextSelection.ts",
+    "destination_sha256": "83f5d4a56cb0c390ce7ffb6a8afbd19cc317c805f5d9a24f227036725a1bd922",
+    "reuse_kind": "adapted",
+    "changes": "迁移可见文本投影，限制在同一条已结束的答复内，排除界面控件。",
+    "verification_status": "A24_answer_quote_insertion_and_restore_verified"
+  },
+  {
+    "feature_id": "A24",
+    "upstream_path": "packages/session/message-quotes/src/client/QuoteSelection.tsx",
+    "upstream_sha256": "b8ce0819ab472ca04d328d1cb6ae532cc975b6decae0ef155da359eafe356d13",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/AnswerQuoteSelection.tsx",
+    "destination_sha256": "d5b0c7772e510b9bffec7e8a933b0e057b8f7e1835031752bcf988cfc541d89c",
+    "reuse_kind": "adapted",
+    "changes": "适配选区浮层和明确引用动作，接入 Easel 编辑器与选区所有权。",
+    "verification_status": "A24_answer_quote_insertion_and_restore_verified"
+  },
+  {
+    "feature_id": "A24",
+    "upstream_path": "packages/client/ui-conversation/src/client/input/editor/QuoteNode.tsx",
+    "upstream_sha256": "642121c643ac2bf52397ef909c40228aa446c1f4e522661366927f5508ab4cd3",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/composer/quote-node.ts",
+    "destination_sha256": "1025c049cabe940d5ffdc46f5c4af8068180f7bff738e197e532079a09b9ccd0",
+    "reuse_kind": "adapted",
+    "changes": "适配为当前 Lexical 纯文本编辑器的可移除原子节点。",
+    "verification_status": "A24_answer_quote_insertion_and_restore_verified"
+  },
+  {
+    "feature_id": "A24",
+    "upstream_path": "packages/session/message-quotes/src/client/quote-text.ts",
+    "upstream_sha256": "81dc50d903e5f44eab4f01da8594ec4bcabcb6d49a269268938fd8869e134251",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/composer/quote-text.ts",
+    "destination_sha256": "5fddf78f74f9401774b26962f135f8e2c3e95326229a1c0368e2571a9f2d2824",
+    "reuse_kind": "adapted",
+    "changes": "复用引用区间与去除单层引用标记，结合 ui-primitives 的原文格式化。",
+    "verification_status": "A24_answer_quote_insertion_and_restore_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 76,
+    "source_migration_files": 80,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 61,
+    "adapted_upstream_files": 65,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",
