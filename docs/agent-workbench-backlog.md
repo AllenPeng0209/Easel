@@ -16,7 +16,7 @@
 | 04 | 服务器会话目录 | C09、C19 | 目录基础及并发修复已有；整包未关闭 | `1a4c8b7`（目录基础）；`f5118d9`（C19并发初始化修复） | 目录/跨浏览器恢复的完整包级验收未关闭；C23分页仍待，不能将局部并发修复扩大为整包完成。 |
 | 05 | 真实停止状态 | B18 | 停止状态基础回归已有；整包未关闭 | `1a4c8b7`（停止回执/状态基础） | 停止失败、未确认、外部不可取消任务及后台生命周期的完整真实场景仍待验收。 已证实缺口：dispatcher取消 `await asyncio.to_thread(subprocess.run)` 时底层线程/进程可能继续，`_execute`结束可先释放profile锁；须按真实进程终态验收。 |
 | 06 | 交付物协议与版本 | D01、D08 | D01/D08核心验收已过；整包未关闭 | `3086ca8`（D01）；`97a2071`（D08固定版本核心） | 批准版本仍需与主包07联动；有交付/固定版本commit不等于整个交付包已关闭。 |
-| 07 | 精确批准与发布回执 | B30、D30 | B30基础及原生恢复已提交；D30开发中未提交；整包未关闭 | `11845ad`（B30基础）；`2cc4272`（原生恢复）；D30未提交 | D30脚本/normalizer/writer/回执卡仍在开发；真实平台确认、回执对账、恢复与精确hash批准的整包验收未过。未确认的新测试不算整包通过。 已证实缺口：dispatcher取消 `await asyncio.to_thread(subprocess.run)` 时底层线程/进程可能继续，`_execute`结束可先释放profile锁；须按真实进程终态验收。 |
+| 07 | 精确批准与发布回执 | B30、D30 | B30基础及原生恢复已提交；D30结构化回执核心验收随本次提交；整包未关闭 | `11845ad`（B30基础）；`2cc4272`（原生恢复）；D30本次功能提交（见D30验收记录） | D30结构化协议、既有脚本适配、聊天卡/只读查询及模拟完整链路已验收；真实平台确认、具体平台ACK/身份及进程恢复的整包验收未过。 已证实缺口：dispatcher取消 `await asyncio.to_thread(subprocess.run)` 时底层线程/进程可能继续，`_execute`结束可先释放profile锁；须按真实进程终态验收。 |
 | 08 | 业务卡接入聊天 | D25、D26、D28 | 未开始：选题/稿件/成片结构化业务卡 | —（本主包尚无功能commit） | 真实业务实体、状态及合法下一步尚未接成该组聊天卡；pub receipt卡归主包07，不能拿来关闭08。 |
 | 09 | 阅读交互与会话状态 | C25、C26、C34 | 阅读/回底基础已有；整包未关闭 | `1a4c8b7`（阅读跟随/回底基础） | 侧栏完整动态状态与包级阅读/恢复交互仍未收口。 |
 | 10 | 队列、纠偏与并排工作区 | A04、A05、D04、B24、B27 | queue基础已有；整包未关闭 | `1a4c8b7`（队列基础） | Steer、并排工作区、Todo及子Agent工作台仍未完成，不能只按queue通过关闭整包。 |
@@ -25,7 +25,7 @@
 
 - 后续commit标题包含主包号及细项，例如 `feat(pkg07/D30): ...` 或 `fix(pkg04/C19): ...`；一包可有多次细项commit，不改写已经存在的历史提交。
 - 单个细项通过只更新该细项和主包进度，不自动将整包标为done。只有原包级关键验收完整通过、对应剩余范围有明确结论后，才关闭该包。
-- 当前重点是主包07的D30。B30基础与Native恢复已经提交；D30当前脚本、normalizer、writer和回执卡仍开发中、未提交。未经最终确认的新测试或本地runner结束不能当真实平台已发布，也不能当整包07通过。
+- 当前重点是主包07的D30。B30基础与Native恢复已经提交；D30结构化回执核心随本次功能提交，证据见[D30验收记录](agent-feature-acceptance/D30.md)。未经最终确认的新测试或本地runner结束不能当真实平台已发布，也不能当整包07通过。
 - 主包08的选题/稿件/成片业务卡未开始；发布回执卡归07。主包06的D01/D08核心已通过，但批准版本联动仍跟07验收。
 ## 优先级与执行规则
 
@@ -36,7 +36,7 @@
 - 直接复用固定提交的上游实现；复用代码保留 MIT 许可证及来源。Python 引擎、IP/RBAC、业务任务与发布回执属于必要适配层，不能把一段通用 UI 当成已打通业务。
 - 每个行为改动先有失败用例，再迁移代码、通过回归、构建和实际界面检查。涉及真实生产或发布，还需另有实际任务与回执证据。
 
-当前执行以页首01–10主台账为准：主包06的D01/D08核心已有commit；主包07的B30基础及原生恢复已提交，D30开发中未提交。主包08业务卡未开始，其余包按未过验收继续，不把细项通过当整包关闭。
+当前执行以页首01–10主台账为准：主包06的D01/D08核心已有commit；主包07的B30基础及原生恢复已提交，D30结构化回执核心随本次功能提交，真实平台验收仍开放。主包08业务卡未开始，其余包按未过验收继续，不把细项通过当整包关闭。
 
 ## 内部实现模块映射（M00–M12，非对外产品包）
 
@@ -49,7 +49,7 @@
 | M04 | P0 | 服务器会话目录与可恢复历史 | M01 | 以服务器授权目录为真源，迁移现有浏览器历史，取消按100条截断的持久化策略。 | session-controller、ui-workspace | 至少101条会话可检索；换浏览器可找回；旧会话导入幂等，归档和删除保留边界清楚。 | SQLite目录恢复基础保留；C19并发初始化修复已独立提交f5118d9；跨浏览器其他场景按条目验收，C23分页仍待开发。 |
 | M05 | P0 | 停止回执与后台任务控制 | M01、M03 | 停止显示真实后端确认；聊天流与媒体后台任务分别管理。 | ui-jobs、session-controller cancel | 停止失败不能显示已停止；单任务取消不误停其他任务；不可取消外部动作继续核实回执。 | 真实proc结束且supervisor释放才stopped，失败/未确认状态回归通过；完整媒体后台job工作台未完成。 |
 | M09 | P0→P1 | 交付协议、版本与并排预览 | M01、M02、M04 | P0先做明确交付和版本身份；P1再做右侧工作区、diff及Office/表格预览。 | ui-deliverables、workspace-changes、ui-sidebar-right、ui-sidebar-documentpreview | 不依赖正文链接识别文件；可核对历史/当前/批准版本；预览失败仍可访问原文件；只读预览不冒充编辑。 | 对应原主包06：D01已提交3086ca8；D08固定版本核心已提交97a2071。批准版本与原主包07联动，整包06未关闭。 |
-| M10 | P0→P1 | 真实自媒体业务卡和发布回执 | M01、M03、M05、M09 | 复用通用工具/workflow卡框架，接现有选题、稿件、工坊、审阅和发布服务。 | ui-tool、ui-workflow-run；Easel既有业务服务 | 卡片引用真实topic/project/revision/publication ID；服务端检查IP角色；导出/提交/发布成功互不混用。 | 跨原主包07/08的内部模块：B30基础11845ad、Native恢复2cc4272已提交；D30脚本/normalizer/writer/回执卡开发中未提交（归07）；选题/稿件/成片业务卡归08，未开始。 |
+| M10 | P0→P1 | 真实自媒体业务卡和发布回执 | M01、M03、M05、M09 | 复用通用工具/workflow卡框架，接现有选题、稿件、工坊、审阅和发布服务。 | ui-tool、ui-workflow-run；Easel既有业务服务 | 卡片引用真实topic/project/revision/publication ID；服务端检查IP角色；导出/提交/发布成功互不混用。 | 跨原主包07/08的内部模块：B30基础11845ad、Native恢复2cc4272已提交；D30结构化回执核心已验收并随本次功能提交（归07）；真实平台验收仍开放；选题/稿件/成片业务卡归08，未开始。 |
 | M06 | P1 | 消息阅读、渲染与代码显示 | M01、M02 | 复用上游渲染、代码卡和阅读跟随行为，保留现有媒体和消毒策略。 | ui-chat、ui-primitives | 上翻不抢位置；回底可用；复制反馈真实；流式未闭合围栏与多代码块稳定。 | 本轮气泡、复制、预览、阅读跟随基础已通过回归；高亮/数学/增量Markdown等剩余项未实现。 |
 | M07 | P1 | 结构化输入、引用、队列与纠偏 | M02、M03、M04 | 先建立 Host 能力，再迁移编辑节点、命令补全、Queue/Steer 和模型控件。 | ui-conversation、ui-reference、ui-input-trigger、ui-model-selection | 引用带授权对象身份；Queue有服务端回执；运行中纠偏只投递一次；不支持的能力明确禁用。 | 队列基础已本机验收：运行中排队、自动随后执行、刷新保留；richtext/@/slash/Steer和完整模型控件未完成。 |
 | M08 | P1 | Todo、计划审阅与子 Agent 工作台 | M01、M03、M05 | 真实计划和子任务事件驱动视图；不从自然语言猜任务已完成。 | ui-plan、ui-subagent、ui-goal、ui-tool todo | 可查看父子任务和精确会话；方案变更使批准失效；只停止指定子任务；未提供能力不伪造控件。 | 下一批P1：durable goal、正式计划审阅、Todo/子Agent工作台尚未交付；只有事件基础。 |
@@ -71,7 +71,7 @@
 | AUT05 | P0 | 授权、凭据与公开动作边界 | M03、M10 | 普通偏好超时可继续；发布批准、提权、账号更换、付款及敏感凭据不被默认答案自动批准；允许继续准备和校验可逆产物。 | 权限请求超时得到等待/拒绝等明确状态；不会无批准公开发布；变更账号、内容版本或payload使原确认失效。 | secret投影/风险降级阻止与权限读取边界通过回归；公开业务动作仍必须真实批准，不能以本次smoke宣称全部业务策略验收。 |
 | AUT06 | P0 | 持久执行、恢复与幂等 | M01、M04、M05 | 任务与决策保存在服务端；续流、恢复、工具重试保留request/task/call身份；不可幂等外部动作先查实际回执。 | 重连或浏览器重开不重复制作/发布；状态可恢复；限流、上游短暂错误有真实重试记录和可停止控制。 | 部分已验证：持久目录/队列及turn_claims幂等，8并发仅1赢家；本机排队→执行→刷新恢复通过；通用任务恢复和pending future重启未交付。 |
 | AUT07 | P1 | 无进展、失败和停止 | M01、M05、M08 | 失败可执行合理恢复分支；真正缺认证/权限或多次无进展时标blocked并显示必要输入；停止服从后端终态。 | 不会无限循环相同失败；失败原因、已完成部分和可恢复入口可见；停止失败不显示成功，停后不偷偷继续新步骤。 | 拒绝/blocked和真实停止状态通过回归；通用无进展检测、durable goal暂停恢复未实现。 |
-| AUT08 | P1 | 完成检查和可核对交付 | M09、M10 | 完成前检查目标清单、产物存在/版本、工具结果和发布回执；将残余阻塞与已完成内容分别呈现。 | 一次任务包含正文、附件或业务动作时可逐项验收；无真实文件或回执不能勾选完成；交付关联正确IP和当前批准版本。 | D01/D08交付与固定版本核心已有独立commit；B30基础及Native恢复已有commit，D30开发中未提交。通用目标终验、选题/稿件/成片业务卡及原10包剩余验收继续，不能以局部通过关闭AUT或整包。 |
+| AUT08 | P1 | 完成检查和可核对交付 | M09、M10 | 完成前检查目标清单、产物存在/版本、工具结果和发布回执；将残余阻塞与已完成内容分别呈现。 | 一次任务包含正文、附件或业务动作时可逐项验收；无真实文件或回执不能勾选完成；交付关联正确IP和当前批准版本。 | D01/D08交付与固定版本核心已有独立commit；B30基础及Native恢复已有commit，D30结构化回执核心随本次功能提交，真实平台验收仍开放。通用目标终验、选题/稿件/成片业务卡及原10包剩余验收继续，不能以局部通过关闭AUT或整包。 |
 
 ## 144 项完整开发映射
 
@@ -220,7 +220,7 @@
 | D26 | 选题来源到创作的结构化承接 | P1 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:67-69](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L67-L69)<br>[packages/client/ui-workflow-run/README.md:28-36](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-workflow-run/README.md#L28-L36) | 从选题入口发起后，聊天显示可展开的来源卡；携带topicId/平台/URL/采集时间并落到成稿关联；标题同名也能追溯准确来源。 | 原主包08的结构化选题卡未开始；现有热点预填自然语言入口不等于topic/source快照等业务对象已承接。 |
 | D28 | 视频画布是真业务编辑器，应接回聊天 | P1 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-sidebar-documentpreview/README.md:144-145](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L144-L145) | AI生成工坊项目卡并指向准确projectId/revision；有权限者在侧面打开专属画布，无权限者打开交付审阅；画布保存/导出后回传状态及交付版本到原聊天。 | 原主包08的成片/编辑业务卡未开始；既有工坊画布保留，但未完成该包聊天承接；pub receipt卡另归07。 |
 | D29 | 交付版本、人工批准与发布记录的关联 | 保持 | M12／相应基础包 | 保留 Easel；按上游契约回归<br>[packages/client/ui-deliverables/README.md:37-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37-L39)<br>[packages/client/ui-deliverables/README.md:118](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L118) | 聊天中审阅卡复用服务端工坊状态，显示版本/hash和人工/模拟标志；改版后旧批准不会批准新文件；已发布卡显示绑定版本和真实平台链接。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
-| D30 | 人工/自动发布与回执真实性 | P0 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:37-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37-L39)<br>[packages/client/ui-sidebar-browser/README.md:28-32](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-browser/README.md#L28-L32) | 聊天卡区分draft/exported/submitted/confirmed/failed；引用服务器任务/内容版本/平台链接；人工确认标注来源；无平台回执不显示自动验证成功；重复点击不重复发布。 | 原主包07开发中、未提交：当前脚本、normalizer、writer及回执卡仍在串通；未经最终确认的新测试不当整包通过，真实平台confirmed/对账/恢复和精确hash批准仍按包级验收。 |
+| D30 | 人工/自动发布与回执真实性 | P0 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:37-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37-L39)<br>[packages/client/ui-sidebar-browser/README.md:28-32](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-browser/README.md#L28-L32) | 聊天卡区分draft/exported/submitted/confirmed/failed；引用服务器任务/内容版本/平台链接；人工确认标注来源；无平台回执不显示自动验证成功；重复点击不重复发布。 | 原主包07的结构化回执核心已验收并随本次功能提交，复用既有发布脚本和DeepSeek展开生命周期；区分草稿/导出/提交/公开确认，支持同操作晚到回执及只读刷新。471前端及真实Native新建/恢复硬模拟状态工具、隔离浏览器刷新通过；完整证据见[D30.md](agent-feature-acceptance/D30.md)。真实平台ACK/身份/公开读回及进程恢复仍开放，不将模拟验收算真实平台成功。 |
 | D31 | 商业IP、owner/operator/viewer的隔离 | 保持 | M12／相应基础包 | 保留 Easel；按上游契约回归<br>[docs/user/guide/public-deployments.md:21-35](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/docs/user/guide/public-deployments.md#L21-L35)<br>[packages/client/ui-sidebar-files/README.md:58-66](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-files/README.md#L58-L66) | 同一用户不同IP资源不串；viewer不能操作、operator不能管账号/成员；侧栏文件、下载、预览、引用继续修改和后台任务都复用同一服务器授权，不仅隐藏按钮。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
 | D32 | 未来只读聊天的 HTML 预览策略 | 观察 | M12／相应基础包 | 先验证需求与 Host 条件；暂不承诺照搬<br>[packages/client/ui-sidebar-documentpreview/README.md:51-62](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L51-L62) | 开放 viewer 聊天前统一角色与资源可信级别策略；两入口采用一致静态/交互配置，交互预览继续使用隔离 iframe。 | 待验证／产品判断 |
 
@@ -299,17 +299,17 @@ Codex默认模式的原生 `request_user_input` 受模式门禁限制。本轮�
 | `06` | D01 | 真实交付验收，`3086ca8` | 不是整个主包06验收 |
 | `06` | D08 | 固定版本核心验收，`97a2071` | 批准版本仍与07联动 |
 | `07` | B30 | 基础 `11845ad`；Native恢复 `2cc4272` | 模拟publisher不等于真实公开发布；整包未关闭 |
-| `07` | D30 | 脚本/normalizer/writer/回执卡开发中，未提交 | 最新未确认测试不作为整包通过；真实平台回执与恢复等待验收 |
+| `07` | D30 | 结构化回执核心随本次提交；2743后端/471前端、真实Native模拟状态工具及隔离浏览器刷新通过 | 真实平台ACK/身份/公开读回与进程恢复待验收，主包07未关闭 |
 | `08` | D25/D26/D28 | 选题/稿件/成片业务卡未开始 | pub receipt卡归07，不算08的实现 |
 
-- 验收记录：[D01](agent-feature-acceptance/D01.md)、[D08](agent-feature-acceptance/D08.md)、[B30](agent-feature-acceptance/B30.md)、[B30-native-restore](agent-feature-acceptance/B30-native-restore.md)。各自只证明其记录范围，不替代原10包验收。
+- 验收记录：[D01](agent-feature-acceptance/D01.md)、[D08](agent-feature-acceptance/D08.md)、[B30](agent-feature-acceptance/B30.md)、[B30-native-restore](agent-feature-acceptance/B30-native-restore.md)、[D30](agent-feature-acceptance/D30.md)。各自只证明其记录范围，不替代原10包验收。
 - 模板：[agent-feature-acceptance-template.md](agent-feature-acceptance-template.md)。未来commit含主包号＋细项；每包关键验收完整通过后才done。
 - 已验收引擎支持仍按各细项条件判断，不能从通用UI推断所有旧线程/ACP都支持。Python store、原生协议和IP业务边界是必要适配，不夸大为上游Python原样复制。
 - 144项及AUT01–AUT08完整保留；当前不是“已完成6/10”，其余细项与整包验收继续逐项推进。
 
 ## 早期细项摘要原文（历史，不是当前主台账）
 
-以下只保留当时的逐细项记录。原文里“随本记录提交”或“后续P0”等措辞不作当前状态：现B30基础11845ad及Native恢复2cc4272已提交，D30仍在开发未提交；以页首主台账及上节证据索引为准。
+以下只保留当时的逐细项记录。原文里“随本记录提交”或“后续P0”等措辞不作当前状态：现B30基础11845ad及Native恢复2cc4272已提交，D30结构化回执核心随本次功能提交，真实平台验收仍开放；以页首主台账及上节证据索引为准。
 
 > 当时补正：B30原生发布工具跨CLI进程恢复已验证并修复；不再以进程内缓存错误判无工具。原native ID保持，resume不追加工具，恢复调用仍走原Host批准。候选树2447后端通过/17跳过，真实适配器mock回调通过；详见[B30-native-restore](agent-feature-acceptance/B30-native-restore.md)。下一项继续D30真实回执与尚未完成的权限/平台适配，144项和AUT范围不变。
 >
@@ -319,4 +319,4 @@ Codex默认模式的原生 `request_user_input` 受模式门禁限制。本轮�
 >
 > 当时逐功能阶段以基线commit `1a4c8b7` 为起点：**D01已真实验收并提交 `3086ca8`；C19并发初始化修复已提交 `f5118d9`；D08固定版本存储/预览切片已验收，本记录随功能独立提交；批准与版本联动仍归B30/D30。** B30/D30批准与精确hash联动仍为后续P0；144项继续逐项自测、验收和独立提交。
 
-**当前结论：01–10为唯一对外主台账。06的D01/D08核心已提交；07的B30基础/恢复已提交、D30未提交；08业务卡未开始。其余各包仍有未过关键验收，不能按“已完成6/10”汇报。**
+**当前结论：01–10为唯一对外主台账。06的D01/D08核心已提交；07的B30基础/恢复已提交、D30本次功能提交（见D30验收记录）；08业务卡未开始。其余各包仍有未过关键验收，不能按“已完成6/10”汇报。**

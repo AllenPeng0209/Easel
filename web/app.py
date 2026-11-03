@@ -481,6 +481,8 @@ if str(SHARED_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SHARED_SCRIPTS))
 
 from model_registry import model_group
+from publication_receipt import PublicationReceiptFiles, PublicationReceiptError as ReceiptFileError
+from easel.publication_receipts import normalize_receipt, PublicationReceiptError as ReceiptEvidenceError
 
 BROWSER_PROFILES = Path.home() / ".easel-browser-profiles"
 LOGIN_DIR = OUTPUTS_DIR / "_login"
@@ -3523,6 +3525,20 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 'artifacts': artifacts, 'status': 'available', 'completedAt': int(time.time() * 1000)})
         return artifacts
 
+    def publication_event(record):
+        digest = hashlib.sha256(json.dumps(record, sort_keys=True, ensure_ascii=False,
+            allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+        receive('agent_event', {'id': 'publication_' + digest, 'kind': 'publication',
+            'publication': record, 'completedAt': int(time.time() * 1000)})
+        return record
+
+    async def publication_status(approval_id: str) -> dict:
+        _require_host_tools()
+        try:
+            return publication_event(_publication_workflow().get(approval_id))
+        except HTTPException as error:
+            raise HarnessError(_scrub_secrets(str(error.detail))) from None
+
     async def publish(payload: dict, call_id: str) -> dict:
         _require_host_tools()
         if not interactive:
@@ -3532,7 +3548,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             record = await workflow.prepare(payload['platform'], payload,
                 idempotency_key=f'{sk}:{turn_id}:{call_id}')
             if record.get('operationId'):
-                return record
+                return publication_event(record)
             if record['state'] == 'pending':
                 allow = '批准此版本并创建草稿' if record['subject']['mode'] == 'create_draft' else '批准此版本并发布'
                 answers = await _harness_ask(sk, [{'questionId': 'publication', 'kind': 'approval',
@@ -3541,7 +3557,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                     mode=req.autonomyMode, publication=record)
                 record = workflow.decide(record['id'], answers.get('publication') == [allow], record['payloadHash'])
             if record['state'] != 'approved':
-                return {**record, 'message': '此版本未获发布批准；保留草稿并继续其它可完成工作，未公开发布。'}
+                return publication_event({**record, 'message': '此版本未获发布批准；保留草稿并继续其它可完成工作，未公开发布。'})
             subject = record['subject']
             record = await workflow.start(subject['platform']['id'], {**{key: subject[key]
                 for key in ('title', 'body', 'tags', 'persona')}, 'media': [],
@@ -3552,7 +3568,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 await asyncio.sleep(.5)
                 _require_host_tools()
                 record = workflow.get(record['id'])
-            return record
+            return publication_event(record)
         except HTTPException as error:
             raise HarnessError(_scrub_secrets(str(error.detail))) from None
 
@@ -3601,7 +3617,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         request = RunRequest(message, _workspace_root(), env, native_id,
                              config["models"].get(runtime, ""), config["sandbox"], timeout,
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
-                             autonomy_mode=req.autonomyMode, present=present, publish=publish)
+                             autonomy_mode=req.autonomyMode, present=present, publish=publish,
+                             publication_status=publication_status)
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
             lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
@@ -5881,6 +5898,48 @@ async def _publication_account(platform):
             'name': identity.get('name') or identity['accountId']}
 
 
+def _publication_receipt_context(record):
+    subject = record['subject']
+    return {'operationId': record['operationId'], 'payloadHash': record['payloadHash'],
+        'platform': subject['platform']['id'], 'mode': subject['mode'],
+        'approvedAccountId': subject['account']['id']}
+
+
+def _read_publication_receipt(record):
+    if not record.get('operationId'):
+        return None
+    directory = _publication_workflow().operation_dir(record)
+    if not (directory / 'receipt-context.json').exists():
+        return None
+    context = _publication_receipt_context(record)
+    try:
+        receipt = PublicationReceiptFiles(directory, context).read()
+        return normalize_receipt(context, receipt)
+    except (ReceiptFileError, ReceiptEvidenceError):
+        return {**normalize_receipt(context), 'reason': 'machine_receipt_invalid'}
+
+
+def _record_confirmed_publication(record):
+    subject, result = record['subject'], record.get('result') or {}
+    expected = _publication_receipt_context(record)
+    if (record['state'] != 'approved' or result.get('status') != 'confirmed'
+            or result.get('phase') != 'readback' or result.get('evidenceMethod') != 'authenticated_readback'
+            or result.get('reason') != 'public_readback_confirmed'
+            or result.get('publicationState') != 'public' or not result.get('externalId')
+            or any(result.get(key) != value for key, value in expected.items() if key != 'approvedAccountId')
+            or result.get('accountId') != expected['approvedAccountId']):
+        return
+    try:
+        import calendar_ops
+        with _schedule_lock():
+            calendar_ops.record_publish(subject['platform']['name'], subject['title'], note=subject['body'][:200],
+                tags=subject['tags'], source='publish-page', profile=subject['persona'], data_path=_schedule_file(),
+                forward_log=False, operation_id=record['operationId'], payload_hash=record['payloadHash'])
+    except Exception:
+        # A projection failure must not erase the actual platform receipt.
+        pass
+
+
 def _load_publication_article_renderer():
     # Load trusted application code once at service initialization, before any
     # agent requests. Approval preparation must not execute workspace Python.
@@ -5949,27 +6008,8 @@ def api_manual_publish_export(platform: str, req: ManualPublishRequest):
             "filename": package.name, "published": False}
 
 
-def _write_publish_status(status_file: Path, state: str, message: str = '') -> None:
-    """写异步发布状态（与 login_state 同格式），原子写。"""
-    try:
-        status_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp = status_file.with_suffix('.tmp')
-        tmp.write_text(json.dumps({'state': state, 'message': message, 'ts': int(time.time())},
-                                  ensure_ascii=False), encoding='utf-8')
-        os.replace(tmp, status_file)
-    except Exception:
-        pass
 
 
-def _read_publish_status(platform: str) -> dict:
-    st = _publish_dir() / f'{platform}.json'
-    if st.is_file():
-        try:
-            d = json.loads(st.read_text(encoding='utf-8'))
-            return {'state': d.get('state', 'unknown'), 'message': d.get('message', '')}
-        except Exception:
-            pass
-    return {'state': 'unknown', 'message': ''}
 
 
 def _record_successful_publish(title: str, body: str, cfg: dict, profile: str = '',
@@ -5988,56 +6028,8 @@ def _record_successful_publish(title: str, body: str, cfg: dict, profile: str = 
         pass
 
 
-def _run_publish_bg(platform: str, cmd: list, title: str, body: str, cfg: dict,
-                    status_file: Path, code_file: Path, profile: str = '',
-                    tags: str = '', ptype: str = '') -> None:
-    """后台线程跑发布脚本（脚本自身把 starting/sms_required/verifying/success/error 写进 status_file）。
-    结束后兜底补写终态 + 记 _publish.log + 成功则回流排期。"""
-    ok = False
-    out = err = ''
-    try:
-        proc = subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=_publish_env(),
-                              capture_output=True, text=True, timeout=900)
-        ok = proc.returncode == 0
-        out, err = proc.stdout or '', proc.stderr or ''
-    except subprocess.TimeoutExpired:
-        err = '发布超时（>900s）'
-    except Exception as e:  # noqa: BLE001
-        err = f'发布进程异常：{e}'
-    try:
-        with (_outputs_dir() / '_publish.log').open('a', encoding='utf-8') as lf:
-            lf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {platform}(async) ok={ok} =====\n")
-            lf.write('CMD: ' + ' '.join(cmd) + '\nSTDOUT:\n' + out[-2000:] + '\nSTDERR:\n' + err[-2000:] + '\n')
-    except Exception:
-        pass
-    # 脚本正常会写终态；异常/超时没写到时兜底补一个
-    if _read_publish_status(platform)['state'] not in ('success', 'error'):
-        _write_publish_status(status_file, 'success' if ok else 'error',
-                              '发布成功' if ok else ('\n'.join((err or out).strip().splitlines()[-4:]) or '发布失败'))
-    try:
-        code_file.unlink()
-    except OSError:
-        pass
-    if ok:
-        _record_successful_publish(title, body, cfg, profile, tags, ptype)
 
 
-def _start_async_publish(platform: str, cmd: list, title: str, body: str, cfg: dict,
-                         status_file: Path, code_file: Path, profile: str = '',
-                         tags: str = '', ptype: str = '') -> dict:
-    """启动异步发布：清旧码/状态 → 起后台线程 → 立即返回。前端轮询 /api/publish/{p}/status，
-    遇 sms_required 弹输入框、提交到 /api/publish/{p}/sms。"""
-    try:
-        code_file.unlink()
-    except OSError:
-        pass
-    _write_publish_status(status_file, 'starting', '发布中…（若触发风控会要求短信验证）')
-    context_thread(target=_run_publish_bg,
-                     args=(platform, cmd, title, body, cfg, status_file, code_file, profile, tags, ptype),
-                     daemon=True).start()
-    # 关键：**不返回 ok:true**——这只是「已启动」的应答，真正结果要靠轮询 /status。
-    # 若这里给 ok:true，旧前端会把它当「已发布」立刻显示成功（假成功 bug，真机踩过）。
-    return {'async': True, 'pending': True, 'message': '发布已启动，请稍候…'}
 
 
 @app.get("/api/publish/{platform}/status")
@@ -6063,10 +6055,11 @@ async def api_publish_sms(platform: str, req: SmsCodeRequest, approvalId: str = 
 
 
 async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=None, operation_id=None,
-                            expected_account=None, approved_article=None, approved_media=None):
+                            expected_account=None, approved_article=None, approved_media=None, payload_hash=None):
     """Internal runner: only the claimed exact-subject workflow dispatches here."""
     if (not isinstance(operation_id, str) or not re.fullmatch(r'[a-f0-9]{32}', operation_id)
-            or not isinstance(expected_account, dict)):
+            or not isinstance(expected_account, dict)
+            or not isinstance(payload_hash, str) or not re.fullmatch(r'[a-f0-9]{64}', payload_hash)):
         raise HTTPException(428, '平台执行必须关联已批准的具体操作和账号')
     _require_operation()
     _require_automated_publishing()
@@ -6099,6 +6092,15 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
     tags = req.tags or ''
     publish_type = '视频' if vids else ('文章' if platform == 'wechat-oa' else '图文')
     py = sys.executable
+    operation_dir = _publication_dir() / 'operations' / current_user()['id'] / operation_id
+    operation_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    receipt_context = {'operationId': operation_id, 'payloadHash': payload_hash, 'platform': platform,
+        'mode': 'create_draft' if platform == 'wechat-oa' else 'publish_now',
+        'approvedAccountId': expected_account.get('id', '')}
+    try:
+        receipt_files = PublicationReceiptFiles(operation_dir, receipt_context)
+    except ReceiptFileError:
+        raise HTTPException(409, '本次操作的私有回执上下文不可用，未启动发布器') from None
     if platform == 'xiaohongshu':
         base = [py, str(SHARED_SCRIPTS / 'xhs_publish.py')]
         cmd = base + ['publish-video', '--no-proxy', '--video', vids[0]] if vids else base + ['publish', '--no-proxy', '--images', ','.join(imgs)]
@@ -6107,8 +6109,9 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
         # B站投稿：直接调 biliup CLI（需 cookies.json，PATH 上有 biliup）。必须视频；
         # tid=36「知识」；B站投稿必须≥1 标签，无则兜底「日常」。
         bili_tag = tags.replace('#', '').replace('，', ',').strip().strip(',') or '日常'
-        cmd = ['biliup', '-u', str(_cookie_path()), 'upload', vids[0],
-               '--title', title[:80], '--tid', '36', '--copyright', '1', '--tag', bili_tag]
+        cmd = [py, str(SKILLS_DIR / 'builtin/skill-bilibili-upload/scripts/bili_upload.py'),
+               'upload', '--video', vids[0], '--cookie', str(_cookie_path()),
+               '--title', title[:80], '--tid', '36', '--copyright', '1', '--tag', bili_tag, '--exec']
         if req.body.strip():
             cmd += ['--desc', req.body[:2000]]
     elif platform == 'douyin':
@@ -6117,15 +6120,9 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
         cmd += ['--title', title, '--content', req.body, '--tags', tags, '--exec']
         # 抖音发布可能触发风控短信墙——异步跑 + 状态/验证码文件，前端轮询到 sms_required 时弹输入框
         _publish_dir().mkdir(parents=True, exist_ok=True)
-        operation_dir = (_publication_dir() / 'operations' / current_user()['id'] / operation_id
-            if operation_id else _publish_dir())
-        operation_dir.mkdir(parents=True, exist_ok=True)
-        status_file = operation_dir / ('runner.json' if operation_id else 'douyin.json')
-        code_file = operation_dir / ('runner.code' if operation_id else 'douyin.code')
+        status_file = operation_dir / 'runner.json'
+        code_file = operation_dir / 'runner.code'
         cmd += ['--status-file', str(status_file), '--sms-code-file', str(code_file)]
-        if not operation_id:
-            return _start_async_publish(platform, cmd, title, req.body, cfg, status_file, code_file,
-                                        profile, tags, publish_type)
     elif platform == 'wechat-oa':
         # 微信公众号：走「后台会话」发布（免 AppID/AppSecret、免 IP 白名单）。
         # 正文 MD → 公众号 HTML（skill 排版器）→ 会话建草稿（weixin_mp_stats.py publish，内嵌图传 mp CDN）。
@@ -6162,6 +6159,7 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
         if media:
             cmd += ['--media', media]
     # 公众号走后台会话（Playwright，脚本自带 --proxy，默认直连）；其余平台走 _publish_env
+    cmd += ['--receipt-context', str(receipt_files.context_path), '--receipt-file', str(receipt_files.receipt_path)]
     _require_operation()
     _require_automated_publishing()
     if await _publication_account(platform) != expected_account:
@@ -6175,27 +6173,31 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
         _require_automated_publishing()
         return subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=pub_env,
             capture_output=True, text=True, timeout=600)
+    proc = None
+    process_error = None
     try:
         proc = await asyncio.to_thread(run_checked_publish)
     except subprocess.TimeoutExpired:
-        raise HTTPException(504, '发布超时（媒体处理慢或流程卡住）')
-    ok = proc.returncode == 0
-    tail = (proc.stderr or proc.stdout or '').strip().splitlines()
+        process_error = 'timeout'
+    except OSError:
+        process_error = 'io_error'
+    ok = proc is not None and proc.returncode == 0
+    tail = ((proc.stderr or proc.stdout or '') if proc is not None else '').strip().splitlines()
     detail = '\n'.join(tail[-8:])
     try:
         with (_outputs_dir() / '_publish.log').open('a', encoding='utf-8') as lf:
-            lf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {platform} rc={proc.returncode} ok={ok} =====\n")
+            lf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {platform} rc={proc.returncode if proc else 'timeout'} ok={ok} =====\n")
             lf.write('CMD: ' + ' '.join(cmd) + '\n')
-            lf.write('STDOUT:\n' + (proc.stdout or '')[-2000:] + '\n')
-            lf.write('STDERR:\n' + (proc.stderr or '')[-2000:] + '\n')
+            lf.write('STDOUT:\n' + _scrub_secrets((proc.stdout or '')[-2000:]) + '\n' if proc else 'TIMEOUT\n')
+            lf.write('STDERR:\n' + _scrub_secrets((proc.stderr or '')[-2000:]) + '\n' if proc else '')
     except Exception:
         pass
-    # Runner exit zero is not evidence that a post is publicly visible. The MP
-    # runner only creates a draft; neither outcome enters the published calendar.
-    status = ('draft_created' if platform == 'wechat-oa' else 'submitted') if ok else 'unknown'
-    return {'status': status, 'message': ('已创建公众号草稿，尚未公开发布' if platform == 'wechat-oa'
-        else '平台流程已提交，公开发布状态尚未核实') if ok else '执行结果待核实，请核对平台，勿重复提交',
-        'detail': _scrub_secrets(detail), 'runnerExitCode': proc.returncode}
+    try:
+        return normalize_receipt(receipt_context, receipt_files.read(),
+            returncode=proc.returncode if proc is not None else None, process_error=process_error)
+    except (ReceiptFileError, ReceiptEvidenceError):
+        result = normalize_receipt(receipt_context, returncode=proc.returncode if proc is not None else None)
+        return {**result, 'reason': 'machine_receipt_invalid'}
 
 
 class ProfileBuildRequest(BaseModel):
@@ -6482,7 +6484,7 @@ SCHEDULE_FILE = OUTPUTS_DIR / "_schedule.json"
 SCHEDULE_STATUSES = {"idea", "draft", "scheduled", "published"}
 SCHEDULE_KINDS = {"content", "event"}
 
-# _schedule.json 读-改-写串行化：发布回流（后台线程 _run_publish_bg + 事件循环上的
+# _schedule.json 读-改-写串行化：发布回执投影（后台操作 + 事件循环上的
 # api_publish 成功路径）与增删改端点并发时，不加锁会互相覆盖丢记录。
 _SCHEDULE_LOCK = threading.Lock()
 

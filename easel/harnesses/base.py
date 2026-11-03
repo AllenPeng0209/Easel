@@ -17,6 +17,8 @@ Bind = Callable[[str], None]
 Present = Callable[[list[dict], str], Awaitable[list[dict] | None]]
 # Publication authority, exact-payload approval and receipts remain host-owned.
 Publish = Callable[[dict, str], Awaitable[dict]]
+# Read an existing scoped approval/operation; never create or execute one.
+PublicationStatus = Callable[[str], Awaitable[dict]]
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class RunRequest:
     autonomy_mode: str = "autonomous"
     present: Present | None = None
     publish: Publish | None = None
+    publication_status: PublicationStatus | None = None
 
 
 class Adapter(Protocol):

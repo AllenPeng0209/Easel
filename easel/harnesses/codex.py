@@ -116,6 +116,43 @@ EASEL_PUBLISH_TOOL = {
 }
 
 
+# Easel-owned read-only contract using the same eager native-tool envelope.
+# Native Codex owns persisted tool definitions; the host owns scoped status data.
+EASEL_PUBLICATION_STATUS_TOOL = {
+    'type': 'function', 'name': 'easel_publication_status', 'deferLoading': False,
+    'description': (
+        'Read the current host status of an existing Easel publication approval or operation. '
+        'Supply only its approvalId. This is a read-only lookup: it never approves, retries, '
+        'creates or submits a publication. Use it to inspect an existing request instead of '
+        'calling easel_publish again. If this tool is absent from an old native thread, '
+        'inspect the existing request in the Easel UI; never create a new publication as a status query.'
+    ),
+    'inputSchema': {
+        'type': 'object', 'additionalProperties': False, 'required': ['approvalId'],
+        'properties': {'approvalId': {'type': 'string', 'pattern': '^[a-f0-9]{32}$'}},
+    },
+}
+
+
+def _publication_status_failure() -> dict:
+    return {'success': False, 'contentItems': [{'type': 'inputText', 'text':
+        'The existing publication status could not be read through this host route. '
+        'Supply only a valid approvalId, or inspect the existing request in the Easel UI. '
+        'Do not call easel_publish again as a lookup. No approval or submission was performed.'}]}
+
+
+def _publication_status_instructions(host_enabled: bool) -> str:
+    channel = ('The read-only host channel is enabled for this request. ' if host_enabled else
+               'This request has no enabled read-only status host channel. ')
+    return ('\n\n## Existing publication status\n' + channel +
+            'When easel_publication_status is in the native tool list, use it with the existing approvalId '
+            'to query an existing task. A status lookup never approves, executes or retries it. '
+            'Do not call easel_publish again or invent a new publication to obtain status. '
+            'Already registered tools may be restored on resume; preserve the original native ID and history. '
+            'If an older thread lacks this status tool, use the Easel UI to inspect its existing request; '
+            'do not pretend that resume can append new tool definitions.')
+
+
 def _publication_payload(arguments) -> dict:
     if not isinstance(arguments, dict) or set(arguments) - {'platform', 'artifactIds', *_PUBLICATION_TEXT_LIMITS}:
         raise ValueError('invalid publication arguments')
@@ -289,6 +326,30 @@ class CodexAdapter:
                     turn_id and params.get("turnId", turn_id) != turn_id):
                 raise HarnessError("不属于当前会话的请求")
             if method == "item/tool/call":
+                if params.get('tool') == 'easel_publication_status':
+                    if request.publication_status is None or params.get('namespace') not in (None, ''):
+                        return _publication_status_failure()
+                    if not turn_id or params.get('turnId') != turn_id:
+                        raise HarnessError('发布状态请求不属于当前回合')
+                    try:
+                        arguments = params.get('arguments')
+                        if (not isinstance(arguments, dict) or set(arguments) != {'approvalId'}
+                                or not isinstance(arguments.get('approvalId'), str)
+                                or not re.fullmatch(r'[a-f0-9]{32}', arguments['approvalId'])):
+                            raise ValueError('invalid status arguments')
+                        call_id = params.get('callId')
+                        if (not isinstance(call_id, str) or not call_id.strip() or len(call_id) > 256
+                                or any(ord(character) < 32 for character in call_id)):
+                            raise ValueError('invalid status call identity')
+                        status = await request.publication_status(arguments['approvalId'])
+                        if not isinstance(status, dict) or not status:
+                            raise ValueError('invalid host status result')
+                        text = json.dumps(status, ensure_ascii=False, allow_nan=False)
+                    except Exception:
+                        # Callback failures are private; cancellation is not an
+                        # Exception and still tears down the pending RPC safely.
+                        return _publication_status_failure()
+                    return {'success': True, 'contentItems': [{'type': 'inputText', 'text': text}]}
                 if params.get('tool') == 'easel_publish':
                     # Native Codex persists dynamic tool definitions and routes
                     # them again after thread/resume, including across processes.
@@ -376,7 +437,8 @@ class CodexAdapter:
             options = {"cwd": str(request.cwd), "approvalPolicy": "on-request",
                        "sandbox": request.sandbox,
                        "developerInstructions": harness_instructions(request) + _publication_instructions(
-                           request.publish is not None)}
+                           request.publish is not None) + _publication_status_instructions(
+                           request.publication_status is not None)}
             if request.model:
                 options["model"] = request.model
             if thread_id and rpc.native_id == thread_id:
@@ -389,6 +451,8 @@ class CodexAdapter:
                     tools.append(EASEL_PRESENT_TOOL)
                 if request.publish is not None:
                     tools.append(EASEL_PUBLISH_TOOL)
+                if request.publication_status is not None:
+                    tools.append(EASEL_PUBLICATION_STATUS_TOOL)
                 result = await rpc.call("thread/start", {**options, "dynamicTools": tools})
             resumed_id = (result.get("thread") or {}).get("id", "")
             if request.native_id and resumed_id != request.native_id:

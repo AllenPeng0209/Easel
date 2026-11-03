@@ -1,5 +1,8 @@
 import { useState } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
+import { publicationEventKey } from '../lib/agentEvents';
+import PublicationReceiptCard from './PublicationReceiptCard';
+import { fetchPublicationApproval } from '../lib/api';
 import { DisclosureRow } from '../vendor/deepseek-harness/message/DisclosureRow';
 
 const statusText: Record<string, string> = {
@@ -36,11 +39,14 @@ function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
   const indexes = new Map<string, number>();
   const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped', 'denied']);
   for (const event of events) {
-    const identity = event.kind === 'tool' ? event.callId || event.id : event.id;
-    const index = event.kind === 'tool' ? indexes.get(identity) : undefined;
+    const receipt = publicationEventKey(event);
+    const identity = receipt ? `publication:${receipt}` : event.kind === 'tool' ? event.callId || event.id : event.id;
+    const index = event.kind === 'tool' || receipt ? indexes.get(identity) : undefined;
     if (index === undefined) {
-      if (event.kind === 'tool') indexes.set(identity, result.length);
+      if (event.kind === 'tool' || receipt) indexes.set(identity, result.length);
       result.push(event);
+    } else if (receipt) {
+      if ((event.completedAt || 0) >= (result[index].completedAt || 0)) result[index] = event;
     } else if (!terminal.has(result[index].status || '') || terminal.has(event.status || '')) {
       result[index] = { ...result[index], ...event };
     }
@@ -78,6 +84,8 @@ function ToolEvent({ event, expanded, settled }: { event: AgentEvent; expanded: 
 }
 
 function OtherEvent({ event }: { event: AgentEvent }) {
+  if (event.kind === 'publication' && event.publication) return <PublicationReceiptCard record={event.publication}
+    onRefresh={fetchPublicationApproval} />;
   const automatic = event.source === 'default' || event.resolvedBy === 'default';
   const source = automatic ? 'default' : event.source || event.resolvedBy || 'unknown';
   const decisionTitle = event.status === 'blocked' ? '等待确认超时，任务受阻'

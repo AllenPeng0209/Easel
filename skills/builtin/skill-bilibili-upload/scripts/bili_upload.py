@@ -135,12 +135,45 @@ def cmd_tid(_a) -> int:
     return 0
 
 
+def _publication_reporter(a):
+    reporter = getattr(a, '_publication_receipt_reporter', None)
+    if reporter is None:
+        from publication_receipt import PublicationReceiptReporter
+        reporter = PublicationReceiptReporter.from_args(a, 'bilibili')
+        a._publication_receipt_reporter = reporter
+    return reporter
+
+
+def _receipt_record(a, phase: str, **fields) -> None:
+    try:
+        _publication_reporter(a).record(phase, **fields)
+    except Exception:
+        a._receipt_write_failed = True
+        raise
+    a._receipt_phase = phase
+
+
 def cmd_upload(a) -> int:
+    _receipt_record(a, 'not_started')
+    try:
+        return _cmd_upload_impl(a)
+    except BaseException as error:
+        if not getattr(a, '_receipt_write_failed', False) and getattr(a, '_receipt_phase', '') != 'readback':
+            phase = getattr(a, '_receipt_phase', 'not_started')
+            reason = ('cancelled' if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else
+                      'login_required' if isinstance(error, platform_readback.LoginRequiredError) else
+                      'preflight_failed' if phase == 'not_started' else 'submit_error')
+            _receipt_record(a, phase, reason=reason)
+        raise
+
+
+def _cmd_upload_impl(a) -> int:
     if not Path(a.video).expanduser().is_file():
         _die(f"视频不存在：{a.video}")
     cmd = build_cmd(a)
     printable = " ".join(f'"{c}"' if " " in c else c for c in cmd)
     if not a.exec:
+        _receipt_record(a, 'not_started', reason='dry_run')
         content_guard.guard_or_die(
             [a.title or Path(a.video).stem, a.desc, a.tag, a.source],
             exec_mode=False,
@@ -160,37 +193,45 @@ def cmd_upload(a) -> int:
         label="B站投稿内容",
     )
     print("投稿中 ...", file=sys.stderr)
+    account = None
+    if _publication_reporter(a).enabled:
+        observed = platform_readback.read_bilibili_account(cookie)
+        uid = observed.get('uid') if isinstance(observed, dict) else None
+        if (isinstance(uid, (str, int)) and not isinstance(uid, bool)
+                and str(uid).isascii() and str(uid).isdigit() and int(uid) > 0):
+            account = {'id': f'mid:{int(uid)}', 'authenticated': True}
+        _receipt_record(a, 'not_started', account=account)
     # 发前快照 + 时间窗基准（读回对账用；快照失败自动退化为标题+时间窗）
     snapshot = platform_readback.capture_bilibili_snapshot(cookie)
     started_ms = int(time.time() * 1000)
+    _receipt_record(a, 'submit_attempted', account=account)
     rc = subprocess.call(cmd, env=_direct_env())
     if rc == 0:
+        _receipt_record(a, 'submit_attempted', reason='no_ack')
         # 发布读回对账（权威判定：读回对上才算成功——没有平台侧证据绝不报成功）
         title = a.title or Path(a.video).stem
         try:
             result = platform_readback.verify_bilibili_publish(
                 cookie, title=title, since_ms=started_ms, snapshot_ids=snapshot)
         except Exception as e:  # noqa: BLE001
-            _die(f"投稿已提交但读回通道异常：{e}——去创作中心人工核对，先别重发。", 4)
+            _receipt_record(a, 'readback', reason='readback_error')
+            _die("投稿已提交但读回通道异常——去创作中心人工核对，先别重发。", 4)
+        _receipt_record(a, 'readback', readback=result.as_dict(), reason=(
+            result.outcome if result.outcome in ('unverified', 'login_required', 'readback_error') else None))
         if result.outcome == "verified" and result.matched:
             m = result.matched
             acct = (result.evidence.get("account") or {}).get("name", "")
-            print(f"✅ 读回核验：{m.platform_content_id}（{m.status}）；账号：{acct}", file=sys.stderr)
+            print(f"读回候选：{m.platform_content_id}（{m.status}）；账号：{acct}。"
+                  '旧版匹配不证明公开发布，确认状态以结构化回执或人工核对为准。', file=sys.stderr)
         else:
             hints = {
                 "unverified": "读回通了但多轮未见新稿件（索引/审核延迟）",
                 "login_required": "读回时登录态失效，请重新扫码登录",
-                "readback_error": f"读回通道故障（{result.error}）",
+                "readback_error": "读回通道故障",
             }
             _die(f"投稿已提交但读回未核实（{result.outcome}）：{hints.get(result.outcome, '')}——去创作中心核对，先别重发。", 4)
-        # 投稿成功 → 落统一内容日历（对话页自动；发布页 B 站走 biliup CLI 由 web 记录，路径不同不重复）
-        try:
-            import calendar_ops
-            calendar_ops.record_publish("bilibili", title,
-                                        ptype="视频", tags=(a.tag or ""),
-                                        note=(a.desc or ""), source="chat")
-        except Exception:
-            pass
+    else:
+        _receipt_record(a, 'submit_attempted', reason='submit_error')
     return rc
 
 
@@ -264,6 +305,8 @@ def main() -> int:
     pu.add_argument("--cookie", help="cookie 文件（默认 cookies.json）")
     pu.add_argument("--proxy", help="代理")
     pu.add_argument("--exec", action="store_true", help="真正投稿（默认 dry-run 预览）")
+    pu.add_argument('--receipt-context', help='Host 提供的私有发布回执上下文')
+    pu.add_argument('--receipt-file', help='私有结构化发布回执输出路径')
     pu.set_defaults(func=cmd_upload)
 
     sub.add_parser("selftest", help="自检").set_defaults(func=cmd_selftest)

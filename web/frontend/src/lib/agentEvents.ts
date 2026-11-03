@@ -24,7 +24,8 @@ export interface AgentArtifact {
 
 export interface AgentEvent {
   id: string;
-  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task';
+  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication';
+  publication?: import('./publicationApproval').PublicationApprovalRecord;
   callId?: string;
   parentCallId?: string;
   name?: string;
@@ -43,7 +44,7 @@ export interface AgentEvent {
   [key: string]: unknown;
 }
 
-const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task']);
+const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication']);
 const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped']);
 
 export function normalizeAgentEvent(value: unknown): AgentEvent | null {
@@ -55,10 +56,25 @@ export function normalizeAgentEvent(value: unknown): AgentEvent | null {
   return candidate as AgentEvent;
 }
 
+export function publicationEventKey(event: AgentEvent): string | null {
+  const value = event.kind === 'publication' ? event.publication : undefined;
+  return value && [value.id, value.actorId, value.projectId, value.payloadHash].every(part => typeof part === 'string')
+    ? JSON.stringify([value.id, value.actorId, value.projectId, value.payloadHash, value.operationId || null]) : null;
+}
+
 /** Tool events are cumulative snapshots; older replay must not revive a finished call. */
 export function reduceAgentEvents(previous: AgentEvent[], input: unknown): AgentEvent[] {
   const event = normalizeAgentEvent(input);
-  if (!event || previous.some(item => item.id === event.id)) return previous;
+  if (!event) return previous;
+  const receipt = publicationEventKey(event);
+  if (receipt) {
+    const index = previous.findIndex(item => publicationEventKey(item) === receipt);
+    if (index >= 0) {
+      if ((event.completedAt || 0) < (previous[index].completedAt || 0)) return previous;
+      const next = [...previous]; next[index] = event; return next;
+    }
+  }
+  if (previous.some(item => item.id === event.id)) return previous;
   const index = event.kind === 'tool'
     ? previous.findIndex(item => item.kind === 'tool' && item.callId === event.callId) : -1;
   if (index < 0) return [...previous, event];

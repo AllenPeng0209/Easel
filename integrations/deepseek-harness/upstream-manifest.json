@@ -19,7 +19,7 @@
     ],
     "managed_clone_is_gitignored": true
   },
-  "status_notice": "B30 foundation 11845ad; native registered tool resume correction verified in this feature commit. Real-platform identity/receipts, runtime recovery, AUT boundaries and all other original requirements remain open.",
+  "status_notice": "Package 07 D30 structured receipt core verified in a feature-only candidate, including real native status tool with a mocked callback and isolated browser refresh; real social platform acceptance, process recovery and other original requirements remain open.",
   "selected_packages": [
     {
       "upstream_path": "packages/client/ui-conversation",
@@ -7396,7 +7396,7 @@
     "sha_notice": "All recorded target hashes refreshed after the final dynamic-tool and countdown changes were frozen on 2026-11-03."
   },
   "baseline_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
-  "current_feature": "B30-native-restore",
+  "current_feature": "D30",
   "feature_work": {
     "D01": {
       "status": "verified_committed",
@@ -7935,6 +7935,172 @@
           "path": "tests/test_native_publication_tool.py",
           "sha256": "7bb3e695c2fea68d83f56a8591bfe34fb253b2c99f1b586eded4df80e9f48726"
         }
+      ]
+    },
+    "D30": {
+      "status": "core_verified_real_platform_acceptance_open",
+      "baseline_commit": "2179cebc808a2cdb8eebf54fc27fb6c047573d6c",
+      "acceptance_record": "docs/agent-feature-acceptance/D30.md",
+      "source_kind": "Adapted DeepSeek WorkflowRunPanel disclosure lifecycle and existing vendored DisclosureRow; Python receipt evidence, existing publisher adapters and native status are Easel-specific host integration, not a verbatim upstream backend.",
+      "upstream_sources": [
+        {
+          "path": "packages/client/ui-workflow-run/src/client/WorkflowRunPanel.tsx",
+          "sha256": "7d51903eb8b76579565fdb858271bbd6443e5db49c6c4d92d0b0c337fde78439"
+        },
+        {
+          "path": "packages/client/ui-primitives/src/DisclosureRow.tsx",
+          "sha256": "000d8193ebed80b6ac1d9ff8f8b7ce76e596532065b08003d0033c0ab040501d"
+        }
+      ],
+      "files": [
+        {
+          "path": "easel/harnesses/base.py",
+          "sha256": "1806a839f7781f8a3598ead3e3641837f3c41e6e3b6a78cf1302bdb74a8e004c"
+        },
+        {
+          "path": "easel/harnesses/codex.py",
+          "sha256": "42ff39793237800cce74c27cb14f9978e0279b0a52c0fdd0c0f8abeac3d09ba0"
+        },
+        {
+          "path": "easel/publication_approvals.py",
+          "sha256": "39c470a6bc7811707ddc1cbc6818b9d291b75f44037fab1cb017358758acabc8"
+        },
+        {
+          "path": "easel/publication_receipts.py",
+          "sha256": "098fb34d9964560ced6417dbf08f4af9ddb426ecb8f6e074bc95b3879dc9d10f"
+        },
+        {
+          "path": "skills/builtin/skill-bilibili-upload/scripts/bili_upload.py",
+          "sha256": "bcb30b1f0fc9851354f292ca85026bc3aa1fdb5df760af00f3c9f7549e5952bf"
+        },
+        {
+          "path": "skills/shared/scripts/calendar_ops.py",
+          "sha256": "bc085c6c1686598ae1972938c595153b77f0b2a409fe145a383b4141892451ac"
+        },
+        {
+          "path": "skills/shared/scripts/douyin_publish.py",
+          "sha256": "cc3befa1dc6d44d378a3e5a520476293eaf93cd8a67fe80b7b2cc231c163f618"
+        },
+        {
+          "path": "skills/shared/scripts/web_publisher.py",
+          "sha256": "b52d227d51a64de24a1c4fe90fb4880f43c56680205d40ebca3c81e9a0364afa"
+        },
+        {
+          "path": "skills/shared/scripts/weixin_mp_stats.py",
+          "sha256": "c6c9374bee0b38aa31f0b83e43a30bc95461786665c05573892d6ef77cd6d145"
+        },
+        {
+          "path": "skills/shared/scripts/xhs_publish.py",
+          "sha256": "0489cb541886e3769416237e8a7db790e6008cc89c10efefb2ed07f2c8ab45ec"
+        },
+        {
+          "path": "skills/shared/scripts/publication_receipt.py",
+          "sha256": "98cee9b64ce64b533b97e0408a9a6e2b6679751820c77dc9299013225e9d4bd8"
+        },
+        {
+          "path": "web/publication_workflow.py",
+          "sha256": "b9b778b33df0f30259954072d57656db568aeb17690315b461272f069c945b98"
+        },
+        {
+          "path": "web/frontend/src/components/AgentEventPanel.tsx",
+          "sha256": "304f561e5366a1b61f46baff734a51ca0273e68f06df4814a349cdedd7f37ef9"
+        },
+        {
+          "path": "web/frontend/src/components/PublicationReceiptCard.tsx",
+          "sha256": "30398155e7ad56c1664739741f57b67b0582166ce3781a0ae88d12a395494e7d"
+        },
+        {
+          "path": "web/frontend/src/lib/agentEvents.ts",
+          "sha256": "bfcd28cea0db5678f4768e6997328f00dab96f9d670b9c4dc5a1850df8909209"
+        },
+        {
+          "path": "web/frontend/src/lib/publicationReceipt.ts",
+          "sha256": "1217739223e9ff46c580f8ddc65c11c8114ce6989a96be5d7ac8bd5a5b6d971c"
+        },
+        {
+          "path": "web/frontend/src/styles/publicationReceipt.css",
+          "sha256": "19a59816f76b993625d1e1e67480c57de8ca59dc39fd289576a12965faf1132b"
+        },
+        {
+          "path": "tests/test_publication_dispatch.py",
+          "sha256": "7f46972423bda25cfa54fa42c20137cab55fbdaa2386944f06f3331bf70b247f"
+        },
+        {
+          "path": "tests/test_publication_workflow_http.py",
+          "sha256": "a1984cad7d64eaf6e6465e2dff3a51558de11ea37ce96736fead834b673bdc8f"
+        },
+        {
+          "path": "tests/test_native_publication_status.py",
+          "sha256": "3c61581fba487a84444ba7e5fcb3bea885d911b0bde3f5935e87351e2a00c52d"
+        },
+        {
+          "path": "tests/test_publication_calendar.py",
+          "sha256": "d4fcc6e5d07b8181763d94bc7cf6fb81ede460ec921517dc8914389422cc5ec1"
+        },
+        {
+          "path": "tests/test_publication_receipt_integration.py",
+          "sha256": "1781f80a6e67ab1877a9916d6aedbadcd8fccd0cc96595296886c613377cee57"
+        },
+        {
+          "path": "tests/test_publication_receipt_progression.py",
+          "sha256": "66ed3a3a7c7149c77fd35554372acd0ea9fbf9cc015cd40ab9d5628d62cf3ea5"
+        },
+        {
+          "path": "tests/test_publication_receipt_writer.py",
+          "sha256": "5f7824abb8baf853bedcc65b67084e81077c0133c52e7b30399b4b8400fdbcc5"
+        },
+        {
+          "path": "tests/test_publication_receipts.py",
+          "sha256": "2a6ed9ef41439242a29f110e6fe408d371d074b08f6b595a7101164a8b363be1"
+        },
+        {
+          "path": "tests/test_publisher_receipt_adapters.py",
+          "sha256": "6436ba7a43dfb5503d1f4848b5271831206ec7e6763d37e266214246616ecb18"
+        },
+        {
+          "path": "tests/test_web_publication_receipts.py",
+          "sha256": "9e90c9a5ca7ee66787c175dd9da86880caa49b32ed25361e618d6896761453f0"
+        },
+        {
+          "path": "tests/frontend/publicationEvent.test.mjs",
+          "sha256": "394c060156567789aa53cad282ca299f1e30639c48a38400aad02e4c1bea7188"
+        },
+        {
+          "path": "tests/frontend/publicationReceipt.test.mjs",
+          "sha256": "d3a2c3d05f98181790c6525cf921de56c9f8025f97d29f4412a6ee0ee9e4855c"
+        },
+        {
+          "path": "web/app.py",
+          "sha256": "d09c6890ebe9ce1c74b78618133aa8a0df620cae5a7d76a390d5a7f10b6ac887"
+        }
+      ],
+      "verification": {
+        "candidate_code_tree": "e80ef3fd67361b4b2939170a72a712ea78213e4d",
+        "frontend_passed": 471,
+        "frontend_failed": 0,
+        "frontend_exit": 0,
+        "build_exit": 0,
+        "lint_exit": 0,
+        "runtime_real_native_status_new_and_resume": true,
+        "runtime_native_status_callbacks": 2,
+        "runtime_publishers_loaded": false,
+        "runtime_publisher": "none; browser used an isolated simulated receipt fixture",
+        "runtime_browser_unknown_to_submitted": true,
+        "runtime_browser_reload_then_same_operation_refresh": true,
+        "runtime_real_social_publication": false,
+        "parallel_social_changes_excluded": true,
+        "backend_passed": 2743,
+        "backend_skipped": 17,
+        "backend_warnings": 2,
+        "backend_exit": 0,
+        "compile_exit": 0,
+        "diff_check_exit": 0
+      },
+      "remaining": [
+        "platform-specific ACK ID and authenticated public readback end-to-end acceptance",
+        "strict MP/Kuaishou stable account identity gaps",
+        "process cancellation, lease ownership and crash recovery",
+        "durable autonomous goals and all other original 144/AUT requirements"
       ]
     }
   }

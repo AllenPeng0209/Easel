@@ -145,6 +145,14 @@ class PublicationWorkflow:
 
     def get(self, identifier):
         record = self.call('get', identifier)
+        if record.get('operationId') and (record.get('result') or {}).get('status') != 'executing':
+            observed = self.host._read_publication_receipt(record)
+            if observed is not None:
+                try:
+                    record = self.call('observe', identifier, operation_id=record['operationId'], result=observed)
+                except HTTPException:
+                    record['receiptNotice'] = '新回执与原操作不一致，未覆盖既有结果'
+            self.host._record_confirmed_publication(record)
         if record.get('operationId') and (record.get('result') or {}).get('status') == 'executing':
             status = self.status_path(record)
             try:
@@ -250,7 +258,7 @@ class PublicationWorkflow:
             dispatched = True
             result = await self.host._dispatch_publish(subject['platform']['id'], request,
                 media_paths=media, operation_id=operation, expected_account=subject['account'],
-                approved_article=subject.get('article'), approved_media=subject['media'])
+                approved_article=subject.get('article'), approved_media=subject['media'], payload_hash=record['payloadHash'])
             if not isinstance(result, dict) or result.get('status') not in (
                     'submitted', 'confirmed', 'unknown', 'failed', 'draft_created', 'exported', 'scheduled'):
                 result = {'status': 'unknown', 'message': '发布进程结果尚未核实，请核对平台，勿重复提交'}
@@ -265,8 +273,9 @@ class PublicationWorkflow:
         # A revoked user cannot execute new work, but the host must still preserve
         # this already-owned operation's terminal receipt under its original scope.
         try:
-            self.store().finish(identifier, operation_id=operation, result=result,
+            finished = self.store().finish(identifier, operation_id=operation, result=result,
                 actor_id=record['actorId'], project_id=record['projectId'])
+            self.host._record_confirmed_publication(finished)
         except PublicationApprovalError:
             pass
 

@@ -63,6 +63,43 @@ def _identity(value):
 _RESULT_STATES = {'executing', 'submitted', 'confirmed', 'unknown', 'failed',
                   'draft_created', 'exported', 'scheduled'}
 
+_RECEIPT_FIELDS = {'status', 'reason', 'phase', 'operationId', 'payloadHash', 'platform', 'mode',
+                   'accountId', 'externalId', 'publicationState', 'evidenceMethod', 'runnerExitCode',
+                   'notStarted', 'identityVerification'}
+_RECEIPT_REASONS = {'machine_receipt_missing', 'dry_run', 'help', 'validation_failed', 'runner_unavailable',
+    'timeout_after_submission', 'interrupted_after_submission', 'submission_not_acknowledged',
+    'submission_account_unverified', 'provider_ack_missing', 'provider_id_missing', 'account_mismatch',
+    'provider_draft_created', 'unsupported_provider_effect', 'provider_submission_acknowledged',
+    'readback_unverified', 'readback_missing', 'readback_id_mismatch', 'readback_account_unverified',
+    'readback_ambiguous', 'readback_status_unknown', 'readback_time_unverified',
+    'public_readback_confirmed', 'publication_not_public', 'readback_visibility_unknown', 'provider_rejected'}
+
+
+def _external_id(value):
+    if type(value) is int:
+        value = str(value) if value > 0 else ''
+    return (value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+=-]{0,255}', value)
+            and not (value.isdecimal() and int(value) == 0) else None)
+
+
+def _receipt_fields(value):
+    """Retain the normalizer's safe result contract, never raw runner output."""
+    clean = {key: item for key, item in value.items() if key in _RECEIPT_FIELDS
+             and (isinstance(item, str) and key not in {'runnerExitCode', 'notStarted'}
+                  or key == 'runnerExitCode' and type(item) is int
+                  or key == 'externalId' and type(item) is int or key == 'notStarted' and type(item) is bool)}
+    if clean.get('reason') not in _RECEIPT_REASONS:
+        clean.pop('reason', None)
+    enums = {'phase': {'unknown', 'not_started', 'submit_attempted', 'platform_ack', 'readback'},
+             'evidenceMethod': {'provider_response', 'authenticated_readback'},
+             'publicationState': {'unknown', 'public', 'processing', 'reviewing', 'pending', 'private',
+                                  'scheduled', 'rejected', 'deleted', 'prohibited', 'draft'},
+             'identityVerification': {'host_dispatch_only', 'authenticated_submission', 'account_mismatch'}}
+    for key, allowed in enums.items():
+        if clean.get(key) not in allowed:
+            clean.pop(key, None)
+    return clean
+
 
 class PublicationApprovalStore:
     def __init__(self, directory: Path):
@@ -305,5 +342,93 @@ class PublicationApprovalStore:
             if value['status'] == 'executing':
                 self._profile_busy(database, record)
             record['result'] = value
+            self._save(database, record)
+        return record
+
+    def observe(self, identifier, operation_id, result, *, actor_id, project_id):
+        """Append same-operation read-only evidence after its runner has ended.
+
+        This is not execution authority: it cannot finish an active runner,
+        acquire a profile, generate an operation, or replace a concrete post ID.
+        Only the Host calls this with a versioned normalizer's safe result.
+        """
+        with self._database(write=True) as database:
+            record = self._load(database, identifier, actor_id, project_id)
+            if not record['operationId'] or record['operationId'] != operation_id:
+                raise PublicationApprovalError('核对回执不属于该批准操作', 409)
+            previous = record.get('result') or {}
+            if previous.get('status') == 'executing':
+                raise PublicationApprovalError('运行尚未结束，不能用只读核对终结执行', 409)
+            if not isinstance(result, dict):
+                raise PublicationApprovalError('核对回执必须是 JSON 对象')
+            subject = record['subject']
+            expected = {'operationId': operation_id, 'payloadHash': record['payloadHash'],
+                        'platform': subject['platform']['id'], 'mode': subject.get('mode'),
+                        'accountId': (subject.get('account') or {}).get('id')}
+            if (any(not isinstance(value, str) or not value for value in expected.values())
+                    or any(result.get(key) != value for key, value in expected.items())):
+                raise PublicationApprovalError('核对回执与批准对象、平台或账号不匹配', 409)
+            value, _, digest = _canonical(_receipt_fields(result))
+            status = value.get('status')
+            allowed = {'publish_now': {'unknown', 'submitted', 'confirmed', 'failed'},
+                       'scheduled': {'unknown', 'submitted', 'scheduled', 'confirmed', 'failed'},
+                       'create_draft': {'unknown', 'draft_created', 'failed'},
+                       'manual_export': {'unknown', 'exported', 'failed'}}
+            if not isinstance(status, str) or status not in allowed.get(expected['mode'], set()):
+                raise PublicationApprovalError('核对结果与批准的执行方式不一致', 409)
+            identifier_value = value.get('externalId')
+            external_id = _external_id(identifier_value)
+            if identifier_value is not None and external_id is None:
+                raise PublicationApprovalError('核对回执缺少有效的平台对象编号', 409)
+            if external_id is not None:
+                value['externalId'] = external_id
+            if status == 'confirmed' and (value.get('evidenceMethod') != 'authenticated_readback'
+                    or value.get('publicationState') != 'public' or external_id is None):
+                raise PublicationApprovalError('公开确认必须具有账号独立读回、公开状态和具体对象编号', 409)
+            if status in {'submitted', 'scheduled', 'draft_created'} and external_id is None:
+                raise PublicationApprovalError('平台效果回执必须具有具体对象编号', 409)
+            observations = record.get('observations') or []
+            # B30 accepted snake_case platform IDs before the D30 normalizer
+            # standardized externalId. Those older proofs bind the same object.
+            known_ids = {_external_id(prior.get(key))
+                         for prior in [previous, *(item.get('result', {}) for item in observations)]
+                         for key in ('externalId', 'external_id', 'external_message_id')}
+            known_ids.discard(None)
+            if status == 'failed':
+                not_started = (value.get('notStarted') is True and value.get('phase') == 'not_started'
+                    and value.get('reason') in {'dry_run', 'help', 'validation_failed', 'runner_unavailable'}
+                    and not known_ids)
+                provider_rejected = (value.get('notStarted') is not True and value.get('phase') == 'readback'
+                    and value.get('evidenceMethod') == 'authenticated_readback' and external_id is not None
+                    and value.get('publicationState') in {'rejected', 'prohibited'}
+                    and value.get('reason') == 'provider_rejected')
+                if not (not_started or provider_rejected):
+                    raise PublicationApprovalError('失败核对必须有可靠的未执行证据或同对象的平台拒绝读回', 409)
+            if external_id is not None and known_ids and known_ids != {external_id}:
+                raise PublicationApprovalError('同一操作的核对不能替换为另一个平台对象', 409)
+            # Hash only canonical safe fields; the same observation after a
+            # restart or from another tab cannot append duplicate audit entries.
+            value, _, digest = _canonical(value)
+            if any(item.get('digest') == digest for item in observations):
+                return record
+            if not observations and previous:
+                historical = _receipt_fields(previous)
+                # Earlier B30 records may carry a receipt ID instead of the D30
+                # externalId field. Preserve that existing proof without logs.
+                for key in ('receiptId', 'receipt_id', 'external_id', 'external_message_id'):
+                    if _external_id(previous.get(key)) is not None:
+                        historical[key] = previous[key]
+                historical, _, historical_digest = _canonical(historical)
+                observations.append({'digest': historical_digest, 'observedAt': _now_ms(), 'result': historical})
+                if historical_digest == digest:
+                    record['observations'] = observations
+                    self._save(database, record)
+                    return record
+            observations.append({'digest': digest, 'observedAt': _now_ms(), 'result': value})
+            record['observations'] = observations
+            old_status = previous.get('status')
+            if (old_status in (None, 'unknown') or old_status == status
+                    or old_status in {'submitted', 'scheduled'} and status in {'confirmed', 'failed'}):
+                record['result'] = value
             self._save(database, record)
         return record

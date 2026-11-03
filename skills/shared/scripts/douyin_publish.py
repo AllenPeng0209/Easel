@@ -10,7 +10,7 @@ WJZ-P/douyin-upload-mcp-skill（src/douyin-ops.js）。确定性 IO 在脚本，
   - 切 tab（发布视频/发布图文）→ 隐藏 file input 塞文件
   - 视频等 uploading-container 消失（≤5min）→ 等 AI 封面（≤60s）选推荐封面
   - 标题 input[placeholder*=作品标题]；简介 slate contenteditable（Ctrl+A 清空再输）
-  - 发布按钮在 card-container-creator-layout 内文本「发布」→ 发布后读回创作者中心作品列表对账（platform_readback；标题+时间窗对上才算成功）
+  - 发布按钮在 card-container-creator-layout 内文本「发布」→ 读回候选作品供 Host 回执核对，不以标题时间匹配直接宣布公开成功
   - 登录：img[aria-label=二维码] 抠图轮询；命中短信验证给提示
 
 子命令: check / login / plan / publish / publish-video / selftest
@@ -442,13 +442,15 @@ def _wait_publish_button_ready(page, timeout_s: int = 180):
     _die(f"发布按钮迟迟未就绪（上传未完成/表单校验未过），已按未提交处理（{timeout_s}s）")
 
 
-def _click_publish(page, content_length: int = 0):
+def _click_publish(page, content_length: int = 0, before_submit=None):
     """单次提交契约：整个发布流程**唯一一次**点击「发布」。
     点前等按钮就绪 → 复核/提交双停顿 → 点击。REF publishVideo step8。"""
     btn = _wait_publish_button_ready(page)
     human_pace.pause_before_commit(content_length)
     btn.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
+    if before_submit is not None:
+        before_submit()
     btn.click()
 
 
@@ -1123,7 +1125,7 @@ def _plan_lines(kind, title, desc, media, tags):
         f"  2. 切 tab「{tab}」",
         f"  3. {'上传视频等转码(≤5min)+选AI封面' if kind == 'video' else '上传图片'}",
         "  4. 填标题/简介（Ctrl+A 清空再逐字输入）+ # 话题",
-        "  5. 点「发布」→ 发布后读回作品列表对账（标题+时间窗对上才算发布成功）",
+        "  5. 点「发布」→ 读回候选作品；公开状态交 Host 强回执核验",
     ]
 
 
@@ -1167,6 +1169,21 @@ def _readback_verify(p, a, title: str, since_ms: int | None = None,
 
 
 def _publish(a, kind: str) -> int:
+    from publication_receipt import PublicationReceiptReporter
+    reporter = PublicationReceiptReporter.from_args(a, 'douyin')
+    state = {'phase': 'not_started', 'account': None, 'settled': False}
+    reporter.record('not_started')
+    try:
+        return _publish_impl(a, kind, reporter, state)
+    except BaseException as error:
+        if not state['settled']:
+            reporter.record(state['phase'], account=state['account'],
+                reason='cancelled' if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else
+                    'submit_error' if state['phase'] != 'not_started' else 'preflight_failed')
+        raise
+
+
+def _publish_impl(a, kind: str, reporter, state) -> int:
     if not a.title:
         _die("--title 必填")
     if len(a.title) > TITLE_MAX:
@@ -1188,6 +1205,7 @@ def _publish(a, kind: str) -> int:
                                label="抖音发布内容")
 
     if not a.exec:
+        reporter.record('not_started', reason='dry_run')
         print("dry-run（加 --exec 真正发布）：\n")
         for ln in _plan_lines(kind, a.title, a.content or "", media, tags):
             print(ln)
@@ -1212,6 +1230,19 @@ def _publish(a, kind: str) -> int:
             _wait_ready(page)
             if not _logged_in(page):
                 _die("未登录，请先 `login` 扫码")
+            if reporter.enabled:
+                try:
+                    response = page.evaluate(platform_readback._JS_FETCH_JSON,
+                        [platform_readback.DOUYIN_PROFILE_API, 4000])
+                    binding = _account_binding(response)
+                    if binding['accountIdentityStatus'] == 'verified':
+                        state['account'] = {'id': f"{binding['accountIdKind']}:{binding['accountId']}", 'authenticated': True}
+                except Exception:
+                    state['account'] = None
+                reporter.record('not_started', account=state['account'])
+            def before_submit():
+                state['phase'] = 'submit_attempted'
+                reporter.record('submit_attempted', account=state['account'])
             # 发前快照：记录当前作品 id 集，读回时用于排除旧作品
             snapshot_ids = platform_readback.capture_douyin_snapshot(page)
             _go_upload(page)
@@ -1223,7 +1254,7 @@ def _publish(a, kind: str) -> int:
                 _wait_video_processed(page)
                 _select_ai_cover(page)
             _fill_title_desc(page, a.title, a.content or "", tags)
-            _click_publish(page, len(a.title) + len(a.content or ""))
+            _click_publish(page, len(a.title) + len(a.content or ""), before_submit=before_submit)
             # 点击后轮询等风控墙浮现（2026-09-12 真机发现：墙的渲染晚于 2.5s，
             # 单次检查会扑空 → 漏进收尾 → 对着被墙遮挡的按钮空点超时。≤12s 窗口）
             wall_up = False
@@ -1256,7 +1287,7 @@ def _publish(a, kind: str) -> int:
                     if published is None:
                         if "post/video" in page.url or "post/image" in page.url:
                             try:
-                                _click_publish(page)
+                                _click_publish(page, before_submit=before_submit)
                             except SystemExit:
                                 pass
                         _wait_toast(page, timeout_s=40)
@@ -1296,21 +1327,23 @@ def _publish(a, kind: str) -> int:
                                         snapshot_ids=snapshot_ids)
     # 结算：以读回对账为权威（四档），界面判定仅作旁证。
     outcome = readback.outcome if readback else "readback_error"
+    if state['phase'] == 'not_started':
+        reporter.record('not_started', account=state['account'], reason='preflight_failed')
+        state['settled'] = True
+        _die('未尝试提交；读回候选不能证明本次发布已发生', 5)
+    observation = readback.as_dict() if readback is not None else None
+    reason = {'unverified': 'unverified', 'login_required': 'login_required', 'readback_error': 'readback_error'}.get(outcome)
+    if observation is not None:
+        state['phase'] = 'readback'
+    reporter.record(state['phase'], account=state['account'], readback=observation, reason=reason)
+    state['settled'] = True
     if outcome == "verified":
         m = readback.matched
         _acct = (readback.evidence or {}).get("account") or {}
         _who = f"；账号：{_acct.get('display_name')}" if _acct.get("display_name") else ""
-        login_state.write_status(sf, "success",
-                                 f"发布成功（读回核验：作品 {m.platform_content_id}，{m.status}{_who}）")
-        print(f"✅ 抖音发布成功（读回核验：{m.platform_content_id}{_who}）")
-        # 落统一内容日历（对话页自动；发布页由 web 设 AUTORECORD=0 跳过防重复）
-        try:
-            import calendar_ops
-            calendar_ops.record_publish("douyin", a.title,
-                                        ptype="视频" if kind == "video" else "图文",
-                                        tags=(a.tags or ""), note=(a.content or ""), source="chat")
-        except Exception:
-            pass
+        login_state.write_status(sf, "unknown",
+                                 f"已找到读回候选：作品 {m.platform_content_id}，{m.status}{_who}；公开状态待强回执核对")
+        print(f"已找到抖音读回候选（{m.platform_content_id}{_who}）；公开状态未核实")
         return 0
     if outcome == "login_required":
         login_state.write_status(sf, "error",
@@ -1506,6 +1539,8 @@ def main() -> int:
         p.add_argument("--keep-open", action="store_true", help="发布后不关浏览器")
         p.add_argument("--sms-code-file", help="发布触发短信验证时的验证码回填文件（默认 <_login>/douyin.code）")
         p.add_argument("--status-file", help="登录/验证状态 JSON 输出路径（供 Web 后端轮询短信墙）")
+        p.add_argument("--receipt-context", help="Host 提供的机器回执上下文文件")
+        p.add_argument("--receipt-file", help="机器回执输出文件")
 
     sub.add_parser("check", help="检查 playwright/内核").set_defaults(func=cmd_check)
 

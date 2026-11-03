@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -148,13 +149,25 @@ def _forward_publish_log(platform: str, title: str, url: str, ptype: str,
 def record_publish(platform: str, title: str, url: str = "", ptype: str = "",
                    tags: str = "", note: str = "", source: str = "chat",
                    profile: str = "", data_path: Path | None = None,
-                   forward_log: bool = True) -> bool:
+                   forward_log: bool = True, operation_id: str = "",
+                   payload_hash: str = "") -> bool:
     """追加一条已发布记录到日历底座。返回是否写入。全程异常安全。
-    env EASEL_CALENDAR_AUTORECORD=0 时直接跳过（发布页由 web 记录，防重复）。"""
+    env EASEL_CALENDAR_AUTORECORD=0 时直接跳过（发布页由 web 记录，防重复）。
+    可选的操作与内容哈希只做本地幂等投影，不判定平台发布状态。二者须同时给定；
+    已有同操作（包括哈希冲突）不写、不转发并返回 False。并发调用方负责串行化。"""
     if os.environ.get("EASEL_CALENDAR_AUTORECORD") == "0":
         return False
     try:
+        if not isinstance(operation_id, str) or not isinstance(payload_hash, str):
+            return False
+        correlated = bool(operation_id or payload_hash)
+        if correlated and (not re.fullmatch(r'[a-f0-9]{32}', operation_id)
+                           or not re.fullmatch(r'[a-f0-9]{64}', payload_hash)):
+            return False
         path = data_path or DEFAULT_DATA
+        items = load(path)
+        if correlated and any(item.get('publicationOperationId') == operation_id for item in items):
+            return False
         profile = (profile or os.environ.get("EASEL_ACTIVE_PROFILE") or "").strip()
         now = _today()
         item = {
@@ -170,7 +183,8 @@ def record_publish(platform: str, title: str, url: str = "", ptype: str = "",
             "source": source if source in SOURCES else "chat",
             "profile": profile,
         }
-        items = load(path)
+        if correlated:
+            item.update(publicationOperationId=operation_id, publicationPayloadHash=payload_hash)
         items.append(item)
         atomic_write(path, items)
     except Exception:

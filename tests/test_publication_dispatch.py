@@ -16,7 +16,7 @@ import web.app as web
 
 
 pytestmark = pytest.mark.access_integration
-ACCOUNT = {'id':'verified-account-one', 'name':'Verified account'}
+ACCOUNT = {'id':'id:verified-account-one', 'name':'Verified account'}
 
 
 @pytest.fixture
@@ -94,7 +94,7 @@ def test_membership_revoked_during_mp_materialization_prevents_platform_dispatch
             with pytest.raises(HTTPException) as caught:
                 await web._dispatch_publish('wechat-oa', web.PublishRequest(title='Reviewed', body=body),
                     media_paths=staged, operation_id='a' * 32, expected_account=ACCOUNT,
-                    approved_article=article, approved_media=media)
+                    approved_article=article, approved_media=media, payload_hash='a' * 64)
             assert caught.value.status_code == 403
     asyncio.run(scenario())
     assert materialized and calls == []
@@ -103,7 +103,7 @@ def test_membership_revoked_during_mp_materialization_prevents_platform_dispatch
 
 
 @pytest.mark.parametrize('platform', ['zhihu', 'wechat-oa', 'douyin', 'xiaohongshu'])
-def test_zero_exit_records_submission_or_mp_draft_without_published_calendar(dispatch_environment, monkeypatch, platform):
+def test_zero_exit_without_machine_receipt_does_not_claim_submission(dispatch_environment, monkeypatch, platform):
     root, actor, _, image, video = dispatch_environment
     calls = fake_runner(monkeypatch, platform)
     path = video if platform == 'douyin' else image
@@ -119,7 +119,8 @@ def test_zero_exit_records_submission_or_mp_draft_without_published_calendar(dis
             await asyncio.gather(*list(_TASKS))
             return workflow.store().get(record['id'], actor_id=actor['id'], project_id='default')
     record = asyncio.run(scenario())
-    assert record['result']['status'] == ('draft_created' if platform == 'wechat-oa' else 'submitted')
+    assert record['result']['status'] == 'unknown'
+    assert record['result']['reason'] == 'machine_receipt_missing'
     assert record['result']['runnerExitCode'] == 0
     assert len([call for call in calls if call['kind'] == 'platform']) == 1
     assert not web.SCHEDULE_FILE.exists()
