@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar';
 import type { Page } from './components/Sidebar';
 import ChatPage from './components/ChatPage';
 import ArchiveRunningChatDialog from './components/ArchiveRunningChatDialog';
+import DeleteChatDialog from './components/DeleteChatDialog';
 import SkillPage from './components/SkillPage';
 import OutputsPage from './components/OutputsPage';
 import AccountsPage from './components/AccountsPage';
@@ -31,11 +32,10 @@ import { trimChatReferenceText, toWireSessionReferences, type ChatReference, typ
 import { mergeSessionCatalog, nextSessionRevision } from './lib/sessionSync';
 import { sessionAttentionState } from './lib/sessionNavigation';
 import { confirmChatStop, enqueueMessage, nextQueuedMessage } from './lib/chatControl';
-import { chatDraftOwner, loadChatDraft } from './lib/chatDrafts';
+import { chatDraftOwner, loadChatDraft, clearChatDraft } from './lib/chatDrafts';
 import { applyPromptAdmission, forgetPromptAttempt, loadPromptAttempt, sameComposerDraft,
   samePromptAttempt, savePromptAttempt, type PromptAttempt } from './lib/promptAdmission';
 import { questionStatus } from './lib/api';
-import { deleteSession as deleteRemoteSession } from './lib/api';
 import {
   loadSessions,
   saveSessions,
@@ -98,6 +98,7 @@ export default function App() {
   const [workshopJobsOpen, setWorkshopJobsOpen] = useState(false);
   const [archiveRequest, setArchiveRequest] = useState<ArchiveIntent | null>(null);
   const archiveGeneration = useRef(0);
+  const [deleteRequest, setDeleteRequest] = useState<{ id: string; title: string } | null>(null);
   const [interactionEntry, setInteractionEntry] = useState(0);
   const [businessEntry, setBusinessEntry] = useState<BusinessTarget | null>(null);
   const [businessNotice, setBusinessNotice] = useState('');
@@ -1402,19 +1403,19 @@ export default function App() {
   const handleSessionArchive = useCallback(async (id: string, archived: boolean) => {
     const generation = ++archiveGeneration.current;
     setArchiveRequest(null);
-    if (!archived) { applySessionArchive(id, false); return; }
+    if (!archived) { applySessionArchive(id, false); return true; }
     const target = sessionsRef.current.find(session => session.id === id);
-    if (!target || target.archived) return;
+    if (!target || target.archived) return false;
     const local = streamAcc.current[id];
     if (local || streamCtl.current[id] || target.pendingTurnId) {
       setArchiveRequest({ id, title: target.title, generation,
         turnId: local?.turnId ?? target.pendingTurnId, remote: !local });
-      return;
+      return true;
     }
     const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
-    if (archiveGeneration.current !== generation) return;
+    if (archiveGeneration.current !== generation) return false;
     const current = sessionsRef.current.find(session => session.id === id);
-    if (!current || current.archived) return;
+    if (!current || current.archived) return false;
     const owner = streamAcc.current[id];
     if (owner || streamCtl.current[id] || current.pendingTurnId || latest?.status === 'running') {
       setArchiveRequest({ id, title: current.title, generation, remote: !owner,
@@ -1423,7 +1424,9 @@ export default function App() {
       applySessionArchive(id, true);
     } else {
       setHistoryNotice('暂时无法确认会话是否运行，请稍后再归档。');
+      return false;
     }
+    return true;
   }, [applySessionArchive]);
 
   const handleArchiveChoice = useCallback(async (intent: ArchiveIntent, action: 'continue' | 'stop') => {
@@ -1476,52 +1479,71 @@ export default function App() {
     setCurrentPage('chat');
   }, [sessions]);
 
-  const handleSessionDelete = useCallback(async (id: string) => {
-    if (!window.confirm('删除 Easel 中的这条对话？引擎原生历史可能仍保留。')) return;
-    const target = sessionsRef.current.find((s) => s.id === id);
+  const handleSessionDelete = useCallback((id: string) => {
+    const target = sessionsRef.current.find(session => session.id === id);
+    if (target) setDeleteRequest({ id, title: target.title });
+  }, []);
+
+  const executeSessionDelete = useCallback(async (id: string): Promise<boolean> => {
+    const target = sessionsRef.current.find(session => session.id === id);
+    if (!target) return false;
     const owner = streamAcc.current[id];
-    const expectedTurnId = owner ? owner.turnId : target?.pendingTurnId;
+    let expectedTurnId = owner ? owner.turnId : target.pendingTurnId;
+    if (!owner && !streamCtl.current[id] && !expectedTurnId) {
+      const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
+      if (latest?.status === 'running') {
+        if (!latest.turn_id) return false;
+        expectedTurnId = latest.turn_id;
+      } else if (latest?.status !== 'done' && latest?.status !== 'none') return false;
+    }
     if (owner || streamCtl.current[id] || expectedTurnId) {
-      if (!expectedTurnId) {
-        setHistoryNotice('当前回合尚未确认，请等待恢复后再删除。');
-        return;
-      }
+      if (!expectedTurnId) return false;
       try {
-        await confirmChatStop(() => stopChat(id, expectedTurnId));
+        await confirmChatStop(() => stopChat(id, expectedTurnId!));
       } catch {
-        setHistoryNotice('停止尚未确认，对话仍保留。请稍后重试删除。');
-        return;
+        setHistoryNotice('停止尚未确认，原对话仍可查看。');
+        return false;
       }
+      const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
       const currentOwner = streamAcc.current[id];
-      const currentPending = sessionsRef.current.find((s) => s.id === id)?.pendingTurnId;
-      if ((currentOwner && currentOwner !== owner) || (currentPending && currentPending !== expectedTurnId)) {
-        setHistoryNotice('对话已有新的回合，请确认后再删除。');
-        return;
+      const currentPending = sessionsRef.current.find(session => session.id === id)?.pendingTurnId;
+      if ((currentOwner && currentOwner !== owner) || (currentPending && currentPending !== expectedTurnId)
+          || latest?.status !== 'done' || latest.turn_id !== expectedTurnId) {
+        setHistoryNotice('原回合状态已变化，请刷新后再删除。');
+        return false;
       }
     }
-    void deleteChatSession(id).catch(() => setHistoryNotice('服务器删除尚未确认，请稍后重试。'));
+    try {
+      await deleteChatSession(id);
+    } catch {
+      return false;
+    }
     streamCtl.current[id]?.abort();
     clearStream(id);
-    try { sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${id}`)); } catch { /* ignore */ }
+    clearChatDraft(id);
+    const pending = loadPromptAttempt(id);
+    if (pending) forgetPromptAttempt(id, pending.turnId);
+    try {
+      sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${id}`));
+      sessionStorage.removeItem(projectStorageKey(`easel_chat_reading:${id}`));
+    } catch { /* Browser storage is optional. */ }
 
-    if (target?.sessionKey) void deleteRemoteSession(target.sessionKey).catch(() => {});
-
-    setSessions((prev) => {
-      const updated = prev.filter((s) => s.id !== id);
-      saveSessions(updated);
-
+    setSessions(previous => {
+      const updated = previous.filter(session => session.id !== id);
       if (id === activeIdRef.current) {
-        if (updated.length > 0) {
-          setActiveSessionId(updated[0].id);
-        } else {
+        const fallback = updated.find(session => !session.archived);
+        if (fallback) setActiveSessionId(fallback.id);
+        else {
           const newSession = createSession();
           updated.unshift(newSession);
-          saveSessions(updated);
           setActiveSessionId(newSession.id);
         }
       }
+      saveSessions(updated);
       return updated;
     });
+    setHistoryNotice('对话已从 Easel 目录删除。原生历史、交付物和操作回执已保留。');
+    return true;
   }, [clearStream]);
 
   const handleSessionPin = useCallback((id: string, pinned: boolean) => {
@@ -1733,6 +1755,7 @@ export default function App() {
             后台任务
           </button>
         </ProjectBreadcrumb>
+        {historyNotice && currentPage !== 'chat' && <p className="agent-event__note" role="status">{historyNotice}</p>}
         {businessNotice && <p className="agent-event__note" role="status">{businessNotice}</p>}
         {(['trends', 'ideas', 'breakdown'] as Page[]).includes(currentPage) && (
           <SubNav current={currentPage} onNavigate={page => { businessNavigation.current += 1;
@@ -1754,6 +1777,11 @@ export default function App() {
           </aside>}
         </div>
       </main>
+
+      {deleteRequest && <DeleteChatDialog key={deleteRequest.id} sessionTitle={deleteRequest.title}
+        onClose={() => setDeleteRequest(null)}
+        onDelete={() => executeSessionDelete(deleteRequest.id)}
+        onArchive={() => handleSessionArchive(deleteRequest.id, true)} />}
 
       {archiveRequest && <ArchiveRunningChatDialog key={archiveRequest.generation}
         sessionTitle={archiveRequest.title} onClose={closeArchiveRequest}

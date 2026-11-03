@@ -1019,8 +1019,19 @@ export async function fetchChatSessions(signal?: AbortSignal): Promise<{ session
 export function syncChatSessions(sessions: ChatSession[]): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
   return request('/api/chat/sessions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions }) });
 }
-export function deleteChatSession(id: string): Promise<{ ok: boolean }> {
-  return request(`/api/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export interface ChatDeletionReceipt {
+  ok: true;
+  sessionId: string;
+  catalogDeleted: true;
+  nativeHistoryDeleted: false;
+}
+
+export async function deleteChatSession(id: string): Promise<ChatDeletionReceipt> {
+  const value = await request<Partial<ChatDeletionReceipt>>(`/api/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!value || value.ok !== true || value.sessionId !== id || value.catalogDeleted !== true || value.nativeHistoryDeleted !== false) {
+    throw new Error('对话目录删除结果尚未确认。');
+  }
+  return { ok: true, sessionId: id, catalogDeleted: true, nativeHistoryDeleted: false };
 }
 
 // ═══ 设置面板 · 环境安装（install_tool 引擎桥） ═══

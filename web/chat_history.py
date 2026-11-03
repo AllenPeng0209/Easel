@@ -14,6 +14,10 @@ import time
 from pathlib import Path
 
 
+class ChatSessionDeletedError(ValueError):
+    """The current scoped catalog retired this session before admission."""
+
+
 def validated_session(value: dict) -> dict:
     if not isinstance(value, dict):
         raise ValueError("无效的会话")
@@ -117,6 +121,8 @@ class ChatHistoryStore:
             row = connection.execute("SELECT session_id,payload_hash,owner_pid FROM turn_claims WHERE turn_id=?", (turn_id,)).fetchone()
             if row:
                 return False, {"sessionId": row[0], "payloadHash": row[1], "ownerPid": row[2]}
+            if connection.execute("SELECT 1 FROM sessions WHERE id=? AND deleted=1", (session_id,)).fetchone():
+                raise ChatSessionDeletedError("该会话已删除，请新建会话")
             event_path.parent.mkdir(parents=True, exist_ok=True)
             # A pre-existing unclaimed legacy log is uncertain, not permission to
             # execute the original action again.
@@ -169,10 +175,13 @@ class ChatHistoryStore:
                     (session["id"], session["updated"], json.dumps(session, ensure_ascii=False)))
         return self.sessions()
 
-    def delete(self, identifier: str) -> None:
-        if not identifier or len(identifier) > 256:
+    def delete(self, identifier: str) -> str:
+        if (not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 256
+                or any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in identifier)):
             raise ValueError("无效的会话标识")
         with self._connect() as connection:
             connection.execute("INSERT INTO sessions(id,updated,payload,deleted) VALUES(?,?,?,1) "
-                "ON CONFLICT(id) DO UPDATE SET deleted=1,updated=MAX(sessions.updated,excluded.updated)",
+                "ON CONFLICT(id) DO UPDATE SET deleted=1,payload=excluded.payload,"
+                "updated=MAX(sessions.updated,excluded.updated)",
                 (identifier, int(time.time() * 1000), "{}"))
+        return identifier

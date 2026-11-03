@@ -70,7 +70,7 @@ from easel.chat_artifacts import ArtifactError, ChatArtifactStore, is_private_ou
 from easel.artifact_archives import ArchiveSnapshotReader
 from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
-from web.chat_history import ChatHistoryStore, validated_session
+from web.chat_history import ChatHistoryStore, ChatSessionDeletedError, validated_session
 from web.chat_artifact_compare import compare_artifact_snapshots
 from web.chat_commands import ChatCommand, chat_command_catalog, chat_command_message, validate_chat_command
 from web.chat_session_references import (
@@ -4993,10 +4993,16 @@ async def api_chat_sessions_merge(req: ChatSessionsRequest):
 async def api_chat_session_delete(session_id: str):
     _require_operation()
     try:
-        await asyncio.to_thread(ChatHistoryStore(_sessions_dir()).delete, session_id)
+        def retire():
+            _require_operation()
+            return ChatHistoryStore(_sessions_dir()).delete(session_id)
+
+        deleted_id = await asyncio.to_thread(retire)
     except ValueError:
         raise HTTPException(400, "无效的会话标识") from None
-    return {"ok": True, "nativeHistoryDeleted": False}
+    except (OSError, sqlite3.Error):
+        raise HTTPException(503, "会话目录暂时无法更新，请重试") from None
+    return {"ok": True, "sessionId": deleted_id, "catalogDeleted": True, "nativeHistoryDeleted": False}
 
 
 @app.get("/api/chat/last/{session_id}")
@@ -5159,6 +5165,9 @@ async def api_chat_stream(req: ChatRequest):
         raise HTTPException(422, "计划执行缺少批准版本")
     req = req.model_copy(update={"turnId": req.turnId or uuid.uuid4().hex,
                                  "sessionId": req.sessionId or "web-" + uuid.uuid4().hex})
+    catalog = ChatHistoryStore(_sessions_dir())
+    if catalog.is_deleted(req.sessionId) and catalog.turn_claim(req.turnId) is None:
+        raise HTTPException(410, "该会话已删除，请新建会话")
     runtime = _chat_backend(req.sessionId)
     config = _harness_settings()
     direct = runtime == "api"
@@ -5179,7 +5188,6 @@ async def api_chat_stream(req: ChatRequest):
         request_payload.pop("planRef")
     payload_hash = hashlib.sha256(json.dumps({"request": request_payload, "runtime": runtime},
         sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
-    catalog = ChatHistoryStore(_sessions_dir())
     existing = catalog.turn_claim(req.turnId)
     if existing is not None:
         return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId)
@@ -5231,6 +5239,8 @@ async def api_chat_stream(req: ChatRequest):
     event_path = _job_event_file(req.turnId)
     try:
         admitted, claim = catalog.claim_turn(req.turnId, req.sessionId, payload_hash, event_path)
+    except ChatSessionDeletedError as error:
+        raise HTTPException(410, str(error)) from None
     except (OSError, sqlite3.Error):
         raise HTTPException(409, "任务准入记录不可用，未启动执行；请检查已有任务与本地存储") from None
     if not admitted:
@@ -6244,9 +6254,14 @@ async def api_chat(req: ChatRequest):
     """非流式对话（备选）。"""
     if req.planRef is not None or (req.turnId and req.turnId.startswith("plan-")):
         raise HTTPException(409, "请通过流式对话执行已批准的计划")
+    catalog = ChatHistoryStore(_sessions_dir()) if req.sessionId else None
+    if catalog is not None and catalog.is_deleted(req.sessionId):
+        raise HTTPException(410, "该会话已删除，请新建会话")
     runtime = _chat_backend(req.sessionId)
     topic, workshop = await _resolve_chat_references(req)
     captures = await asyncio.to_thread(_capture_session_references, req, ChatHistoryStore(_sessions_dir())) if req.sessionReferences else []
+    if catalog is not None and catalog.is_deleted(req.sessionId):
+        raise HTTPException(410, "该会话已删除，请新建会话")
     if runtime not in ("api", "openclaw"):
         message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
         message = append_session_reference_context(message, captures)

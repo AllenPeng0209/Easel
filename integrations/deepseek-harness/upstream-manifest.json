@@ -7972,12 +7972,23 @@
     "reuse_kind": "adapted",
     "changes": "适配先核对活动再归档，保留原回合的可恢复记录和确认失败状态。",
     "verification_status": "C13_running_archive_choices_and_exact_stop_verified"
+  },
+  {
+    "feature_id": "C14",
+    "upstream_path": "packages/client/ui-workspace/src/client/session-actions/ArchiveSession.tsx",
+    "upstream_sha256": "25060f622ca339c2ef84e6ac29c05d57de18442ecab2f97984806078d3c5ddb7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/DeleteChatDialog.tsx",
+    "destination_sha256": "dcf29f65548d234e637a21977400f64c79f56790a754e5d506ebca7e400d03dc",
+    "reuse_kind": "adapted",
+    "changes": "适配明确的工作空间确认流程，接入目录删除回执、保留范围和重试/归档选择。",
+    "verification_status": "C14_exact_catalog_deletion_boundary_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 98,
+    "source_migration_files": 99,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 83,
+    "adapted_upstream_files": 84,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

@@ -280,3 +280,14 @@ test('approval answer success requires the exact authoritative server receipt', 
   assert.equal(result.ok, false);
   assert.deepEqual(JSON.parse(JSON.stringify(result.receipt)), receipt);
 });
+
+test('delete confirms only an exact catalog receipt and preserves the native-history boundary', async () => {
+  const id = 'session-1';
+  for (const body of [{ ok: true }, { ok: true, sessionId: 'wrong', catalogDeleted: true, nativeHistoryDeleted: false }]) {
+    const { api } = loadApi(() => ({ ok: true, json: async () => body }));
+    await assert.rejects(api.deleteChatSession(id));
+  }
+  const body = { ok: true, sessionId: id, catalogDeleted: true, nativeHistoryDeleted: false };
+  const { api } = loadApi(() => ({ ok: true, json: async () => body }));
+  assert.deepEqual(JSON.parse(JSON.stringify(await api.deleteChatSession(id))), body);
+});

@@ -18,7 +18,7 @@ function visit(node) {
 }
 visit(parsed);
 
-function setup(stopReceipt, readFinal = async () => undefined) {
+function setup(stopReceipt, readFinal = async () => undefined, deleteReceipt) {
   const owner = { turnId: 'turn-old', content: 'shown', thinking: 'thinking', steps: ['step'], questions: [{ id: 'question' }], events: [], timeline: [] };
   const streamAcc = { current: { session: owner } };
   const finalizers = { current: new Map() };
@@ -43,8 +43,9 @@ function setup(stopReceipt, readFinal = async () => undefined) {
     clearTimeout() {}, sessionStorage: { removeItem() {} },
     setSessions: update => { sessions = update(sessions); }, saveSessions() {},
     sessionsRef: { current: sessions }, nextSessionRevision: () => 1, projectStorageKey: key => key,
-    activeIdRef: { current: 'other' }, window: { confirm: () => true }, setHistoryNotice: note => notices.push(note),
-    deleteChatSession: async id => { deletes.push(['catalog', id]); },
+    activeIdRef: { current: 'other' }, setHistoryNotice: note => notices.push(note),
+    deleteChatSession: async id => { deletes.push(['catalog', id]); return deleteReceipt?.(); },
+    clearChatDraft() {}, loadPromptAttempt: () => undefined, forgetPromptAttempt() {},
     deleteRemoteSession: async id => { deletes.push(['remote', id]); },
     setStreams: update => { streams = update(streams); }, confirmChatStop: control.confirmChatStop,
     stopChat: (session, turn) => { stops.push([session, turn]); return stopReceipt?.() || Promise.resolve({ stopped: true, status: 'stopped' }); },
@@ -58,7 +59,7 @@ function setup(stopReceipt, readFinal = async () => undefined) {
   };
   const output = ts.transpileModule(
     `const ${declarations.get('confirmQueuedMessage')}; const ${declarations.get('failQueuedAdmission')};
-     const ${declarations.get('finalizeStream')}; const ${declarations.get('handleStopStream')}; const ${declarations.get('handleSessionDelete')}; ({finalizeStream,handleStopStream,handleSessionDelete});`,
+     const ${declarations.get('finalizeStream')}; const ${declarations.get('handleStopStream')}; const ${declarations.get('executeSessionDelete')}; ({finalizeStream,handleStopStream,executeSessionDelete});`,
     { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
   ).outputText;
   return { ...runInNewContext(output, context), owner, streamAcc, typingBuf, finalizers,
@@ -177,20 +178,21 @@ test('a network failure permits retry against the same turn with distinct feedba
   assert.equal(state.messages[0].message.status, 'stopped');
 });
 
-test('deleting a running session binds the stop and waits before deleting either history', async () => {
+test('deleting a running session waits for the exact stop and catalog receipt only', async () => {
   let confirm;
-  const state = setup(() => new Promise(resolve => { confirm = resolve; }));
-  const deletion = state.handleSessionDelete('session');
+  const state = setup(() => new Promise(resolve => { confirm = resolve; }),
+    async () => ({ status: 'done', turn_id: 'turn-old', outcome: 'stopped' }));
+  const deletion = state.executeSessionDelete('session');
   assert.deepEqual(state.stops, [['session', 'turn-old']]);
   assert.deepEqual(state.deletes, []);
   confirm({ stopped: true, status: 'stopped' });
-  await deletion;
-  assert.deepEqual(state.deletes, [['catalog', 'session'], ['remote', 'native']]);
+  assert.equal(await deletion, true);
+  assert.deepEqual(state.deletes, [['catalog', 'session']]);
 });
 
 test('a mismatched stop leaves both histories and live stream intact on delete', async () => {
   const state = setup(async () => ({ stopped: false, status: 'turn_mismatch' }));
-  await state.handleSessionDelete('session');
+  await state.executeSessionDelete('session');
   assert.deepEqual(state.stops, [['session', 'turn-old']]);
   assert.deepEqual(state.deletes, []);
   assert.equal(state.notices.length, 1);
@@ -201,7 +203,7 @@ test('legacy recovered turns without an identity never send an unbound stop', as
   const state = setup();
   state.owner.turnId = undefined;
   await state.handleStopStream('session', state.owner);
-  await state.handleSessionDelete('session');
+  await state.executeSessionDelete('session');
   assert.deepEqual(state.stops, []);
   assert.deepEqual(state.deletes, []);
   assert.equal(state.streams.session.stopFeedback.kind, 'unconfirmed');
@@ -270,4 +272,14 @@ test('a lost journal is an unconfirmed outcome even when the UI has a typed erro
   }));
   assert.equal(state.messages[0].message.status, 'unconfirmed');
   assert.equal(state.messages[0].message.failure?.code, 'network');
+});
+
+
+test('a failed directory deletion keeps the session and its runtime binding visible', async () => {
+  const state = setup(undefined, async () => ({ status: 'done', turn_id: 'turn-old', outcome: 'stopped' }),
+    async () => { throw new Error('network'); });
+  assert.equal(await state.executeSessionDelete('session'), false);
+  assert.deepEqual(state.deletes, [['catalog', 'session']]);
+  assert.equal(state.streamAcc.current.session, state.owner);
+  assert.equal(state.aborted, 0);
 });
