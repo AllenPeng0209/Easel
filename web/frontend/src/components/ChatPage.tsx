@@ -12,7 +12,8 @@ import type { UploadedFile } from '../lib/api';
 import type { ChatDeliverable } from '../lib/deliverables';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
 import { AttachmentUploadQueue } from '../lib/uploadQueue';
-import { loadChatDraft, saveChatDraft, clearChatDraft } from '../lib/chatDrafts';
+import { validateRestoredAttachments } from '../lib/restoredAttachments';
+import { loadChatDraft, saveChatDraft, consumeChatDraft } from '../lib/chatDrafts';
 import { useChatReading } from '../lib/chatReading';
 import { fileSizeText } from '../vendor/deepseek-harness/composer/file-size';
 import { ImageLightbox } from '../vendor/deepseek-harness/composer/ImageLightbox';
@@ -73,6 +74,11 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     }
   }, [queue, queueEdit]);
   const [initialDraft] = useState(() => loadChatDraft(session.id));
+  const [composerId] = useState(() => crypto.getRandomValues(new Uint32Array(4)).join('-'));
+  const [restoredKeys] = useState(() => new Set(initialDraft.attachments.map(item => item.key)));
+  const [restoreState, setRestoreState] = useState<'checking' | 'complete' | 'unconfirmed'>(
+    restoredKeys.size ? 'checking' : 'complete');
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [input, setInput] = useState(initialDraft.text);
   const [uploadItems, setUploadItems] = useState(initialDraft.attachments);
   const [interruptedFiles, setInterruptedFiles] = useState(initialDraft.interruptedFiles);
@@ -101,6 +107,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const compositionEndedAt = useRef(0);
   const sendingRef = useRef(false);
   const mountedRef = useRef(false);
+  const admittedCleanup = useRef(false);
   const dragDepth = useRef(0);
 
   const isStreaming = !!stream;
@@ -123,7 +130,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const uploading = uploadItems.some(item => item.status === 'queued' || item.status === 'uploading');
   const failedUploads = uploadItems.some(item => item.status === 'failed');
   const attachments = uploads.ready;
-  const canSend = (!!input.trim() || attachments.length > 0) && !uploading && !failedUploads && !sending;
+  const restorePending = restoreState !== 'complete' && uploadItems.some(item => restoredKeys.has(item.key));
+  const canSend = (!!input.trim() || attachments.length > 0) && !uploading && !failedUploads && !restorePending && !sending;
   const showSteer = isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0;
   const waitingApproval = stream?.questions?.some(question => (!question.status || question.status === 'pending')
     && (question.requiresHuman || question.kind === 'approval' || question.publication));
@@ -137,8 +145,31 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   }, []);
 
   useEffect(() => {
-    setDraftError(!saveChatDraft(session.id, { text: input, attachments: uploadItems, interruptedFiles }));
-  }, [session.id, input, uploadItems, interruptedFiles]);
+    const items = uploads.snapshot.filter(item => restoredKeys.has(item.key) && item.status === 'ready');
+    if (!items.length) return;
+    const controller = new AbortController();
+    void validateRestoredAttachments(session.id, items, controller.signal).then(invalid => {
+      if (controller.signal.aborted) return;
+      uploads.invalidateRestored(invalid);
+      setRestoreState('complete');
+    }).catch(() => {
+      if (!controller.signal.aborted) setRestoreState('unconfirmed');
+    });
+    return () => controller.abort();
+  }, [session.id, restoredKeys, uploads, restoreAttempt]);
+
+  useEffect(() => {
+    if (admittedCleanup.current) {
+      admittedCleanup.current = false;
+      if (!input && uploadItems.length === 0) {
+        // Reconcile any simultaneous reminder dismissal without taking over
+        // storage that a newly mounted composer may already own.
+        setDraftError(!consumeChatDraft(session.id, composerId, interruptedFiles));
+        return;
+      }
+    }
+    setDraftError(!saveChatDraft(session.id, { text: input, attachments: uploadItems, interruptedFiles }, composerId));
+  }, [session.id, composerId, input, uploadItems, interruptedFiles]);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -172,7 +203,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     const trimmed = input.trim();
     if (sendingRef.current) return;
     if (intent === 'steer' && (!showSteer || !trimmed || uploads.snapshot.length > 0)) return;
-    if ((!trimmed && attachments.length === 0) || uploading || failedUploads) return;
+    if ((!trimmed && attachments.length === 0) || uploading || failedUploads || restorePending) return;
     sendingRef.current = true; setSending(true); setSubmitError('');
     try {
       const accepted = await (intent === 'steer' ? onSteer?.(trimmed) : onSend(trimmed, attachments));
@@ -181,9 +212,10 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           ? '当前任务尚未确认接收指导，草稿已保留。' : '任务尚未接收，草稿已保留，请重试。');
         return;
       }
-      if (intent === 'send' || mountedRef.current) clearChatDraft(session.id);
+      consumeChatDraft(session.id, composerId);
       if (mountedRef.current) {
-        setInput(''); uploads.clear(); setInterruptedFiles([]); reading.backToBottom();
+        admittedCleanup.current = true;
+        setInput(''); uploads.clear(); reading.backToBottom();
       }
     } catch (error) {
       if (mountedRef.current) setSubmitError(error instanceof Error ? error.message
@@ -211,7 +243,9 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
       {uploadItems.length > 0 && (
         <div className="composer-upload-list" aria-label="待发送附件">
           {uploadItems.map((item) => {
-            const imageUrl = item.previewUrl || (item.mime.startsWith('image/') && item.reference ? mediaUrl(item.reference.path) : '');
+            const checking = restorePending && restoredKeys.has(item.key);
+            const imageUrl = item.previewUrl || (item.mime.startsWith('image/') && item.reference
+              && item.status === 'ready' && !checking ? mediaUrl(item.reference.path) : '');
             return (
             <div key={item.key} className={`composer-file composer-file--${item.status}`}>
               {imageUrl ? <button className="composer-file-preview" type="button" title={`预览 ${item.name}`}
@@ -219,12 +253,12 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 <img src={imageUrl} alt={item.name} /></button>
                 : <div className="composer-file-icon"><IconFile size={22} /></div>}
               <div className="composer-file-info"><strong title={item.name}>{item.name}</strong>
-                <span>{fileSizeText(item.size)} · {item.status === 'ready' ? '已就绪' : item.status === 'queued' ? '排队中'
-                  : item.status === 'uploading' ? '上传中…' : '上传失败'}</span>
+                <span>{fileSizeText(item.size)} · {checking ? (restoreState === 'unconfirmed' ? '附件未核验' : '核验中…') : item.status === 'ready' ? '已就绪' : item.status === 'queued' ? '排队中'
+                  : item.status === 'uploading' ? '上传中…' : item.reference ? '附件不可用' : '上传失败'}</span>
                 {item.status === 'uploading' && <span className="composer-upload-progress" role="progressbar" aria-label={`${item.name} 上传中`} />}
                 {item.error && <span className="composer-file-error" title={item.error}>{item.error}</span>}
               </div>
-              {item.status === 'failed' && <button type="button" className="composer-file-retry" disabled={sending}
+              {item.status === 'failed' && !item.reference && <button type="button" className="composer-file-retry" disabled={sending}
                 onClick={() => uploads.retry(item.key)}>重试</button>}
               <button type="button" className="composer-file-remove" disabled={sending} onClick={() => uploads.remove(item.key)}
                 title={`移除 ${item.name}`} aria-label={`移除 ${item.name}`}>×</button>
@@ -232,8 +266,15 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           ); })}
         </div>
       )}
+      {restorePending && restoreState === 'unconfirmed' && <div className="composer-notice" role="status">
+        <span>暂时无法核验恢复的附件，请重试或移除这些附件。</span>
+        <button type="button" onClick={() => {
+          setRestoreState('checking');
+          setRestoreAttempt(value => value + 1);
+        }}>重试核验</button>
+      </div>}
       {!!interruptedFiles.length && <div className="composer-notice" role="status">
-        <span>上次有 {interruptedFiles.length} 个文件未上传完成，请重新选择：{interruptedFiles.map(file => file.name).join('、')}</span>
+        <span>上次有 {interruptedFiles.length} 个附件需要重新选择：{interruptedFiles.map(file => file.name).join('、')}</span>
         <button type="button" onClick={() => setInterruptedFiles([])}>知道了</button>
       </div>}
       <div className="composer-top">

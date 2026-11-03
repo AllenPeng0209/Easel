@@ -9,8 +9,8 @@ const text = node => typeof node === 'string' || typeof node === 'number' ? Stri
   : !node || typeof node !== 'object' ? '' : [node.props?.children].flat(Infinity).map(text).join('');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
-function view({ onSend = () => true, onSteer, stream, initial = '', interruptedFiles = [], queueProps = {} } = {}) {
-  const local = new Map(initial ? [['scope:easel_chat_draft:s1', JSON.stringify({ text: initial, attachments: [], interruptedFiles })]] : []);
+function view({ onSend = () => true, onSteer, stream, initial = '', interruptedFiles = [], queueProps = {}, sharedDrafts, validate } = {}) {
+  const local = sharedDrafts ?? new Map(initial ? [['scope:easel_chat_draft:s1', JSON.stringify({ text: initial, attachments: [], interruptedFiles })]] : []);
   const localStorage = { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key) };
   const slots = []; let cursor = 0; let effects = []; let nodes = [];
   const hooks = {
@@ -41,7 +41,8 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'fragment' };
       if (name.endsWith('.css')) return {};
       if (name.endsWith('projectScope')) return { projectStorageKey: key => `scope:${key}`, projectUrl: value => value,
-        projectFetch: async () => ({ json: async () => ({ max_mb: 50 }) }) };
+        projectFetch: async (url, options) => url.endsWith('/upload/validate') && validate
+          ? validate(options) : ({ json: async () => ({ max_mb: 50 }) }) };
       if (name.endsWith('/api')) return { uploadFiles: async () => [], adoptOversize: async () => [] };
       if (name.includes('MessageBubble') || name.includes('QuestionCards') || name.includes('BrushEntry')) return { default: () => null };
       if (name === './AgentSubagentLineage') return { SubagentTranscript: () => null };
@@ -65,6 +66,7 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
       nodes.push(node); [node.props?.children].flat(Infinity).forEach(walk); };
     walk(component(props)); effects.splice(0).forEach(run => run()); return nodes; };
   return { render, get nodes() { return nodes; }, local,
+    unmount() { for (const slot of slots) slot?.cleanup?.(); },
     async ready() { render(); await settle(); return render(); } };
 }
 
@@ -127,6 +129,56 @@ test('pending admission freezes the attachment selection instead of silently cle
 const running = { content: 'working', thinking: '', activity: '', questions: [], lifecycle: 'running' };
 const control = (nodes, title) => nodes.find(node => node.type === 'button' && node.props.title === title);
 const editor = nodes => nodes.find(node => node.type === 'textarea');
+
+test('late admission after remount cannot erase the new composer draft', async () => {
+  let accept;
+  const old = view({ initial: 'sent draft', onSend: () => new Promise(resolve => { accept = resolve; }) });
+  const sent = control(await old.ready(), '发送').props.onClick();
+  old.unmount();
+  const current = view({ sharedDrafts: old.local });
+  editor(await current.ready()).props.onChange({ target: { value: 'new draft after navigation' } });
+  current.render();
+  accept(true);
+  await sent;
+  const reopened = view({ sharedDrafts: old.local });
+  assert.equal(editor(await reopened.ready()).props.value, 'new draft after navigation');
+});
+
+test('late admission can consume its original draft if no other composer has taken over', async () => {
+  let accept;
+  const old = view({ initial: 'sent draft', interruptedFiles: [{ name: 'interrupted.txt', size: 2, mime: 'text/plain' }],
+    onSend: () => new Promise(resolve => { accept = resolve; }) });
+  const sent = control(await old.ready(), '发送').props.onClick();
+  old.unmount();
+  accept(true);
+  await sent;
+  const restored = await view({ sharedDrafts: old.local }).ready();
+  assert.equal(editor(restored).props.value, '');
+  assert.ok(restored.some(node => node.props?.role === 'status' && text(node).includes('interrupted.txt')));
+});
+
+test('accepted cleanup in one mounted composer cannot overwrite a newer writer in another tab', async () => {
+  let accept;
+  const old = view({ initial: 'sent draft', onSend: () => new Promise(resolve => { accept = resolve; }) });
+  const sent = control(await old.ready(), '发送').props.onClick();
+  const current = view({ sharedDrafts: old.local });
+  editor(await current.ready()).props.onChange({ target: { value: 'newer draft' } });
+  current.render();
+  accept(true);
+  await sent;
+  assert.equal(editor(old.render()).props.value, '');
+  assert.equal(editor(await view({ sharedDrafts: old.local }).ready()).props.value, 'newer draft');
+});
+
+test('unrelated send clears text but preserves interrupted file reminders in UI and storage', async () => {
+  const ui = view({ initial: 'unrelated text', interruptedFiles: [{ name: 'pending.txt', size: 12, mime: 'text/plain' }] });
+  await control(await ui.ready(), '发送').props.onClick();
+  const nodes = ui.render();
+  assert.equal(editor(nodes).props.value, '');
+  assert.ok(nodes.some(node => node.props?.role === 'status' && text(node).includes('pending.txt')));
+  const restored = await view({ sharedDrafts: ui.local }).ready();
+  assert.ok(restored.some(node => node.props?.role === 'status' && text(node).includes('pending.txt')));
+});
 
 test('explicit guidance sends only to the active turn and shares the queue admission lock', async () => {
   const calls = [];
@@ -222,4 +274,29 @@ test('queue editor isolates the text edit and locks rows awaiting an admission r
   assert.ok(nodes.some(node => node.type === 'small' && text(node) === 'reference.pdf'));
   byLabel('移除第 1 条排队消息').props.onClick();
   assert.deepEqual(removals, ['editable']);
+});
+
+test('restored files block sends until verified, and unavailable receipts must be removed', async () => {
+  const sharedDrafts = new Map([['scope:easel_chat_draft:s1', JSON.stringify({
+    text: 'restore draft',
+    attachments: [{ key: 'gone', name: 'gone.txt', size: 1, mime: 'text/plain', status: 'ready',
+      reference: { id: 'id', path: '_inbox/scope/batch/gone.txt', name: 'gone.txt' } }],
+    interruptedFiles: [],
+  })]]);
+  let resolve;
+  let sends = 0;
+  const ui = view({ sharedDrafts, validate: () => new Promise(value => { resolve = value; }),
+    onSend: () => { sends++; return true; } });
+  let nodes = await ui.ready();
+  assert.equal(control(nodes, '发送').props.disabled, true);
+  await control(nodes, '发送').props.onClick();
+  assert.equal(sends, 0);
+  resolve({ ok: true, json: async () => ({ valid: [false] }) });
+  nodes = await ui.ready();
+  assert.equal(control(nodes, '发送').props.disabled, true);
+  assert.ok(nodes.some(node => text(node) === '附件已不可用，请移除或重新选择文件。'));
+  assert.ok(!nodes.some(node => node.props?.className === 'composer-file-retry'));
+  nodes.find(node => node.props?.['aria-label'] === '移除 gone.txt').props.onClick();
+  nodes = await ui.ready();
+  assert.equal(control(nodes, '发送').props.disabled, false);
 });

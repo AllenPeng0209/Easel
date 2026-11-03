@@ -78,6 +78,21 @@ export class AttachmentUploadQueue {
     this.publish();
   }
 
+  invalidateRestored(rejected: UploadAttachment[]): void {
+    if (this.disposed || !rejected.length) return;
+    const byKey = new Map(rejected.map(item => [item.key, item.reference]));
+    let changed = false;
+    for (const item of this.items) {
+      const rejectedRef = byKey.get(item.key);
+      if (item.status !== 'ready' || !item.reference || !rejectedRef
+        || rejectedRef.id !== item.reference.id || rejectedRef.path !== item.reference.path) continue;
+      item.status = 'failed';
+      item.error = '附件已不可用，请移除或重新选择文件。';
+      changed = true;
+    }
+    if (changed) this.publish();
+  }
+
   clear(): void {
     for (const item of [...this.items]) this.remove(item.key);
   }

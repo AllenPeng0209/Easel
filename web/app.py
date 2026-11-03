@@ -3105,6 +3105,55 @@ def _attachment_id(scope: str, path: str) -> str:
     return hashlib.sha256(f"{scope}\0{path}".encode("utf-8")).hexdigest()[:24]
 
 
+def _validate_attachment(scope: str, attachment: AttachmentRef, *, must_exist: bool = True) -> str:
+    rel = Path(attachment.path)
+    if rel.is_absolute() or ".." in rel.parts or len(rel.parts) != 4:
+        raise HTTPException(400, "附件路径无效")
+    if rel.parts[0] != "_inbox" or rel.parts[1] != scope:
+        raise HTTPException(403, "附件不属于当前会话")
+    normalized = rel.as_posix()
+    if attachment.id != _attachment_id(scope, normalized):
+        raise HTTPException(403, "附件标识校验失败")
+    try:
+        root = _outputs_dir()
+        if root.is_symlink():
+            raise HTTPException(403, "附件路径不能包含符号链接")
+        candidate = root
+        for part in rel.parts:
+            candidate = candidate / part
+            if candidate.is_symlink():
+                raise HTTPException(403, "附件路径不能包含符号链接")
+        full = _safe_output_target(normalized, must_exist=must_exist)
+        if full != root.resolve() / rel:
+            raise HTTPException(403, "附件路径不能重定向")
+        if must_exist and not full.is_file():
+            raise HTTPException(404, f"附件不存在：{attachment.name}")
+    except (OSError, RuntimeError, ValueError):
+        raise HTTPException(403, "无法验证附件路径") from None
+    return normalized
+
+
+class ValidateAttachmentsRequest(BaseModel):
+    sessionId: str
+    attachments: list[AttachmentRef] = Field(max_length=100)
+
+
+@app.post("/api/upload/validate")
+def api_upload_validate(req: ValidateAttachmentsRequest):
+    """Check saved draft references without opening or returning file contents."""
+    _require_operation()
+    scope = _attachment_scope(req.sessionId)
+    valid = []
+    for attachment in req.attachments:
+        try:
+            _validate_attachment(scope, attachment)
+        except HTTPException:
+            valid.append(False)
+        else:
+            valid.append(True)
+    return {"valid": valid}
+
+
 def _attachment_context(req: ChatRequest, *, must_exist: bool = True) -> str:
     """Validate attachment ownership and build an Agent-only attachment manifest."""
     if not req.attachments:
@@ -3116,17 +3165,7 @@ def _attachment_context(req: ChatRequest, *, must_exist: bool = True) -> str:
     rows: list[str] = []
     seen: set[str] = set()
     for attachment in req.attachments:
-        rel = Path(attachment.path)
-        if rel.is_absolute() or ".." in rel.parts or len(rel.parts) != 4:
-            raise HTTPException(400, "附件路径无效")
-        if rel.parts[0] != "_inbox" or rel.parts[1] != scope:
-            raise HTTPException(403, "附件不属于当前会话")
-        normalized = rel.as_posix()
-        if attachment.id != _attachment_id(scope, normalized):
-            raise HTTPException(403, "附件标识校验失败")
-        full = _safe_output_target(normalized, must_exist=must_exist)
-        if must_exist and not full.is_file():
-            raise HTTPException(404, f"附件不存在：{attachment.name}")
+        normalized = _validate_attachment(scope, attachment, must_exist=must_exist)
         if normalized in seen:
             continue
         seen.add(normalized)

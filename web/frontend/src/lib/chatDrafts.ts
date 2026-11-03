@@ -41,7 +41,7 @@ export function loadChatDraft(sessionId: string): ChatDraft {
 }
 
 /** Persist only complete receipts; unfinished file metadata becomes a reselect notice. */
-export function saveChatDraft(sessionId: string, draft: ChatDraft): boolean {
+export function saveChatDraft(sessionId: string, draft: ChatDraft, composerId?: string): boolean {
   try {
     const attachments = draft.attachments.filter(item => item.status === 'ready' && item.reference)
       .map(item => ({ key: item.key, name: item.name, size: item.size, mime: item.mime, status: 'ready',
@@ -49,7 +49,23 @@ export function saveChatDraft(sessionId: string, draft: ChatDraft): boolean {
     const interruptedFiles = [...draft.interruptedFiles, ...draft.attachments
       .filter(item => item.status !== 'ready').map(item => ({ name: item.name, size: item.size, mime: item.mime }))];
     if (!draft.text && !attachments.length && !interruptedFiles.length) localStorage.removeItem(keyFor(sessionId));
-    else localStorage.setItem(keyFor(sessionId), JSON.stringify({ version: 1, text: draft.text, attachments, interruptedFiles }));
+    else localStorage.setItem(keyFor(sessionId), JSON.stringify({ version: 1, composerId, text: draft.text, attachments, interruptedFiles }));
+    return true;
+  } catch { return false; }
+}
+
+/** Consume the admitted text and receipts only while this composer owns the saved draft. */
+export function consumeChatDraft(sessionId: string, composerId: string, reminders?: InterruptedFile[]): boolean {
+  try {
+    const key = keyFor(sessionId);
+    const stored = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!stored || stored.composerId !== composerId) return true;
+    const interruptedFiles = reminders ?? (Array.isArray(stored.interruptedFiles) ? stored.interruptedFiles : []);
+    if (interruptedFiles.length) {
+      localStorage.setItem(key, JSON.stringify({ version: 1, composerId, text: '', attachments: [], interruptedFiles }));
+    } else {
+      localStorage.removeItem(key);
+    }
     return true;
   } catch { return false; }
 }
