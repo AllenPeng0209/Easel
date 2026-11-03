@@ -39,12 +39,8 @@ interface ChatPageProps {
     sessionReferences?: ChatDraftSessionReference[], command?: ChatCommand) => boolean | Promise<boolean>;
   onSteer?: (text: string) => Promise<boolean>;
   onStop: () => void;
-  onResend: (
-    userIndex: number,
-    displayText: string,
-    attachments?: UploadedFile[],
-    legacyAgentText?: string,
-  ) => void; // 重试：仅对最后一轮
+  onResend: (userIndex: number) => void; // 仅最后一轮，追加新请求
+  onEditHistory?: (sessionId: string, userIndex: number) => Promise<void>;
   onForkAnswer?: (messageIndex: number) => Promise<CreatedChatFork | null>;
   onOpenFork?: (id: string) => void;
   onQuestionAnswered?: (receipt: ChatQuestionClosed) => void;
@@ -74,10 +70,35 @@ function greeting(): string {
   return `${g}，想创作点什么？`;
 }
 
-export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onForkAnswer, onOpenFork, onQuestionAnswered,
+export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onEditHistory, onForkAnswer, onOpenFork, onQuestionAnswered,
   sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
   const [forkTarget, setForkTarget] = useState<{ sessionId: string; index: number; turnId: string; answer: string }>();
   useEffect(() => setForkTarget(undefined), [session.id]);
+  const [historyEdit, setHistoryEdit] = useState<{ sessionId: string; index: number; pending: boolean; error?: string }>();
+  const historyEditOwner = useRef<{ sessionId: string; index: number } | undefined>(undefined);
+  useEffect(() => {
+    setHistoryEdit(undefined);
+    return () => {
+      if (historyEditOwner.current?.sessionId === session.id) historyEditOwner.current = undefined;
+    };
+  }, [session.id]);
+  const editHistoricalMessage = async (index: number) => {
+    if (!onEditHistory || historyEditOwner.current?.sessionId === session.id) return;
+    const owner = { sessionId: session.id, index };
+    historyEditOwner.current = owner;
+    setHistoryEdit({ ...owner, pending: true });
+    try {
+      await onEditHistory(owner.sessionId, index);
+      if (historyEditOwner.current === owner) setHistoryEdit(undefined);
+    } catch (error) {
+      if (historyEditOwner.current === owner) {
+        setHistoryEdit({ ...owner, pending: false,
+          error: error instanceof Error && error.message ? error.message : '无法从此消息创建修订分支，请稍后重试。' });
+      }
+    } finally {
+      if (historyEditOwner.current === owner) historyEditOwner.current = undefined;
+    }
+  };
   const [queueEdit, setQueueEdit] = useState<{ id: string; text: string } | null>(null);
   const queueEditChange = useRef(onQueueEditChange);
   queueEditChange.current = onQueueEditChange;
@@ -523,6 +544,10 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
       onOpen={onOpenFork} onClose={() => setForkTarget(undefined)} /> : null;
   // ---- 对话态 ----
   const lastUserIndex = session.messages.findLastIndex(message => message.role === 'user');
+  const lastMessage = session.messages.at(-1);
+  const lastTurnHasPublication = lastMessage?.events?.some(event => event.kind === 'publication' && event.publication);
+  const canRetryLastTurn = !lastTurnHasPublication && lastMessage?.status !== 'unconfirmed';
+  const activeHistoryEdit = historyEdit?.sessionId === session.id ? historyEdit : undefined;
   const displayMessages: ChatMessage[] = [...session.messages];
   if (isStreaming) displayMessages.push({ role: 'assistant', content: stream!.content || '' });
 
@@ -562,17 +587,24 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
             const isLast = i === displayMessages.length - 1;
             const live = isStreaming && isLast && msg.role === 'assistant';
             const isFinal = !live && i < session.messages.length;
+            const inherited = isFinal && !!hasLineage && i <= lineage.cutoffIndex;
             let actions;
             if (isFinal) {
               const copy = () => navigator.clipboard?.writeText(msg.content);
-              // 只允许对「最后一轮」重试，契合 OpenClaw append-only 模型（不改写历史）；已移除编辑
+              // 最近一轮可追加一次尝试，旧消息从分支修订。
               const isLastFinal = i === session.messages.length - 1;
               if (msg.role === 'user') {
                 actions = {
                   onCopy: copy,
-                  onRetry: isLastFinal && !msg.planRef
-                    ? () => onResend(i, msg.content, msg.attachments, msg.agentContent)
+                  onRetry: canRetryLastTurn && isLastFinal && !msg.planRef && !inherited
+                    ? () => onResend(i)
                     : undefined,
+                  onEditHistory: onEditHistory && !inherited && i < lastUserIndex
+                    ? () => { void editHistoricalMessage(i); }
+                    : undefined,
+                  historyEditPending: activeHistoryEdit?.pending === true,
+                  historyEditCurrent: activeHistoryEdit?.index === i,
+                  historyEditError: activeHistoryEdit?.index === i ? activeHistoryEdit.error : undefined,
                   canModify: !isStreaming,
                 };
               } else {
@@ -585,8 +617,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                     /^[A-Za-z0-9_.-]{1,160}$/.test(turnId)
                     ? () => setForkTarget({ sessionId: session.id, index: i, turnId, answer: msg.content })
                     : undefined,
-                  onRetry: (isLastFinal && prevUser && !prevUser.planRef)
-                    ? () => onResend(pi, prevUser.content, prevUser.attachments, prevUser.agentContent)
+                  onRetry: (canRetryLastTurn && isLastFinal && prevUser && !prevUser.planRef && !inherited)
+                    ? () => onResend(pi)
                     : undefined,
                   canModify: !isStreaming,
                 };
@@ -599,7 +631,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 sessionId={session.id}
                 message={msg}
                 isStreaming={live}
-                inheritedForkText={isFinal && !!hasLineage && i <= lineage.cutoffIndex}
+                inheritedForkText={inherited}
                 detailMode={workDetails.mode}
                 foldWorkDetails={isFinal && (workDetails.collapseTiming === 'completion' || i < lastUserIndex)}
                 reasoningSummary={live ? stream!.reasoningSummary : undefined}

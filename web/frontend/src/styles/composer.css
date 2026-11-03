@@ -112,3 +112,5 @@
   .composer-image-overlay { padding: 50px 15px; }
 }
 @media (prefers-reduced-motion: reduce) { .composer-upload-progress::after { animation: none; width: 100%; opacity: .5; } }
+
+.msg-action-error { color: var(--danger); font-size: .82rem; overflow-wrap: anywhere; }

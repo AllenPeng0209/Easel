@@ -30,6 +30,10 @@ export interface BubbleActions {
   onCopy: () => void | Promise<void>;
   onRetry?: () => void;    // 仅最后一轮可用（append-only：不改写历史）
   onFork?: () => void;
+  onEditHistory?: () => void;
+  historyEditPending?: boolean;
+  historyEditCurrent?: boolean;
+  historyEditError?: string;
   canModify: boolean;      // 流式中禁用 retry
 }
 
@@ -66,8 +70,16 @@ function ActionBar({ actions, text, onFork }: { actions: BubbleActions; text: st
       </button>
       {onFork && <button className="msg-action" type="button" data-fork-answer onClick={onFork}>从此答复分叉</button>}
       {actions.onRetry && actions.canModify && (
-        <button className="msg-action" onClick={actions.onRetry} title="重新生成"><IconRetry size={14} /><span>重试</span></button>
+        <button className="msg-action" type="button" data-retry-last-turn onClick={actions.onRetry}
+          title="追加新一轮，保留原回答"><IconRetry size={14} /><span>再试一次</span></button>
       )}
+      {actions.onEditHistory && <button className="msg-action" type="button" data-edit-history
+        disabled={!actions.canModify || actions.historyEditPending}
+        aria-busy={actions.historyEditPending && actions.historyEditCurrent || undefined}
+        onClick={actions.onEditHistory} title="在新分支中编辑，保留原会话">
+        {actions.historyEditPending && actions.historyEditCurrent ? '正在创建分支…' : '在分支中修订'}
+      </button>}
+      {actions.historyEditError && <span className="msg-action-error" role="alert" data-edit-history-error>{actions.historyEditError}</span>}
     </div>
   );
 }
@@ -150,7 +162,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, inherit
             <small className="agent-event__note" data-chat-plan-execution>已批准方案 V{message.planRef.revision}</small>}
           {message.attachments?.length ? <UserAttachments files={message.attachments} /> : null}
           {message.content.trim() && <UserMessageBubble className="message-bubble user"><UserText message={message} /></UserMessageBubble>}
-          {actions && message.content.trim() && <ActionBar actions={actions} text={message.content} />}
+          {actions && (message.content.trim() || actions.onEditHistory) && <ActionBar actions={actions} text={message.content} />}
         </div>
       </div>
     );
@@ -242,7 +254,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, inherit
           {isStreaming && !answerCompleted && <span className="streaming-cursor" />}
         </div>
         {actions && !isStreaming && (!(failedTurn || uncertainTurn) || assistantContent) &&
-          <ActionBar actions={failedTurn || uncertainTurn ? { ...actions, onRetry: undefined } : actions} text={assistantContent} onFork={canFork ? actions.onFork : undefined} />}
+          <ActionBar actions={failedTurn || uncertainTurn || hasPublicationReceipt ? { ...actions, onRetry: undefined } : actions} text={assistantContent} onFork={canFork ? actions.onFork : undefined} />}
       </div>
     </div>
   );

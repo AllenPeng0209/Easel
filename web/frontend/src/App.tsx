@@ -32,7 +32,7 @@ import { trimChatReferenceText, toWireSessionReferences, type ChatReference, typ
 import { mergeSessionCatalog, nextSessionRevision } from './lib/sessionSync';
 import { sessionAttentionState } from './lib/sessionNavigation';
 import { confirmChatStop, enqueueMessage, nextQueuedMessage } from './lib/chatControl';
-import { chatDraftOwner, loadChatDraft, clearChatDraft } from './lib/chatDrafts';
+import { chatDraftOwner, loadChatDraft, saveChatDraft, clearChatDraft } from './lib/chatDrafts';
 import { applyPromptAdmission, forgetPromptAttempt, loadPromptAttempt, sameComposerDraft,
   samePromptAttempt, savePromptAttempt, type PromptAttempt } from './lib/promptAdmission';
 import { questionStatus } from './lib/api';
@@ -932,13 +932,12 @@ export default function App() {
     }
   }, [activeSessionId, canOperate, historyReady, resumePendingTurn, sessions]);
 
-  // 落用户消息（可选先把 messages 截断到 truncateAt）→ 启动流。retry/edit 都走这里。
+  // 等待服务端接收，再追加用户消息。
   const sendUserAndStream = useCallback((
     sessionId: string,
     displayText: string,
     attachments: UploadedFile[] = [],
     legacyAgentText?: string,
-    truncateAt?: number,
     requestedTurnId?: string,
     topicRef?: ChatMessage['topicRef'],
     workshopRef?: WorkshopReference,
@@ -966,8 +965,7 @@ export default function App() {
     const previous = loadPromptAttempt(sessionId);
     let attempt: PromptAttempt = {
       turnId: requestedTurnId || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      state: 'sending', wireText: agentMessage, persona, composer, truncateAt,
-      baseline: truncateAt !== undefined && cur ? JSON.stringify(cur.messages.slice(truncateAt)) : undefined,
+      state: 'sending', wireText: agentMessage, persona, composer,
       message: {
         role: 'user', content: planRef ? displayText : visible, created: Date.now(),
         ...(attachments.length ? { attachments: attachments.map(item => ({ ...item })) } : {}),
@@ -1010,7 +1008,7 @@ export default function App() {
         || !/^[a-f0-9]{32}$/.test(plan.planId) || !Number.isSafeInteger(plan.revision) || plan.revision < 1
         || !/^[a-f0-9]{64}$/.test(plan.digest)) return false;
     const ref = { planId: plan.planId, revision: plan.revision, digest: plan.digest };
-    return sendUserAndStream(sessionId, plan.text, [], undefined, undefined,
+    return sendUserAndStream(sessionId, plan.text, [], undefined,
       `plan-${ref.planId}-${ref.revision}`, undefined, undefined, false, undefined, undefined, undefined, ref);
   }, [canOperate, sendUserAndStream]);
 
@@ -1019,7 +1017,7 @@ export default function App() {
     if (!session || (!displayText.trim() && !attachments?.length) || (command && !validateChatCommand(displayText, command))) return false;
     const prior = loadPromptAttempt(sessionId);
     if (prior && prior.state !== 'accepted') {
-      return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, undefined, undefined, true, references, sessionReferences, command);
+      return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, undefined, true, references, sessionReferences, command);
     }
     if (prior && sameComposerDraft(prior, displayText, attachments || [], references, sessionReferences, command)) {
       // A cold or remounted composer may still hold the already admitted draft.
@@ -1050,7 +1048,7 @@ export default function App() {
       });
       return true;
     }
-    return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, undefined, undefined, true, references, sessionReferences, command);
+    return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, undefined, true, references, sessionReferences, command);
   }, [sendUserAndStream]);
 
   const reconcilePromptAttempt = useCallback((sessionId: string) => {
@@ -1129,7 +1127,7 @@ export default function App() {
       if (loadPromptAttempt(session.id)?.state === 'unconfirmed') continue;
       const next = nextQueuedMessage(session, Boolean(streamAcc.current[session.id] || streamCtl.current[session.id] || session.pendingTurnId));
       if (!next || queueEdits.current[session.id]) continue;
-      sendUserAndStream(session.id, next.text, next.attachments || [], undefined, undefined, `queue-${next.id}`, undefined, undefined, false, next.references, next.sessionReferences, next.command);
+      sendUserAndStream(session.id, next.text, next.attachments || [], undefined, `queue-${next.id}`, undefined, undefined, false, next.references, next.sessionReferences, next.command);
     }
   }, [sessions, streams, queueEditRevision, historyReady, canOperate, resumePendingTurn, sendUserAndStream]);
 
@@ -1175,29 +1173,22 @@ export default function App() {
     });
   }, []);
 
-  // 有明确安全回执的失败可另起一轮，保留原失败记录。
-  const handleResend = useCallback((
-    sessionId: string,
-    userIndex: number,
-    displayText: string,
-    attachments?: UploadedFile[],
-    legacyAgentText?: string,
-  ) => {
-    const messages = sessionsRef.current.find(session => session.id === sessionId)?.messages;
-    const original = messages?.[userIndex];
-    const last = messages?.at(-1);
-    const latestUserIndex = (messages?.length ?? 0) - (last?.role === 'assistant' ? 2 : 1);
-    if (original?.role !== 'user' || original.planRef || userIndex !== latestUserIndex || last?.status === 'unconfirmed') return;
+  // 重试追加新轮次，保留原回答和服务端回执。
+  const handleResend = useCallback((sessionId: string, userIndex: number) => {
+    const source = sessionsRef.current.find(session => session.id === sessionId);
+    if (!canOperate || !source || source.pendingTurnId || streamAcc.current[sessionId]
+        || userIndex <= (source.fork?.cutoffIndex ?? -1)) return;
+    const original = source.messages[userIndex];
+    const last = source.messages.at(-1);
+    const latestUserIndex = source.messages.length - (last?.role === 'assistant' ? 2 : 1);
+    if (original?.role !== 'user' || original.planRef || userIndex !== latestUserIndex || last?.status === 'unconfirmed'
+        || last?.events?.some(event => event.kind === 'publication' && event.publication)) return;
     const failed = last?.status === 'failed' || !!last?.failure;
     if (failed && (last?.failure?.retryable !== true || last.failure.phase !== 'startup'
-      || !['network', 'timeout', 'rate_limit'].includes(last.failure.code)
-      || last.events?.some(event => event.kind === 'publication' && event.publication))) return;
-    sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, failed ? undefined : userIndex, undefined,
-      original?.topicRef, original?.workshopRef, false,
-      original?.content === displayText ? original.references : undefined,
-      original?.content === displayText ? original.sessionReferences : undefined,
-      original?.content === displayText ? original.command : undefined);
-  }, [sendUserAndStream]);
+      || !['network', 'timeout', 'rate_limit'].includes(last.failure.code))) return;
+    sendUserAndStream(sessionId, original.content, original.attachments, original.agentContent, undefined,
+      original.topicRef, original.workshopRef, false, original.references, original.sessionReferences, original.command);
+  }, [canOperate, sendUserAndStream]);
 
   // 热点「一键做成内容」：新开会话，把选题作为指令发出去，跳到对话页。
   const handleUseTopic = useCallback((title: string) => {
@@ -1227,7 +1218,7 @@ export default function App() {
       setCurrentPage('chat');
       setBusinessNotice('');
       sendUserAndStream(session.id, '请根据所选选题及来源拟定创作方向，并起草一版内容。', [], undefined,
-        undefined, undefined, { id: idea.id, snapshotHash: idea.snapshotHash });
+        undefined, { id: idea.id, snapshotHash: idea.snapshotHash });
     } catch {
       if (generation === businessNavigation.current) setBusinessNotice('无法读取该选题，请在当前 IP 核对后重试。');
     }
@@ -1255,7 +1246,7 @@ export default function App() {
     if (origin) {
       const target = sessionsRef.current.find(session => session.id === origin);
       if (!target || target.archived || target.pendingTurnId || target.queued?.length ||
-          !sendUserAndStream(origin, prompt, [], undefined, undefined, undefined, undefined, reference)) {
+          !sendUserAndStream(origin, prompt, [], undefined, undefined, undefined, reference)) {
         setBusinessNotice('原对话不可用或还有任务，请完成后重试。');
         return;
       }
@@ -1267,7 +1258,7 @@ export default function App() {
         return next;
       });
       setActiveSessionId(session.id);
-      sendUserAndStream(session.id, prompt, [], undefined, undefined, undefined, undefined, reference);
+      sendUserAndStream(session.id, prompt, [], undefined, undefined, undefined, reference);
     }
     setWorkshopPanel(null);
     setCurrentPage('chat');
@@ -1509,6 +1500,28 @@ export default function App() {
     setCurrentPage('chat');
   }, [sessions]);
 
+  const handleEditHistory = useCallback(async (sessionId: string, userIndex: number) => {
+    const source = sessionsRef.current.find(session => session.id === sessionId);
+    const original = source?.messages[userIndex];
+    if (!canOperate || !source || original?.role !== 'user' || userIndex <= (source.fork?.cutoffIndex ?? -1)
+        || !source.messages.slice(userIndex + 1).some(message => message.role === 'user')) {
+      throw new Error('这条消息无法从历史记录中修订。');
+    }
+    const cutoff = source.messages[userIndex - 1];
+    if (cutoff?.role !== 'assistant' || cutoff.status !== 'completed' || !cutoff.clientTurnId) {
+      throw new Error('这条消息之前没有可核验的已完成回答，无法在此处分支。可复制原文到新对话。');
+    }
+    const child = await handleForkAnswer(sessionId, userIndex - 1);
+    if (!child) throw new Error('分支创建未获确认，请刷新历史后重试。');
+    if (!saveChatDraft(child.id, { text: original.content, attachments: [], interruptedFiles: [] })) {
+      throw new Error('分支已创建，但无法保存修订草稿。可在新分支粘贴原文。');
+    }
+    if (chatOrigin.current === sessionId) {
+      setActiveSessionId(child.id);
+      setSelectedPersona(child.persona || '');
+    }
+  }, [canOperate, handleForkAnswer]);
+
   const handleSessionDelete = useCallback((id: string) => {
     const target = sessionsRef.current.find(session => session.id === id);
     if (target) setDeleteRequest({ id, title: target.title });
@@ -1669,15 +1682,14 @@ export default function App() {
             onExecutePlan={canOperate ? plan => handleExecutePlan(activeSession.id, plan) : undefined}
             onForkAnswer={canOperate ? index => handleForkAnswer(activeSession.id, index) : undefined}
             onOpenFork={handleSessionSelect}
+            onEditHistory={canOperate ? handleEditHistory : undefined}
             onSend={(displayText, attachments, references, sessionReferences, command) =>
               handleSendMessage(activeSession.id, displayText, attachments, references, sessionReferences, command)}
             onSteer={streams[activeSession.id]?.steerTurnId && streams[activeSession.id]?.lifecycle === 'running'
               ? text => handleSteer(activeSession.id, text) : undefined}
             onStop={() => handleStopStream(activeSession.id, stopOwner)}
             onOpenFailureSettings={isPlatformAdmin ? () => setSettingsOpen(true) : undefined}
-            onResend={(userIndex, displayText, attachments, legacyAgentText) => handleResend(
-              activeSession.id, userIndex, displayText, attachments, legacyAgentText,
-            )}
+            onResend={userIndex => handleResend(activeSession.id, userIndex)}
             onQuestionAnswered={receipt => {
               answeredRef.current.add(receipt.id);
               closeQuestion(activeSession.id, receipt);

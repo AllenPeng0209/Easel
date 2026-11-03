@@ -8005,12 +8005,23 @@
     "reuse_kind": "adapted",
     "changes": "适配创建分叉后保留源选择的工作区流程，显式预览截止答复和打开分支。",
     "verification_status": "C15_exact_completed_fork_and_native_independence_verified"
+  },
+  {
+    "feature_id": "C16",
+    "upstream_path": "packages/client/ui-chat/src/client/chat/MessageIconActions.tsx",
+    "upstream_sha256": "c2aad02ac677070772e22ba9e8a26ea91aa69a73cd242879ba18287a8b3fe6b8",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/MessageBubble.tsx",
+    "destination_sha256": "1bd0ae3ac670da77ea19d8bc79ff9227ac49d0171c49c5dddc6a4f85d691a18b",
+    "reuse_kind": "adapted",
+    "changes": "适配消息级分支操作和可用性判断，历史修订使用 Easel 的服务端截止点与草稿，重试只追加。",
+    "verification_status": "C16_append_only_retry_and_branch_draft_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 101,
+    "source_migration_files": 102,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 86,
+    "adapted_upstream_files": 87,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

@@ -228,19 +228,24 @@ test('cold admitted echo does not resend an identical restored composer draft', 
   assert.equal(restored.context.sessions[0].messages.length, 1);
 });
 
-test('regeneration only truncates the original suffix after admission', () => {
+test('last-turn retry appends after admission and preserves the existing transcript', () => {
   const transcript = [{ role: 'user', content: 'first' }, { role: 'assistant', content: 'old reply' }];
   const ui = appBoundary([{ id: 's', title: 'Draft', created: 1, messages: transcript }]);
-  ui.context.sendUserAndStream('s', 'regenerated', [], undefined, 0);
+  ui.callback('handleResend')('s', 0);
   assert.deepEqual(plain(ui.context.sessions[0].messages), transcript);
   ui.context.sessions[0].messages.push({ role: 'assistant', content: 'newer tab reply' });
   ui.requests[0][19]();
   assert.deepEqual(plain(ui.context.sessions[0].messages.map(item => item.content)),
-    ['first', 'old reply', 'newer tab reply', 'regenerated']);
-  const unchanged = appBoundary([{ id: 's', title: 'Draft', created: 1, messages: transcript }]);
-  unchanged.context.sendUserAndStream('s', 'regenerated', [], undefined, 0);
-  unchanged.requests[0][19]();
-  assert.deepEqual(plain(unchanged.context.sessions[0].messages.map(item => item.content)), ['regenerated']);
+    ['first', 'old reply', 'newer tab reply', 'first']);
+});
+
+test('last-turn retry refuses to rerun a completed turn with a publication receipt', () => {
+  const messages = [{ role: 'user', content: 'publish' }, { role: 'assistant', content: 'published', status: 'completed',
+    events: [{ kind: 'publication', publication: { id: 'receipt' } }] }];
+  const ui = appBoundary([{ id: 's', title: 'Publish', created: 1, messages }]);
+  ui.callback('handleResend')('s', 0);
+  assert.equal(ui.requests.length, 0);
+  assert.deepEqual(plain(ui.context.sessions[0].messages), messages);
 });
 
 test('a background queued conversation preserves its own explicit persona', () => {

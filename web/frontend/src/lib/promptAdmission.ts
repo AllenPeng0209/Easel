@@ -14,8 +14,6 @@ export interface PromptAttempt {
   persona?: string;
   message: ChatMessage;
   composer: boolean;
-  truncateAt?: number;
-  baseline?: string;
 }
 
 const memory = new Map<string, PromptAttempt>();
@@ -75,7 +73,7 @@ function promptIdentity(attempt: PromptAttempt): string {
     attempt.message.command ? [attempt.message.command.id, attempt.message.command.token] : null, topicRef ? [topicRef.id, topicRef.snapshotHash] : null,
     workshopRef ? [workshopRef.id, workshopRef.revision, workshopRef.engineRevision,
       workshopRef.artifactId, workshopRef.artifactSha256] : null,
-    planRef ? [planRef.planId, planRef.revision, planRef.digest] : null, attempt.truncateAt ?? null]);
+    planRef ? [planRef.planId, planRef.revision, planRef.digest] : null]);
 }
 
 export function samePromptAttempt(first: PromptAttempt, second: PromptAttempt): boolean {
@@ -86,9 +84,6 @@ export function applyPromptAdmission(session: ChatSession, attempt: PromptAttemp
   if (session.messages.some(message => (message as ChatMessage & { clientTurnId?: string }).clientTurnId === attempt.turnId)) {
     return session;
   }
-  const truncate = attempt.truncateAt !== undefined && Number.isSafeInteger(attempt.truncateAt)
-    && attempt.truncateAt >= 0 && attempt.baseline === JSON.stringify(session.messages.slice(attempt.truncateAt));
-  const base = truncate ? session.messages.slice(0, attempt.truncateAt) : session.messages;
   const message = { ...attempt.message, clientTurnId: attempt.turnId };
-  return { ...session, messages: [...base, message] };
+  return { ...session, messages: [...session.messages, message] };
 }

@@ -55,20 +55,22 @@ test('legacy or malformed failed data shows neutral guidance and no generic retr
     assert.equal(doc.querySelector('[data-chat-failure-action]'), null);
     assert.equal(doc.querySelector('[data-assistant-answer]'), null);
     assert.equal(doc.querySelector('[title="复制"]'), null);
-    assert.equal(doc.querySelector('[title="重新生成"]'), null);
+    assert.equal(doc.querySelector('[data-retry-last-turn]'), null);
   }
 });
 
 
 test('unconfirmed outcomes or existing publication observations never offer another execution', () => {
-  const retry = '[data-chat-failure-action=retry], [title="重新生成"]';
+  const retry = '[data-chat-failure-action=retry], [data-retry-last-turn]';
   for (const fields of [
     { status: 'unconfirmed', content: '未确认结果' },
+    { status: 'completed', content: '已发布',
+      events: [{ id: 'receipt', kind: 'publication', publication: { id: 'existing' } }] },
     { status: 'unconfirmed', failure: failure('network', 'startup', true) },
     { failure: failure('network', 'startup', true),
       events: [{ id: 'receipt', kind: 'publication', publication: { id: 'existing' } }] },
   ]) assert.equal(show(fields).querySelector(retry), null);
-  assert.ok(show({ status: 'completed', content: '完成' }).querySelector('[title="重新生成"]'));
+  assert.ok(show({ status: 'completed', content: '完成' }).querySelector('[data-retry-last-turn]'));
 });
 
 test('settings is explicit and a retry click is latched against repeated activation', async () => {
