@@ -64,7 +64,7 @@ function appBoundary(initial, overrides = {}) {
   const requests = [];
   const saved = [];
   const context = vm.createContext({
-    Date, Math, Error, Boolean, Array, undefined, nextSessionRevision, mergeSessionCatalog, nextQueuedMessage,
+    Date, Math, Error, Boolean, Array, AbortController, undefined, nextSessionRevision, mergeSessionCatalog, nextQueuedMessage,
     sessions: plain(initial), sessionsRef: { current: plain(initial) }, streams: {},
     streamCtl: { current: {} }, streamAcc: { current: {} }, typingBuf: { current: {} }, queueEdits: { current: {} },
     selectedPersona: 'another-brand-persona', historyReady: true, canOperate: true,

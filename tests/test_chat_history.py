@@ -15,6 +15,28 @@ def test_catalog_retains_more_than_one_hundred_and_reloads(tmp_path):
     assert store.sessions()[0]['id'] == '124'
 
 
+def test_catalog_pages_by_id_through_recency_changes_and_cursor_deletion(tmp_path):
+    from web.chat_history import ChatHistoryStore
+    store = ChatHistoryStore(tmp_path)
+    store.merge([entry('d', 3), entry('b', 8), entry('a', 1),
+                 {**entry('c', 5), 'archived': True}])
+    store.delete('z')
+
+    first = store.sessions_page(2)
+    assert [row['id'] for row in first['sessions']] == ['a', 'b']
+    assert first['nextCursor'] == 'b'
+    assert first['deletedIds'] == []
+
+    store.merge([entry('a', 100), entry('d', 101)])
+    store.delete('b')
+    second = store.sessions_page(2, first['nextCursor'])
+    assert [row['id'] for row in second['sessions']] == ['c', 'd']
+    assert second['sessions'][0]['archived'] is True
+    assert second['nextCursor'] is None
+    assert second['deletedIds'] == ['b', 'z']
+    assert [row['id'] for row in store.sessions()] == ['d', 'a', 'c']
+
+
 def test_stale_browser_cannot_drop_newer_messages_or_other_sessions(tmp_path):
     from web.chat_history import ChatHistoryStore
     store = ChatHistoryStore(tmp_path)
@@ -78,11 +100,20 @@ def test_catalog_http_boundary_is_private_to_user_and_ip(tmp_path, monkeypatch):
     assert client().get('/api/chat/sessions').status_code == 401
     own = owner.put('/api/chat/sessions', json={'sessions': [entry('same', 1, 'owner-private')]})
     assert own.status_code == 200, own.text
+    assert owner.get('/api/chat/sessions?limit=1').json() == {
+        'sessions': own.json()['sessions'], 'deletedIds': [], 'nextCursor': None,
+    }
+    for query in ('limit=0', 'limit=101', 'limit=invalid', 'cursor=same', 'limit=1&cursor='):
+        assert owner.get('/api/chat/sessions?' + query).status_code == 422
     assert operator.get('/api/chat/sessions').json() == {'sessions': [], 'deletedIds': []}
+    assert operator.get('/api/chat/sessions?limit=1').json() == {'sessions': [], 'deletedIds': [], 'nextCursor': None}
     assert operator.put('/api/chat/sessions', json={'sessions': [entry('same', 1, 'operator-private')]}).status_code == 200
     assert owner.get('/api/chat/sessions').json()['sessions'][0]['messages'][0]['content'] == 'owner-private'
     other_ip = owner.post('/api/projects', json={'name': 'second-ip'}).json()['id']
     assert owner.get(f'/api/projects/{other_ip}/chat/sessions').json() == {'sessions': [], 'deletedIds': []}
+    assert owner.get(f'/api/projects/{other_ip}/chat/sessions?limit=1').json() == {
+        'sessions': [], 'deletedIds': [], 'nextCursor': None,
+    }
     assert operator.get(f'/api/projects/{other_ip}/chat/sessions').status_code == 403
     assert owner.delete('/api/chat/sessions/same').json()['nativeHistoryDeleted'] is False
     assert owner.get('/api/chat/sessions').json() == {'sessions': [], 'deletedIds': ['same']}

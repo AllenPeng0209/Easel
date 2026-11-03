@@ -75,6 +75,21 @@ class ChatHistoryStore:
             return [json.loads(row[0]) for row in connection.execute(
                 "SELECT payload FROM sessions WHERE deleted=0 ORDER BY updated DESC, id")]
 
+    def sessions_page(self, limit: int, cursor: str | None = None) -> dict:
+        """Read by stable session ID so recent activity cannot shift the page boundary."""
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            rows = connection.execute(
+                "SELECT id,payload FROM sessions WHERE deleted=0 AND id>? ORDER BY id LIMIT ?",
+                (cursor or "", limit + 1),
+            ).fetchall()
+            next_cursor = rows[limit - 1][0] if len(rows) > limit else None
+            # Read tombstones in the same snapshot as the final page.
+            deleted = [] if next_cursor is not None else [row[0] for row in connection.execute(
+                "SELECT id FROM sessions WHERE deleted=1 ORDER BY id")]
+        return {"sessions": [json.loads(row[1]) for row in rows[:limit]],
+                "deletedIds": deleted, "nextCursor": next_cursor}
+
     def deleted_ids(self) -> list[str]:
         with self._connect() as connection:
             return [row[0] for row in connection.execute("SELECT id FROM sessions WHERE deleted=1 ORDER BY id")]

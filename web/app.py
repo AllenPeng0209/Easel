@@ -4392,9 +4392,16 @@ async def api_chat_subagent(session_id: str, handle: str, request: Request):
 
 
 @app.get("/api/chat/sessions")
-async def api_chat_sessions():
+async def api_chat_sessions(limit: int | None = None, cursor: str | None = None):
     _require_operation()
+    if limit is not None and not 1 <= limit <= 100:
+        raise HTTPException(422, "会话分页每次仅支持 1 至 100 条")
+    if cursor is not None and (limit is None or not cursor or len(cursor) > 256
+                               or any(ord(character) < 32 for character in cursor)):
+        raise HTTPException(422, "无效的会话分页游标")
     store = ChatHistoryStore(_sessions_dir())
+    if limit is not None:
+        return await asyncio.to_thread(store.sessions_page, limit, cursor)
     return {"sessions": await asyncio.to_thread(store.sessions), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
 
 

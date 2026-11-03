@@ -1,6 +1,7 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
 import type { ChatSession } from './store';
+import { mergeSessionCatalog } from './sessionSync';
 function getBasePath(): string {
   const path = window.location.pathname;
   const cleaned = path.replace(/\/index\.html$/, '').replace(/\/$/, '');
@@ -829,8 +830,37 @@ export function fetchLastTurn(sessionId: string, turnId?: string): Promise<{
   return request(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`);
 }
 
-export function fetchChatSessions(): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
-  return request('/api/chat/sessions');
+interface ChatSessionPage {
+  sessions: ChatSession[];
+  deletedIds?: string[];
+  nextCursor?: string | null;
+}
+
+export async function fetchChatSessions(signal?: AbortSignal): Promise<{ sessions: ChatSession[]; deletedIds: string[] }> {
+  const sessions: ChatSession[] = [];
+  const deleted = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor = '';
+  while (true) {
+    signal?.throwIfAborted();
+    const query = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const page = await request<ChatSessionPage>(`/api/chat/sessions?limit=50${query}`, { signal });
+    if (!Array.isArray(page?.sessions) || (page.deletedIds !== undefined
+      && (!Array.isArray(page.deletedIds) || page.deletedIds.some(id => typeof id !== 'string')))) {
+      throw new Error('服务器会话目录回执无效');
+    }
+    for (const session of page.sessions) sessions.push(session);
+    for (const id of page.deletedIds || []) deleted.add(id);
+    if (page.nextCursor == null) {
+      const deletedIds = [...deleted];
+      return { sessions: mergeSessionCatalog([], sessions, deletedIds), deletedIds };
+    }
+    if (typeof page.nextCursor !== 'string' || !page.nextCursor || seenCursors.has(page.nextCursor) || !page.sessions.length) {
+      throw new Error('服务器会话目录游标无效');
+    }
+    cursor = page.nextCursor;
+    seenCursors.add(cursor);
+  }
 }
 export function syncChatSessions(sessions: ChatSession[]): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
   return request('/api/chat/sessions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions }) });

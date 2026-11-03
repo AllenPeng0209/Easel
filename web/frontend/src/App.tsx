@@ -307,7 +307,8 @@ export default function App() {
   useEffect(() => {
     if (!canOperate || !navigationReady) return;
     let cancelled = false;
-    void fetchChatSessions().then(result => {
+    const controller = new AbortController();
+    void fetchChatSessions(controller.signal).then(result => {
       if (cancelled) return;
       const remote = Array.isArray(result.sessions) ? result.sessions : [];
       setSessions(previous => {
@@ -323,7 +324,7 @@ export default function App() {
     }).catch(() => {
       if (!cancelled) setHistoryNotice('服务器历史暂不可用，当前内容仍保存在此浏览器。');
     }).finally(() => { if (!cancelled) setHistoryReady(true); });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; controller.abort(); };
   }, [canOperate, navigationReady]);
 
   useEffect(() => {
