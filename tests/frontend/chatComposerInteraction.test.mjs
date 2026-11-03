@@ -535,3 +535,13 @@ test('background execution preserves existing attachments and blocks both click 
   assert.equal(editor(ui.render()).props.value, '检查现有文件');
   assert.ok(ui.render().some(node => text(node) === 'notes.txt'));
 });
+
+test('the composer omits command, conversation reference and keyboard shortcut prompts', async () => {
+  const ui = view({ queueProps: { sessionReferenceCandidates: [] } });
+  const nodes = await ui.ready();
+  const editor = nodes.find(node => node.type === 'structured-editor');
+  assert.doesNotMatch(editor.props.placeholder, /Enter/);
+  for (const node of nodes) {
+    assert.doesNotMatch(text(node), /查看命令|引用历史对话|Enter 发送/);
+  }
+});

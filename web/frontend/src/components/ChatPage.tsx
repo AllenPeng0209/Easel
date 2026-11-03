@@ -11,13 +11,12 @@ import QuestionCards from './QuestionCards';
 import BrushEntry from './BrushEntry';
 import StructuredComposerEditor, { type StructuredEditorHandle } from './StructuredComposerEditor';
 import { chatCommandOverlapsReferences, validateChatCommand, type ChatCommand } from '../lib/chatCommands';
-import SessionReferencePicker, { type SessionReferenceCandidate } from './SessionReferencePicker';
 import {
-  attachmentReferenceLabel, MAX_CHAT_REFERENCES, MAX_CHAT_SESSION_REFERENCES, validateChatReferences,
+  attachmentReferenceLabel, MAX_CHAT_REFERENCES, validateChatReferences,
   validateChatSessionReferences, type ChatDraftSessionReference, type ChatReference,
 } from '../lib/chatReferences';
 import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ChatPlanRef } from '../lib/store';
-import { uploadFiles, adoptOversize, fetchSessionReference, fetchSessionReferenceTurns } from '../lib/api';
+import { uploadFiles, adoptOversize } from '../lib/api';
 import type { ChatQuestionClosed, UploadedFile } from '../lib/api';
 import type { ChatDeliverable } from '../lib/deliverables';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
@@ -46,7 +45,6 @@ interface ChatPageProps {
   onReloadModels?: () => void;
   onNewContextChat?: () => void;
   stream?: StreamState;          // 进行中的流式态（来自 App，切页也不丢）
-  sessionReferenceCandidates?: readonly SessionReferenceCandidate[];
   onSend: (displayText: string, attachments?: UploadedFile[], references?: ChatReference[],
     sessionReferences?: ChatDraftSessionReference[], command?: ChatCommand) => boolean | Promise<boolean>;
   onSendSuperagent?: (text: string) => Promise<boolean>;
@@ -86,7 +84,7 @@ function greeting(): string {
 }
 
 export default function ChatPage({ apiDirect, session, stream, onSend, onSendSuperagent, superagentTasks, onSteer, onStop, onResend, onEditHistory, onLoadEarlier, onForkAnswer, onOpenFork, onQuestionAnswered,
-  sessionReferenceCandidates, modelCapability, nextModel, turnModel, onChangeModel, modelLoading, onReloadModels, onNewContextChat, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
+  modelCapability, nextModel, turnModel, onChangeModel, modelLoading, onReloadModels, onNewContextChat, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
   const [forkTarget, setForkTarget] = useState<{ sessionId: string; index: number; turnId: string; answer: string }>();
   useEffect(() => setForkTarget(undefined), [session.id]);
   const [historyEdit, setHistoryEdit] = useState<{ sessionId: string; index: number; pending: boolean; error?: string }>();
@@ -152,7 +150,6 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
   const backgroundExecution = sendInBackground && !!onSendSuperagent;
   const [selectingFile, setSelectingFile] = useState(false);
   const selectingFileRef = useRef(false);
-  const [pickingSession, setPickingSession] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [draftError, setDraftError] = useState(false);
@@ -462,7 +459,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
             selectingFileRef.current = pending;
             setSelectingFile(pending);
           }}
-          placeholder={backgroundExecution ? '描述要交给 Super Agent 的任务…' : dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（输入 @ 引用文件，也可拖入素材）' : '发消息…（Enter 发送，Shift+Enter 换行，@ 引用文件）'}
+          placeholder={backgroundExecution ? '描述要交给 Super Agent 的任务…' : dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（输入 @ 引用文件，也可拖入素材）' : '发消息…（@ 引用文件）'}
           onChange={(text, nextReferences, nextSessions, nextCommand) => {
             if (sendingRef.current) return;
             const receipts = uploads.ready;
@@ -484,21 +481,12 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
           disabled={sending || backgroundExecution} title={`添加图片或文档；超过 ${maxMb}MB 使用大文件上传通道`}>
           <IconPlus size={15} /> 添加素材
         </button>
-        <button type="button" className="composer-attach-btn" disabled={sending || backgroundExecution}
-          onMouseDown={event => event.preventDefault()} onClick={() => editorRef.current?.openCommandMenu()}>查看命令</button>
-        {sessionReferenceCandidates && <button type="button" className="composer-attach-btn" disabled={sending || backgroundExecution}
-          onMouseDown={event => event.preventDefault()} onClick={() => {
-            if (sendingRef.current) return;
-            editorRef.current?.rememberSelection();
-            setPickingSession(true);
-          }}>引用历史对话</button>}
         {onSendSuperagent && <button type="button" className="composer-attach-btn composer-background-toggle"
           data-superagent-composer-toggle aria-pressed={backgroundExecution} disabled={sending || selectingFile}
           title="交给 Super Agent 后台执行"
           onClick={() => { setSendInBackground(value => !value); setSubmitError(''); }}>后台执行</button>}
-        <span className="composer-hint">{uploading ? '附件全部就绪后可发送' : selectingFile ? '正在准备所选文件…' : sending ? '正在接收…'
-          : backgroundExecution ? '任务发送后可离开对话'
-          : isStreaming ? '继续输入，下一条会加入队列' : 'Enter 发送 · Shift+Enter 换行'}</span>
+        {(uploading || selectingFile || sending || backgroundExecution) && <span className="composer-hint">{uploading ? '附件全部就绪后可发送' : selectingFile ? '正在准备所选文件…' : sending ? '正在接收…'
+          : '任务发送后可离开对话'}</span>}
         <div className="composer-send-controls">
           {isStreaming && <button className="composer-stop-btn" onClick={onStop} title="停止当前任务"
             disabled={stream?.lifecycle === 'stopping' || queue.some(item => item.delivery === 'sending')}>
@@ -514,17 +502,6 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
       {(modelCapability || modelLoading || onReloadModels) && <SessionModelControl capability={modelCapability}
         nextModel={nextModel} turnModel={turnModel} running={isStreaming} disabled={sending}
         loading={modelLoading} onChangeModel={onChangeModel} onReload={onReloadModels} />}
-      {pickingSession && sessionReferenceCandidates && <SessionReferencePicker
-        candidates={sessionReferenceCandidates.filter(candidate => candidate.id !== session.id)}
-        inspect={fetchSessionReference} listTurns={fetchSessionReferenceTurns} onClose={() => setPickingSession(false)}
-        onInsert={({ sessionId, label, snapshotHash, turnId }) => {
-          if (sendingRef.current || !editorRef.current ||
-              draftContentRef.current.sessionReferences.length >= MAX_CHAT_SESSION_REFERENCES) return false;
-          editorRef.current.insertSessionReference({ sessionId, label, snapshotHash, ...(turnId !== undefined ? { turnId } : {}) });
-          setSubmitError('');
-          return true;
-        }}
-      />}
       {failedUploads && <div className="composer-feedback" role="alert">请重试或移除失败的附件后发送。</div>}
       {backgroundExecution && backgroundBlocked && <div className="composer-feedback" role="status">
         后台执行只接收文字。请移除附件、引用或命令，或切回对话模式。

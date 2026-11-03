@@ -1802,7 +1802,6 @@ export default function App() {
               ...(canReconcile
                 ? { action: { label: '核对上一条发送', run: () => reconcilePromptAttempt(activeSession.id) } } : {}),
             } : undefined}
-            sessionReferenceCandidates={sessions.filter(item => item.id !== activeSession.id && item.messages.length > 0)}
             onExecutePlan={canOperate ? plan => handleExecutePlan(activeSession.id, plan) : undefined}
             onForkAnswer={canOperate ? index => handleForkAnswer(activeSession.id, index) : undefined}
             onOpenFork={handleSessionSelect}

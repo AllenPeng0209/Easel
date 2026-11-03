@@ -36,7 +36,7 @@
   border-color: var(--accent-start);
   color: var(--text);
 }
-.composer-send-controls { display: flex; gap: 9px; align-items: center; flex: none; }
+.composer-send-controls { margin-inline-start: auto; display: flex; gap: 9px; align-items: center; flex: none; }
 .agent-chat .send-btn { width: 36px; height: 36px; border-radius: 12px; }
 .agent-chat .send-btn-queue { width: auto; padding: 0 12px; font-size: 11px; font-weight: 550; }
 .composer-stop-btn { height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--border);
@@ -113,7 +113,6 @@
   .agent-chat .composer-bar > .composer-hint { font-size: 9px; }
   .agent-chat .composer-bar--superagent { flex-wrap: wrap; justify-content: flex-start; }
   .composer-bar--superagent > .composer-hint { flex-basis: 100%; order: 1; text-align: left; }
-  .composer-bar--superagent > .composer-send-controls { margin-inline-start: auto; }
   .agent-chat .chat-hero { justify-content: flex-start; padding-top: 56px; }
   .agent-chat .chat-hero-title { font-size: 25px; }
   .chat-autonomy-hint { font-size: 9px; }
