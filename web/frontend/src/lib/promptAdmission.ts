@@ -4,6 +4,7 @@
 import { projectStorageKey } from './projectScope';
 import type { UploadedFile } from './api';
 import type { ChatMessage, ChatSession } from './store';
+import { trimChatReferenceText, type ChatReference } from './chatReferences';
 
 export interface PromptAttempt {
   turnId: string;
@@ -53,15 +54,17 @@ export function forgetPromptAttempt(sessionId: string, turnId: string): void {
 
 const fileIdentity = (files: UploadedFile[] = []) => files.map(file => [file.id, file.name, file.path]);
 
-export function sameComposerDraft(attempt: PromptAttempt, text: string, files: UploadedFile[]): boolean {
-  return attempt.composer && attempt.message.content === text.trim()
+export function sameComposerDraft(attempt: PromptAttempt, text: string, files: UploadedFile[], references?: ChatReference[]): boolean {
+  const trimmed = trimChatReferenceText(text, references);
+  return attempt.composer && attempt.message.content === trimmed.text
+    && JSON.stringify(attempt.message.references || []) === JSON.stringify(trimmed.references || [])
     && JSON.stringify(fileIdentity(attempt.message.attachments)) === JSON.stringify(fileIdentity(files));
 }
 
 function promptIdentity(attempt: PromptAttempt): string {
   const { topicRef, workshopRef, attachments } = attempt.message;
   return JSON.stringify([attempt.wireText, attempt.persona || null, attempt.message.content,
-    fileIdentity(attachments), topicRef ? [topicRef.id, topicRef.snapshotHash] : null,
+    fileIdentity(attachments), attempt.message.references || [], topicRef ? [topicRef.id, topicRef.snapshotHash] : null,
     workshopRef ? [workshopRef.id, workshopRef.revision, workshopRef.engineRevision,
       workshopRef.artifactId, workshopRef.artifactSha256] : null, attempt.truncateAt ?? null]);
 }

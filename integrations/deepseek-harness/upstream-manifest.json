@@ -7423,12 +7423,42 @@
     "reuse_kind": "adapted",
     "changes": "复用同一发送尝试只在接收后提交草稿的规则，适配持久回执与会话恢复。",
     "verification_status": "A03_verified_host_journal_and_isolated_browser"
+  },
+  {
+    "feature_id": "A01",
+    "upstream_path": "packages/client/ui-conversation/src/client/input/editor/projection.ts",
+    "upstream_sha256": "c28ff5b4bb6e7bf9ffd564b471b12fe7db9dd3817d4eaa36b763a75e79803a37",
+    "source_references": [
+      "packages/client/ui-conversation/src/client/input/editor/chip-node.tsx",
+      "packages/client/ui-conversation/src/client/input/editor/runtime.ts"
+    ],
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/composer/reference-editor.ts",
+    "destination_sha256": "be3720789f2a1855b446bb6c8f6637363e717042139450df9bb286b40b907d82",
+    "reuse_kind": "adapted",
+    "changes": "复用 Lexical 节点投影、正文位置与原子引用编辑，接入文件回执。",
+    "verification_status": "A01_file_nodes_verified_in_isolated_browser"
+  },
+  {
+    "feature_id": "A01",
+    "upstream_path": "packages/client/ui-conversation/src/client/input/editor/DraftEditor.tsx",
+    "upstream_sha256": "6496905b4bfd8a3809f69b44fa99305df22eccdeb553f5691a7483a1b5eac1f8",
+    "source_references": [
+      "packages/client/ui-conversation/src/client/input/editor/runtime.ts",
+      "packages/client/ui-conversation/src/client/input/editor/keymap.ts"
+    ],
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/StructuredComposerEditor.tsx",
+    "destination_sha256": "36af34cbc4d775d746e38815ee778b59f8cba317fa3711d70be7990903cdabfe",
+    "reuse_kind": "adapted",
+    "changes": "接入上游编辑器运行、输入法提交及粘贴边界，保留 Easel 草稿和上传生命周期。",
+    "verification_status": "A01_file_nodes_verified_in_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 51,
+    "source_migration_files": 53,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 36,
+    "adapted_upstream_files": 38,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

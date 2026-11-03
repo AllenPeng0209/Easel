@@ -22,7 +22,7 @@ function load(relative, extras = {}) {
   runInNewContext(code, { exports, AbortController, File, URL, Date, crypto, console, setTimeout, clearTimeout,
     require: name => name === 'react' ? require('react') : name.endsWith('projectScope')
       ? { projectStorageKey: key => `user:u1:ip:a:${key}` }
-      : require(name), ...extras });
+      : name === './chatReferences' ? load('lib/chatReferences.ts') : require(name), ...extras });
   return exports;
 }
 

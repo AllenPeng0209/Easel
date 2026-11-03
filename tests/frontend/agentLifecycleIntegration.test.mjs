@@ -57,6 +57,7 @@ function helper(name, context = {}) {
 
 const { nextSessionRevision, mergeSessionCatalog } = helper('sessionSync');
 const { nextQueuedMessage, confirmChatStop } = helper('chatControl');
+const chatReferences = helper('chatReferences');
 const plain = value => JSON.parse(JSON.stringify(value));
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
@@ -69,14 +70,14 @@ function appBoundary(initial, overrides = {}) {
     removeItem: key => storage.delete(key),
   };
   const projectStorageKey = value => `scope:${value}`;
-  const prompt = helper('promptAdmission', { localStorage, require: () => ({ projectStorageKey }) });
+  const prompt = helper('promptAdmission', { localStorage, require: name => name === './chatReferences' ? chatReferences : { projectStorageKey } });
   const context = vm.createContext({
     Date, Math, Error, Boolean, Array, AbortController, undefined, nextSessionRevision, mergeSessionCatalog, nextQueuedMessage,
     sessions: plain(initial), sessionsRef: { current: plain(initial) }, streams: {},
     streamCtl: { current: {} }, streamAcc: { current: {} }, typingBuf: { current: {} }, queueEdits: { current: {} },
     selectedPersona: 'another-brand-persona', historyReady: true, canOperate: true,
     projectStorageKey, localStorage, sessionStorage: { setItem() {}, getItem() { return null; }, removeItem() {} },
-    ...prompt, admissionFeedback: {},
+    ...prompt, ...chatReferences, admissionFeedback: {},
     loadChatDraft: () => ({ text: '', attachments: [] }), chatDraftOwner: () => 'composer',
     saveSessions: value => saved.push(plain(value)), updateSessionTitle() {},
     startTypingPump() {}, ensureTypingPump() {}, finalizeStream() {},
@@ -515,4 +516,20 @@ test('queue dispatch waits for editing and retains an unconfirmed row for exact 
   ui.effect('nextQueuedMessage')();
   assert.equal(ui.requests[1][9], ui.requests[0][9]);
   assert.equal(ui.requests[1][0], ui.requests[0][0]);
+});
+
+test('inline references rebase through trimming and persist with the matching user echo', async () => {
+  const ui = appBoundary([{ id: 'file-chat', title: 'Chat', created: 1, messages: [] }]);
+  const file = { id: 'one', name: 'a.txt', path: '_inbox/user/batch/a.txt' };
+  const text = '  🖼 @a.txt  ';
+  const start = text.indexOf('@');
+  const sent = ui.callback('handleSendMessage')('file-chat', text, [file],
+    [{ start, end: start + 6, attachmentId: 'one' }]);
+  const payload = ui.requests[0];
+  assert.equal(payload[0], '🖼 @a.txt');
+  assert.deepEqual(plain(payload[21]), [{ start: 3, end: 9, attachmentId: 'one' }]);
+  assert.equal(ui.context.sessions[0].messages.length, 0);
+  payload[19]();
+  assert.equal(await sent, true);
+  assert.deepEqual(plain(ui.context.sessions[0].messages[0].references), plain(payload[21]));
 });

@@ -1,6 +1,7 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
 import type { ChatSession } from './store';
+import type { ChatReference } from './chatReferences';
 import { mergeSessionCatalog } from './sessionSync';
 function getBasePath(): string {
   const path = window.location.pathname;
@@ -673,6 +674,7 @@ export function streamChat(
   workshopRef?: import('./workshop').WorkshopReference,
   onAdmitted?: (receipt: { turnId: string; sessionId: string }) => void,
   requireAdmission = false,
+  references?: ChatReference[],
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -813,7 +815,8 @@ export function streamChat(
         const res = first
           ? await projectFetch(projectUrl(`${BASE}/api/chat/stream`), {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef }),
+              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef,
+                ...(references?.length ? { references } : {}) }),
               signal: controller.signal,
             })
           : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {

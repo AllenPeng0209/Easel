@@ -6,7 +6,7 @@ const frame = (id, event, value) => `id: ${id}\r\nevent: ${event}\r\ndata: ${JSO
 const admission = frame(1, 'admitted', { turnId: 'exact-turn', sessionId: 'session' });
 const done = frame(3, 'done', { outcome: 'completed' });
 
-async function scenario(responses, { requireAdmission = true, resumeOnly = false, shortAdmissionTimeout = false } = {}) {
+async function scenario(responses, { requireAdmission = true, resumeOnly = false, shortAdmissionTimeout = false, references, attachments = [] } = {}) {
   const requests = [];
   const observed = [];
   let finish;
@@ -26,8 +26,8 @@ async function scenario(responses, { requireAdmission = true, resumeOnly = false
   const controller = streamChat('original draft', undefined, 'session',
     token => observed.push(['token', token]), (_sessionKey, outcome) => { observed.push(['done', outcome]); finish(); },
     error => { observed.push(['error', error.status, error.message]); finish(); }, undefined, undefined,
-    undefined, 'exact-turn', resumeOnly, undefined, [], undefined, undefined, undefined, undefined,
-    undefined, undefined, receipt => observed.push(['admitted', receipt.turnId, receipt.sessionId]), requireAdmission);
+    undefined, 'exact-turn', resumeOnly, undefined, attachments, undefined, undefined, undefined, undefined,
+    undefined, undefined, receipt => observed.push(['admitted', receipt.turnId, receipt.sessionId]), requireAdmission, references);
   let deadline;
   try {
     await Promise.race([terminal, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('No terminal event')), 250); })]);
@@ -133,4 +133,13 @@ test('receiving admission cancels the short wait and leaves the running turn att
   }))], { shortAdmissionTimeout: true });
   assert.deepEqual(result.observed, [['admitted', 'exact-turn', 'session'], ['done', 'completed']]);
   assert.equal(result.requests.length, 1);
+});
+
+test('ordered typed inline occurrences are carried on POST, with old request bodies unchanged', async () => {
+  const references = [{ start: 1, end: 4, attachmentId: 'file' }];
+  const attachments = [{ id: 'file', name: 'a', path: '_inbox/user/batch/a' }];
+  const result = await scenario([admission + done], { references, attachments });
+  assert.deepEqual(JSON.parse(result.requests[0].body).references, references);
+  const plain = await scenario([admission + done], { references: [] });
+  assert.ok(!Object.hasOwn(JSON.parse(plain.requests[0].body), 'references'));
 });

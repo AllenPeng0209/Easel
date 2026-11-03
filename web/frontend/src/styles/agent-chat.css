@@ -73,3 +73,12 @@
   .agent-tool__status { margin-left: 6px; }
   .agent-tool__children { margin-left: 4px; padding-left: 5px; }
 }
+
+.message-inline-reference {
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: inherit;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}

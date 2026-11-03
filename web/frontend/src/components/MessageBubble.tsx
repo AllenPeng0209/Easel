@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import type { ChatMessage } from '../lib/store';
 import type { AgentEvent, AgentSubagent } from '../lib/agentEvents';
 import { renderMarkdown } from '../lib/sanitize';
@@ -10,6 +10,8 @@ import DeliverableCards from './DeliverableCards';
 import { deliverablesFromEvents, legacyArchivesForDeliverables, omitDeclaredArtifacts,
   pinSnapshotLinks, rejectedSnapshotPaths } from '../lib/deliverables';
 import UserAttachments from './UserAttachments';
+import { validateChatReferences } from '../lib/chatReferences';
+import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
 import AgentEventPanel from './AgentEventPanel';
 import { UserMessageBubble } from '../vendor/deepseek-harness/message/UserMessageBubble';
 import { useClipboardCopy } from '../vendor/deepseek-harness/message/use-clipboard-copy';
@@ -52,6 +54,26 @@ function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) 
   );
 }
 
+function UserText({ message }: { message: ChatMessage }) {
+  const { content, attachments = [] } = message;
+  const references = validateChatReferences(content, message.references, attachments);
+  if (!references?.length) return content;
+  const files = new Map(attachments.map(file => [file.id, file]));
+  let offset = 0;
+  const parts = references.map(reference => {
+    const prefix = content.slice(offset, reference.start);
+    const text = content.slice(reference.start, reference.end);
+    offset = reference.end;
+    const file = files.get(reference.attachmentId);
+    const href = file ? attachmentHref(file.path) : null;
+    return <Fragment key={reference.start}>{prefix}
+      {href && file ? <a className="message-inline-reference" data-chat-reference={file.id} href={href}
+        target="_blank" rel="noreferrer" aria-label={`打开正文附件：${file.name}`}>{text}</a> : text}
+    </Fragment>;
+  });
+  return <>{parts}{content.slice(offset)}</>;
+}
+
 export default function MessageBubble({ message, sessionId, isStreaming, thinking, activity, stillWorking, events, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
@@ -77,7 +99,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, thinkin
       <div className="message-row user">
         <div className="msg-col user">
           {message.attachments?.length ? <UserAttachments files={message.attachments} /> : null}
-          {message.content.trim() && <UserMessageBubble className="message-bubble user">{message.content}</UserMessageBubble>}
+          {message.content.trim() && <UserMessageBubble className="message-bubble user"><UserText message={message} /></UserMessageBubble>}
           {actions && message.content.trim() && <ActionBar actions={actions} text={message.content} />}
         </div>
       </div>

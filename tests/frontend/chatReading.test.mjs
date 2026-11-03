@@ -27,7 +27,15 @@ async function chatDOM(run) {
     IS_REACT_ACT_ENVIRONMENT: { value: true, configurable: true, writable: true } });
   const root = require('react-dom/client').createRoot(window.document.getElementById('root'));
   try {
-    const ChatPage = componentModule('components/ChatPage.tsx', { globals: { window, document: window.document, DOMParser: window.DOMParser,
+    // Linkedom has no native caret or selection support. Keep the real editor
+    // model while detaching its DOM runtime for these reading/preview tests.
+    const lexical = require('lexical');
+    const createEditor = options => {
+      const editor = lexical.createEditor(options);
+      editor.setRootElement = () => {};
+      return editor;
+    };
+    const ChatPage = componentModule('components/ChatPage.tsx', { externals: { lexical: { ...lexical, createEditor } }, globals: { window, document: window.document, DOMParser: window.DOMParser,
       navigator: { platform: 'MacIntel', userAgent: 'test' }, crypto, queueMicrotask,
       fetch: async url => new Response(String(url).endsWith('/content') ? '固定版本内容' : JSON.stringify({ max_mb: 50 })), Response, TextDecoder,
     } }).default;

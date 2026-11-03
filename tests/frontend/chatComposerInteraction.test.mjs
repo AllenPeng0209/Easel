@@ -44,6 +44,7 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
         projectFetch: async (url, options) => url.endsWith('/upload/validate') && validate
           ? validate(options) : ({ json: async () => ({ max_mb: 50 }) }) };
       if (name.endsWith('/api')) return { uploadFiles: async () => [], adoptOversize: async () => [] };
+      if (name === './StructuredComposerEditor') return { __esModule: true, default: 'structured-editor' };
       if (name.includes('MessageBubble') || name.includes('QuestionCards') || name.includes('BrushEntry')) return { default: () => null };
       if (name === './AgentSubagentLineage') return { SubagentTranscript: () => null };
       if (name.endsWith('icons')) return new Proxy({}, { get: (_target, key) => String(key) });
@@ -72,26 +73,26 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
 
 test('a rejected submission leaves the editable text and persisted draft intact', async () => {
   const ui = view({ onSend: () => false }); let nodes = await ui.ready();
-  nodes.find(node => node.type === 'textarea').props.onChange({ target: { value: 'keep this draft' } });
+  nodes.find(node => node.type === 'structured-editor').props.onChange('keep this draft', []);
   nodes = ui.render();
   await nodes.find(node => node.type === 'button' && node.props.title === '发送').props.onClick();
   nodes = await ui.ready();
-  assert.equal(nodes.find(node => node.type === 'textarea').props.value, 'keep this draft');
+  assert.equal(nodes.find(node => node.type === 'structured-editor').props.value, 'keep this draft');
 });
 
 test('an accepted submission clears its draft only after the admission promise resolves', async () => {
   let accept; const ui = view({ onSend: () => new Promise(resolve => { accept = resolve; }) });
-  let nodes = await ui.ready(); nodes.find(node => node.type === 'textarea').props.onChange({ target: { value: 'pending admission' } });
+  let nodes = await ui.ready(); nodes.find(node => node.type === 'structured-editor').props.onChange('pending admission', []);
   nodes = ui.render(); const result = nodes.find(node => node.type === 'button' && node.props.title === '发送').props.onClick();
-  assert.equal(ui.render().find(node => node.type === 'textarea').props.value, 'pending admission');
+  assert.equal(ui.render().find(node => node.type === 'structured-editor').props.value, 'pending admission');
   accept(true); await result; await settle();
-  assert.equal(ui.render().find(node => node.type === 'textarea').props.value, '');
+  assert.equal(ui.render().find(node => node.type === 'structured-editor').props.value, '');
 });
 
 test('a running conversation can submit the next message to the queue without stopping', async () => {
   const sent = []; const ui = view({ stream: { content: 'working', thinking: '', activity: '', questions: [] },
     onSend: (...args) => { sent.push(args); return true; } });
-  let nodes = await ui.ready(); nodes.find(node => node.type === 'textarea').props.onChange({ target: { value: 'next task' } });
+  let nodes = await ui.ready(); nodes.find(node => node.type === 'structured-editor').props.onChange('next task', []);
   nodes = ui.render(); const queue = nodes.find(node => node.type === 'button' && node.props.title === '加入队列');
   assert.ok(queue, 'Streaming must keep a distinct next-message submission control');
   await queue.props.onClick();
@@ -101,7 +102,7 @@ test('a running conversation can submit the next message to the queue without st
 test('opening the same conversation restores its unsent draft', async () => {
   const ui = view({ initial: 'saved draft' });
   const nodes = await ui.ready();
-  assert.equal(nodes.find(node => node.type === 'textarea').props.value, 'saved draft');
+  assert.equal(nodes.find(node => node.type === 'structured-editor').props.value, 'saved draft');
 });
 
 test('waiting for human input is distinguished from generation in the conversation header', async () => {
@@ -115,7 +116,7 @@ test('pending admission freezes the attachment selection instead of silently cle
   let accept;
   const ui = view({ onSend: () => new Promise(resolve => { accept = resolve; }) });
   let nodes = await ui.ready();
-  nodes.find(node => node.type === 'textarea').props.onChange({ target: { value: 'pending message' } });
+  nodes.find(node => node.type === 'structured-editor').props.onChange('pending message', []);
   nodes = ui.render();
   const pending = nodes.find(node => node.type === 'button' && node.props.title === '发送').props.onClick();
   nodes = ui.render();
@@ -128,7 +129,7 @@ test('pending admission freezes the attachment selection instead of silently cle
 
 const running = { content: 'working', thinking: '', activity: '', questions: [], lifecycle: 'running' };
 const control = (nodes, title) => nodes.find(node => node.type === 'button' && node.props.title === title);
-const editor = nodes => nodes.find(node => node.type === 'textarea');
+const editor = nodes => nodes.find(node => node.type === 'structured-editor');
 
 test('late admission after remount cannot erase the new composer draft', async () => {
   let accept;
@@ -136,7 +137,7 @@ test('late admission after remount cannot erase the new composer draft', async (
   const sent = control(await old.ready(), '发送').props.onClick();
   old.unmount();
   const current = view({ sharedDrafts: old.local });
-  editor(await current.ready()).props.onChange({ target: { value: 'new draft after navigation' } });
+  editor(await current.ready()).props.onChange('new draft after navigation', []);
   current.render();
   accept(true);
   await sent;
@@ -162,7 +163,7 @@ test('accepted cleanup in one mounted composer cannot overwrite a newer writer i
   const old = view({ initial: 'sent draft', onSend: () => new Promise(resolve => { accept = resolve; }) });
   const sent = control(await old.ready(), '发送').props.onClick();
   const current = view({ sharedDrafts: old.local });
-  editor(await current.ready()).props.onChange({ target: { value: 'newer draft' } });
+  editor(await current.ready()).props.onChange('newer draft', []);
   current.render();
   accept(true);
   await sent;
@@ -201,7 +202,7 @@ test('Enter queues even when guidance is available, and unavailable guidance sta
   const calls = [];
   const ui = view({ stream: running, initial: 'next', onSend: value => { calls.push(value); return true; },
     onSteer: () => { calls.push('steer'); return Promise.resolve(true); } });
-  editor(await ui.ready()).props.onKeyDown({ key: 'Enter', nativeEvent: {}, preventDefault() {} });
+  editor(await ui.ready()).props.onSubmit();
   await settle();
   assert.deepEqual(calls, ['next']);
   assert.ok(!control(await view({ stream: running }).ready(), '立即指导'));
@@ -312,4 +313,59 @@ test('an uncertain earlier send can be reconciled without editing the current dr
   action.props.onClick();
   assert.equal(checks, 1);
   assert.equal(editor(ui.render()).props.value, 'new text stays editable');
+});
+
+test('validated inline references keep the draft and receipt offsets until admission resolves', async () => {
+  const calls = [];
+  let accept;
+  const file = { key: 'file-key', name: 'brief.md', size: 1, mime: 'text/plain', status: 'ready',
+    reference: { id: 'receipt', path: '_inbox/scope/batch/brief.md', name: 'brief.md' } };
+  const sharedDrafts = new Map([['scope:easel_chat_draft:s1', JSON.stringify({
+    text: '', attachments: [file], interruptedFiles: [],
+  })]]);
+  const ui = view({ sharedDrafts, validate: async () => ({ ok: true, json: async () => ({ valid: [true] }) }),
+    onSend: (...values) => { calls.push(values); return new Promise(resolve => { accept = resolve; }); } });
+  await ui.ready();
+  const value = '  @brief.md  ';
+  const references = [{ start: 2, end: 11, attachmentId: 'receipt' }];
+  editor(ui.render()).props.onChange(value, references);
+  const pending = control(ui.render(), '发送').props.onClick();
+  assert.equal(calls[0][0], value);
+  assert.equal(calls[0][1][0].id, 'receipt');
+  assert.equal(JSON.stringify(calls[0][2]), JSON.stringify(references));
+  assert.equal(editor(ui.render()).props.disabled, true);
+  assert.equal(editor(ui.render()).props.value, value);
+  accept(false);
+  await pending;
+  assert.equal(editor(ui.render()).props.disabled, false);
+  assert.equal(JSON.stringify(editor(ui.render()).props.references), JSON.stringify(references));
+  assert.equal(JSON.parse(sharedDrafts.get('scope:easel_chat_draft:s1')).references[0].attachmentId, 'receipt');
+});
+
+test('unknown inline IDs become ordinary text and cannot enter the submitted reference list', async () => {
+  const calls = [];
+  const ui = view({ onSend: (...values) => { calls.push(values); return false; } });
+  editor(await ui.ready()).props.onChange('@foreign.txt', [{ start: 0, end: 12, attachmentId: 'unknown' }]);
+  assert.equal(editor(ui.render()).props.references.length, 0);
+  await control(ui.render(), '发送').props.onClick();
+  assert.equal(calls[0][0], '@foreign.txt');
+  assert.equal(calls[0].length, 2);
+});
+
+test('attachment insertion reports a full reference list without discarding its draft', async () => {
+  const file = { key: 'file-key', name: 'brief.md', size: 1, mime: 'text/plain', status: 'ready',
+    reference: { id: 'receipt', path: '_inbox/scope/batch/brief.md', name: 'brief.md' } };
+  const textValue = '@brief.md '.repeat(100);
+  const references = Array.from({ length: 100 }, (_, index) =>
+    ({ start: index * 10, end: index * 10 + 9, attachmentId: 'receipt' }));
+  const sharedDrafts = new Map([['scope:easel_chat_draft:s1', JSON.stringify({
+    text: textValue, attachments: [file], interruptedFiles: [], references,
+  })]]);
+  const ui = view({ sharedDrafts, validate: async () => ({ ok: true, json: async () => ({ valid: [true] }) }) });
+  const nodes = await ui.ready();
+  nodes.find(node => node.props?.['aria-label'] === '插入正文 brief.md').props.onClick();
+  const updated = ui.render();
+  assert.equal(editor(updated).props.value, textValue);
+  assert.equal(editor(updated).props.references.length, 100);
+  assert.ok(updated.some(node => node.props?.role === 'alert' && /已达上限/.test(text(node))));
 });

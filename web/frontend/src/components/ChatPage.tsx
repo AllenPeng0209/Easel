@@ -6,6 +6,8 @@ import { SubagentTranscript } from './AgentSubagentLineage';
 import type { AgentSubagent } from '../lib/agentEvents';
 import QuestionCards from './QuestionCards';
 import BrushEntry from './BrushEntry';
+import StructuredComposerEditor, { type StructuredEditorHandle } from './StructuredComposerEditor';
+import { attachmentReferenceLabel, MAX_CHAT_REFERENCES, validateChatReferences, type ChatReference } from '../lib/chatReferences';
 import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from '../lib/store';
 import { uploadFiles, adoptOversize, mediaUrl } from '../lib/api';
 import type { UploadedFile } from '../lib/api';
@@ -23,7 +25,7 @@ interface ChatPageProps {
   apiDirect: boolean;
   session: ChatSession;
   stream?: StreamState;          // 进行中的流式态（来自 App，切页也不丢）
-  onSend: (displayText: string, attachments?: UploadedFile[]) => boolean | Promise<boolean>;
+  onSend: (displayText: string, attachments?: UploadedFile[], references?: ChatReference[]) => boolean | Promise<boolean>;
   onSteer?: (text: string) => Promise<boolean>;
   onStop: () => void;
   onResend: (
@@ -80,7 +82,15 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const [restoreState, setRestoreState] = useState<'checking' | 'complete' | 'unconfirmed'>(
     restoredKeys.size ? 'checking' : 'complete');
   const [restoreAttempt, setRestoreAttempt] = useState(0);
-  const [input, setInput] = useState(initialDraft.text);
+  const [{ text: input, references }, setDraftContent] = useState(() => ({
+    text: initialDraft.text, references: initialDraft.references ?? [],
+  }));
+  const draftContentRef = useRef({ text: input, references });
+  const replaceInput = (text: string, nextReferences: ChatReference[] = []) => {
+    const next = { text, references: nextReferences };
+    draftContentRef.current = next;
+    setDraftContent(next);
+  };
   const [uploadItems, setUploadItems] = useState(initialDraft.attachments);
   const [interruptedFiles, setInterruptedFiles] = useState(initialDraft.interruptedFiles);
   const [sending, setSending] = useState(false);
@@ -102,10 +112,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     if (!saved[0]) throw new Error('上传服务没有返回文件回执');
     return saved[0];
   }, setUploadItems, initialDraft.attachments));
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<StructuredEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const isComposingRef = useRef(false);
-  const compositionEndedAt = useRef(0);
   const sendingRef = useRef(false);
   const mountedRef = useRef(false);
   const admittedCleanup = useRef(false);
@@ -170,8 +178,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         return;
       }
     }
-    setDraftError(!saveChatDraft(session.id, { text: input, attachments: uploadItems, interruptedFiles }, composerId));
-  }, [session.id, composerId, input, uploadItems, interruptedFiles]);
+    setDraftError(!saveChatDraft(session.id, { text: input, references, attachments: uploadItems, interruptedFiles }, composerId));
+  }, [session.id, composerId, input, references, uploadItems, interruptedFiles]);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -189,26 +197,18 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     e.preventDefault(); dragDepth.current = 0; setDragOver(false);
     if (e.dataTransfer.files?.length) doUpload(e.dataTransfer.files);
   };
-  const onPaste = (e: React.ClipboardEvent) => {
-    if (e.clipboardData.files?.length) { e.preventDefault(); doUpload(e.clipboardData.files); }
-  };
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (el) {
-      el.style.height = 'auto';
-      el.style.height = Math.min(el.scrollHeight, 180) + 'px';
-    }
-  }, [input]);
-
   const submitDraft = async (intent: 'send' | 'steer') => {
-    const trimmed = input.trim();
+    const { text: submittedText, references: submittedReferences } = draftContentRef.current;
+    const trimmed = submittedText.trim();
     if (sendingRef.current) return;
     if (intent === 'steer' && (!showSteer || !trimmed || uploads.snapshot.length > 0)) return;
     if ((!trimmed && attachments.length === 0) || uploading || failedUploads || restorePending) return;
+    const exactReferences = validateChatReferences(submittedText, submittedReferences, attachments);
+    if (!exactReferences) { setSubmitError('正文附件引用已变更，请重新插入后发送。'); return; }
     sendingRef.current = true; setSending(true); setSubmitError('');
     try {
-      const accepted = await (intent === 'steer' ? onSteer?.(trimmed) : onSend(trimmed, attachments));
+      const accepted = await (intent === 'steer' ? onSteer?.(trimmed)
+        : exactReferences.length ? onSend(submittedText, attachments, exactReferences) : onSend(trimmed, attachments));
       if (accepted !== true) {
         if (mountedRef.current) setSubmitError(intent === 'steer'
           ? '当前任务尚未确认接收指导，草稿已保留。' : '任务尚未接收，草稿已保留，请重试。');
@@ -217,7 +217,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
       consumeChatDraft(session.id, composerId);
       if (mountedRef.current) {
         admittedCleanup.current = true;
-        setInput(''); uploads.clear(); reading.backToBottom();
+        replaceInput(''); uploads.clear(); reading.backToBottom();
       }
     } catch (error) {
       if (mountedRef.current) setSubmitError(error instanceof Error ? error.message
@@ -228,17 +228,6 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     }
   };
   const handleSend = () => submitDraft('send');
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 输入法确认候选词/英文的回车交给输入法处理，不能触发发送。
-    // 部分浏览器先触发 compositionend，此时仍需用 229 识别输入法按键。
-    if (isComposingRef.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229
-      || Date.now() - compositionEndedAt.current < 60) return;
-    if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
 
   const inputBox = (hero: boolean) => (
     <div className={`composer ${hero ? 'composer-hero' : ''} ${dragOver ? 'composer-drag' : ''}`}>
@@ -262,8 +251,22 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
               </div>
               {item.status === 'failed' && !item.reference && <button type="button" className="composer-file-retry" disabled={sending}
                 onClick={() => uploads.retry(item.key)}>重试</button>}
-              <button type="button" className="composer-file-remove" disabled={sending} onClick={() => uploads.remove(item.key)}
-                title={`移除 ${item.name}`} aria-label={`移除 ${item.name}`}>×</button>
+              {item.status === 'ready' && item.reference && !checking && <button type="button" className="composer-file-retry"
+                disabled={sending} aria-label={`插入正文 ${item.name}`} onMouseDown={event => event.preventDefault()}
+                onClick={() => {
+                  if (!item.reference || sendingRef.current) return;
+                  if (draftContentRef.current.references.length >= MAX_CHAT_REFERENCES) {
+                    setSubmitError('正文引用数量已达上限，请先移除一个引用。');
+                    return;
+                  }
+                  setSubmitError('');
+                  editorRef.current?.insertReference(item.reference.id, attachmentReferenceLabel(item.reference));
+                }}>插入正文</button>}
+              <button type="button" className="composer-file-remove" disabled={sending} onClick={() => {
+                if (sendingRef.current) return;
+                if (item.reference) editorRef.current?.removeReference(item.reference.id);
+                uploads.remove(item.key);
+              }} title={`移除 ${item.name}`} aria-label={`移除 ${item.name}`}>×</button>
             </div>
           ); })}
         </div>
@@ -283,23 +286,20 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         {apiDirect ? <span className="composer-hint">API 直连 · 文字与附件分析</span>
           : <BrushEntry onPick={(t) => {
             if (sendingRef.current) return;
-            setInput(t);
-            requestAnimationFrame(() => textareaRef.current?.focus());
+            replaceInput(t);
+            requestAnimationFrame(() => editorRef.current?.focus());
           }} />}
-        <textarea
-          ref={textareaRef}
-          className="chat-input"
+        <StructuredComposerEditor ref={editorRef} value={input} references={references} disabled={sending}
           placeholder={dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（可拖入图片/文档当素材）' : '发消息…（Enter 发送，Shift+Enter 换行，可拖入/粘贴素材）'}
-          value={input}
-          disabled={sending}
-          aria-label="给 AI 发送消息"
-          onChange={(e) => setInput(e.target.value)}
-          onCompositionStart={() => { isComposingRef.current = true; }}
-          onCompositionEnd={() => { isComposingRef.current = false; compositionEndedAt.current = Date.now(); }}
-          onBlur={() => { isComposingRef.current = false; }}
-          onKeyDown={handleKeyDown}
-          onPaste={onPaste}
-          rows={1}
+          onChange={(text, nextReferences) => {
+            if (sendingRef.current) return;
+            const receipts = uploads.ready;
+            const valid = validateChatReferences(text, nextReferences, receipts) ??
+              nextReferences.slice(0, MAX_CHAT_REFERENCES)
+                .filter(reference => validateChatReferences(text, [reference], receipts) !== null);
+            replaceInput(text, valid);
+          }}
+          onSubmit={handleSend} onPasteFiles={doUpload}
         />
       </div>
       <input ref={fileInputRef} type="file" multiple hidden
@@ -402,7 +402,11 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           <div className="suggestions">
             {SUGGESTIONS.filter((s) => !apiDirect || ['写小红书文案', '口播脚本'].includes(s.title)).map((s) => (
               <button key={s.title} className="card card-hover suggestion-card"
-                onClick={() => { setInput(s.prompt); requestAnimationFrame(() => textareaRef.current?.focus()); }}>
+                onClick={() => {
+                  if (sendingRef.current) return;
+                  replaceInput(s.prompt);
+                  requestAnimationFrame(() => editorRef.current?.focus());
+                }}>
                 <span className="suggestion-icon">{s.icon}</span>
                 <span className="suggestion-body">
                   <span className="suggestion-title">{s.title}</span>

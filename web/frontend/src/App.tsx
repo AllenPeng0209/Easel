@@ -24,6 +24,7 @@ import { fetchBusinessObject, parseBusinessHash } from './lib/businessObjectApi'
 import type { BusinessTarget } from './lib/businessObjectApi';
 import type { WorkshopReference } from './lib/workshop';
 import type { AgentEvent } from './lib/agentEvents';
+import { trimChatReferenceText, type ChatReference } from './lib/chatReferences';
 import { mergeSessionCatalog, nextSessionRevision } from './lib/sessionSync';
 import { sessionAttentionState } from './lib/sessionNavigation';
 import { confirmChatStop, enqueueMessage, nextQueuedMessage } from './lib/chatControl';
@@ -450,7 +451,7 @@ export default function App() {
     const ownsAttempt = stored?.turnId === attempt.turnId;
     const draft = loadChatDraft(sessionId);
     const needsReview = ownsAttempt && sameComposerDraft(attempt, draft.text,
-      draft.attachments.flatMap(item => item.reference ? [item.reference] : []))
+      draft.attachments.flatMap(item => item.reference ? [item.reference] : []), draft.references)
       && (!owner.resolveAdmission || chatDraftOwner(sessionId) !== owner.admissionComposerId);
     if (ownsAttempt) savePromptAttempt(sessionId, { ...attempt, state: 'accepted' });
     setSessions(previous => {
@@ -504,7 +505,9 @@ export default function App() {
         if (session.id !== sessionId || session.pendingTurnId !== owner.turnId) return session;
         const item = session.queued?.find(row => row.id === owner.queuedId);
         if (!item) return session;
-        const message: ChatMessage = { role: 'user', content: item.text.trim(), attachments: item.attachments, created: Date.now() };
+        const trimmed = trimChatReferenceText(item.text, item.references);
+        const message: ChatMessage = { role: 'user', content: trimmed.text, attachments: item.attachments,
+          references: trimmed.references, created: Date.now() };
         const updated = { ...session, updated: nextSessionRevision(session),
           queued: session.queued?.filter(row => row.id !== item.id), messages: [...session.messages, message] };
         updateSessionTitle(updated);
@@ -646,6 +649,7 @@ export default function App() {
     queueRetry?: boolean,
     prompt?: PromptAttempt,
     waitForAdmission = false,
+    references = prompt?.message.references,
   ) => {
     const turnId = requestedTurnId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try { sessionStorage.setItem(projectStorageKey(`easel_pending_turn:${sessionId}`), turnId); } catch { /* ignore */ }
@@ -721,6 +725,7 @@ export default function App() {
         confirmPromptAdmission(sessionId, owner);
       },
       !!prompt,
+      references,
     );
     return owner;
   }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage, confirmPromptAdmission, failPromptAdmission]);
@@ -858,9 +863,11 @@ export default function App() {
     topicRef?: ChatMessage['topicRef'],
     workshopRef?: WorkshopReference,
     composer = false,
+    references?: ChatReference[],
   ) => {
-    const visible = displayText.trim();
-    const agentMessage = (legacyAgentText || displayText).trim();
+    const trimmed = trimChatReferenceText(displayText, references);
+    const visible = trimmed.text;
+    const agentMessage = legacyAgentText ? legacyAgentText.trim() : visible;
     if (!agentMessage && attachments.length === 0) return false;
     const cur = sessionsRef.current.find((s) => s.id === sessionId);
     const persona = cur ? cur.persona : selectedPersona || undefined;
@@ -868,7 +875,7 @@ export default function App() {
     if (queuedItem) {
       if (streamCtl.current[sessionId] || streamAcc.current[sessionId]) return false;
       startStream(sessionId, agentMessage, persona, attachments, requestedTurnId, topicRef, workshopRef,
-        queuedItem.id, queuedItem.delivery === 'unconfirmed');
+        queuedItem.id, queuedItem.delivery === 'unconfirmed', undefined, false, trimmed.references);
       return true;
     }
     const previous = loadPromptAttempt(sessionId);
@@ -879,6 +886,7 @@ export default function App() {
       message: {
         role: 'user', content: visible, created: Date.now(),
         ...(attachments.length ? { attachments: attachments.map(item => ({ ...item })) } : {}),
+        ...(trimmed.references?.length ? { references: trimmed.references } : {}),
         ...(topicRef ? { topicRef: { ...topicRef } } : {}),
         ...(workshopRef ? { workshopRef: { ...workshopRef } } : {}),
         ...(legacyAgentText && legacyAgentText !== visible ? { agentContent: legacyAgentText } : {}),
@@ -908,14 +916,14 @@ export default function App() {
     return composer ? owner.admissionPromise! : true;
   }, [selectedPersona, startStream]);
 
-  const handleSendMessage = useCallback((sessionId: string, displayText: string, attachments?: UploadedFile[]) => {
+  const handleSendMessage = useCallback((sessionId: string, displayText: string, attachments?: UploadedFile[], references?: ChatReference[]) => {
     const session = sessionsRef.current.find(item => item.id === sessionId);
     if (!session || (!displayText.trim() && !attachments?.length)) return false;
     const prior = loadPromptAttempt(sessionId);
     if (prior && prior.state !== 'accepted') {
-      return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, undefined, undefined, true);
+      return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, undefined, undefined, true, references);
     }
-    if (prior && sameComposerDraft(prior, displayText, attachments || [])) {
+    if (prior && sameComposerDraft(prior, displayText, attachments || [], references)) {
       // A cold or remounted composer may still hold the already admitted draft.
       // An intentional send of that exact draft acknowledges the old echo.
       setSessions(previous => {
@@ -934,7 +942,8 @@ export default function App() {
     }
     if (prior) forgetPromptAttempt(sessionId, prior.turnId);
     if (streamCtl.current[sessionId] || streamAcc.current[sessionId] || session.queued?.length) {
-      const queued = { id: crypto.randomUUID(), text: displayText, attachments, created: Date.now() };
+      const trimmed = trimChatReferenceText(displayText, references);
+      const queued = { id: crypto.randomUUID(), text: trimmed.text, attachments, references: trimmed.references, created: Date.now() };
       setSessions(previous => {
         const next = previous.map(item => item.id === sessionId ? enqueueMessage(item, queued) : item);
         saveSessions(next);
@@ -942,7 +951,7 @@ export default function App() {
       });
       return true;
     }
-    return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, undefined, undefined, true);
+    return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, undefined, undefined, true, references);
   }, [sendUserAndStream]);
 
   const reconcilePromptAttempt = useCallback((sessionId: string) => {
@@ -1021,7 +1030,7 @@ export default function App() {
       if (loadPromptAttempt(session.id)?.state === 'unconfirmed') continue;
       const next = nextQueuedMessage(session, Boolean(streamAcc.current[session.id] || streamCtl.current[session.id] || session.pendingTurnId));
       if (!next || queueEdits.current[session.id]) continue;
-      sendUserAndStream(session.id, next.text, next.attachments || [], undefined, undefined, `queue-${next.id}`);
+      sendUserAndStream(session.id, next.text, next.attachments || [], undefined, undefined, `queue-${next.id}`, undefined, undefined, false, next.references);
     }
   }, [sessions, streams, queueEditRevision, historyReady, canOperate, resumePendingTurn, sendUserAndStream]);
 
@@ -1043,7 +1052,8 @@ export default function App() {
       const next = previous.map(session => session.id === sessionId
         ? { ...session, updated: nextSessionRevision(session), queued: session.queued?.map(item =>
           item.id === messageId && item.delivery !== 'sending' && item.delivery !== 'unconfirmed'
-            ? { ...item, text: text.trim(), delivery: undefined } : item) } : session);
+            ? { ...item, text: text === item.text ? text : text.trim(),
+                references: text === item.text ? item.references : undefined, delivery: undefined } : item) } : session);
       saveSessions(next);
       return next;
     });
@@ -1074,7 +1084,8 @@ export default function App() {
   ) => {
     const original = sessionsRef.current.find(session => session.id === sessionId)?.messages[userIndex];
     sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, userIndex, undefined,
-      original?.topicRef, original?.workshopRef);
+      original?.topicRef, original?.workshopRef, false,
+      original?.content === displayText ? original.references : undefined);
   }, [sendUserAndStream]);
 
   // 热点「一键做成内容」：新开会话，把选题作为指令发出去，跳到对话页。
@@ -1422,7 +1433,7 @@ export default function App() {
               ...(canReconcile
                 ? { action: { label: '核对上一条发送', run: () => reconcilePromptAttempt(activeSession.id) } } : {}),
             } : undefined}
-            onSend={(displayText, attachments) => handleSendMessage(activeSession.id, displayText, attachments)}
+            onSend={(displayText, attachments, references) => handleSendMessage(activeSession.id, displayText, attachments, references)}
             onSteer={streams[activeSession.id]?.steerTurnId && streams[activeSession.id]?.lifecycle === 'running'
               ? text => handleSteer(activeSession.id, text) : undefined}
             onStop={() => handleStopStream(activeSession.id, stopOwner)}

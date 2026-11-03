@@ -13,6 +13,7 @@ function compile(relative) {
 const outputText = compile('../../web/frontend/src/lib/projectScope.ts');
 const sessionSyncText = compile('../../web/frontend/src/lib/sessionSync.ts');
 const promptAdmissionText = compile('../../web/frontend/src/lib/promptAdmission.ts');
+const chatReferencesText = compile('../../web/frontend/src/lib/chatReferences.ts');
 export const projectScope = {};
 runInNewContext(outputText, { exports: projectScope });
 
@@ -22,7 +23,10 @@ export function runWithProjectScope(code, context) {
   runInNewContext(sessionSyncText, { ...context, exports: sessionSync });
   runInNewContext(outputText, { ...context, exports: scoped });
   const admission = {};
-  runInNewContext(promptAdmissionText, { ...context, exports: admission, require: () => scoped });
+  const references = {};
+  runInNewContext(chatReferencesText, { ...context, exports: references });
+  runInNewContext(promptAdmissionText, { ...context, exports: admission,
+    require: name => name === './chatReferences' ? references : scoped });
   return runInNewContext(code, { ...context, ...scoped,
     require: name => name === './promptAdmission' ? admission : name === './sessionSync' ? sessionSync : name.endsWith('projectScope') ? scoped : context.require?.(name),
   });

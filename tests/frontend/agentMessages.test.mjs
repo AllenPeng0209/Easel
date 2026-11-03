@@ -144,3 +144,19 @@ test('plan history never borrows baselines across turns or treats an empty snaps
   assert.match(html, /移除[^<]*新任务/);
   assert.doesNotMatch(html, /移除[^<]*旧任务/);
 });
+
+test('an admitted file reference renders in place and a typed lookalike remains plain text', () => {
+  const MessageBubble = componentModule('components/MessageBubble.tsx', { project: 'ip2' }).default;
+  const file = { id: 'file-one', name: '稿件.txt', path: '_inbox/u1/b/稿件.txt' };
+  const text = '🖼 @稿件.txt 与 @稿件.txt';
+  const start = text.indexOf('@');
+  const message = { ...userMessage([file], text), references: [{ start, end: start + 1 + file.name.length, attachmentId: file.id }] };
+  const html = renderToStaticMarkup(React.createElement(MessageBubble, { message }));
+  assert.equal((html.match(/data-chat-reference="file-one"/g) || []).length, 1);
+  assert.match(html, /打开正文附件：稿件\.txt/);
+  assert.match(html, /<\/a> 与 @稿件\.txt/);
+  const forged = renderToStaticMarkup(React.createElement(MessageBubble, { message: {
+    ...message, references: [{ ...message.references[0], attachmentId: 'foreign-file' }],
+  } }));
+  assert.doesNotMatch(forged, /data-chat-reference/);
+});

@@ -4,6 +4,7 @@
  * ce7073d51254c26cd63b22a60835b8f948deb447. Raw File bytes are never persisted.
  */
 import { projectStorageKey } from './projectScope';
+import { validateChatReferences, type ChatReference } from './chatReferences';
 import type { UploadAttachment } from './uploadQueue';
 
 export interface InterruptedFile { name: string; size: number; mime: string; }
@@ -11,6 +12,7 @@ export interface ChatDraft {
   text: string;
   attachments: UploadAttachment[];
   interruptedFiles: InterruptedFile[];
+  references?: ChatReference[];
 }
 
 const empty = (): ChatDraft => ({ text: '', attachments: [], interruptedFiles: [] });
@@ -36,7 +38,8 @@ export function loadChatDraft(sessionId: string): ChatDraft {
         && typeof (file as InterruptedFile).name === 'string')
       .map((file: InterruptedFile) => ({ name: file.name, size: Number(file.size) || 0,
         mime: typeof file.mime === 'string' ? file.mime : '' }));
-    return { text: value.text, attachments, interruptedFiles };
+    const references = validateChatReferences(value.text, value.references, attachments.map(item => item.reference!));
+    return { text: value.text, attachments, interruptedFiles, ...(references?.length ? { references } : {}) };
   } catch { return empty(); }
 }
 
@@ -48,8 +51,10 @@ export function saveChatDraft(sessionId: string, draft: ChatDraft, composerId?: 
         reference: { id: item.reference!.id, name: item.reference!.name, path: item.reference!.path } }));
     const interruptedFiles = [...draft.interruptedFiles, ...draft.attachments
       .filter(item => item.status !== 'ready').map(item => ({ name: item.name, size: item.size, mime: item.mime }))];
+    const references = validateChatReferences(draft.text, draft.references, attachments.map(item => item.reference));
     if (!draft.text && !attachments.length && !interruptedFiles.length) localStorage.removeItem(keyFor(sessionId));
-    else localStorage.setItem(keyFor(sessionId), JSON.stringify({ version: 1, composerId, text: draft.text, attachments, interruptedFiles }));
+    else localStorage.setItem(keyFor(sessionId), JSON.stringify({ version: 1, composerId, text: draft.text, attachments, interruptedFiles,
+      ...(references?.length ? { references } : {}) }));
     return true;
   } catch { return false; }
 }
