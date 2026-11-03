@@ -7574,12 +7574,26 @@
     "reuse_kind": "adapted",
     "changes": "适配证据区布局和主题。",
     "verification_status": "B06_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B09",
+    "upstream_path": "packages/client/ui-tool/src/client/tool/ToolCallTree.tsx",
+    "upstream_sha256": "fbb6a0e2b82db325a90ed1f491deb0972c50fe368ac9b0ca00c7181ede7e054f",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "source_references": [
+      "packages/client/ui-tool/src/client/contract/slots.ts"
+    ],
+    "destination_path": "web/frontend/src/components/toolRendererRegistry.ts",
+    "destination_sha256": "a396a7c77ba8a05a7247242c567fa0c9ef636ea897c83baeebe490cef7ce3801",
+    "reuse_kind": "adapted",
+    "changes": "复用上游 keyed 工具详情分派和通用回退，接入 Easel 原生证据校验。",
+    "verification_status": "B09_registry_verified_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 64,
+    "source_migration_files": 65,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 49,
+    "adapted_upstream_files": 50,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

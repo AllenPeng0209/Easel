@@ -1,12 +1,9 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
-import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots, commandStatus, isCommandExecution, fileMutationLabel, fileMutationState, toolLifecycle } from '../lib/agentEvents';
-import { WebBlock } from '../vendor/deepseek-harness/tool/WebBlock';
-import { webActionTitle, webCardModel } from '../vendor/deepseek-harness/tool/web-card-model';
+import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots, toolLifecycle } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
-import ToolValueInspector from './ToolValueInspector';
-import FileMutationCard from './FileMutationCard';
-import CommandExecutionCard from './CommandExecutionCard';
+import { resolveToolRenderer } from './toolRendererRegistry';
+import ToolRendererDetails from './ToolRendererDetails';
 import { inspectToolValue } from '../lib/toolValueInspection';
 import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
 import BusinessObjectCard from './BusinessObjectCard';
@@ -56,21 +53,21 @@ function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
 function ToolEvent({ event, open, settled, children, childCount, onToggle }: {
   event: AgentEvent; open: boolean; settled: boolean; children?: ReactNode; childCount: number; onToggle: () => void;
 }) {
-  const isCommand = isCommandExecution(event);
-  const mutationState = fileMutationState(event, settled);
-  const web = webCardModel(event);
-  const reportedState = isCommand ? commandStatus(event, event.status || '') : event.status;
-  const { status: state, phase, awaitingTerminal: unconfirmed } = toolLifecycle(reportedState, settled);
+  const renderer = useMemo(() => resolveToolRenderer(event, settled), [event, settled]);
+  const view = renderer.kind === 'specialized' ? renderer.view : undefined;
+  const { status: state, phase, awaitingTerminal: unconfirmed } = toolLifecycle(view?.status ?? event.status, settled);
   const running = phase === 'running' || (phase === 'preparing' && state === 'preparing');
-  const visualState = phase === 'unconfirmed' || mutationState === 'unconfirmed' ? 'unconfirmed' : state;
+  const visualState = phase === 'unconfirmed' || view?.unconfirmed ? 'unconfirmed' : state;
   const publication = event.name === 'easel_publish' || event.name === 'easel_publication_status';
-  const stateLabel = mutationState ? fileMutationLabel[mutationState] : unconfirmed ? '未收到工具终态'
-    : publication && state === 'completed' ? '调用已结束 · 查看发布回执' : statusText[state];
-  const title = isCommand ? '运行命令' : mutationState ? '修改文件' : web ? webActionTitle[web.action] : names[event.name || ''] || event.name || '工具调用';
-  const duration = !isCommand && !web && typeof event.startedAt === 'number' && typeof event.completedAt === 'number'
+  const stateLabel = view?.statusLabel ?? (unconfirmed ? '未收到工具终态'
+    : publication && state === 'completed' ? '调用已结束 · 查看发布回执' : statusText[state]);
+  const name = typeof event.name === 'string' ? event.name : '';
+  const title = view?.title ?? (Object.hasOwn(names, name) ? names[name] : name || '工具调用');
+  const duration = !view?.suppressDerivedDuration && typeof event.startedAt === 'number' && typeof event.completedAt === 'number'
     ? Math.max(0, event.completedAt - event.startedAt) : undefined;
   return <div className="agent-tool" data-tool-call={event.callId || event.id}
-    data-chat-anchor-key={`call:${agentToolKey(event)}`} data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={visualState} data-tool-status={state} data-tool-phase={phase}>
+    data-chat-anchor-key={`call:${agentToolKey(event)}`} data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={visualState} data-tool-status={state} data-tool-phase={phase}
+    data-tool-renderer={renderer.kind === 'specialized' ? renderer.key : 'generic'}>
     <DisclosureRow icon={<span className="agent-status-dot" data-state={visualState} />}
       title={title} open={open} expandable expandOnRowClick running={running}
       onToggle={onToggle}
@@ -82,14 +79,7 @@ function ToolEvent({ event, open, settled, children, childCount, onToggle }: {
       <div className="agent-tool__details">
         {unconfirmed && <p className="agent-event__note">本轮已结束，此工具的最终状态仍未确认。</p>}
         {publication && <p className="agent-event__note">平台结果以发布回执为准。</p>}
-        {isCommand ? <CommandExecutionCard event={event} showExit={phase === 'terminal' || settled} />
-          : mutationState ? <FileMutationCard event={event} state={mutationState} />
-            : web ? <WebBlock model={web} renderResults={value => <ToolValueInspector label="引擎结果记录" value={value} />} /> : <>
-          <ToolValueInspector label="输入" value={event.input} />
-          <ToolValueInspector label="结果" value={event.output} />
-          {event.exitCode !== undefined && <p className="agent-tool__exit">退出码：{event.exitCode === null ? '未提供' : event.exitCode}</p>}
-          {event.truncated && <p className="agent-event__note">引擎输出已截断，以上不是完整日志。</p>}
-        </>}
+        <ToolRendererDetails event={event} renderer={renderer} showTerminalFacts={phase === 'terminal' || settled} />
       </div>
     </DisclosureRow>
   </div>;
