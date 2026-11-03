@@ -31,6 +31,7 @@ function compile(path, dependencies, globals) {
 async function mount(file, initialProps = {}, { ideas = [], projects = [], detail, role = 'operator', isPlatformAdmin = false, trends = [], saveIdea } = {}) {
   const { window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   const document = window.document;
+  Object.defineProperty(window, 'location', { value: { origin: 'http://127.0.0.1:7860' }, configurable: true });
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
   const focused = [], scrolled = [], reads = [], writes = [];
   window.HTMLElement.prototype.focus = function () { focused.push(this.getAttribute('data-idea-id') || this.getAttribute('data-workshop-project-id')); };
@@ -60,8 +61,10 @@ async function mount(file, initialProps = {}, { ideas = [], projects = [], detai
     createWorkshopProject: denied, updateWorkshopProject: denied, archiveWorkshopProject: denied, connectWorkshopCanvas: denied,
     addWorkshopComment: denied, addWorkshopReview: denied, recordWorkshopPublication: denied,
   };
+  const businessApi = compile('lib/businessObjectApi.ts',
+    { './projectScope': { ACTIVE_PROJECT_ID: 'active' }, './businessObjects': {} }, { window, document });
   const Component = compile(`components/${file}.tsx`, { react: React, 'react/jsx-runtime': require('react/jsx-runtime'),
-    '../lib/api': componentApi, '../lib/workshop': workshopApi,
+    '../lib/api': componentApi, '../lib/workshop': workshopApi, '../lib/businessObjectApi': businessApi,
     './icons': new Proxy({}, { get: () => () => null }), './ProjectSpace': { useIpPermissions: () => ({
       canOperate: role !== 'viewer', isPlatformAdmin, role }) } }, { window, document }).default;
   const root = createRoot(document.getElementById('root'));
@@ -72,6 +75,22 @@ async function mount(file, initialProps = {}, { ideas = [], projects = [], detai
     async dispose() { await act(async () => root.unmount()); for (const [key, descriptor] of Object.entries(old)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; } } };
 }
+
+test('a completed production idea links to the exact workshop in the current IP', async () => {
+  const link = `#/business/active/workshop/${A}/artifact/${B}`;
+  const reference = url => ({ platform: 'easel_workshop', url });
+  const ui = await mount('IdeasPage', { onUseTopic() {} }, { ideas: [
+    { ...idea('current'), provenance: reference('http://127.0.0.1:7860/' + link) },
+    { ...idea('other'), provenance: reference('http://127.0.0.1:7860/' + link.replace('/active/', '/other/')) },
+    { ...idea('external'), provenance: reference('https://example.test/' + link) },
+  ] });
+  try {
+    assert.equal(ui.document.querySelector('[data-idea-id="current"] a')?.getAttribute('href'), link);
+    assert.ok(!ui.document.querySelector('[data-idea-id="other"] a'));
+    assert.ok(!ui.document.querySelector('[data-idea-id="external"] a'));
+    assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
 
 test('idea navigation anchors and focuses only the exact existing idea without creating content', async () => {
   const ui = await mount('IdeasPage', { initialIdeaId: 'b'.repeat(12), onUseTopic() { throw new Error('no auto creation'); } },

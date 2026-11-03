@@ -142,6 +142,24 @@ _BUSINESS_TEXT_SCHEMA = {
            'pattern': r'^[^\u0000-\u001f\u007f-\u009f]*$'}
     for name, limit in _BUSINESS_TEXT_LIMITS.items()
 }
+EASEL_WORKSHOP_DELIVERY_TOOL = {
+    'type': 'function', 'name': 'easel_workshop_delivery', 'deferLoading': False,
+    'description': (
+        'Plan video episodes in Easel Ideas and Workshop, or render and collect already-mastered videos in BeefTV. '
+        'Use a JSON manifest path relative to the current IP outputs; optionally limit to specific episode IDs. '
+        'Plan can precede media creation. Deliver requires real audio/video masters already in outputs. '
+        'Use returned ideaUrl/workshopUrl and artifact receipts. Never pass identities, commands or credentials.'
+    ),
+    'inputSchema': {
+        'type': 'object', 'additionalProperties': False, 'required': ['action', 'manifestPath'],
+        'properties': {
+            'action': {'type': 'string', 'enum': ['plan', 'deliver']},
+            'manifestPath': {'type': 'string', 'minLength': 1, 'maxLength': 512},
+            'episodes': {'type': 'array', 'maxItems': 12, 'uniqueItems': True,
+                         'items': {'type': 'string', 'pattern': '^[A-Za-z0-9_-]{1,120}$'}},
+        },
+    },
+}
 EASEL_BUSINESS_OBJECTS_TOOL = {
     'type': 'function', 'name': 'easel_business_objects', 'deferLoading': False,
     'description': (
@@ -375,6 +393,7 @@ class CodexAdapter:
         completed_answers: set[str] = set()
         events = EventProjector(emit, request.env)
         business_calls: dict[str, tuple[str, asyncio.Future]] = {}
+        workshop_calls: dict[str, tuple[object, asyncio.Future]] = {}
         summaries: dict[str, dict[int, str]] = {}
         settled_summaries: set[str] = set()
         summary_limit = 4000
@@ -495,6 +514,32 @@ class CodexAdapter:
                     turn_id and params.get("turnId", turn_id) != turn_id):
                 raise HarnessError("不属于当前会话的请求")
             if method == "item/tool/call":
+                if params.get('tool') == 'easel_workshop_delivery':
+                    failed = {'success': False, 'contentItems': [{'type': 'inputText', 'text':
+                        'Easel workshop delivery was not confirmed. Verify the current IP manifest and existing workshop receipts.'}]}
+                    if (request.workshop_delivery is None or params.get('namespace') not in (None, '')
+                            or not turn_id or params.get('turnId') != turn_id):
+                        return failed
+                    call_id, arguments = params.get('callId'), params.get('arguments')
+                    if (not isinstance(call_id, str) or not call_id.strip() or len(call_id) > 256
+                            or any(ord(character) < 32 for character in call_id)):
+                        return failed
+                    previous = workshop_calls.get(call_id)
+                    if previous is not None:
+                        return await asyncio.shield(previous[1]) if previous[0] == arguments else failed
+                    outcome = asyncio.get_running_loop().create_future()
+                    workshop_calls[call_id] = (arguments, outcome)
+                    try:
+                        rows = await request.workshop_delivery(arguments)
+                        result = {'success': True, 'contentItems': [{'type': 'inputText',
+                            'text': json.dumps({'episodes': rows}, ensure_ascii=False, allow_nan=False)}]}
+                    except asyncio.CancelledError:
+                        outcome.cancel()
+                        raise
+                    except Exception:
+                        result = failed
+                    outcome.set_result(result)
+                    return result
                 if params.get('tool') == 'easel_business_objects':
                     if request.business_objects is None or params.get('namespace') not in (None, ''):
                         return _business_objects_failure()
@@ -689,6 +734,8 @@ class CodexAdapter:
                     tools.append(EASEL_PUBLICATION_STATUS_TOOL)
                 if request.business_objects is not None:
                     tools.append(EASEL_BUSINESS_OBJECTS_TOOL)
+                if request.workshop_delivery is not None:
+                    tools.append(EASEL_WORKSHOP_DELIVERY_TOOL)
                 result = await rpc.call("thread/start", {**options, "dynamicTools": tools})
             resumed_id = (result.get("thread") or {}).get("id", "")
             if request.native_id and resumed_id != request.native_id:

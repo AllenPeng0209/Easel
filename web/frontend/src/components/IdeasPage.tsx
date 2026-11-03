@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { fetchIdeas, createIdea, updateIdea, deleteIdea, createSchedule } from '../lib/api';
 import type { Idea, IdeaInput } from '../lib/api';
-import { IconIdea, IconEdit, IconTrash, IconChat, IconCalendar, IconChevron } from './icons';
+import { parseBusinessHash } from '../lib/businessObjectApi';
+import { IconIdea, IconEdit, IconTrash, IconChat, IconCalendar, IconChevron, IconVideo } from './icons';
 import { useIpPermissions } from './ProjectSpace';
 
 interface IdeasPageProps {
@@ -16,6 +17,18 @@ const COLUMNS: { key: string; label: string; color: string }[] = [
 ];
 const NEXT: Record<string, string> = { pending: 'doing', doing: 'done', done: 'pending' };
 const EMPTY: IdeaInput = { title: '', note: '', source: '', status: 'pending' };
+
+function workshopLink(idea: Idea): string | undefined {
+  const reference = idea.provenance;
+  if (reference?.platform !== 'easel_workshop') return;
+  try {
+    const url = new URL(reference.url);
+    if (url.origin === window.location.origin && url.pathname === '/'
+        && parseBusinessHash(url.hash)?.kind === 'workshop') return url.hash;
+  } catch {
+    // Old or invalid references cannot navigate away from the active IP.
+  }
+}
 
 export default function IdeasPage({ onUseTopic, initialIdeaId }: IdeasPageProps) {
   const { canOperate } = useIpPermissions();
@@ -102,7 +115,9 @@ export default function IdeasPage({ onUseTopic, initialIdeaId }: IdeasPageProps)
             </div>
             <div className="kanban-list">
               {byStatus[col.key].length === 0 && <div className="kanban-empty">{canOperate ? '拖点选题进来吧' : '暂时没有选题'}</div>}
-              {byStatus[col.key].map((it) => (
+              {byStatus[col.key].map((it) => {
+                const workshop = workshopLink(it);
+                return (
                 <div key={it.id} className="card idea-card" data-idea-id={it.id}
                   data-idea-selected={it.id === targetId && !unavailable && readState === 'ready' ? true : undefined}
                   ref={it.id === targetId ? targetCard : undefined} tabIndex={it.id === targetId ? -1 : undefined}
@@ -116,6 +131,7 @@ export default function IdeasPage({ onUseTopic, initialIdeaId }: IdeasPageProps)
                   {it.source && <span className="badge" style={{ marginTop: 6 }}>{it.source}</span>}
                   {it.note && <div className="idea-note">{it.note}</div>}
                   {canOperate && <div className="idea-foot">
+                    {workshop && <a className="idea-act" href={workshop}><IconVideo size={13} /> 查看视频工坊</a>}
                     <button className="idea-act" onClick={() => { if (canOperate) onUseTopic(it.id); }}><IconChat size={13} /> 做内容</button>
                     <button className="idea-act" onClick={() => schedule(it)}><IconCalendar size={13} /> 排期</button>
                     <button className="idea-act next" onClick={() => advance(it)} title="推进状态">
@@ -123,7 +139,8 @@ export default function IdeasPage({ onUseTopic, initialIdeaId }: IdeasPageProps)
                     </button>
                   </div>}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}

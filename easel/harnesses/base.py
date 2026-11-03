@@ -27,6 +27,7 @@ PublicationStatus = Callable[[str], Awaitable[dict]]
 PublicationStatusWithCall = Callable[[str, str], Awaitable[dict]]
 # Typed, read-only business queries; actor/IP scope and DTOs remain host-owned.
 BusinessObjects = Callable[[dict, str], Awaitable[dict]]
+WorkshopDelivery = Callable[[dict], Awaitable[list[dict]]]
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class RunRequest:
     record_subagent: Callable[[dict], None] | None = None
     publication_status_with_call: PublicationStatusWithCall | None = None
     auto_allow_tools: bool = False
+    workshop_delivery: WorkshopDelivery | None = None
 
 
 class Adapter(Protocol):

@@ -4416,6 +4416,59 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         except HTTPException as error:
             raise HarnessError(_scrub_secrets(str(error.detail))) from None
 
+    async def workshop_delivery(payload: dict) -> list[dict]:
+        from web.workshop_delivery import run_workshop_delivery
+
+        loop = asyncio.get_running_loop()
+        cancelled = threading.Event()
+
+        def authorize():
+            if cancelled.is_set():
+                raise HarnessError("成片操作已停止，可查询已保存的工坊任务")
+            _require_host_tools()
+
+        async def idea_operation(method, path, values):
+            authorize()
+            if method == "GET":
+                return _read_ideas()
+            if method == "POST":
+                return await api_ideas_create(IdeaItem.model_validate(values))
+            return await api_ideas_update(path.rsplit("/", 1)[-1], IdeaItem.model_validate(values))
+
+        def ideas(method, path, values):
+            pending = asyncio.run_coroutine_threadsafe(idea_operation(method, path, values), loop)
+            try:
+                return pending.result(timeout=20)
+            except TimeoutError:
+                pending.cancel()
+                raise
+
+        authorize()
+        worker = asyncio.create_task(asyncio.to_thread(run_workshop_delivery, payload, outputs=_outputs_dir(),
+                                                       ip=project_id(), ideas=ideas, authorize=authorize))
+        try:
+            rows = await asyncio.shield(worker)
+            authorize()
+            return json.loads(_scrub_secrets(json.dumps(rows, ensure_ascii=False)))
+        except asyncio.CancelledError:
+            cancelled.set()
+            # The host may be inside a native write; drain it before ending the turn.
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if worker.done():
+                try:
+                    worker.result()
+                except BaseException:
+                    pass
+            raise
+        finally:
+            cancelled.set()
+
     async def publish(payload: dict, call_id: str) -> dict:
         _require_host_tools()
         if not interactive:
@@ -4512,6 +4565,9 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                              autonomy_mode=req.autonomyMode, present=present, publish=publish,
                              publication_status=publication_status, publication_status_with_call=publication_status,
                              business_objects=business_objects,
+                             workshop_delivery=workshop_delivery if (
+                                 runtime == "codex" and interactive and current_user()
+                                 and config["sandbox"] == "workspace-write") else None,
                              bind_steer=bind_steer if runtime == "codex" and interactive else None,
                              record_subagent=record_subagent if runtime == "codex" and interactive else None)
         if interactive and config["sandbox"] == "workspace-write":
