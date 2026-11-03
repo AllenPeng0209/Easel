@@ -79,6 +79,11 @@ class ChatHistoryStore:
         with self._connect() as connection:
             return [row[0] for row in connection.execute("SELECT id FROM sessions WHERE deleted=1 ORDER BY id")]
 
+    def is_deleted(self, session_id: str) -> bool:
+        with self._connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM sessions WHERE id=? AND deleted=1", (session_id,)).fetchone() is not None
+
     def turn_claim(self, turn_id: str) -> dict | None:
         with self._connect() as connection:
             row = connection.execute("SELECT session_id,payload_hash,owner_pid FROM turn_claims WHERE turn_id=?", (turn_id,)).fetchone()

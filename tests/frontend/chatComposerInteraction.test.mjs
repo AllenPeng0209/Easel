@@ -44,6 +44,7 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
         projectFetch: async () => ({ json: async () => ({ max_mb: 50 }) }) };
       if (name.endsWith('/api')) return { uploadFiles: async () => [], adoptOversize: async () => [] };
       if (name.includes('MessageBubble') || name.includes('QuestionCards') || name.includes('BrushEntry')) return { default: () => null };
+      if (name === './AgentSubagentLineage') return { SubagentTranscript: () => null };
       if (name.endsWith('icons')) return new Proxy({}, { get: (_target, key) => String(key) });
       if (name.startsWith('.')) {
         const target = new URL(name, `file://${path}`);

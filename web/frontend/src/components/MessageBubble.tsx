@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { ChatMessage } from '../lib/store';
-import type { AgentEvent } from '../lib/agentEvents';
+import type { AgentEvent, AgentSubagent } from '../lib/agentEvents';
 import { renderMarkdown } from '../lib/sanitize';
 import { linkifyOutputs, externalizeMediaLinks } from '../lib/linkifyOutputs';
 import { IconCopy, IconCheck, IconRetry } from './icons';
@@ -25,12 +25,14 @@ export interface BubbleActions {
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  sessionId?: string;
   isStreaming?: boolean;
   thinking?: string;
   activity?: string;
   stillWorking?: string;   // 防呆心跳提示（未卡住）；仅流式时的独立提示，不替代思考/活动
   events?: AgentEvent[];
   actions?: BubbleActions;
+  onOpenSubagent?: (child: AgentSubagent, trigger: HTMLElement) => void;
   onOpenDeliverable?: (file: import('../lib/deliverables').ChatDeliverable, trigger: HTMLElement) => void;
 }
 
@@ -50,7 +52,7 @@ function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) 
   );
 }
 
-export default function MessageBubble({ message, isStreaming, thinking, activity, stillWorking, events, actions, onOpenDeliverable }: MessageBubbleProps) {
+export default function MessageBubble({ message, sessionId, isStreaming, thinking, activity, stillWorking, events, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
   const rejectedPaths = useMemo(() => rejectedSnapshotPaths(effEvents), [effEvents]);
@@ -134,7 +136,7 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
       <div className="msg-col assistant">
         <div className="message-bubble assistant">
           {livePanel}
-          <AgentEventPanel events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
+          <AgentEventPanel sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
           {message.content && <div dangerouslySetInnerHTML={{ __html: rendered.html }} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
           <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />

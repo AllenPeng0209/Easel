@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
-import { publicationEventKey, businessEventKey } from '../lib/agentEvents';
+import { publicationEventKey, businessEventKey, normalizeAgentEvent } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
+import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
 import BusinessObjectCard from './BusinessObjectCard';
 import { fetchBusinessObject } from '../lib/businessObjectApi';
 import PublicationReceiptCard from './PublicationReceiptCard';
@@ -129,13 +130,22 @@ function OtherEvent({ event }: { event: AgentEvent }) {
 }
 
 /** The Easel transport boundary feeds the vendored Harness disclosure surface. */
-export default function AgentEventPanel({ events, expandedCallId, settled = false }: {
-  events: AgentEvent[]; expandedCallId?: string; settled?: boolean;
+export default function AgentEventPanel({ events, expandedCallId, sessionId = '', settled = false, onOpenSubagent }: {
+  events: AgentEvent[]; expandedCallId?: string; sessionId?: string; settled?: boolean; onOpenSubagent?: OpenSubagent;
 }) {
   const snapshots = toolSnapshots(events);
   if (!snapshots.length) return null;
   const plans = new Map<string | undefined, AgentEvent[]>();
+  const subagents = new Map<string | undefined, { first: AgentEvent; events: AgentEvent[] }>();
   for (const event of snapshots) {
+    if (event.kind === 'subagent') {
+      const normalized = normalizeAgentEvent(event);
+      if (normalized) {
+        const lineage = subagents.get(event.turnId) || { first: event, events: [] };
+        lineage.events.push(normalized);
+        subagents.set(event.turnId, lineage);
+      }
+    }
     if ((event.kind !== 'plan' || typeof event.text === 'string')) continue;
     const revisions = plans.get(event.turnId) || [];
     revisions.push(event);
@@ -143,6 +153,11 @@ export default function AgentEventPanel({ events, expandedCallId, settled = fals
   }
   return <div className="agent-events" role="region" aria-label="任务执行记录">
     {snapshots.map(event => {
+      if (event.kind === 'subagent') {
+        const lineage = subagents.get(event.turnId);
+        return lineage?.first === event ? <AgentSubagentLineage key={JSON.stringify([sessionId, event.turnId])}
+          events={lineage.events} sessionId={sessionId} settled={settled} onOpenSubagent={onOpenSubagent} /> : null;
+      }
       if (event.kind === 'tool') return <ToolEvent key={`tool:${event.callId || event.id}`}
         event={event} expanded={event.callId === expandedCallId} settled={settled} />;
       if ((event.kind !== 'plan' || typeof event.text === 'string')) return <OtherEvent key={event.id} event={event} />;

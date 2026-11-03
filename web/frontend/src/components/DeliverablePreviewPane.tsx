@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { ChatDeliverable } from '../lib/deliverables';
 import DeliverablePreviewBody from './DeliverablePreviewBody';
 import '../styles/deliverablePreviewPane.css';
@@ -17,9 +17,19 @@ const MAX_PANE = 960;
 const STEP = 20;
 
 export default function DeliverablePreviewPane({ file, onClose }: { file: ChatDeliverable; onClose: () => void }) {
+  return <ChatInspectionPane title={file.name} contentLabel="交付物内容"
+    suffix={file.storageMode === 'snapshot' ? ` · 交付 V${file.revision}` : ''}
+    resizeLabel="调整交付物预览宽度" onClose={onClose}>
+    <DeliverablePreviewBody key={file.artifactId} file={file} />
+  </ChatInspectionPane>;
+}
+
+export function ChatInspectionPane({ title, suffix, contentLabel, resizeLabel = "调整侧栏宽度", onClose, children }: {
+  title: string; suffix?: string; contentLabel: string; resizeLabel?: string; onClose: () => void; children: ReactNode;
+}) {
   const pane = useRef<HTMLElement>(null);
   const close = useRef<HTMLButtonElement>(null);
-  const title = useId();
+  const heading = useId();
   const drag = useRef<{ pointerId: number; x: number; width: number } | null>(null);
   const [geometry, setGeometry] = useState({ mobile: false, maximum: MAX_PANE });
   const [preferredWidth, setPreferredWidth] = useState(480);
@@ -58,7 +68,7 @@ export default function DeliverablePreviewPane({ file, onClose }: { file: ChatDe
 
   return (
     <aside ref={pane} className={`deliverable-preview-pane${geometry.mobile ? ' is-fullscreen' : ''}`}
-      role={geometry.mobile ? 'dialog' : undefined} aria-modal={geometry.mobile || undefined} aria-labelledby={title}
+      role={geometry.mobile ? 'dialog' : undefined} aria-modal={geometry.mobile || undefined} aria-labelledby={heading}
       style={{ '--deliverable-preview-width': `${width}px` } as CSSProperties}
       onKeyDown={event => {
         if (event.defaultPrevented) return;
@@ -72,7 +82,7 @@ export default function DeliverablePreviewPane({ file, onClose }: { file: ChatDe
         else if (!event.shiftKey && event.target === last) { event.preventDefault(); first?.focus(); }
       }}>
       {!geometry.mobile && <div className="deliverable-preview-separator" role="separator" aria-orientation="vertical"
-        aria-label="调整交付物预览宽度" aria-valuemin={MIN_PANE} aria-valuemax={geometry.maximum} aria-valuenow={width}
+        aria-label={resizeLabel} aria-valuemin={MIN_PANE} aria-valuemax={geometry.maximum} aria-valuenow={width}
         tabIndex={0}
         onKeyDown={event => {
           const next = event.key === 'ArrowLeft' ? width + STEP : event.key === 'ArrowRight' ? width - STEP
@@ -97,13 +107,13 @@ export default function DeliverablePreviewPane({ file, onClose }: { file: ChatDe
         onPointerCancel={event => { if (drag.current?.pointerId === event.pointerId) drag.current = null; }}
         onLostPointerCapture={event => { if (drag.current?.pointerId === event.pointerId) drag.current = null; }} />}
       <header className="deliverable-preview-header">
-        <h2 id={title} title={file.name}>{file.name}{file.storageMode === 'snapshot' ? ` · 交付 V${file.revision}` : ''}</h2>
+        <h2 id={heading} title={title}>{title}{suffix}</h2>
         <button ref={close} type="button" aria-label={geometry.mobile ? '返回对话' : '关闭预览'} onClick={onClose}>
           {geometry.mobile ? '返回对话' : '关闭'}
         </button>
       </header>
-      <div className="deliverable-preview-scroll" role="region" tabIndex={0} aria-label="交付物内容">
-        <DeliverablePreviewBody key={file.artifactId} file={file} />
+      <div className="deliverable-preview-scroll" role="region" tabIndex={0} aria-label={contentLabel}>
+        {children}
       </div>
     </aside>
   );

@@ -7268,12 +7268,41 @@
     "reuse_kind": "adapted",
     "changes": "保留新增、移除、相对顺序和状态比对，接入逐轮 Easel 计划快照。",
     "verification_status": "B24_engine_snapshot_slice_verified"
+  },
+  {
+    "feature_id": "B27",
+    "upstream_path": "packages/client/ui-subagent/src/client/SubagentHeaderLineage.tsx",
+    "upstream_sha256": "7df1f44bc2d7845ba4da7624157827202c40822e226ad487552f047434ddbf12",
+    "source_references": [
+      "packages/client/ui-subagent/src/client/sidebar-chat/index.tsx",
+      "packages/client/ui-subagent/src/client/SubagentReadOnlyComposer.tsx"
+    ],
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/AgentSubagentLineage.tsx",
+    "destination_sha256": "b4f693c421a7f393936b7d60e5e4ce0124c7350cd5b326468838d4fb3c80dfde",
+    "reuse_kind": "adapted",
+    "changes": "迁移会话目录、嵌套展示和只读会话行为，适配 Easel 作用域请求及可取消加载。",
+    "verification_status": "B27_verified_live_codex_and_isolated_browser"
+  },
+  {
+    "feature_id": "B27",
+    "upstream_path": "packages/client/ui-subagent/src/client/SubagentHeaderLineage.module.css",
+    "upstream_sha256": "3b298761015c6dbcb0af28090121e5ad92f90d093db60fe569562f38f09429a3",
+    "source_references": [
+      "packages/client/ui-subagent/src/client/sidebar-chat/SidebarChat.module.css"
+    ],
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/styles/agentSubagents.css",
+    "destination_sha256": "d4912a75795c5807734af92277a0eaed25b12d66e93333fc497206d77e9c257c",
+    "reuse_kind": "adapted",
+    "changes": "适配上游层级缩进和会话布局，复用 Easel 主题与共享查看面板。",
+    "verification_status": "B27_verified_live_codex_and_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 38,
+    "source_migration_files": 40,
     "verbatim_original_bodies": 14,
-    "adapted_upstream_files": 24,
+    "adapted_upstream_files": 26,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

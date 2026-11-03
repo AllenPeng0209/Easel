@@ -1,0 +1,64 @@
+/*
+ * Copyright (c) 2026 DeepSeek. MIT, see integrations/deepseek-harness/LICENSE.
+ * Lineage indentation and embedded conversation layout adapted from
+ * ui-subagent/src/client/SubagentHeaderLineage.module.css and
+ * sidebar-chat/SidebarChat.module.css at ce7073d51254c26cd63b22a60835b8f948deb447.
+ */
+.agent-subagent-lineage {
+  min-width: 0;
+  padding: 8px 0;
+}
+.agent-subagent-lineage h4 {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.agent-subagent-lineage ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.agent-subagent-lineage li > ul, .agent-subagent-details > ul {
+  margin-left: 8px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+.agent-subagent-details {
+  margin: 4px 0 8px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.agent-subagent-details p, .agent-subagent-pane-body p {
+  margin: 4px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-subagent-actions, .agent-subagent-readonly {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.agent-subagent-actions button, .agent-subagent-details button, .agent-subagent-pane-body button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.agent-subagent-transcript {
+  overflow: auto;
+  overscroll-behavior: contain;
+  max-height: 320px;
+}
+.agent-subagent-transcript > div + div {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.agent-subagent-pane-body .agent-subagent-transcript {
+  max-height: none;
+}

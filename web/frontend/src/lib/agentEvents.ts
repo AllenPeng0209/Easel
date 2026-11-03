@@ -22,13 +22,25 @@ export interface AgentArtifact {
   reviewStatus?: 'unreviewed' | 'unknown';
 }
 
+export interface AgentSubagent {
+  id: string;
+  parentId: string | null;
+  rootSessionId: string;
+  originTurnId: string;
+  title: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface AgentEvent {
   id: string;
-  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication' | 'business' | 'steer' | 'steer_capability';
+  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication' | 'business' | 'steer' | 'steer_capability' | 'subagent';
   turnId?: string;
   text?: string;
   business?: import('./businessObjects').BusinessObject;
   publication?: import('./publicationApproval').PublicationApprovalRecord;
+  subagent?: AgentSubagent;
   callId?: string;
   parentCallId?: string;
   name?: string;
@@ -47,8 +59,36 @@ export interface AgentEvent {
   [key: string]: unknown;
 }
 
-const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business', 'steer']);
+const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business', 'steer', 'subagent']);
 const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped']);
+
+function isSubagentHandle(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{32}$/.test(value);
+}
+
+export function isSubagentRouteSegment(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,256}$/.test(value) && value !== '.' && value !== '..';
+}
+
+export function normalizeAgentSubagent(value: unknown): AgentSubagent | null {
+  if (!value || typeof value !== 'object') return null;
+  const { id, parentId, title, status, rootSessionId, originTurnId, createdAt, updatedAt } = value as Partial<AgentSubagent>;
+  if (!isSubagentHandle(id) || typeof title !== 'string' || !title.trim() || typeof status !== 'string'
+      || (parentId !== null && (!isSubagentHandle(parentId) || parentId === id))
+      || !isSubagentRouteSegment(rootSessionId) || !isSubagentRouteSegment(originTurnId)
+      || typeof createdAt !== 'number' || !Number.isSafeInteger(createdAt) || createdAt < 0
+      || typeof updatedAt !== 'number' || !Number.isSafeInteger(updatedAt) || updatedAt < createdAt) return null;
+  return { id, parentId, title: title.slice(0, 240), status: status.slice(0, 32),
+    rootSessionId, originTurnId, createdAt, updatedAt };
+}
+
+export function mergeAgentSubagent(previous: AgentSubagent | undefined, next: AgentSubagent): AgentSubagent {
+  if (!previous) return next;
+  if (previous.rootSessionId !== next.rootSessionId || previous.originTurnId !== next.originTurnId
+      || previous.parentId !== next.parentId || previous.createdAt !== next.createdAt
+      || previous.updatedAt >= next.updatedAt) return previous;
+  return next;
+}
 
 export function normalizeAgentEvent(value: unknown): AgentEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -56,6 +96,11 @@ export function normalizeAgentEvent(value: unknown): AgentEvent | null {
   if (typeof candidate.id !== 'string' || !candidate.id || candidate.id.length > 512
       || typeof candidate.kind !== 'string' || !kinds.has(candidate.kind)) return null;
   if (candidate.kind === 'tool' && (typeof candidate.callId !== 'string' || !candidate.callId)) return null;
+  if (candidate.kind === 'subagent') {
+    const subagent = normalizeAgentSubagent(candidate.subagent);
+    if (!subagent || !isSubagentRouteSegment(candidate.turnId)) return null;
+    return { id: candidate.id, kind: 'subagent', turnId: candidate.turnId, subagent };
+  }
   return candidate as AgentEvent;
 }
 
@@ -92,6 +137,17 @@ export function reduceAgentEvents(previous: AgentEvent[], input: unknown): Agent
     }
   }
   if (previous.some(item => item.id === event.id)) return previous;
+  if (event.kind === 'subagent' && event.subagent) {
+    const index = previous.findIndex(item => item.kind === 'subagent' && item.turnId === event.turnId
+      && item.subagent?.id === event.subagent?.id);
+    if (index < 0) return [...previous, event];
+    const old = previous[index].subagent;
+    const subagent = mergeAgentSubagent(old, event.subagent);
+    if (old === subagent) return previous;
+    const next = [...previous];
+    next[index] = { ...event, subagent };
+    return next;
+  }
   const index = event.kind === 'tool'
     ? previous.findIndex(item => item.kind === 'tool' && item.callId === event.callId) : -1;
   if (index < 0) return [...previous, event];

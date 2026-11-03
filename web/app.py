@@ -62,11 +62,13 @@ from easel.request_identity import current_user, actor_key, ActorMap, ActorSet
 from easel import harnesses
 from easel.harnesses import store as harness_store
 from easel.harnesses.base import HarnessError, RunRequest, Steer, SteerRejected
+from easel.harnesses.codex_subagents import read_subagent
 from easel.chat_artifacts import ArtifactError, ChatArtifactStore
 from easel.artifact_archives import ArchiveSnapshotReader
 from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
 from web.chat_history import ChatHistoryStore, validated_session
+from web.chat_subagents import ChatSubagentStore
 try:
     from easel.gateway_questions import (
         GatewayClient, GatewayQuestionError, GatewayQuestionClosedError, GatewayUnsupportedError,
@@ -3568,6 +3570,22 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             error_message = safe if isinstance(safe, str) and safe else "Agent 执行失败"
         emit(kind, safe)
 
+    def record_subagent(update: dict):
+        try:
+            actor, ip, directory, root = _chat_subagent_scope(sk)
+            if update.get("rootThreadId") != root:
+                return
+            claim = ChatHistoryStore(directory).turn_claim(turn_id)
+            if not claim or claim["sessionId"] != sk or claim["ownerPid"] != os.getpid():
+                return
+            node = ChatSubagentStore(directory).record(actor_id=actor, project_id=ip,
+                session_id=sk, turn_id=turn_id, update=update)
+        except (HTTPException, HarnessError, OSError, sqlite3.Error):
+            # A failed optional observation cannot interrupt the native turn.
+            return
+        if node:
+            receive("agent_event", {"id": uuid.uuid4().hex, "kind": "subagent", "turnId": turn_id, "subagent": node})
+
     capability_sequence = 0
 
     def bind_steer(steer: Steer | None):
@@ -3747,7 +3765,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
                              autonomy_mode=req.autonomyMode, present=present, publish=publish,
                              publication_status=publication_status, business_objects=business_objects,
-                             bind_steer=bind_steer if runtime == "codex" and interactive else None)
+                             bind_steer=bind_steer if runtime == "codex" and interactive else None,
+                             record_subagent=record_subagent if runtime == "codex" and interactive else None)
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
             lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
@@ -4286,6 +4305,51 @@ def api_chat_business_objects(request: Request):
     if len(request.query_params) != len(request.query_params.multi_items()):
         raise HTTPException(400, '业务查询参数不能重复')
     return _business_query(dict(request.query_params))
+
+
+def _chat_subagent_scope(session_id: str) -> tuple[str, str, Path, str]:
+    _require_host_tools()
+    user = current_user()
+    if not user or not session_id or len(session_id) > 256 or any(ord(char) < 32 for char in session_id):
+        raise HTTPException(404, "未找到子 Agent 会话")
+    directory = _sessions_dir()
+    binding = harness_store.binding(directory, session_id)
+    if (binding.get("runtime") != "codex" or not binding.get("native_id")
+            or ChatHistoryStore(directory).is_deleted(session_id)):
+        raise HTTPException(404, "未找到子 Agent 会话")
+    return user["id"], project_id(), directory, binding["native_id"]
+
+
+@app.get("/api/chat/subagents/{session_id}/{handle}")
+async def api_chat_subagent(session_id: str, handle: str, request: Request):
+    _require_host_tools()
+    if not re.fullmatch(r"[a-f0-9]{32}", handle):
+        raise HTTPException(404, "未找到子 Agent 会话")
+    actor, ip, directory, root = _chat_subagent_scope(session_id)
+    scope = dict(actor_id=actor, project_id=ip, session_id=session_id)
+    registry = ChatSubagentStore(directory)
+    edge = registry.resolve(**scope, root_thread_id=root, handle=handle)
+    if not edge:
+        raise HTTPException(404, "未找到子 Agent 会话")
+    native_request = RunRequest("", _workspace_root(), {
+        **read_settings(ENV_FILE), **_proxy_env(), "EASEL_AGENT_RUNTIME": "codex",
+        "EASEL_ROOT": str(_workspace_root())}, sandbox="read-only")
+    try:
+        result = await read_subagent(native_request, parent_id=edge["parentThreadId"], child_id=edge["childThreadId"])
+    except HarnessError:
+        raise HTTPException(503, "子 Agent 消息暂不可用") from None
+    # A slow native read must never outlive a logout, role change or deleted root.
+    from easel.access import AccessStore
+    current = AccessStore(PROJECT_ROOT).authenticate_token(request.cookies.get("easel_session", ""))
+    if not current or current["id"] != actor:
+        raise HTTPException(401, "登录已失效")
+    if _chat_subagent_scope(session_id) != (actor, ip, directory, root):
+        raise HTTPException(404, "未找到子 Agent 会话")
+    for observed in result.get("observedChildren", []):
+        registry.record(**scope, turn_id=edge["originTurnId"], update={
+            **observed, "rootThreadId": root, "parentThreadId": edge["childThreadId"]})
+    children = [item for item in registry.list(**scope, root_thread_id=root) if item.get("parentId") == handle]
+    return {"messages": result["messages"], "hasMore": result["hasMore"], "children": children}
 
 
 @app.get("/api/chat/sessions")

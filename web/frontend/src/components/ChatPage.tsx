@@ -1,7 +1,9 @@
 import { projectUrl, projectFetch } from '../lib/projectScope';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import MessageBubble from './MessageBubble';
-import DeliverablePreviewPane from './DeliverablePreviewPane';
+import DeliverablePreviewPane, { ChatInspectionPane } from './DeliverablePreviewPane';
+import { SubagentTranscript } from './AgentSubagentLineage';
+import type { AgentSubagent } from '../lib/agentEvents';
 import QuestionCards from './QuestionCards';
 import BrushEntry from './BrushEntry';
 import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from '../lib/store';
@@ -78,8 +80,10 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const [submitError, setSubmitError] = useState('');
   const [draftError, setDraftError] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
-  const [deliverablePreview, setDeliverablePreview] = useState<ChatDeliverable | null>(null);
-  const deliverableTrigger = useRef<HTMLElement | null>(null);
+  const [inspection, setInspection] = useState<
+    { kind: 'file'; file: ChatDeliverable } | { kind: 'subagent'; child: AgentSubagent } | null
+  >(null);
+  const inspectionTrigger = useRef<HTMLElement | null>(null);
   const closePreview = useCallback(() => setPreviewImage(null), []);
   const [dragOver, setDragOver] = useState(false);
   const [maxMb, setMaxMb] = useState(50);
@@ -103,15 +107,19 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const isEmpty = session.messages.length === 0 && !isStreaming;
   const reading = useChatReading(session.id, session.messages, stream, !isEmpty);
   const openDeliverable = (file: ChatDeliverable, trigger: HTMLElement) => {
-    deliverableTrigger.current = trigger;
-    setDeliverablePreview(file);
+    inspectionTrigger.current = trigger;
+    setInspection({ kind: 'file', file });
+  };
+  const openSubagent = (child: AgentSubagent, trigger: HTMLElement) => {
+    if (!trigger.closest('.deliverable-preview-pane')) inspectionTrigger.current = trigger;
+    setInspection({ kind: 'subagent', child });
   };
   useEffect(() => {
-    if (deliverablePreview || !deliverableTrigger.current) return;
-    const trigger = deliverableTrigger.current;
-    deliverableTrigger.current = null;
+    if (inspection || !inspectionTrigger.current) return;
+    const trigger = inspectionTrigger.current;
+    inspectionTrigger.current = null;
     (trigger.isConnected ? trigger : reading.scrollRef.current)?.focus({ preventScroll: true });
-  }, [deliverablePreview, reading.scrollRef]);
+  }, [inspection, reading.scrollRef]);
   const uploading = uploadItems.some(item => item.status === 'queued' || item.status === 'uploading');
   const failedUploads = uploadItems.some(item => item.status === 'failed');
   const attachments = uploads.ready;
@@ -405,6 +413,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
               <div key={`${i}-${msg.role}`}>
               <MessageBubble
                 key={`${i}-${msg.role}`}
+                sessionId={session.id}
                 message={msg}
                 isStreaming={live}
                 thinking={live ? stream!.thinking : ''}
@@ -413,6 +422,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 events={live ? stream!.events : msg.events}
                 actions={actions}
                 onOpenDeliverable={openDeliverable}
+                onOpenSubagent={openSubagent}
               />
               {!live && msg.questions && <QuestionCards sessionId={session.id} questions={msg.questions} onDone={onQuestionAnswered} onClosed={onQuestionClosed} />}
               </div>
@@ -435,7 +445,11 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   );
   return <div className="chat-deliverable-layout">
     {chat}
-    {deliverablePreview && <DeliverablePreviewPane key={deliverablePreview.artifactId} file={deliverablePreview}
-      onClose={() => setDeliverablePreview(null)} />}
+    {inspection?.kind === 'file' && <DeliverablePreviewPane key={inspection.file.artifactId} file={inspection.file}
+      onClose={() => setInspection(null)} />}
+    {inspection?.kind === 'subagent' && <ChatInspectionPane key={inspection.child.id} title={inspection.child.title}
+      contentLabel="子会话内容" onClose={() => setInspection(null)}>
+      <SubagentTranscript sessionId={session.id} child={inspection.child} onOpenSubagent={openSubagent} />
+    </ChatInspectionPane>}
   </div>;
 }

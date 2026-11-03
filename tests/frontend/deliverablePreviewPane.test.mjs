@@ -8,7 +8,7 @@ const require = createRequire(new URL('../../web/frontend/package.json', import.
 const React = require('react');
 const { parseHTML } = require('linkedom');
 
-async function view(mobile, verify, width = 900) {
+async function view(mobile, verify, width = 900, subagent = false) {
   const { window, document } = parseHTML('<html><body><div class="chat-deliverable-layout" id="root"></div></body></html>');
   const parent = document.getElementById('root');
   parent.getBoundingClientRect = () => ({ width });
@@ -38,7 +38,10 @@ async function view(mobile, verify, width = 900) {
     let closes = 0;
     const show = open => React.act(async () => root.render(React.createElement(React.Fragment, null,
       React.createElement('div', { className: 'chat-page' }, 'Original chat'),
-      open && React.createElement(exports.default, {
+      open && React.createElement(subagent ? exports.ChatInspectionPane : exports.default, subagent ? {
+        title: '子 Agent', contentLabel: '子会话内容', onClose: () => { closes++; },
+        children: React.createElement('p', null, '独立会话 · 只读'),
+      } : {
         file: { name: '报告.md', artifactId: 'a'.repeat(32) }, onClose: () => { closes++; },
       }))));
     await show(true);
@@ -107,4 +110,12 @@ test('a narrow chat layout uses fullscreen even at a desktop viewport', async ()
     assert.ok(parent.querySelector('.deliverable-preview-pane.is-fullscreen'));
     assert.ok(parent.querySelector('.chat-page').hasAttribute('inert'));
   }, 640);
+});
+
+test('the same workspace keeps chat alongside the read-only child conversation', async () => {
+  await view(false, async ({ parent }) => {
+    assert.match(parent.querySelector('.chat-page').textContent, /Original chat/);
+    assert.match(parent.querySelector('[aria-label="子会话内容"]').textContent, /独立会话 · 只读/);
+    assert.ok(parent.querySelector('[aria-label="调整侧栏宽度"]'));
+  }, 900, true);
 });

@@ -10,6 +10,7 @@ The upstream notice is retained in integrations/deepseek-harness/LICENSE.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 import uuid
@@ -32,6 +33,71 @@ _PRIVATE_KEY_START = re.compile(r"-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
 MAX_TEXT = 32000
 _TRUNCATED = "\n[truncated: remaining content omitted]"
+
+_COLLAB_TOOLS = frozenset({
+    "spawnAgent", "sendInput", "resumeAgent", "wait", "closeAgent",
+    "sendMessage", "followupTask", "interruptAgent", "listAgents",
+})
+_NATIVE_SUBAGENT_STATUS = {
+    "pendingInit": "queued", "running": "running", "completed": "completed",
+    "errored": "failed", "interrupted": "interrupted", "shutdown": "closed",
+    "notFound": "unavailable",
+}
+SUBAGENT_STATUSES = frozenset({*_NATIVE_SUBAGENT_STATUS.values(), "unknown"})
+
+
+def valid_native_subagent_id(value) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value) is not None
+
+
+def native_subagent_descriptors(item, *, parent_id=None, live=False) -> list[dict]:
+    """Translate completed native collab observations into private edge candidates.
+
+    A historical child-page read supplies its verified parent_id and discovers
+    only spawn edges. Live callers supply the notification envelope's parent
+    and also receive status observations for already known edges.
+    """
+    if not isinstance(item, dict):
+        return []
+    if item.get("type") == "subAgentActivity":
+        # Current Codex reports spawn in this item, without a senderThreadId.
+        # Only the trusted envelope or verified native history supplies a parent.
+        child, kind = item.get("agentThreadId"), item.get("kind")
+        if not valid_native_subagent_id(parent_id) or not valid_native_subagent_id(child) or child == parent_id:
+            return []
+        if kind == "started":
+            action, status = "spawn", "running"
+        elif live and kind in ("completed", "interrupted"):
+            action, status = "update", kind
+        else:
+            return []
+        return [{"parentThreadId": parent_id, "childThreadId": child,
+                 "action": action, "status": status}]
+    if item.get("type") != "collabAgentToolCall" or item.get("status") != "completed":
+        return []
+    sender, tool = item.get("senderThreadId"), item.get("tool")
+    receivers = item.get("receiverThreadIds")
+    if (not valid_native_subagent_id(sender) or not isinstance(tool, str) or tool not in _COLLAB_TOOLS
+            or not isinstance(receivers, list)
+            or parent_id is not None and (sender != parent_id or not live and tool != "spawnAgent")):
+        return []
+    action = "spawn" if tool == "spawnAgent" else "update"
+    states = item.get("agentsStates")
+    if not isinstance(states, dict):
+        states = {}
+    seen = set()
+    result = []
+    for child in receivers:
+        if not valid_native_subagent_id(child) or child == sender or child in seen:
+            continue
+        seen.add(child)
+        state = states.get(child)
+        state = state.get("status") if isinstance(state, dict) else None
+        status = _NATIVE_SUBAGENT_STATUS.get(state) if isinstance(state, str) else None
+        if status is not None or action == "spawn":
+            result.append({"parentThreadId": sender, "childThreadId": child,
+                           "action": action, "status": status or "unknown"})
+    return result
 
 
 def _now() -> int:
@@ -187,7 +253,8 @@ class EventProjector:
             return
         kind = item.get("type")
         completed = method == "item/completed"
-        if kind in ("agentMessage", "userMessage", "reasoning", "hookPrompt", "enteredReviewMode", "exitedReviewMode"):
+        if kind in ("agentMessage", "userMessage", "reasoning", "hookPrompt", "enteredReviewMode", "exitedReviewMode",
+                    "subAgentActivity"):
             return
         if kind == "plan":
             self.event("plan", callId=item.get("id"), text=item.get("text", ""),
@@ -199,6 +266,16 @@ class EventProjector:
             return
         identifier = item.get("id")
         status = self._status(item.get("status"), completed)
+        if kind == "collabAgentToolCall":
+            if not isinstance(identifier, str) or not identifier or len(identifier) > 240:
+                return
+            # Lineage IDs and payloads belong exclusively to the Host registry.
+            # Keep the paired tool row with a stable opaque call ID.
+            call_id = "codex-collab:" + hashlib.sha256(identifier.encode("utf-8", "surrogatepass")).hexdigest()
+            tool = item.get("tool")
+            self.tool(call_id, name=tool if isinstance(tool, str) and tool in _COLLAB_TOOLS else kind,
+                      status=status)
+            return
         fields = {"name": item.get("tool") or kind or "tool", "status": status,
                   "parentCallId": item.get("parentCallId") or params.get("parentCallId"),
                   "startedAt": params.get("startedAtMs"), "completedAt": params.get("completedAtMs"),
@@ -224,9 +301,6 @@ class EventProjector:
                           output=item.get("results"))
         elif kind == "imageView":
             fields.update(name="read_image", input={"path": item.get("path")})
-        elif kind == "collabAgentToolCall":
-            fields.update(input={"prompt": item.get("prompt"), "model": item.get("model")},
-                          output={"agents": item.get("agentsStates"), "threadIds": item.get("receiverThreadIds")})
         else:
             fields.update(input={key: value for key, value in item.items()
                                  if key not in ("id", "type", "status", "result", "output", "parentCallId")},

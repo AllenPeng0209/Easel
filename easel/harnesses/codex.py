@@ -12,7 +12,7 @@ from easel.agent_policy import requests_secret
 from .base import Descriptor, HarnessError, RunRequest, SteerRejected
 from .commands import base_command, codex_override
 from .diagnostics import codex_failure_message
-from .events import EventProjector
+from .events import EventProjector, native_subagent_descriptors, valid_native_subagent_id
 from .permissions import can_auto_approve
 from .rpc import RpcRejected, connection
 from .workspace import harness_instructions
@@ -389,7 +389,20 @@ class CodexAdapter:
                     completion.set_exception(HarnessError(codex_failure_message(params.get("error"))))
                 return
 
-            if not turn_id or params.get("threadId") != thread_id or params.get("turnId", turn_id) != turn_id:
+            envelope_thread = params.get("threadId")
+            envelope_turn = params.get("turnId")
+            if (request.record_subagent is not None and turn_id and not completion.done()
+                    and method == "item/completed" and valid_native_subagent_id(envelope_thread)
+                    and valid_native_subagent_id(envelope_turn)
+                    and (envelope_thread != thread_id or envelope_turn == turn_id)):
+                # Root notifications must match the exact active turn. A child
+                # envelope carries its own turn ID and is only accepted by the
+                # Host after that parent has been linked to this root.
+                for update in native_subagent_descriptors(
+                        params.get("item"), parent_id=envelope_thread, live=True):
+                    request.record_subagent({"rootThreadId": thread_id, **update})
+
+            if not turn_id or envelope_thread != thread_id or params.get("turnId", turn_id) != turn_id:
                 return
             events.codex(method, params)
             if method == "item/agentMessage/delta":
@@ -399,7 +412,7 @@ class CodexAdapter:
                 emit("thinking", params.get("delta", ""))
             elif method == "item/started":
                 item = params.get("item") or {}
-                if item.get("type") not in ("agentMessage", "reasoning", "userMessage"):
+                if item.get("type") not in ("agentMessage", "reasoning", "userMessage", "subAgentActivity"):
                     events.activity(f"工具：{item.get('type', 'tool')}")
             elif method == "item/completed":
                 item = params.get("item") or {}

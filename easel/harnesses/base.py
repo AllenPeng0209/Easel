@@ -54,6 +54,7 @@ class RunRequest:
     publication_status: PublicationStatus | None = None
     business_objects: BusinessObjects | None = None
     bind_steer: Callable[[Steer | None], None] | None = None
+    record_subagent: Callable[[dict], None] | None = None
 
 
 class Adapter(Protocol):
