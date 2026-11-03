@@ -138,6 +138,5 @@
 .composer-context-meter circle { fill: none; stroke-width: 2px; }
 .composer-context-track { stroke: var(--border-strong); }
 .composer-context-fill { stroke: var(--accent-start); }
-.composer-context-source { color: var(--text-tertiary); }
 .composer-context-advice { color: var(--amber); }
 .composer-context-budget[data-context-warning] .composer-context-fill { stroke: var(--amber); }

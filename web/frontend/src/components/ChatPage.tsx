@@ -747,7 +747,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
         <div className="chat-input-inner">{queueDock}{composer(false)}
           {admissionBanner}
           {historyNotice && <p className="chat-history-notice" role="status">{historyNotice}</p>}
-          <p className="chat-autonomy-hint">{apiDirect ? '文字与附件分析模式' : 'AI 持续推进任务；需要你补充信息时会显示输入卡。'}</p></div>
+          {apiDirect && <p className="chat-autonomy-hint">文字与附件分析模式</p>}
+        </div>
       </div>
     </div>
   );

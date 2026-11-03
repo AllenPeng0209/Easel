@@ -535,3 +535,9 @@ test('the composer omits command, conversation reference and keyboard shortcut p
     assert.doesNotMatch(text(node), /查看命令|引用历史对话|Enter 发送/);
   }
 });
+
+test('the conversation composer omits the autonomy footer copy', async () => {
+  const session = { id: 's1', title: 'Chat', created: 1, messages: [{ role: 'user', content: 'hello' }] };
+  const nodes = await view({ queueProps: { session } }).ready();
+  assert.ok(!nodes.some(node => node.type === 'p' && text(node).includes('AI 持续推进任务')));
+});
