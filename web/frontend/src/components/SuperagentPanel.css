@@ -37,3 +37,6 @@
 .superagent-publication p, .superagent-publication label { color: var(--text-secondary); font-size: 12px; }
 .superagent-publication label { display: grid; gap: 4px; }
 .superagent-publication .field { width: 100%; }
+
+.superagent-panel-embedded { width: 100%; margin: 12px auto; padding: 0; }
+.superagent-panel-embedded .superagent-header h2 { margin: 0; font-size: 15px; }

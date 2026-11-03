@@ -21,6 +21,7 @@ class Scope(BaseModel):
 class DraftTask(Scope):
     title: str = Field(min_length=1, max_length=200)
     brief: str = Field(min_length=1, max_length=16000)
+    sessionId: str | None = Field(default=None, min_length=1, max_length=256)
     requestId: str = Field(pattern=r"^[a-zA-Z0-9_.:-]{1,160}$")
 
 
@@ -81,8 +82,14 @@ def create_router(get_root, publication_workflow):
     @router.post("")
     async def create_task(request: Request, body: DraftTask):
         bindings = scope(request, body.projectId)
+        steps = DRAFT_STEPS
+        if body.sessionId is not None:
+            from web.chat_session_references import valid_session_reference_id
+            if not valid_session_reference_id(body.sessionId):
+                raise HTTPException(422, "无效的来源会话")
+            steps = [{**DRAFT_STEPS[0], "payload": {"sessionId": body.sessionId}}, *DRAFT_STEPS[1:]]
         return await operate(task_store(get_root()).create, title=body.title, brief=body.brief,
-                             steps=DRAFT_STEPS, request_id=body.requestId, **bindings)
+                             steps=steps, request_id=body.requestId, **bindings)
 
     @router.post("/publish")
     async def create_publish(request: Request, body: Publish):

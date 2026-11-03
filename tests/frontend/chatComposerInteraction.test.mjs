@@ -498,3 +498,40 @@ test('plan review is explicit and preserves the ordinary composer draft', async 
   nodes = ui.render();
   assert.equal(nodes.find(node => node.type === 'structured-editor').props.value, 'ordinary draft');
 });
+
+test('background execution uses the existing composer and keeps the draft until the task is accepted', async () => {
+  let accepted = false;
+  const tasks = [];
+  const ui = view({
+    onSend: () => assert.fail('background execution entered the normal chat path'),
+    queueProps: { onSendSuperagent: async text => { tasks.push(text); return accepted; } },
+  });
+  let nodes = await ui.ready();
+  nodes.find(node => node.type === 'structured-editor').props.onChange('准备三平台草稿', []);
+  nodes = ui.render();
+  nodes.find(node => node.props['data-superagent-composer-toggle']).props.onClick();
+  const send = () => ui.render().find(node => node.props['data-superagent-composer-send']).props.onClick();
+  await send();
+  assert.equal(ui.render().find(node => node.type === 'structured-editor').props.value, '准备三平台草稿');
+  accepted = true;
+  await send();
+  assert.deepEqual(tasks, ['准备三平台草稿', '准备三平台草稿']);
+  assert.equal(ui.render().find(node => node.type === 'structured-editor').props.value, '');
+});
+
+test('background execution preserves existing attachments and blocks both click and keyboard submission', async () => {
+  const ui = view({
+    onSend: () => assert.fail('ordinary send received the background task'),
+    queueProps: { onSendSuperagent: async () => assert.fail('background task silently dropped an attachment') },
+  });
+  let input = editor(await ui.ready());
+  input.props.onChange('检查现有文件', []);
+  assert.equal(input.props.onAdoptFileReference({ id: 'file', name: 'notes.txt', path: '_inbox/scope/batch/notes.txt' }), true);
+  ui.render().find(node => node.props['data-superagent-composer-toggle']).props.onClick();
+  const nodes = ui.render();
+  assert.equal(nodes.find(node => node.props['data-superagent-composer-send']).props.disabled, true);
+  await editor(nodes).props.onSubmit();
+  assert.ok(ui.render().some(node => node.props.role === 'alert' && text(node).includes('后台执行只接收文字')));
+  assert.equal(editor(ui.render()).props.value, '检查现有文件');
+  assert.ok(ui.render().some(node => text(node) === 'notes.txt'));
+});

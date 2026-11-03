@@ -40,6 +40,7 @@ interface TaskScope { projectId: string }
 interface CreateTask extends TaskScope { title: string; brief: string }
 
 export interface SuperagentPanelProps {
+  embedded?: boolean;
   projects: readonly ProjectOption[];
   loadTasks: (signal?: AbortSignal) => Promise<SuperagentTask[]>;
   createTask: (request: CreateTask) => Promise<SuperagentTask>;
@@ -191,7 +192,7 @@ function PublicationIntake({ projects, onQueue, onQueued }: {
   </details>;
 }
 
-export default function SuperagentPanel({ projects, loadTasks, createTask, queuePublication, answerTask, stopTask, retryTask }: SuperagentPanelProps) {
+export default function SuperagentPanel({ embedded = false, projects, loadTasks, createTask, queuePublication, answerTask, stopTask, retryTask }: SuperagentPanelProps) {
   const [tasks, setTasks] = useState<SuperagentTask[]>();
   const [listError, setListError] = useState('');
   const [refresh, setRefresh] = useState(0);
@@ -306,12 +307,14 @@ export default function SuperagentPanel({ projects, loadTasks, createTask, queue
     byProject.set(task.projectId, group);
   }
 
-  return <main className="superagent-panel" data-superagent-panel aria-label="Super Agent 任务">
+  if (embedded && !tasks?.length && !listError) return null;
+  const Container = embedded ? 'section' : 'main';
+  return <Container className={`superagent-panel${embedded ? ' superagent-panel-embedded' : ''}`} data-superagent-panel aria-label="Super Agent 任务">
     <header className="superagent-header">
-      <div><p>跨 IP 任务管理</p><h1>Super Agent</h1></div>
+      <div>{embedded ? <h2>Super Agent · 后台任务</h2> : <><p>跨 IP 任务管理</p><h1>Super Agent</h1></>}</div>
       <button type="button" className="btn btn-sm" data-superagent-refresh onClick={() => setRefresh(value => value + 1)}>刷新任务</button>
     </header>
-    <form className="superagent-create" data-superagent-create aria-label="新建自主任务" onSubmit={event => void create(event)}>
+    {!embedded && <form className="superagent-create" data-superagent-create aria-label="新建自主任务" onSubmit={event => void create(event)}>
       <h2>新建自主任务</h2>
       <div className="superagent-create-fields">
         <label>所属 IP<select className="field" value={projectId} disabled={creating} onChange={event => setProjectId(event.target.value)} required>
@@ -326,7 +329,7 @@ export default function SuperagentPanel({ projects, loadTasks, createTask, queue
       <div className="superagent-actions"><button className="btn btn-primary" type="submit" disabled={!canCreate || creating}>
         {creating ? '正在创建…' : '创建任务'}</button></div>
       {createError && <p className="superagent-error" role="alert">{createError}</p>}
-    </form>
+    </form>}
     {queuePublication && <PublicationIntake projects={projects} onQueue={queuePublication} onQueued={remember} />}
     {listError && <p className="superagent-error" role="alert">{listError}</p>}
     {!tasks && !listError && <p role="status">正在读取任务列表…</p>}
@@ -343,5 +346,5 @@ export default function SuperagentPanel({ projects, loadTasks, createTask, queue
           retry={() => void execute(task, 'retry', () => retryTask(task.id, scope))} />;
       })}
     </section>)}
-  </main>;
+  </Container>;
 }

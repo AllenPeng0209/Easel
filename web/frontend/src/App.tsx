@@ -19,7 +19,7 @@ import BreakdownPage from './components/BreakdownPage';
 import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
 import SettingsPanel from './components/SettingsPanel';
-import SuperagentPage from './components/SuperagentPage';
+import { useChatSuperagent } from './components/SuperagentPage';
 import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession, forkChatSession, forkPrefixHash, fetchEarlierChatTurns, fetchCompleteChatSession, fetchSessionModels, type SessionModelCapability } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed, ChatTurnOutcome } from './lib/api';
 import { reduceAgentEvents } from './lib/agentEvents';
@@ -306,6 +306,22 @@ export default function App() {
   }, [canOperate, isPlatformAdmin]);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
+  const recordSuperagentPrompt = useCallback((sessionId: string, taskId: string, text: string) => {
+    const clientTurnId = `superagent-${taskId}`;
+    setSessions(previous => {
+      const session = previous.find(item => item.id === sessionId);
+      if (!session || session.messages.some(message => message.clientTurnId === clientTurnId)) return previous;
+      const message: ChatMessage = { role: 'user', clientTurnId, content: text, created: Date.now() };
+      const updated = { ...session, messages: [...session.messages, message], updated: nextSessionRevision(session) };
+      updateSessionTitle(updated);
+      const next = previous.map(item => item.id === sessionId ? updated : item);
+      saveSessions(next);
+      return next;
+    });
+  }, []);
+  const chatSuperagent = useChatSuperagent(
+    activeSession?.id, currentPage === 'chat' && canOperate, recordSuperagentPrompt,
+  );
 
   // 最新 sessions 的 ref，供回调里读取而不必进依赖数组（避免闭包过期/频繁重建）
   const sessionsRef = useRef(sessions);
@@ -1734,7 +1750,6 @@ export default function App() {
       return <div className="dash-empty">{canOperate ? '此工具需要平台管理员权限。' : '当前 IP 的查看者可浏览内容，运营操作需要 operator 或 owner 角色。'}<button className="btn" onClick={() => setCurrentPage('dashboard')}>返回工作台</button></div>;
     }
     switch (currentPage) {
-      case 'superagent': return <SuperagentPage />;
       case 'dashboard':
         return (
           <DashboardPage
@@ -1759,6 +1774,8 @@ export default function App() {
             apiDirect={apiDirect}
             key={activeSession.id}
             session={activeSession}
+            onSendSuperagent={canOperate ? chatSuperagent.send : undefined}
+            superagentTasks={chatSuperagent.tasks}
             stream={streams[activeSession.id]}
             modelCapability={modelCatalog?.sessionId === activeSession.id ? modelCatalog.capability : undefined}
             modelLoading={modelCatalog?.sessionId !== activeSession.id || modelCatalog.loading}

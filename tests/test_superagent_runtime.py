@@ -79,3 +79,15 @@ def test_task_intake_deduplicates_and_enforces_ip_and_actor(artifact_http_enviro
     assert members["operator"].get(route).json()["tasks"] == []
     assert members["operator"].post(f"{route}/{identifier}/stop", json={"projectId": "default"}).status_code == 404
     assert owner.post(f"{route}/publish", json={"projectId": "default", "approvalId": "a"*32}).status_code == 404
+
+
+@pytest.mark.access_integration
+def test_chat_task_source_is_durable_and_bound_to_request(artifact_http_environment):
+    _, owner, _, _, _ = artifact_http_environment
+    route = "/api/superagent/tasks"
+    body = {"projectId": "default", "title": "选题", "brief": "家居", "requestId": "chat-intake", "sessionId": "chat-one"}
+    first = owner.post(route, json=body)
+    assert first.status_code == 200, first.text
+    assert first.json()["steps"][0]["payload"] == {"sessionId": "chat-one"}
+    assert owner.post(route, json={**body, "sessionId": "chat-two"}).status_code == 409
+    assert owner.get(route).json()["tasks"][0]["steps"][0]["payload"]["sessionId"] == "chat-one"

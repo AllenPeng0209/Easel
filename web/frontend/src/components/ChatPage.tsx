@@ -1,5 +1,6 @@
 import { projectUrl, projectFetch } from '../lib/projectScope';
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
+import type { ReactNode } from 'react';
 import ForkChatDialog, { type CreatedChatFork } from './ForkChatDialog';
 import MessageBubble from './MessageBubble';
 import ChatPlanPanel from './ChatPlanPanel';
@@ -48,6 +49,8 @@ interface ChatPageProps {
   sessionReferenceCandidates?: readonly SessionReferenceCandidate[];
   onSend: (displayText: string, attachments?: UploadedFile[], references?: ChatReference[],
     sessionReferences?: ChatDraftSessionReference[], command?: ChatCommand) => boolean | Promise<boolean>;
+  onSendSuperagent?: (text: string) => Promise<boolean>;
+  superagentTasks?: ReactNode;
   onSteer?: (text: string) => Promise<boolean>;
   onStop: () => void;
   onResend: (userIndex: number) => void; // 仅最后一轮，追加新请求
@@ -82,7 +85,7 @@ function greeting(): string {
   return `${g}，想创作点什么？`;
 }
 
-export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onEditHistory, onLoadEarlier, onForkAnswer, onOpenFork, onQuestionAnswered,
+export default function ChatPage({ apiDirect, session, stream, onSend, onSendSuperagent, superagentTasks, onSteer, onStop, onResend, onEditHistory, onLoadEarlier, onForkAnswer, onOpenFork, onQuestionAnswered,
   sessionReferenceCandidates, modelCapability, nextModel, turnModel, onChangeModel, modelLoading, onReloadModels, onNewContextChat, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
   const [forkTarget, setForkTarget] = useState<{ sessionId: string; index: number; turnId: string; answer: string }>();
   useEffect(() => setForkTarget(undefined), [session.id]);
@@ -145,6 +148,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const [uploadItems, setUploadItems] = useState(initialDraft.attachments);
   const [interruptedFiles, setInterruptedFiles] = useState(initialDraft.interruptedFiles);
   const [sending, setSending] = useState(false);
+  const [sendInBackground, setSendInBackground] = useState(false);
+  const backgroundExecution = sendInBackground && !!onSendSuperagent;
   const [selectingFile, setSelectingFile] = useState(false);
   const selectingFileRef = useRef(false);
   const [pickingSession, setPickingSession] = useState(false);
@@ -268,8 +273,12 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const failedUploads = uploadItems.some(item => item.status === 'failed');
   const attachments = uploads.ready;
   const restorePending = restoreState !== 'complete' && uploadItems.some(item => restoredKeys.has(item.key));
-  const canSend = (!!input.trim() || attachments.length > 0) && !uploading && !failedUploads && !restorePending && !sending && !selectingFile;
-  const showSteer = isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0 && sessionReferences.length === 0 && !command;
+  const backgroundBlocked = uploadItems.length > 0 || interruptedFiles.length > 0
+    || references.length > 0 || sessionReferences.length > 0 || !!command;
+  const canSend = (backgroundExecution ? !!input.trim() && !backgroundBlocked : !!input.trim() || attachments.length > 0)
+    && !uploading && !failedUploads && !restorePending && !sending && !selectingFile;
+  const showSteer = !backgroundExecution && isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0 && sessionReferences.length === 0 && !command;
+  const sendLabel = backgroundExecution ? '发送到后台' : isStreaming ? '加入队列' : '发送';
   const waitingApproval = stream?.questions?.some(question => (!question.status || question.status === 'pending')
     && (question.requiresHuman || question.kind === 'approval' || question.publication));
   const lifecycleLabel = stream?.lifecycle === 'waiting_input' ? (waitingApproval ? '等待你批准' : '等待补充信息')
@@ -319,6 +328,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
 
   const doUpload = (fs: FileList | File[]) => {
     if (sendingRef.current) { setSubmitError('当前消息接收中，请稍后添加素材。'); return; }
+    if (backgroundExecution) { setSubmitError('后台执行只接收文字。请切回对话模式添加素材。'); return; }
     uploads.add(Array.from(fs)); setSubmitError('');
   };
   const onDrop = (e: React.DragEvent) => {
@@ -331,6 +341,11 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
       sessionReferences: submittedSessionReferences, command: submittedCommand } = draftContentRef.current;
     const trimmed = submittedText.trim();
     if (sendingRef.current || selectingFileRef.current) return;
+    if (backgroundExecution && intent === 'send' && (uploads.snapshot.length > 0 || interruptedFiles.length > 0
+        || submittedReferences.length > 0 || submittedSessionReferences.length > 0 || submittedCommand)) {
+      setSubmitError('后台执行只接收文字。请移除附件、引用或命令，或切回对话模式。');
+      return;
+    }
     if (intent === 'steer' && (!showSteer || !trimmed || uploads.snapshot.length > 0 || submittedSessionReferences.length > 0 || submittedCommand)) return;
     if ((!trimmed && attachments.length === 0) || uploading || failedUploads || restorePending) return;
     const exactReferences = validateChatReferences(submittedText, submittedReferences, attachments);
@@ -345,12 +360,14 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     sendingRef.current = true; setSending(true); setSubmitError('');
     try {
       const accepted = await (intent === 'steer' ? onSteer?.(trimmed)
+        : backgroundExecution ? onSendSuperagent?.(trimmed)
         : exactCommand ? onSend(submittedText, attachments, exactReferences, exactSessions, exactCommand)
           : exactSessions.length ? onSend(submittedText, attachments, exactReferences, exactSessions)
           : exactReferences.length ? onSend(submittedText, attachments, exactReferences) : onSend(trimmed, attachments));
       if (accepted !== true) {
         if (mountedRef.current) setSubmitError(intent === 'steer'
-          ? '当前任务尚未确认接收指导，草稿已保留。' : '任务尚未接收，草稿已保留，请重试。');
+          ? '当前任务尚未确认接收指导，草稿已保留。'
+          : backgroundExecution ? '后台任务尚未接收，草稿已保留，请重试。' : '任务尚未接收，草稿已保留，请重试。');
         return;
       }
       consumeChatDraft(session.id, composerId);
@@ -438,14 +455,14 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           }} />}
         <StructuredComposerEditor ref={editorRef} value={input} references={references}
           sessionReferences={sessionReferences} command={command} disabled={sending}
-          fileReferenceSessionId={session.id}
-          onAdoptFileReference={file => !sendingRef.current &&
+          fileReferenceSessionId={backgroundExecution ? undefined : session.id}
+          onAdoptFileReference={file => !backgroundExecution && !sendingRef.current &&
             draftContentRef.current.references.length < MAX_CHAT_REFERENCES && uploads.adopt(file)}
           onFileSelectionPending={pending => {
             selectingFileRef.current = pending;
             setSelectingFile(pending);
           }}
-          placeholder={dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（输入 @ 引用文件，也可拖入素材）' : '发消息…（Enter 发送，Shift+Enter 换行，@ 引用文件）'}
+          placeholder={backgroundExecution ? '描述要交给 Super Agent 的任务…' : dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（输入 @ 引用文件，也可拖入素材）' : '发消息…（Enter 发送，Shift+Enter 换行，@ 引用文件）'}
           onChange={(text, nextReferences, nextSessions, nextCommand) => {
             if (sendingRef.current) return;
             const receipts = uploads.ready;
@@ -462,20 +479,25 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
       </div>
       <input ref={fileInputRef} type="file" multiple hidden
         onChange={(e) => { if (e.target.files) doUpload(e.target.files); e.target.value = ''; }} />
-      <div className="composer-bar">
+      <div className={onSendSuperagent ? 'composer-bar composer-bar--superagent' : 'composer-bar'}>
         <button className="composer-attach-btn" onClick={() => fileInputRef.current?.click()}
-          disabled={sending} title={`添加图片或文档；超过 ${maxMb}MB 使用大文件上传通道`}>
+          disabled={sending || backgroundExecution} title={`添加图片或文档；超过 ${maxMb}MB 使用大文件上传通道`}>
           <IconPlus size={15} /> 添加素材
         </button>
-        <button type="button" className="composer-attach-btn" disabled={sending}
+        <button type="button" className="composer-attach-btn" disabled={sending || backgroundExecution}
           onMouseDown={event => event.preventDefault()} onClick={() => editorRef.current?.openCommandMenu()}>查看命令</button>
-        {sessionReferenceCandidates && <button type="button" className="composer-attach-btn" disabled={sending}
+        {sessionReferenceCandidates && <button type="button" className="composer-attach-btn" disabled={sending || backgroundExecution}
           onMouseDown={event => event.preventDefault()} onClick={() => {
             if (sendingRef.current) return;
             editorRef.current?.rememberSelection();
             setPickingSession(true);
           }}>引用历史对话</button>}
+        {onSendSuperagent && <button type="button" className="composer-attach-btn composer-background-toggle"
+          data-superagent-composer-toggle aria-pressed={backgroundExecution} disabled={sending || selectingFile}
+          title="交给 Super Agent 后台执行"
+          onClick={() => { setSendInBackground(value => !value); setSubmitError(''); }}>后台执行</button>}
         <span className="composer-hint">{uploading ? '附件全部就绪后可发送' : selectingFile ? '正在准备所选文件…' : sending ? '正在接收…'
+          : backgroundExecution ? '任务发送后可离开对话'
           : isStreaming ? '继续输入，下一条会加入队列' : 'Enter 发送 · Shift+Enter 换行'}</span>
         <div className="composer-send-controls">
           {isStreaming && <button className="composer-stop-btn" onClick={onStop} title="停止当前任务"
@@ -483,9 +505,9 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
             <IconStop size={14} /><span>{stream?.lifecycle === 'stopping' ? '停止中' : stream?.lifecycle === 'stop_failed' ? '重试停止' : '停止'}</span></button>}
           {showSteer && <button type="button" className="composer-attach-btn" title="立即指导"
             onClick={() => submitDraft('steer')} disabled={!canSend}>立即指导</button>}
-          <button className={`send-btn ${isStreaming ? 'send-btn-queue' : ''}`} onClick={handleSend} disabled={!canSend}
-            title={isStreaming ? '加入队列' : '发送'} aria-label={isStreaming ? '加入队列' : '发送'}>
-            {isStreaming ? <span>加入队列</span> : <IconArrowUp size={17} />}
+          <button className={`send-btn ${backgroundExecution || isStreaming ? 'send-btn-queue' : ''}`} onClick={handleSend} disabled={!canSend}
+            data-superagent-composer-send={backgroundExecution || undefined} title={sendLabel} aria-label={sendLabel}>
+            {backgroundExecution || isStreaming ? <span>{sendLabel}</span> : <IconArrowUp size={17} />}
           </button>
         </div>
       </div>
@@ -504,6 +526,9 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         }}
       />}
       {failedUploads && <div className="composer-feedback" role="alert">请重试或移除失败的附件后发送。</div>}
+      {backgroundExecution && backgroundBlocked && <div className="composer-feedback" role="status">
+        后台执行只接收文字。请移除附件、引用或命令，或切回对话模式。
+      </div>}
       {submitError && <div className="composer-feedback" role="alert">{submitError}</div>}
       {draftError && <div className="composer-feedback" role="alert">浏览器存储已满，当前草稿暂未保存。请保持本页打开。</div>}
     </div>
@@ -591,6 +616,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           <p className="chat-hero-sub">{apiDirect ? 'API 直连：写文案、策划选题、分析附件。本机工具和自动发布未启用。'
             : '从选题到发布，一站式帮你把想法做成能发的内容。'}</p>
           {queueDock}{composerWithPlan(true)}
+          {superagentTasks}
           {admissionBanner}
           {historyNotice && <p className="chat-history-notice" role="status">{historyNotice}</p>}
           <div className="suggestions">
@@ -683,12 +709,13 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
               // 最近一轮可追加一次尝试，旧消息从分支修订。
               const isLastFinal = i === session.messages.length - 1;
               if (msg.role === 'user') {
+                const backgroundMessage = msg.clientTurnId?.startsWith('superagent-');
                 actions = {
                   onCopy: copy,
-                  onRetry: canRetryLastTurn && isLastFinal && !msg.planRef && !inherited
+                  onRetry: !backgroundMessage && canRetryLastTurn && isLastFinal && !msg.planRef && !inherited
                     ? () => onResend(i)
                     : undefined,
-                  onEditHistory: onEditHistory && !inherited && i < lastUserIndex
+                  onEditHistory: !backgroundMessage && onEditHistory && !inherited && i < lastUserIndex
                     ? () => { void editHistoricalMessage(i); }
                     : undefined,
                   historyEditPending: activeHistoryEdit?.pending === true,
@@ -706,7 +733,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                     /^[A-Za-z0-9_.-]{1,160}$/.test(turnId)
                     ? () => setForkTarget({ sessionId: session.id, index: i, turnId, answer: msg.content })
                     : undefined,
-                  onRetry: (canRetryLastTurn && isLastFinal && prevUser && !prevUser.planRef && !inherited)
+                  onRetry: (canRetryLastTurn && isLastFinal && prevUser && !prevUser.clientTurnId?.startsWith('superagent-')
+                    && !prevUser.planRef && !inherited)
                     ? () => onResend(pi)
                     : undefined,
                   canModify: !isStreaming,
@@ -745,6 +773,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           {isStreaming && (stream!.questions?.length ?? 0) > 0 && (
             <QuestionCards sessionId={session.id} questions={stream!.questions || []} onDone={onQuestionAnswered} />
           )}
+          {superagentTasks}
         </div>
       </div>
 
