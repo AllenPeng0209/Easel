@@ -1,31 +1,46 @@
 # Easel 自主 Agent 工作台开发清单
 
-日期：2026-11-03。输入基线：上一轮 144 项去重差异；新增 AUT01–AUT08 自主执行要求。本文用于开发跟踪，不能将计划、源码迁移或测试通过直接当作真实业务任务已完成。
+日期：2026-11-03。范围保留原144项差异及AUT01–AUT08。**用户原始01–10包是唯一对外产品主台账；M00–M12只作内部实现模块，不是另外一组产品包。**
 
-当前补正：B30原生发布工具跨CLI进程恢复已验证并修复；不再以进程内缓存错误判无工具。原native ID保持，resume不追加工具，恢复调用仍走原Host批准。候选树2447后端通过/17跳过，真实适配器mock回调通过；详见[B30-native-restore](agent-feature-acceptance/B30-native-restore.md)。下一项继续D30真实回执与尚未完成的权限/平台适配，144项和AUT范围不变。
+用户目标：AI对话作为内容生产与运营入口，普通偏好缺省时自主推进，必要输入用卡片收集并按明确默认策略继续；授权与真实公开动作仍按权限及精确确认执行。
 
+## 01–10 原始产品主台账（唯一对外口径）
 
-当前逐功能阶段：B30精确发布批准基础闭环已通过候选树2438后端/440前端及真实Codex模拟联调，随本记录独立提交。D01 `3086ca8`、C19 `f5118d9`、D08固定交付 `97a2071`已提交。B30复用上游批准卡，绑定认证actor/IP、实际账号、精确文案/媒体/公众号排版及payload hash，Web与新Codex typed工具已接线；7863真实Codex仅模拟publisher联调通过。MP/快手严格本人ID、D30真实平台确认/重启恢复与其余144项/AUT仍待继续，不能把批准或本地runner结束当公开发布。详见 [B30验收记录](agent-feature-acceptance/B30.md)。
+下面沿用原10包名称和代表细项，不改写过去commit。**当前不是“已完成6/10”**：过去按细项提交并未逐包完成全部验收，不能用已提交的细项数量推导整包完成。代表细项是索引，不缩小后文144项及8项AUT范围。
 
+| 主包 | 原名称 | 代表细项 | 当前状态 | 已存在commit（可多个） | 未过的关键包级验收 |
+|---|---|---|---|---|---|
+| 01 | 统一消息、工具和任务事件模型 | B01、B02、B04、B07、B08 | 基础已实现；整包未关闭 | `1a4c8b7`（事件/工具卡基础） | 父子调用完整展示、全部引擎真实链路、整包事件/恢复场景仍未收口。 |
+| 02 | 附件输入与消息显示 | A17、A18、A19 | 附件基础及自动化已有；整包未关闭 | `1a4c8b7`（附件/上传准入基础） | 完整真实浏览器附件流程与异常组合验收未完成，不能只凭自动化关闭整包。 |
+| 03 | 会话草稿恢复 | C24 | 草稿实现与回归已有；整包未关闭 | `1a4c8b7`（会话草稿基础） | 用户/IP/会话、切页/刷新/上传中断等完整包级场景尚未收口。 |
+| 04 | 服务器会话目录 | C09、C19 | 目录基础及并发修复已有；整包未关闭 | `1a4c8b7`（目录基础）；`f5118d9`（C19并发初始化修复） | 目录/跨浏览器恢复的完整包级验收未关闭；C23分页仍待，不能将局部并发修复扩大为整包完成。 |
+| 05 | 真实停止状态 | B18 | 停止状态基础回归已有；整包未关闭 | `1a4c8b7`（停止回执/状态基础） | 停止失败、未确认、外部不可取消任务及后台生命周期的完整真实场景仍待验收。 已证实缺口：dispatcher取消 `await asyncio.to_thread(subprocess.run)` 时底层线程/进程可能继续，`_execute`结束可先释放profile锁；须按真实进程终态验收。 |
+| 06 | 交付物协议与版本 | D01、D08 | D01/D08核心验收已过；整包未关闭 | `3086ca8`（D01）；`97a2071`（D08固定版本核心） | 批准版本仍需与主包07联动；有交付/固定版本commit不等于整个交付包已关闭。 |
+| 07 | 精确批准与发布回执 | B30、D30 | B30基础及原生恢复已提交；D30开发中未提交；整包未关闭 | `11845ad`（B30基础）；`2cc4272`（原生恢复）；D30未提交 | D30脚本/normalizer/writer/回执卡仍在开发；真实平台确认、回执对账、恢复与精确hash批准的整包验收未过。未确认的新测试不算整包通过。 已证实缺口：dispatcher取消 `await asyncio.to_thread(subprocess.run)` 时底层线程/进程可能继续，`_execute`结束可先释放profile锁；须按真实进程终态验收。 |
+| 08 | 业务卡接入聊天 | D25、D26、D28 | 未开始：选题/稿件/成片结构化业务卡 | —（本主包尚无功能commit） | 真实业务实体、状态及合法下一步尚未接成该组聊天卡；pub receipt卡归主包07，不能拿来关闭08。 |
+| 09 | 阅读交互与会话状态 | C25、C26、C34 | 阅读/回底基础已有；整包未关闭 | `1a4c8b7`（阅读跟随/回底基础） | 侧栏完整动态状态与包级阅读/恢复交互仍未收口。 |
+| 10 | 队列、纠偏与并排工作区 | A04、A05、D04、B24、B27 | queue基础已有；整包未关闭 | `1a4c8b7`（队列基础） | Steer、并排工作区、Todo及子Agent工作台仍未完成，不能只按queue通过关闭整包。 |
 
-当前逐功能阶段以基线commit `1a4c8b7` 为起点：**D01已真实验收并提交 `3086ca8`；C19并发初始化修复已提交 `f5118d9`；D08固定版本存储/预览切片已验收，本记录随功能独立提交；批准与版本联动仍归B30/D30。** B30/D30批准与精确hash联动仍为后续P0；144项继续逐项自测、验收和独立提交。
+后续提交与关闭规则：
 
-用户目标：以 AI 对话作为内容生产与运营入口；默认自主推进至目标完成，仅在必要时显示输入卡。普通偏好无人回答时采用可见、可追溯默认答案继续；与现有权限或外部公开动作有关的批准保持精确确认边界。
-
+- 后续commit标题包含主包号及细项，例如 `feat(pkg07/D30): ...` 或 `fix(pkg04/C19): ...`；一包可有多次细项commit，不改写已经存在的历史提交。
+- 单个细项通过只更新该细项和主包进度，不自动将整包标为done。只有原包级关键验收完整通过、对应剩余范围有明确结论后，才关闭该包。
+- 当前重点是主包07的D30。B30基础与Native恢复已经提交；D30当前脚本、normalizer、writer和回执卡仍开发中、未提交。未经最终确认的新测试或本地runner结束不能当真实平台已发布，也不能当整包07通过。
+- 主包08的选题/稿件/成片业务卡未开始；发布回执卡归07。主包06的D01/D08核心已通过，但批准版本联动仍跟07验收。
 ## 优先级与执行规则
 
 - P0：先消除输入、恢复、控制和业务结果真实性的基础问题；此处不是线上事故等级。
 - P1：核心聊天、Agent 工作台和业务承接体验；需先满足对应 P0 事件与持久化依赖。
 - P2：增强能力，根据业务收益分批迁移。保持：现有功能做回归，不重复建设。观察：先验证官方启用条件及本产品需求。
-- 保留上一轮逐项优先级。开发包可以跨 P0/P1，两者按包内依赖交付；不能因包装为 P0 就宣称该包所有增强项也已完成。
+- 保留上一轮逐项优先级。原主包可跨 P0/P1，按包内依赖交付；内部M模块的实现顺序不能替代01–10包级验收。
 - 直接复用固定提交的上游实现；复用代码保留 MIT 许可证及来源。Python 引擎、IP/RBAC、业务任务与发布回执属于必要适配层，不能把一段通用 UI 当成已打通业务。
 - 每个行为改动先有失败用例，再迁移代码、通过回归、构建和实际界面检查。涉及真实生产或发布，还需另有实际任务与回执证据。
 
-当前执行：M09中的D01已提交；D08固定版本store/UI已验收：候选树2236项后端、414项前端、构建/lint及7862真实V1/V2、覆盖/删源后18次下载哈希与HTML/ZIP通过；批准版本联动仍待B30/D30。C19修复不包含C23分页；B30/D30与M10业务确认仍为后续P0。历史阶段记录不覆盖本段当前状态。
+当前执行以页首01–10主台账为准：主包06的D01/D08核心已有commit；主包07的B30基础及原生恢复已提交，D30开发中未提交。主包08业务卡未开始，其余包按未过验收继续，不把细项通过当整包关闭。
 
-## 开发包、依赖和验收
+## 内部实现模块映射（M00–M12，非对外产品包）
 
-| 包 | 顺序 | 工作包 | 前置依赖 | 交付范围 | 优先复用 | 验收门槛 | 状态 |
+| 内部模块 | 实现顺序 | 内部职责 | 前置依赖 | 交付范围 | 优先复用 | 验收门槛 | 状态 |
 |---|---|---|---|---|---|---|---|
 | M00 | P0 | 来源、许可证与可重复迁移基线 | 无 | 已建立固定 revision 的上游 clone、MIT 署名和候选来源清单；实际复用代码单独登记。 | 官方仓库 LICENSE、package.json 和各 package 源码 | 校验提交 SHA、复制的文件 hash、许可证、构建依赖；能区分原样复用、适配和 Easel 专属代码。 | 已核验：官方clone、固定SHA、MIT、实际迁移来源与目标SHA；基线22个、D01新增10个、D08新增2个源码迁移文件逐项登记；适配层另列。 |
 | M01 | P0 | 结构化消息、工具事件与持久化 | M00 | 保留工具身份、输入、结果和生命周期，作为任务卡、轨迹和后台状态的基础。 | ui-tool、ui-trajectory、session-controller | 真实开始→输出→完成事件使用同一 callId；刷新与续流不产生重复卡；失败也有稳定终态。 | 基础已通过全量回归与本机Codex验收：命令/输出/exitCode0、消息持久化与刷新恢复；完整轨迹/各引擎真实覆盖仍未完成。 |
@@ -33,19 +48,19 @@
 | M03 | P0 | 自主推进、默认答案与必要人工输入 | M01、M02 | 默认自主完成可逆生产任务；偏好问答超时采用透明默认值；授权和凭据有独立边界。 | ui-user-questions、ui-approval、ui-goal、session inbox 契约 | 关闭浏览器仍由服务器执行默认策略；重复回答只生效一次；权限类问题不超时批准；历史保留真实决策。 | 普通默认答案/安全拒绝与记录通过回归；新Codex会话已实测输入卡→无人填→25秒默认→继续shell。旧未注册原生线程需新建；durable goal/pending future重启仍未完成。 |
 | M04 | P0 | 服务器会话目录与可恢复历史 | M01 | 以服务器授权目录为真源，迁移现有浏览器历史，取消按100条截断的持久化策略。 | session-controller、ui-workspace | 至少101条会话可检索；换浏览器可找回；旧会话导入幂等，归档和删除保留边界清楚。 | SQLite目录恢复基础保留；C19并发初始化修复已独立提交f5118d9；跨浏览器其他场景按条目验收，C23分页仍待开发。 |
 | M05 | P0 | 停止回执与后台任务控制 | M01、M03 | 停止显示真实后端确认；聊天流与媒体后台任务分别管理。 | ui-jobs、session-controller cancel | 停止失败不能显示已停止；单任务取消不误停其他任务；不可取消外部动作继续核实回执。 | 真实proc结束且supervisor释放才stopped，失败/未确认状态回归通过；完整媒体后台job工作台未完成。 |
-| M09 | P0→P1 | 交付协议、版本与并排预览 | M01、M02、M04 | P0先做明确交付和版本身份；P1再做右侧工作区、diff及Office/表格预览。 | ui-deliverables、workspace-changes、ui-sidebar-right、ui-sidebar-documentpreview | 不依赖正文链接识别文件；可核对历史/当前/批准版本；预览失败仍可访问原文件；只读预览不冒充编辑。 | D01显式交付已真实验收并提交3086ca8；D08固定版本store/UI已验收，候选树2236后端/414前端、构建/lint、真实V1/V2及删源下载/HTML/ZIP通过；批准绑定后续B30/D30。 |
-| M10 | P0→P1 | 真实自媒体业务卡和发布回执 | M01、M03、M05、M09 | 复用通用工具/workflow卡框架，接现有选题、稿件、工坊、审阅和发布服务。 | ui-tool、ui-workflow-run；Easel既有业务服务 | 卡片引用真实topic/project/revision/publication ID；服务端检查IP角色；导出/提交/发布成功互不混用。 | 后续P0：B30/D30批准对象、精确hash/版本和真实发布回执联动仍未完成；D08的版本存储/预览不等于批准链已完成。 |
+| M09 | P0→P1 | 交付协议、版本与并排预览 | M01、M02、M04 | P0先做明确交付和版本身份；P1再做右侧工作区、diff及Office/表格预览。 | ui-deliverables、workspace-changes、ui-sidebar-right、ui-sidebar-documentpreview | 不依赖正文链接识别文件；可核对历史/当前/批准版本；预览失败仍可访问原文件；只读预览不冒充编辑。 | 对应原主包06：D01已提交3086ca8；D08固定版本核心已提交97a2071。批准版本与原主包07联动，整包06未关闭。 |
+| M10 | P0→P1 | 真实自媒体业务卡和发布回执 | M01、M03、M05、M09 | 复用通用工具/workflow卡框架，接现有选题、稿件、工坊、审阅和发布服务。 | ui-tool、ui-workflow-run；Easel既有业务服务 | 卡片引用真实topic/project/revision/publication ID；服务端检查IP角色；导出/提交/发布成功互不混用。 | 跨原主包07/08的内部模块：B30基础11845ad、Native恢复2cc4272已提交；D30脚本/normalizer/writer/回执卡开发中未提交（归07）；选题/稿件/成片业务卡归08，未开始。 |
 | M06 | P1 | 消息阅读、渲染与代码显示 | M01、M02 | 复用上游渲染、代码卡和阅读跟随行为，保留现有媒体和消毒策略。 | ui-chat、ui-primitives | 上翻不抢位置；回底可用；复制反馈真实；流式未闭合围栏与多代码块稳定。 | 本轮气泡、复制、预览、阅读跟随基础已通过回归；高亮/数学/增量Markdown等剩余项未实现。 |
 | M07 | P1 | 结构化输入、引用、队列与纠偏 | M02、M03、M04 | 先建立 Host 能力，再迁移编辑节点、命令补全、Queue/Steer 和模型控件。 | ui-conversation、ui-reference、ui-input-trigger、ui-model-selection | 引用带授权对象身份；Queue有服务端回执；运行中纠偏只投递一次；不支持的能力明确禁用。 | 队列基础已本机验收：运行中排队、自动随后执行、刷新保留；richtext/@/slash/Steer和完整模型控件未完成。 |
 | M08 | P1 | Todo、计划审阅与子 Agent 工作台 | M01、M03、M05 | 真实计划和子任务事件驱动视图；不从自然语言猜任务已完成。 | ui-plan、ui-subagent、ui-goal、ui-tool todo | 可查看父子任务和精确会话；方案变更使批准失效；只停止指定子任务；未提供能力不伪造控件。 | 下一批P1：durable goal、正式计划审阅、Todo/子Agent工作台尚未交付；只有事件基础。 |
 | M11 | P1→P2 | 侧栏、检索、分叉与会话操作 | M04、M06 | 先做手机抽屉、元数据搜索、置顶和运行状态；后做大纲、快捷键和可选全文搜索。 | ui-workspace、ui-sidebar、session-turn-outline、session-log-download | 搜索定位到正确会话；运行/待答/未读状态真实；Fork保留源分支；全文搜索启用条件明确。 | 部分迁移已验收：56px轨道与手机抽屉实测；搜索/置顶/渐进历史/归档筛选/Markdown导出通过回归；剩余项保留。 |
 | M12 | P2／保持／观察 | 可选能力、产品边界与保留回归 | 相应基础包 | 已有IP/RBAC/媒体/工坊能力保持回归；Desktop、分享、市场、Mermaid先验证需求和Host条件。 | 相关官方包的已审阅契约；Easel现有实现 | 保留能力不倒退；可选插件不算默认能力；未验证项先有证据再立开发承诺。 | 已有能力随全量回归保留；可选分享/Desktop/市场/Mermaid仍观察，不宣称启用。 |
 
-执行顺序：M00 → 并行 M01/M02 → M03/M04/M05 → M09 的明确交付与版本、M10 的业务确认 → M06/M11 → M07/M08 与高级预览。保留项随相关模块回归；观察项不阻塞主链。
+内部依赖顺序：M00 → M01/M02 → M03/M04/M05 → M09/M10及其他模块，不能用M编号另算产品包。主包映射：M01主要支撑01；M02支撑02/03；M04支撑04；M05支撑05；M09支撑06；M03/M10承接07及AUT，M10的选题/稿件/成片卡部分归08；M06/M11支撑09及会话体验；M07/M08支撑10。M00为共同来源基线，M12为跨包保留/可选项。
 
 ## 新增自主执行需求
 
-以下 8 项是本轮新增，不计入原有 144 项统计。DeepSeek 的 Question/Inbox/Goal/Approval 可提供复用结构；默认策略、超时决策、IP权限和真实完成检查仍须由 Easel 服务端适配。
+以下8项为跨原10包的自主执行要求，不是第11个产品包，也不计入原144项统计。DeepSeek 的 Question/Inbox/Goal/Approval 可提供复用结构；默认策略、超时决策、IP权限和真实完成检查仍须由 Easel 服务端适配。
 
 | 需求 | 优先级 | 产品要求 | 依赖 | 具体行为 | 验收条件 | 状态 |
 |---|---|---|---|---|---|---|
@@ -56,13 +71,13 @@
 | AUT05 | P0 | 授权、凭据与公开动作边界 | M03、M10 | 普通偏好超时可继续；发布批准、提权、账号更换、付款及敏感凭据不被默认答案自动批准；允许继续准备和校验可逆产物。 | 权限请求超时得到等待/拒绝等明确状态；不会无批准公开发布；变更账号、内容版本或payload使原确认失效。 | secret投影/风险降级阻止与权限读取边界通过回归；公开业务动作仍必须真实批准，不能以本次smoke宣称全部业务策略验收。 |
 | AUT06 | P0 | 持久执行、恢复与幂等 | M01、M04、M05 | 任务与决策保存在服务端；续流、恢复、工具重试保留request/task/call身份；不可幂等外部动作先查实际回执。 | 重连或浏览器重开不重复制作/发布；状态可恢复；限流、上游短暂错误有真实重试记录和可停止控制。 | 部分已验证：持久目录/队列及turn_claims幂等，8并发仅1赢家；本机排队→执行→刷新恢复通过；通用任务恢复和pending future重启未交付。 |
 | AUT07 | P1 | 无进展、失败和停止 | M01、M05、M08 | 失败可执行合理恢复分支；真正缺认证/权限或多次无进展时标blocked并显示必要输入；停止服从后端终态。 | 不会无限循环相同失败；失败原因、已完成部分和可恢复入口可见；停止失败不显示成功，停后不偷偷继续新步骤。 | 拒绝/blocked和真实停止状态通过回归；通用无进展检测、durable goal暂停恢复未实现。 |
-| AUT08 | P1 | 完成检查和可核对交付 | M09、M10 | 完成前检查目标清单、产物存在/版本、工具结果和发布回执；将残余阻塞与已完成内容分别呈现。 | 一次任务包含正文、附件或业务动作时可逐项验收；无真实文件或回执不能勾选完成；交付关联正确IP和当前批准版本。 | D01显式交付已真实验收并提交；D08固定版本store/UI切片已验收并随本记录独立提交。通用目标终验、业务清单及B30/D30精确hash批准/回执仍待继续。 |
+| AUT08 | P1 | 完成检查和可核对交付 | M09、M10 | 完成前检查目标清单、产物存在/版本、工具结果和发布回执；将残余阻塞与已完成内容分别呈现。 | 一次任务包含正文、附件或业务动作时可逐项验收；无真实文件或回执不能勾选完成；交付关联正确IP和当前批准版本。 | D01/D08交付与固定版本核心已有独立commit；B30基础及Native恢复已有commit，D30开发中未提交。通用目标终验、选题/稿件/成片业务卡及原10包剩余验收继续，不能以局部通过关闭AUT或整包。 |
 
 ## 144 项完整开发映射
 
 下表每个原始编号只出现一次。保留原始编号，因此编号不连续。上游链接固定到 `ce7073d51254c26cd63b22a60835b8f948deb447`；“来源”是候选迁移／契约依据，不能代表已经复制或上线。逐项“计划中”需要负责人补充实现文件、测试证据和运行验收后才可关闭。
 
-| 原 ID | 细项 | 原优先级 | 开发包／前置依赖 | 迁移方式与上游来源 | 验收条件 | 当前状态 |
+| 原 ID | 细项 | 原优先级 | 内部模块／前置依赖 | 迁移方式与上游来源 | 验收条件 | 当前状态 |
 |---|---|---|---|---|---|---|
 | A01 | 输入器的结构化编辑模型 | P1 | M07／M02、M03、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-conversation/README.md:93-97](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-conversation/README.md#L93-L97)<br>[packages/bundle/web-app/cordis.patch.yml:322-323](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L322-L323) | 输入文字与多个引用可混排；方向键、选择、删除、撤销和提交均保留正确对象。 | 计划中；未验收 |
 | A03 | 等待接收确认后清空输入 | P1 | M02／M00 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-conversation/README.md:123-125](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-conversation/README.md#L123-L125) | 提交中明确 Sending；接收确认才清空；拒绝时恢复可编辑原草稿与附件，并保留已发送记录一致性。 | 部分已通过本轮代码/回归验证：本地准入布尔/Promise成功后清空并冻结接收中附件；Host durable receipt仍待补。 |
@@ -131,7 +146,7 @@
 | B27 | 子 Agent 树、计数和独立会话 | P1 | M08／M01、M03、M05 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-subagent/README.md:28-36](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L28-L36)<br>[packages/bundle/web-app/cordis.patch.yml:385-386](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L385-L386) | 主任务可展开“调研/脚本/剪辑/复核”子任务，每个有稳定会话身份；可只读查看真实消息；用户只能看当前 IP 有权访问的子会话。 | 计划中；未验收 |
 | B28 | 可继续子任务的追问及独立中断 | P2 | M08／M01、M03、M05 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-subagent/README.md:40-44](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L40-L44)<br>[packages/client/ui-subagent/README.md:68-70](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L68-L70) | 支持受权限约束地向可继续的脚本子任务补充说明；中止子任务不误停同批其他任务；只读子任务明确不能追问；显示名称不作为权限身份。 | 计划中；未验收 |
 | B29 | 并发执行者的活动、耗时和用量 | P2 | M08／M01、M03、M05 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-subagent/README.md:36](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L36)<br>[packages/client/ui-subagent/README.md:64-66](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-subagent/README.md#L64-L66) | 并发任务各自显示活动和实际用量/耗时，未知值留空；失败/取消/拒绝/限额对业务应分别标记；不直接照搬 DSH 仍聚合的非正常 inactive 状态。 | 计划中；未验收 |
-| B30 | 授权卡关联具体动作和主体 | P0 | M03／M01、M02 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-approval/README.md:11](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L11)<br>[packages/client/ui-approval/README.md:38](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L38) | 发布确认卡必须列出 IP、平台账号、目标受众、文案/媒体预览、版本、立即或定时；批准绑定精确 payload hash/版本；内容或账号变化必须重批；双击不重复发布。 | 基础实现与本机模拟链路已接：精确subject/hash、认证主体、固定媒体/排版、事务单操作、Web/native卡及SMS绑定；候选树2438后端/440前端、构建/lint/编译及本机模拟联调通过；随本记录独立提交。MP/快手可靠本人ID与无界宿主能力隔离仍有明确边界；不关闭整个AUT目标。 |
+| B30 | 授权卡关联具体动作和主体 | P0 | M03／M01、M02 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-approval/README.md:11](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L11)<br>[packages/client/ui-approval/README.md:38](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L38) | 发布确认卡必须列出 IP、平台账号、目标受众、文案/媒体预览、版本、立即或定时；批准绑定精确 payload hash/版本；内容或账号变化必须重批；双击不重复发布。 | 原主包07基础已提交11845ad，跨CLI进程Native恢复已提交2cc4272；原native ID保留，恢复调用走原Host批准。真实平台回执与整包07仍未关闭，不把模拟publisher联调当公开发布。 |
 | B31 | 一次授权与长期授权的明确边界 | P1 | M03／M01、M02 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-approval/README.md:21-23](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L21-L23)<br>[packages/client/ui-approval/README.md:38](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L38) | 显示“仅本次/当前会话”及动作范围；公开发布、账号变更等始终按业务策略人工确认；自动批准普通读取/工作区编辑要可查，不提供笼统“永远允许发布”。 | 部分已通过本轮代码/回归验证：加固普通自动读取的敏感目录/工作区边界；按能力主体授权明细仍待补。 |
 | B32 | 审批提交中、防重复与权限撤销 | P1 | M03／M01、M02 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-approval/README.md:21](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-approval/README.md#L21)<br>[packages/client/ui-user-questions/README.md:50-54](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-user-questions/README.md#L50-L54) | 批准按钮发送后显示“提交中”，仅服务端确认后关闭；过期/替换/撤权立即禁用；两浏览器同时批准只产生一次有效决策；旧请求响应不能影响新卡。 | 计划中；未验收 |
 | B33 | 单选、多选和自定义答复 | 保持 | M03／M01、M02 | 保留 Easel；按上游契约回归<br>[packages/client/ui-user-questions/README.md:28-34](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-user-questions/README.md#L28-L34)<br>[packages/bundle/web-app/cordis.patch.yml:461-462](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L461-L462) | 保留多选加自定义回答；长批次分页或分组，固定提交按钮；缺题定位到首个未答项；中文输入法 Enter 只确认候选，不意外提交批准。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
@@ -184,7 +199,7 @@
 | D05 | 会话独立的预览标签与面板状态 | P2 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-sidebar-right/README.md:63-70](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-right/README.md#L63-L70) | 先实现每会话 2-4 个资源标签、当前资源和面板宽度；A/B 会话切换不混用资源；刷新可恢复合法资源地址。 | 计划中；未验收 |
 | D06 | 一轮到底改了哪些文件 | P1 | M09／M01、M02、M04 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/bundle/web-app/cordis.patch.yml:360-363](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L360-L363)<br>[packages/client/ui-deliverables/README.md:28](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L28) | 一轮修改两个内容文件、新增一张封面，结果摘要列出三个授权文件；无变更不造摘要；中断、二进制、超限有明确说明。 | 计划中；未验收 |
 | D07 | 修改前后对比 | P1 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-deliverables/README.md:49-53](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L49-L53) | 文案/脚本显示可读的前后段落差异；图片/视频给并排版本与生成参数；比较地址固定到版本，不悄悄展示最新版。 | 计划中；未验收 |
-| D08 | 区分历史交付、当前文件和已批准版本 | P0 | M09／M01、M02、M04 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:49](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L49)<br>[packages/client/ui-deliverables/README.md:118-122](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L118-L122) | 聊天交付物固定引用不可变 artifactId/revision/hash；文件被覆盖后旧交付仍可取回或显示已不可用；批准卡明确绑定原版本。 | 固定版本store/UI已验收（2236后端、414前端、构建/lint、真实18次下载及HTML/ZIP通过），随本记录独立提交；原行批准部分仍待后续。B30/D30批准精确hash联动另为后续P0。 |
+| D08 | 区分历史交付、当前文件和已批准版本 | P0 | M09／M01、M02、M04 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:49](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L49)<br>[packages/client/ui-deliverables/README.md:118-122](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L118-L122) | 聊天交付物固定引用不可变 artifactId/revision/hash；文件被覆盖后旧交付仍可取回或显示已不可用；批准卡明确绑定原版本。 | 原主包06固定版本store/UI核心已验收并提交97a2071（2236后端、414前端及真实版本下载/HTML/ZIP证据）；批准版本与主包07联动，整包06仍未关闭。 |
 | D09 | 资源更新、重载与错误恢复 | P1 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-sidebar-documentpreview/README.md:55-60](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L55-L60) | 每资源显示加载/可用/已更新/不可用/失败，提供重试；更新中保留旧内容但明确版本；ZIP失败不能静默消失。 | 计划中；未验收 |
 | D10 | Word/PowerPoint交付物查看 | P1 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/bundle/web-app/cordis.patch.yml:283-289](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L283-L289)<br>[packages/client/ui-sidebar-documentpreview/README.md:98-112](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L98-L112) | DOCX/PPTX可看转换预览并下载原文件；未安装转换服务或缺字体时准确提示；无需实现在线Office编辑。 | 计划中；未验收 |
 | D11 | 运营表格预览 | P1 | M09／M01、M02、M04 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/client/ui-sidebar-documentpreview/README.md:75-79](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L75-L79)<br>[packages/client/ui-sidebar-documentpreview/README.md:89](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L89) | CSV/XLSX可只读切工作表、复制单元格、保留数字/前导零；公式未计算或图表未显示必须说明；下载保持原文件。 | 计划中；未验收 |
@@ -201,11 +216,11 @@
 | D22 | ZIP内成品索引 | 保持 | M12／相应基础包 | 保留 Easel；按上游契约回归<br>[packages/client/ui-deliverables/README.md:37](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37) | 保留ZIP成员索引；归档名、成员路径、成员数量可追溯，损坏/超限/权限失败可见；下载原ZIP不误报“已发布”。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
 | D23 | “能做什么”的实时可信度 | P1 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-skill/README.md:32-40](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-skill/README.md#L32-L40)<br>[packages/client/ui-skill/README.md:54-56](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-skill/README.md#L54-L56) | 聊天能力菜单和技能库共享后端能力目录，按当前IP/角色/引擎显示可用、缺配置、无权限及理由；改变配置后不用刷新整页就更新。 | 计划中；未验收 |
 | D24 | 安装、版本兼容和能力来源管理 | P2 | M12／相应基础包 | 优先迁移上游 React/TS/CSS；只适配依赖和 Easel 数据接口<br>[packages/bundle/web-app/cordis.patch.yml:311-320](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L311-L320)<br>[packages/client/ui-plugin-market/README.md:27-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-plugin-market/README.md#L27-L39) | 先为管理员提供已安装能力、来源/版本、依赖与健康状态；运营者只见可用业务能力；如开放第三方市场再做兼容校验与明确安装确认。 | 计划中；未验收 |
-| D25 | 结构化业务动作卡与多阶段任务 | P0 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/bundle/web-app/cordis.patch.yml:344-346](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L344-L346)<br>[packages/bundle/web-app/cordis.patch.yml:369-372](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L369-L372) | 由服务器事件生成topic/draft/render/review/publish五类卡；卡关联IP、实体ID、权限、真实状态和合法下一步；刷新/重放不重复提交，工具失败不能生成成功卡。 | 计划中；未验收 |
-| D26 | 选题来源到创作的结构化承接 | P1 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:67-69](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L67-L69)<br>[packages/client/ui-workflow-run/README.md:28-36](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-workflow-run/README.md#L28-L36) | 从选题入口发起后，聊天显示可展开的来源卡；携带topicId/平台/URL/采集时间并落到成稿关联；标题同名也能追溯准确来源。 | 计划中；未验收 |
-| D28 | 视频画布是真业务编辑器，应接回聊天 | P1 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-sidebar-documentpreview/README.md:144-145](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L144-L145) | AI生成工坊项目卡并指向准确projectId/revision；有权限者在侧面打开专属画布，无权限者打开交付审阅；画布保存/导出后回传状态及交付版本到原聊天。 | 计划中；未验收 |
+| D25 | 结构化业务动作卡与多阶段任务 | P0 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/bundle/web-app/cordis.patch.yml:344-346](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L344-L346)<br>[packages/bundle/web-app/cordis.patch.yml:369-372](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/web-app/cordis.patch.yml#L369-L372) | 由服务器事件生成topic/draft/render/review/publish五类卡；卡关联IP、实体ID、权限、真实状态和合法下一步；刷新/重放不重复提交，工具失败不能生成成功卡。 | 原主包08未开始：选题/稿件/成片的真实结构化业务卡尚未开发；pub receipt卡属于07，不算本项完成。 |
+| D26 | 选题来源到创作的结构化承接 | P1 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:67-69](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L67-L69)<br>[packages/client/ui-workflow-run/README.md:28-36](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-workflow-run/README.md#L28-L36) | 从选题入口发起后，聊天显示可展开的来源卡；携带topicId/平台/URL/采集时间并落到成稿关联；标题同名也能追溯准确来源。 | 原主包08的结构化选题卡未开始；现有热点预填自然语言入口不等于topic/source快照等业务对象已承接。 |
+| D28 | 视频画布是真业务编辑器，应接回聊天 | P1 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-sidebar-documentpreview/README.md:144-145](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L144-L145) | AI生成工坊项目卡并指向准确projectId/revision；有权限者在侧面打开专属画布，无权限者打开交付审阅；画布保存/导出后回传状态及交付版本到原聊天。 | 原主包08的成片/编辑业务卡未开始；既有工坊画布保留，但未完成该包聊天承接；pub receipt卡另归07。 |
 | D29 | 交付版本、人工批准与发布记录的关联 | 保持 | M12／相应基础包 | 保留 Easel；按上游契约回归<br>[packages/client/ui-deliverables/README.md:37-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37-L39)<br>[packages/client/ui-deliverables/README.md:118](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L118) | 聊天中审阅卡复用服务端工坊状态，显示版本/hash和人工/模拟标志；改版后旧批准不会批准新文件；已发布卡显示绑定版本和真实平台链接。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
-| D30 | 人工/自动发布与回执真实性 | P0 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:37-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37-L39)<br>[packages/client/ui-sidebar-browser/README.md:28-32](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-browser/README.md#L28-L32) | 聊天卡区分draft/exported/submitted/confirmed/failed；引用服务器任务/内容版本/平台链接；人工确认标注来源；无平台回执不显示自动验证成功；重复点击不重复发布。 | B30阶段先分开approved/本地submitted/draft_created/unknown，不因exit0写已发布日历；真实平台confirmed、对账与硬重启owner/lease恢复尚未验收。 |
+| D30 | 人工/自动发布与回执真实性 | P0 | M10／M01、M03、M05、M09 | 复用上游契约/视图；适配 Python、原生引擎或 IP 业务服务<br>[packages/client/ui-deliverables/README.md:37-39](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-deliverables/README.md#L37-L39)<br>[packages/client/ui-sidebar-browser/README.md:28-32](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-browser/README.md#L28-L32) | 聊天卡区分draft/exported/submitted/confirmed/failed；引用服务器任务/内容版本/平台链接；人工确认标注来源；无平台回执不显示自动验证成功；重复点击不重复发布。 | 原主包07开发中、未提交：当前脚本、normalizer、writer及回执卡仍在串通；未经最终确认的新测试不当整包通过，真实平台confirmed/对账/恢复和精确hash批准仍按包级验收。 |
 | D31 | 商业IP、owner/operator/viewer的隔离 | 保持 | M12／相应基础包 | 保留 Easel；按上游契约回归<br>[docs/user/guide/public-deployments.md:21-35](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/docs/user/guide/public-deployments.md#L21-L35)<br>[packages/client/ui-sidebar-files/README.md:58-66](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-files/README.md#L58-L66) | 同一用户不同IP资源不串；viewer不能操作、operator不能管账号/成员；侧栏文件、下载、预览、引用继续修改和后台任务都复用同一服务器授权，不仅隐藏按钮。 | 现有能力；随全量回归保留，真实业务验收范围不扩大 |
 | D32 | 未来只读聊天的 HTML 预览策略 | 观察 | M12／相应基础包 | 先验证需求与 Host 条件；暂不承诺照搬<br>[packages/client/ui-sidebar-documentpreview/README.md:51-62](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/client/ui-sidebar-documentpreview/README.md#L51-L62) | 开放 viewer 聊天前统一角色与资源可信级别策略；两入口采用一致静态/交互配置，交互预览继续使用隔离 iframe。 | 待验证／产品判断 |
 
@@ -227,9 +242,9 @@
 - 官方全文搜索默认关闭；Browser 默认是 Desktop 条件能力；Plan/子Agent依赖Host/preset；Office/Excel是预览，不等于编辑或重算；交付宣告本身不等于不可变文件快照。
 - Easel 的业务内容库、媒体画廊、工坊 revision/hash、人工审阅、IP与成员权限应保留，通用Harness不能直接替代这些业务结构。
 
-## 基线交付与当时优先级（历史记录）
+## 内部模块基线计划（历史，非额外产品包）
 
-本轮已完成基础实现和限定范围的本机验收，不能把全部144项或8项自主需求关闭。下一批首先补M09/M10的P0业务可信闭环，之后再扩复杂Agent工作台。
+此节只保留基线时期的内部模块计划及当时判断，已由页首01–10主台账更新。M编号不是额外产品包；不得从本节推导“已完成6/10”或将全部144项/AUT关闭。
 
 | 顺序 | 开发包 | 最终优先级 | 本轮结论／下一步 |
 |---|---|---|---|
@@ -274,21 +289,34 @@ Codex默认模式的原生 `request_user_input` 受模式门禁限制。本轮�
 
 本次真实验收是在新建会话中完成，未填写任何答案：卡片默认专业，服务端25秒后决策并继续实际shell，输出EASEL_DEFAULT_CONTINUED且退出0。这证明该链路可用，不代表持久目标、所有业务回执或所有旧会话都已完成迁移。
 
-## 逐功能开发阶段（当前）
+## 当前细项证据索引（不另立产品包）
 
-基线commit为 `1a4c8b7`。144项保持稳定编号，继续逐项开发、每项自测/真实验收并独立提交，不以一个通用UI或邻项通过代替整项完成。
+当前包级状态只看页首01–10主台账。基线为 `1a4c8b7`，后续一包可以多个细项commit，不改写历史。
 
-| 条目 | 当前状态 | 边界 |
-|---|---|---|
-| `D01` | 已真实验收并提交 `3086ca8` | 显式present、鉴权文件卡、真实下载/PNG/HTML及刷新去重已验收；HTML原403已关闭 |
-| `C19` | 并发初始化修复已提交 `f5118d9` | 不包含C23按turn分页；其他目录/跨浏览器场景继续按各项验收 |
-| `D08` | 固定版本切片已验收；批准部分未完 | 固定版本store/UI、全量2236后端/414前端、构建/lint及隔离7862真实18次下载/HTML/ZIP通过；随本记录独立提交，B30/D30继续 |
-| `B30／D30` | 后续P0，尚未完成 | 批准必须与具体主体、账号、动作和精确hash/版本及真实发布回执联动，不能由D08版本存储替代 |
+| 对应主包 | 细项 | 当前证据／commit | 仍未关闭的范围 |
+|---|---|---|---|
+| `04` | C19 | 并发初始化修复 `f5118d9` | 不包含C23分页或完整目录包级验收 |
+| `06` | D01 | 真实交付验收，`3086ca8` | 不是整个主包06验收 |
+| `06` | D08 | 固定版本核心验收，`97a2071` | 批准版本仍与07联动 |
+| `07` | B30 | 基础 `11845ad`；Native恢复 `2cc4272` | 模拟publisher不等于真实公开发布；整包未关闭 |
+| `07` | D30 | 脚本/normalizer/writer/回执卡开发中，未提交 | 最新未确认测试不作为整包通过；真实平台回执与恢复等待验收 |
+| `08` | D25/D26/D28 | 选题/稿件/成片业务卡未开始 | pub receipt卡归07，不算08的实现 |
 
-- D01记录：[agent-feature-acceptance/D01.md](agent-feature-acceptance/D01.md)。后续功能使用各自记录，不混入同一功能commit。
-- 每功能模板：[agent-feature-acceptance-template.md](agent-feature-acceptance-template.md)。基线和历史阶段测试/截图不替代当前功能最终验收。
-- 新`present`工具的已验收支持条件保持明确：新建Codex线程注册；旧未注册resume不追加工具并保留ID/历史，需新建；ACP未注册对应MCP/工具，不能声称支持。
-- 只将实际迁移的React/TS/CSS称为源码复用；Python store、原生引擎、IP权限及业务边界属于必要适配，不夸大为上游Python原样复制。
+- 验收记录：[D01](agent-feature-acceptance/D01.md)、[D08](agent-feature-acceptance/D08.md)、[B30](agent-feature-acceptance/B30.md)、[B30-native-restore](agent-feature-acceptance/B30-native-restore.md)。各自只证明其记录范围，不替代原10包验收。
+- 模板：[agent-feature-acceptance-template.md](agent-feature-acceptance-template.md)。未来commit含主包号＋细项；每包关键验收完整通过后才done。
+- 已验收引擎支持仍按各细项条件判断，不能从通用UI推断所有旧线程/ACP都支持。Python store、原生协议和IP业务边界是必要适配，不夸大为上游Python原样复制。
+- 144项及AUT01–AUT08完整保留；当前不是“已完成6/10”，其余细项与整包验收继续逐项推进。
 
+## 早期细项摘要原文（历史，不是当前主台账）
 
-当前D08固定版本功能验收见 [D08.md](agent-feature-acceptance/D08.md)：2236后端通过/17跳过、414前端通过、构建/lint/编译/差异通过；18次真实浏览器下载hash、覆盖与删源后的HTML/ZIP版本保持通过。此验收覆盖固定交付切片，不关闭B30/D30精确版本批准或其余计划项。来源manifest登记新增HostReadStore与ReviewTab源码迁移及必要Python持久化适配。
+以下只保留当时的逐细项记录。原文里“随本记录提交”或“后续P0”等措辞不作当前状态：现B30基础11845ad及Native恢复2cc4272已提交，D30仍在开发未提交；以页首主台账及上节证据索引为准。
+
+> 当时补正：B30原生发布工具跨CLI进程恢复已验证并修复；不再以进程内缓存错误判无工具。原native ID保持，resume不追加工具，恢复调用仍走原Host批准。候选树2447后端通过/17跳过，真实适配器mock回调通过；详见[B30-native-restore](agent-feature-acceptance/B30-native-restore.md)。下一项继续D30真实回执与尚未完成的权限/平台适配，144项和AUT范围不变。
+>
+>
+> 当时逐功能阶段：B30精确发布批准基础闭环已通过候选树2438后端/440前端及真实Codex模拟联调，随本记录独立提交。D01 `3086ca8`、C19 `f5118d9`、D08固定交付 `97a2071`已提交。B30复用上游批准卡，绑定认证actor/IP、实际账号、精确文案/媒体/公众号排版及payload hash，Web与新Codex typed工具已接线；7863真实Codex仅模拟publisher联调通过。MP/快手严格本人ID、D30真实平台确认/重启恢复与其余144项/AUT仍待继续，不能把批准或本地runner结束当公开发布。详见 [B30验收记录](agent-feature-acceptance/B30.md)。
+>
+>
+> 当时逐功能阶段以基线commit `1a4c8b7` 为起点：**D01已真实验收并提交 `3086ca8`；C19并发初始化修复已提交 `f5118d9`；D08固定版本存储/预览切片已验收，本记录随功能独立提交；批准与版本联动仍归B30/D30。** B30/D30批准与精确hash联动仍为后续P0；144项继续逐项自测、验收和独立提交。
+
+**当前结论：01–10为唯一对外主台账。06的D01/D08核心已提交；07的B30基础/恢复已提交、D30未提交；08业务卡未开始。其余各包仍有未过关键验收，不能按“已完成6/10”汇报。**
