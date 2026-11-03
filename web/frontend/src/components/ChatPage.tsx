@@ -80,7 +80,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
 
   const isStreaming = !!stream;
   const isEmpty = session.messages.length === 0 && !isStreaming;
-  const reading = useChatReading(session.id, stream || session.messages, !isEmpty);
+  const reading = useChatReading(session.id, session.messages, stream, !isEmpty);
   const uploading = uploadItems.some(item => item.status === 'queued' || item.status === 'uploading');
   const failedUploads = uploadItems.some(item => item.status === 'failed');
   const attachments = uploads.ready;
