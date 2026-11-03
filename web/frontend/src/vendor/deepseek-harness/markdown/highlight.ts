@@ -41,7 +41,7 @@ export function highlightCode(code: string, hint: string | undefined): Highlight
   if (lines.length > MAX_LINES || lines.some(line => line.length >= MAX_LINE_LENGTH)) return undefined;
   try {
     const { tokens } = highlighter().codeToTokens(code, {
-      lang, theme: 'css-variables', tokenizeMaxLineLength: MAX_LINE_LENGTH, tokenizeTimeLimit: 100,
+      lang, theme: 'css-variables', tokenizeMaxLineLength: MAX_LINE_LENGTH,
     });
     if (tokens.length !== lines.length ||
         tokens.some((line, index) => line.map(token => token.content).join('') !== lines[index])) return undefined;

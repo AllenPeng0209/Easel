@@ -7781,7 +7781,7 @@
     "upstream_sha256": "8f641cddd716d1d96908784514e8e557a882d8547a2f2a60f6bb8e19855709b0",
     "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
     "destination_path": "web/frontend/src/vendor/deepseek-harness/markdown/highlight.ts",
-    "destination_sha256": "71028195898035df682617958600c5138f92b241628402ab54ab470627fa69a7",
+    "destination_sha256": "298581630252375d1d4fdd734018b7f74e0af1fe6bad1aa40d0215bc6f4ef4e9",
     "reuse_kind": "adapted",
     "changes": "复用 Shiki core 和 JavaScript 正则引擎，保留已验收语法并限制分词预算。",
     "verification_status": "A27_syntax_highlight_and_async_chunk_verified"
