@@ -7497,12 +7497,56 @@
     "reuse_kind": "adapted",
     "changes": "复用上游命令发现、键盘候选和选择状态，候选由 Easel 服务端提供。",
     "verification_status": "A23_verified_command_editor_and_admission"
+  },
+  {
+    "feature_id": "B05",
+    "upstream_path": "packages/client/ui-deliverables/src/client/FileDiff.tsx",
+    "upstream_sha256": "96d2cd177bd5319ee7c19d02ac37cd1be7ce9b7ff9dc5a7d8b86d50b0d2e0ca8",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/file-diff.ts",
+    "destination_sha256": "f3470b95034a73dcf84bc212744f475c83695a630995317ab7c349f9ce397fd0",
+    "reuse_kind": "adapted",
+    "changes": "复用 hunk 行号算法，适配 Codex 补丁边界。",
+    "verification_status": "B05_verified_wire_and_isolated_browser"
+  },
+  {
+    "feature_id": "B05",
+    "upstream_path": "packages/client/ui-deliverables/src/client/FileDiff.tsx",
+    "upstream_sha256": "96d2cd177bd5319ee7c19d02ac37cd1be7ce9b7ff9dc5a7d8b86d50b0d2e0ca8",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/FileDiff.tsx",
+    "destination_sha256": "01d87710715af16adffd2c99c4849946a5b60e7f5ff1739565ed04b968b6823d",
+    "reuse_kind": "adapted",
+    "changes": "适配行级差异视图、展开和复制。",
+    "verification_status": "B05_verified_wire_and_isolated_browser"
+  },
+  {
+    "feature_id": "B05",
+    "upstream_path": "packages/client/ui-deliverables/src/client/FileDiff.module.css",
+    "upstream_sha256": "a3d8aa354bf27c5652ceb1878b32e165b8ebbd9810b2adbeaa7abb78237e9d33",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/FileDiff.module.css",
+    "destination_sha256": "a19bd7ab4e8fe176c5aeece5824b119fbe6af60f1b6be9d665602254a3c20105",
+    "reuse_kind": "adapted",
+    "changes": "适配增删配色、行号和布局。",
+    "verification_status": "B05_verified_wire_and_isolated_browser"
+  },
+  {
+    "feature_id": "B05",
+    "upstream_path": "packages/client/ui-tool/src/client/tool/toolviews/file-mutation-row.tsx",
+    "upstream_sha256": "3f8a65d70875702591fdd116cbc437bd03309feabba256b7274ca2234c826e05",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/FileMutationCard.tsx",
+    "destination_sha256": "bee776fc993c71f22f43b1a591d609586fd602357323017fde672dad0f282e15",
+    "reuse_kind": "adapted",
+    "changes": "适配原生文件修改状态、路径与差异卡入口。",
+    "verification_status": "B05_verified_wire_and_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 57,
+    "source_migration_files": 61,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 42,
+    "adapted_upstream_files": 46,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

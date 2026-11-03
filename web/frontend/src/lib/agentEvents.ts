@@ -49,6 +49,7 @@ export interface AgentEvent {
   input?: unknown;
   output?: unknown;
   outputStream?: 'merged';
+  fileChangeApplied?: boolean;
   exitCode?: number | null;
   durationMs?: number;
   signal?: string;
@@ -61,6 +62,32 @@ export interface AgentEvent {
   source?: string;
   artifacts?: AgentArtifact[];
   [key: string]: unknown;
+}
+
+export function fileMutationChanges(event: AgentEvent): unknown[] | undefined {
+  if (event.name !== 'apply_patch' || typeof event.fileChangeApplied !== 'boolean'
+      || !event.input || typeof event.input !== 'object') return undefined;
+  const changes = (event.input as Record<string, unknown>).changes;
+  return Array.isArray(changes) ? changes : undefined;
+}
+
+export const fileMutationLabel = {
+  applied: '引擎报告已应用',
+  attempted: '待确认应用结果',
+  failed: '引擎报告应用失败',
+  declined: '引擎报告已拒绝',
+  unconfirmed: '应用结果未确认',
+};
+
+export type FileMutationState = keyof typeof fileMutationLabel;
+
+export function fileMutationState(event: AgentEvent, settled: boolean): FileMutationState | undefined {
+  if (fileMutationChanges(event) === undefined) return undefined;
+  if (event.fileChangeApplied === true && event.status === 'completed') return 'applied';
+  if (event.status === 'failed') return 'failed';
+  if (event.status === 'declined' || event.status === 'denied') return 'declined';
+  return !settled && ['running', 'preparing', 'pending', 'in_progress'].includes(event.status || '')
+    ? 'attempted' : 'unconfirmed';
 }
 
 export function isCommandExecution(event: AgentEvent): boolean {
@@ -144,9 +171,13 @@ export function agentToolKey(event: AgentEvent, callId = event.callId || event.i
   return JSON.stringify([...scope, callId]);
 }
 
+function terminalToolSnapshot(event: AgentEvent): boolean {
+  return terminal.has(event.status || '') || (event.fileChangeApplied === false && event.status === 'unconfirmed');
+}
+
 export function mergeToolSnapshots(previous: AgentEvent, incoming: AgentEvent): AgentEvent {
   const parentCallId = previous.parentCallId || incoming.parentCallId;
-  if (!terminal.has(previous.status || '') || terminal.has(incoming.status || '')) {
+  if (!terminalToolSnapshot(previous) || terminalToolSnapshot(incoming)) {
     return { ...previous, ...incoming, parentCallId };
   }
   // A result can arrive first. Recover only the earlier call's missing context.

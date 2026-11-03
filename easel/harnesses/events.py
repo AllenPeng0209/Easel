@@ -109,6 +109,33 @@ def _valid_tool_parent(value, child_id) -> bool:
             and value.strip() == value and not re.search(r"[\x00-\x1f\x7f-\x9f]", value))
 
 
+def _valid_file_change_path(value) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and not re.search(r"[\x00-\x1f\x7f-\x9f]", value)
+
+
+def _file_changes(value) -> list[dict]:
+    """Retain only the native FileUpdateChange fields that were actually supplied."""
+    if not isinstance(value, list):
+        return []
+    changes = []
+    for item in value:
+        if not isinstance(item, dict) or not _valid_file_change_path(item.get("path")):
+            continue
+        change = {"path": item["path"]}
+        if isinstance(item.get("diff"), str):
+            change["diff"] = item["diff"]
+        kind = item.get("kind")
+        if isinstance(kind, dict) and kind.get("type") in ("add", "delete", "update"):
+            mutation = {"type": kind["type"]}
+            if kind["type"] == "update" and "move_path" in kind:
+                target = kind["move_path"]
+                if target is None or _valid_file_change_path(target):
+                    mutation["move_path"] = target
+            change["kind"] = mutation
+        changes.append(change)
+    return changes
+
+
 class EventProjector:
     """Fold partial native updates, then emit complete safe call snapshots."""
 
@@ -247,7 +274,8 @@ class EventProjector:
                     self.private_streams[identifier] = pending[1]
                 self.tool(identifier, name=prior.get("name", "bash" if command_output else "apply_patch"),
                           status=prior.get("status", "running"), output=existing + delta,
-                          outputStream="merged" if command_output else None)
+                          outputStream="merged" if command_output else None,
+                          fileChangeApplied=None if command_output else prior.get("fileChangeApplied", False))
             return
         if method == "item/mcpToolCall/progress":
             identifier = params.get("itemId")
@@ -302,7 +330,18 @@ class EventProjector:
                     if status != "interrupted" and exit_code not in (None, 0):
                         fields["status"] = "failed"
         elif kind == "fileChange":
-            fields.update(name="apply_patch", input={"changes": item.get("changes") or []})
+            previous = self.calls.get(identifier, {}) if isinstance(identifier, str) else {}
+            terminal_statuses = ("completed", "failed", "declined", "interrupted", "unconfirmed")
+            if (not completed and "fileChangeApplied" in previous and previous.get("status") in terminal_statuses):
+                return
+            native_status = item.get("status")
+            if completed:
+                status = native_status if native_status in terminal_statuses else "unconfirmed"
+            else:
+                status = "running"
+            fields.update(name="apply_patch", status=status,
+                          fileChangeApplied=completed and native_status == "completed",
+                          input={"changes": _file_changes(item.get("changes"))})
         elif kind in ("mcpToolCall", "dynamicToolCall"):
             fields.update(input=item.get("arguments"),
                           output=item.get("result") if kind == "mcpToolCall" else item.get("contentItems"))

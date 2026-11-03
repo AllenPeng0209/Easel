@@ -129,6 +129,81 @@ def test_codex_preserves_file_diff_and_mcp_parent_but_filters_foreign_thread(tmp
     assert tools[1]["output"]["content"][0]["text"] == "duration: 30"
 
 
+def test_codex_file_change_keeps_native_patch_and_marks_only_applied_terminal(tmp_path):
+    patch = "@@ -1 +1 @@\n-old\n+new\n"
+    change = {"path": "caption.srt", "kind": {"type": "update", "move_path": "new-caption.srt"},
+              "diff": patch, "artifactId": "unverified"}
+    call = {"id": "edit", "type": "fileChange", "changes": [change]}
+    started, applied = run_wire(tmp_path, "codex", [
+        codex("item/started", item={**call, "status": "inProgress"}),
+        codex("item/completed", item={**call, "status": "completed"}),
+    ])
+    assert started["fileChangeApplied"] is False and started["status"] == "running"
+    assert applied["fileChangeApplied"] is True and applied["status"] == "completed"
+    assert applied["input"]["changes"] == [{"path": "caption.srt", "diff": patch,
+        "kind": {"type": "update", "move_path": "new-caption.srt"}}]
+    assert "artifactId" not in json.dumps(applied)
+
+
+@pytest.mark.parametrize("native_status,expected", [
+    (None, "unconfirmed"), ("success", "unconfirmed"), ("inProgress", "unconfirmed"),
+    ("failed", "failed"), ("declined", "declined"),
+])
+def test_file_change_without_native_completion_never_claims_applied(tmp_path, native_status, expected):
+    [event] = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={"id": "edit", "type": "fileChange", "status": native_status,
+              "changes": [{"path": "file.txt", "diff": "-attempt\n", "kind": {"type": "delete"}}]}),
+    ])
+    assert event["fileChangeApplied"] is False
+    assert event["status"] == expected
+    assert event["input"]["changes"][0]["diff"] == "-attempt\n"
+
+
+def test_applied_terminal_without_diff_does_not_backfill_attempted_changes(tmp_path):
+    [started, ended] = run_wire(tmp_path, "codex", [
+        codex("item/started", item={"id": "edit", "type": "fileChange", "status": "inProgress",
+              "changes": [{"path": "file.txt", "diff": "+proposed\n", "kind": {"type": "add"}}]}),
+        codex("item/completed", item={"id": "edit", "type": "fileChange", "status": "completed"}),
+    ])
+    assert started["input"]["changes"][0]["diff"] == "+proposed\n"
+    assert ended["fileChangeApplied"] is True
+    assert ended["input"]["changes"] == []
+
+
+def test_file_change_normalizes_only_valid_observed_metadata(tmp_path):
+    [event] = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={"id": "edit", "type": "fileChange", "status": "completed",
+              "changes": [
+                  {"path": "a.txt", "diff": "", "kind": {"type": "update", "move_path": None}},
+                  {"path": "b.txt", "diff": {"unsupported": True}, "kind": {"type": "update", "move_path": "\nwrong"}},
+                  {"path": "c.txt", "diff": "+actual\n", "kind": {"type": "unknown"}},
+                  {"path": "d.txt", "kind": {"type": "add", "move_path": "wrong.txt"}},
+                  {"path": "", "diff": "+unattributed"},
+              ]}),
+    ])
+    assert event["input"]["changes"] == [
+        {"path": "a.txt", "diff": "", "kind": {"type": "update", "move_path": None}},
+        {"path": "b.txt", "kind": {"type": "update"}},
+        {"path": "c.txt", "diff": "+actual\n"},
+        {"path": "d.txt", "kind": {"type": "add"}},
+    ]
+
+
+def test_codex_file_change_progress_and_stale_start_preserve_terminal_evidence(tmp_path):
+    native = {"id": "edit", "type": "fileChange", "changes": [{"path": "file.txt", "kind": {"type": "add"},
+                                                               "diff": "recorded"}]}
+    events = run_wire(tmp_path, "codex", [
+        codex("item/fileChange/outputDelta", itemId="edit", delta="working"),
+        codex("item/completed", item={**native, "status": "completed"}),
+        codex("item/started", item={**native, "status": "inProgress", "changes": []}),
+        codex("item/fileChange/outputDelta", itemId="edit", delta="done"),
+    ])
+    assert len(events) == 3
+    assert events[0]["fileChangeApplied"] is False
+    assert events[-1]["fileChangeApplied"] is True and events[-1]["status"] == "completed"
+    assert events[-1]["input"]["changes"][0]["diff"] == "recorded"
+
+
 def test_codex_plan_usage_and_compaction_are_not_misreported_as_tools(tmp_path):
     events = run_wire(tmp_path, "codex", [
         codex("turn/plan/updated", explanation="先验证输入", plan=[{"step": "检查素材", "status": "inProgress", "assignee": "未验证身份"}]),

@@ -1,0 +1,16 @@
+.card { min-width: 0; }
+.card header { padding: 0 0 8px; }
+.card header p, .note {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin: 3px 0;
+}
+.card[data-file-diff-state="failed"] header strong { color: var(--red); }
+.card[data-file-diff-state="applied"] header strong { color: var(--green); }
+.file {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+.file h4 { overflow-wrap: anywhere; }
+.file code { color: var(--text); }

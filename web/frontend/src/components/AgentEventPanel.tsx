@@ -1,8 +1,9 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
-import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots, commandStatus, isCommandExecution } from '../lib/agentEvents';
+import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots, commandStatus, isCommandExecution, fileMutationLabel, fileMutationState } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
 import ToolValueInspector from './ToolValueInspector';
+import FileMutationCard from './FileMutationCard';
 import CommandExecutionCard from './CommandExecutionCard';
 import { inspectToolValue } from '../lib/toolValueInspection';
 import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
@@ -54,27 +55,31 @@ function ToolEvent({ event, open, settled, children, childCount, onToggle }: {
   event: AgentEvent; open: boolean; settled: boolean; children?: ReactNode; childCount: number; onToggle: () => void;
 }) {
   const isCommand = isCommandExecution(event);
+  const mutationState = fileMutationState(event, settled);
   const reportedState = event.status || 'pending';
   const state = isCommand ? commandStatus(event, reportedState) : reportedState;
   const active = state === 'running' || state === 'in_progress' || state === 'preparing' || state === 'pending';
   const unconfirmed = settled && active;
   const running = !settled && active;
-  const title = isCommand ? '运行命令' : names[event.name || ''] || event.name || '工具调用';
+  const visualState = unconfirmed || (mutationState === 'unconfirmed')
+    ? 'unconfirmed' : state;
+  const title = isCommand ? '运行命令' : mutationState ? '修改文件' : names[event.name || ''] || event.name || '工具调用';
   const duration = !isCommand && typeof event.startedAt === 'number' && typeof event.completedAt === 'number'
     ? Math.max(0, event.completedAt - event.startedAt) : undefined;
   return <div className="agent-tool" data-tool-call={event.callId || event.id}
-    data-chat-anchor-key={`call:${agentToolKey(event)}`} data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={unconfirmed ? 'unconfirmed' : state} data-tool-status={state}>
-    <DisclosureRow icon={<span className="agent-status-dot" data-state={unconfirmed ? 'unconfirmed' : state} />}
+    data-chat-anchor-key={`call:${agentToolKey(event)}`} data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={visualState} data-tool-status={state}>
+    <DisclosureRow icon={<span className="agent-status-dot" data-state={visualState} />}
       title={title} open={open} expandable expandOnRowClick running={running}
       onToggle={onToggle}
-      headerAccessory={<span className="agent-tool__status">{unconfirmed ? '未收到工具终态' : statusText[state] || state}
+      headerAccessory={<span className="agent-tool__status">{mutationState ? fileMutationLabel[mutationState] : unconfirmed ? '未收到工具终态' : statusText[state] || state}
         {duration !== undefined && <span> · {(duration / 1000).toFixed(1)}s</span>}
         {childCount > 0 && <span className="agent-tool__child-count">{childCount} 个子调用</span>}</span>}
       collapsedContent={event.parentCallId ? <span className="agent-tool__nested">子调用</span> : undefined}>
       {children}
       <div className="agent-tool__details">
         {unconfirmed && <p className="agent-event__note">本轮已结束，此工具的最终状态仍未确认。</p>}
-        {isCommand ? <CommandExecutionCard event={event} showExit={!active} /> : <>
+        {isCommand ? <CommandExecutionCard event={event} showExit={!active} />
+          : mutationState ? <FileMutationCard event={event} state={mutationState} /> : <>
           <ToolValueInspector label="输入" value={event.input} />
           <ToolValueInspector label="结果" value={event.output} />
           {event.exitCode !== undefined && <p className="agent-tool__exit">退出码：{event.exitCode === null ? '未提供' : event.exitCode}</p>}
