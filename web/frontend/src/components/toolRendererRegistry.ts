@@ -5,10 +5,13 @@
  */
 import { createElement, type ReactNode } from 'react';
 import {
-  commandStatus, fileMutationLabel, fileMutationState, isCommandExecution, type AgentEvent,
+  agentToolKey, commandStatus, fileMutationLabel, fileMutationState, isCommandExecution, type AgentEvent,
 } from '../lib/agentEvents';
 import { WebBlock } from '../vendor/deepseek-harness/tool/WebBlock';
 import { webActionTitle, webCardModel } from '../vendor/deepseek-harness/tool/web-card-model';
+import { businessObjectIdentity, type BusinessObject } from '../lib/businessObjects';
+import { fetchBusinessObject } from '../lib/businessObjectApi';
+import BusinessObjectCard from './BusinessObjectCard';
 import CommandExecutionCard from './CommandExecutionCard';
 import FileMutationCard from './FileMutationCard';
 import ToolValueInspector from './ToolValueInspector';
@@ -22,7 +25,20 @@ export interface ToolRendererView {
   details: (showTerminalFacts: boolean) => ReactNode;
 }
 
-type ProjectToolRenderer = (event: AgentEvent, settled: boolean) => ToolRendererView | undefined;
+type ProjectToolRenderer = (
+  event: AgentEvent, settled: boolean, workshopRecords?: readonly BusinessObject[],
+) => ToolRendererView | undefined;
+
+export function businessToolCallKey(event: AgentEvent): string | undefined {
+  return event.name === 'easel_business_objects' &&
+      typeof event.runId === 'string' && /^[A-Za-z0-9_-]{1,512}$/.test(event.runId) &&
+      typeof event.callId === 'string' && !!event.callId.trim() && event.callId.length <= 256 && !/\p{Cc}/u.test(event.callId)
+    ? agentToolKey(event) : undefined;
+}
+
+export function nativeBusinessToolKey(event: AgentEvent): string | undefined {
+  return event.kind === 'tool' && event.nativeBusinessTool === true ? businessToolCallKey(event) : undefined;
+}
 
 export interface ToolRenderer {
   key: string;
@@ -39,11 +55,11 @@ export function createToolRendererRegistry(renderers: readonly ToolRenderer[]) {
   for (const renderer of renderers) {
     for (const name of renderer.names) byName.set(name, renderer);
   }
-  return (event: AgentEvent, settled: boolean): ToolRendererResolution => {
+  return (event: AgentEvent, settled: boolean, workshopRecords?: readonly BusinessObject[]): ToolRendererResolution => {
     try {
       if (event.kind === 'tool' && typeof event.name === 'string') {
         const renderer = byName.get(event.name);
-        const view = renderer?.project(event, settled);
+        const view = renderer?.project(event, settled, workshopRecords);
         if (renderer && view) return { kind: 'specialized', key: renderer.key, view };
       }
       return { kind: 'generic', failed: false };
@@ -81,6 +97,14 @@ export const resolveToolRenderer = createToolRendererRegistry([
           model, renderResults: value => createElement(ToolValueInspector, { label: '引擎结果记录', value }),
         }),
       };
+    },
+  },
+  {
+    key: 'workshop', names: ['easel_business_objects'],
+    project: (event, _settled, records) => !nativeBusinessToolKey(event) || !records?.length ? undefined : {
+      title: '视频工坊',
+      details: () => createElement('div', { 'data-tool-workshop-records': true }, records.map(record =>
+        createElement(BusinessObjectCard, { key: businessObjectIdentity(record), record, onRefresh: fetchBusinessObject }))),
     },
   },
 ]);

@@ -380,6 +380,9 @@ class EventProjector:
         elif kind in ("mcpToolCall", "dynamicToolCall"):
             fields.update(input=item.get("arguments"),
                           output=item.get("result") if kind == "mcpToolCall" else item.get("contentItems"))
+            if (kind == "dynamicToolCall" and item.get("namespace") in (None, "")
+                    and item.get("tool") == "easel_business_objects"):
+                fields["nativeBusinessTool"] = True
             error, result = item.get("error"), item.get("result")
             if error:
                 fields["error"] = error

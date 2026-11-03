@@ -2,11 +2,12 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
 import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots, toolLifecycle } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
-import { resolveToolRenderer } from './toolRendererRegistry';
+import { businessToolCallKey, nativeBusinessToolKey, resolveToolRenderer } from './toolRendererRegistry';
 import ToolRendererDetails from './ToolRendererDetails';
 import { inspectToolValue } from '../lib/toolValueInspection';
 import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
 import BusinessObjectCard from './BusinessObjectCard';
+import { normalizeBusinessObject, type BusinessObject } from '../lib/businessObjects';
 import { fetchBusinessObject } from '../lib/businessObjectApi';
 import PublicationReceiptCard from './PublicationReceiptCard';
 import { fetchPublicationApproval } from '../lib/api';
@@ -50,10 +51,30 @@ function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
   return result;
 }
 
-function ToolEvent({ event, open, settled, children, childCount, onToggle }: {
+/** Workshop evidence comes only from a separate, same-scope Host business event. */
+function joinWorkshopRecords(snapshots: AgentEvent[]) {
+  const nativeCalls = new Set(snapshots.map(nativeBusinessToolKey).filter(key => key !== undefined));
+  const records = new Map<string, BusinessObject[]>();
+  const joined = new Set<AgentEvent>();
+  for (const event of snapshots) {
+    if (event.kind !== 'business' || event.business?.kind !== 'workshop') continue;
+    const key = businessToolCallKey(event);
+    if (!key || !nativeCalls.has(key)) continue;
+    const record = normalizeBusinessObject(event.business);
+    if (!record) continue;
+    const list = records.get(key) ?? [];
+    list.push(record);
+    records.set(key, list);
+    joined.add(event);
+  }
+  return { records, joined };
+}
+
+function ToolEvent({ event, open, settled, children, childCount, onToggle, workshopRecords }: {
   event: AgentEvent; open: boolean; settled: boolean; children?: ReactNode; childCount: number; onToggle: () => void;
+  workshopRecords?: readonly BusinessObject[];
 }) {
-  const renderer = useMemo(() => resolveToolRenderer(event, settled), [event, settled]);
+  const renderer = useMemo(() => resolveToolRenderer(event, settled, workshopRecords), [event, settled, workshopRecords]);
   const view = renderer.kind === 'specialized' ? renderer.view : undefined;
   const { status: state, phase, awaitingTerminal: unconfirmed } = toolLifecycle(view?.status ?? event.status, settled);
   const running = phase === 'running' || (phase === 'preparing' && state === 'preparing');
@@ -125,17 +146,17 @@ function OtherEvent({ event }: { event: AgentEvent }) {
 }
 
 /** Adapted from DeepSeek ui-tool ToolCallTree.tsx: one atomic tool card per branch. */
-function ToolBranch({ branch, settled, isOpen, onToggle }: {
-  branch: ToolCallBranch<AgentEvent>; settled: boolean;
+function ToolBranch({ branch, settled, isOpen, onToggle, workshops }: {
+  branch: ToolCallBranch<AgentEvent>; settled: boolean; workshops: ReadonlyMap<string, readonly BusinessObject[]>;
   isOpen: (branch: ToolCallBranch<AgentEvent>) => boolean;
   onToggle: (key: string, open: boolean) => void;
 }) {
   const open = isOpen(branch);
   return <ToolEvent event={branch.value} open={open} settled={settled} childCount={branch.children.length}
-    onToggle={() => onToggle(branch.key, !open)}>
+    workshopRecords={workshops.get(branch.key)} onToggle={() => onToggle(branch.key, !open)}>
     {branch.children.length > 0 && <div className="agent-tool__children" data-subcalls>
       {branch.children.map(child => <ToolBranch key={child.key} branch={child} settled={settled}
-        isOpen={isOpen} onToggle={onToggle} />)}
+        isOpen={isOpen} onToggle={onToggle} workshops={workshops} />)}
     </div>}
   </ToolEvent>;
 }
@@ -146,6 +167,7 @@ export default function AgentEventPanel({ events, expandedCallId, expandedRunId,
 }) {
   const [openCalls, setOpenCalls] = useState(() => new Map<string, boolean>());
   const snapshots = useMemo(() => toolSnapshots(events), [events]);
+  const workshops = useMemo(() => joinWorkshopRecords(snapshots), [snapshots]);
   const { calls, parents } = useMemo(() => projectToolCallTree(
     snapshots.filter(event => event.kind === 'tool').map(event => ({
       key: agentToolKey(event), value: event,
@@ -154,7 +176,7 @@ export default function AgentEventPanel({ events, expandedCallId, expandedRunId,
     }))), [snapshots]);
   if (!snapshots.length) return null;
   const isToolOpen = ({ key, value, children }: ToolCallBranch<AgentEvent>) => openCalls.get(key) ??
-    (children.length > 0 || (value.callId === expandedCallId && (expandedRunId === undefined || value.runId === expandedRunId)));
+    (children.length > 0 || workshops.records.has(key) || (value.callId === expandedCallId && (expandedRunId === undefined || value.runId === expandedRunId)));
   const toggleTool = (key: string, open: boolean) => setOpenCalls(previous => new Map(previous).set(key, open));
   const plans = new Map<string, AgentEvent[]>();
   const subagents = new Map<string, { first: AgentEvent; events: AgentEvent[] }>();
@@ -175,6 +197,7 @@ export default function AgentEventPanel({ events, expandedCallId, expandedRunId,
   }
   return <div className="agent-events" role="region" aria-label="任务执行记录">
     {snapshots.map(event => {
+      if (workshops.joined.has(event)) return null;
       if (event.kind === 'subagent') {
         const lineage = subagents.get(turnKey(event));
         return lineage?.first === event ? <AgentSubagentLineage key={JSON.stringify([sessionId, turnKey(event)])}
@@ -183,7 +206,7 @@ export default function AgentEventPanel({ events, expandedCallId, expandedRunId,
       if (event.kind === 'tool') {
         const key = agentToolKey(event);
         return parents.has(key) ? null : <ToolBranch key={`tool:${key}`} branch={calls.get(key)!}
-          settled={settled} isOpen={isToolOpen} onToggle={toggleTool} />;
+          settled={settled} isOpen={isToolOpen} onToggle={toggleTool} workshops={workshops.records} />;
       }
       if ((event.kind !== 'plan' || typeof event.text === 'string')) return <OtherEvent key={agentEventKey(event)} event={event} />;
       const revisions = plans.get(turnKey(event))!;

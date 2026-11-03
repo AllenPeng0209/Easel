@@ -170,6 +170,23 @@ def test_native_web_search_retains_opaque_result_arrays_and_explicit_null(tmp_pa
     assert event["output"] == expected
 
 
+@pytest.mark.parametrize("item_type,namespace,tool,trusted", [
+    ("dynamicToolCall", None, "easel_business_objects", True),
+    ("dynamicToolCall", "", "easel_business_objects", True),
+    ("dynamicToolCall", "external", "easel_business_objects", False),
+    ("dynamicToolCall", None, "easel_business_objects_other", False),
+    ("mcpToolCall", None, "easel_business_objects", False),
+])
+def test_native_business_marker_is_reserved_to_exact_host_dynamic_tool(tmp_path, item_type, namespace, tool, trusted):
+    [event] = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={"id": "exec-business-1", "type": item_type, "namespace": namespace,
+                                     "tool": tool, "status": "completed", "arguments": {"kind": "workshop"}}),
+    ])
+    assert event.get("nativeBusinessTool", False) is trusted
+    assert event["callId"] == "exec-business-1"
+    assert event["input"] == {"kind": "workshop"}
+
+
 def test_codex_decline_interruption_and_failure_do_not_get_overwritten_by_late_progress(tmp_path):
     events = run_wire(tmp_path, "codex", [
         codex("item/completed", item={"id": "cmd", "type": "commandExecution", "status": "declined",
