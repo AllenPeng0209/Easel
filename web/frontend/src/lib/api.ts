@@ -1,6 +1,6 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
-import type { ChatSession, ReasoningSummary, AnswerCompletion, ChatFailure } from './store';
+import type { ChatSession, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef } from './store';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
 import type { ChatCommand, ChatCommandOption } from './chatCommands';
 import { mergeSessionCatalog } from './sessionSync';
@@ -727,6 +727,7 @@ export function streamChat(
   sessionReferences?: ChatSessionReference[],
   command?: ChatCommand,
   onAnswerCompleted?: (receipt: AnswerCompletion) => void,
+  planRef?: ChatPlanRef,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -885,7 +886,7 @@ export function streamChat(
               body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef,
                 ...(references?.length ? { references } : {}),
                 ...(sessionReferences?.length ? { sessionReferences } : {}),
-                ...(command ? { command } : {}) }),
+                ...(command ? { command } : {}), ...(planRef ? { planRef } : {}) }),
               signal: controller.signal,
             })
           : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {

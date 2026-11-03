@@ -1,6 +1,7 @@
 import { projectUrl, projectFetch } from '../lib/projectScope';
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import MessageBubble from './MessageBubble';
+import ChatPlanPanel from './ChatPlanPanel';
 import DeliverablePreviewPane, { ChatInspectionPane } from './DeliverablePreviewPane';
 import { SubagentTranscript } from './AgentSubagentLineage';
 import type { AgentSubagent } from '../lib/agentEvents';
@@ -13,7 +14,7 @@ import {
   attachmentReferenceLabel, MAX_CHAT_REFERENCES, MAX_CHAT_SESSION_REFERENCES, validateChatReferences,
   validateChatSessionReferences, type ChatDraftSessionReference, type ChatReference,
 } from '../lib/chatReferences';
-import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from '../lib/store';
+import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ChatPlanRef } from '../lib/store';
 import { uploadFiles, adoptOversize, fetchSessionReference } from '../lib/api';
 import type { UploadedFile } from '../lib/api';
 import type { ChatDeliverable } from '../lib/deliverables';
@@ -53,6 +54,7 @@ interface ChatPageProps {
   onResumeQueue?: () => void;
   historyNotice?: string;
   onOpenFailureSettings?: () => void;
+  onExecutePlan?: (plan: ChatPlanRef & { text: string }) => boolean | Promise<boolean>;
   admissionNotice?: { message: string; action?: { label: string; run: () => void } };
 }
 
@@ -71,7 +73,7 @@ function greeting(): string {
 }
 
 export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onQuestionAnswered, onQuestionClosed,
-  sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings }: ChatPageProps) {
+  sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings, onExecutePlan }: ChatPageProps) {
   const [queueEdit, setQueueEdit] = useState<{ id: string; text: string } | null>(null);
   const queueEditChange = useRef(onQueueEditChange);
   queueEditChange.current = onQueueEditChange;
@@ -109,6 +111,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const [selectingFile, setSelectingFile] = useState(false);
   const selectingFileRef = useRef(false);
   const [pickingSession, setPickingSession] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [draftError, setDraftError] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
@@ -224,6 +227,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     if (e.dataTransfer.files?.length) doUpload(e.dataTransfer.files);
   };
   const submitDraft = async (intent: 'send' | 'steer') => {
+    if (planOpen) return;
     const { text: submittedText, references: submittedReferences,
       sessionReferences: submittedSessionReferences, command: submittedCommand } = draftContentRef.current;
     const trimmed = submittedText.trim();
@@ -450,6 +454,19 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     })}
   </div>;
 
+  const composerWithPlan = (hero: boolean) => <>
+    {onExecutePlan && <button className="btn btn-sm" type="button" aria-expanded={planOpen}
+      disabled={!planOpen && (isStreaming || sending || selectingFile)}
+      onClick={() => setPlanOpen(value => !value)}>{planOpen ? '返回对话输入' : '计划审阅'}</button>}
+    {planOpen && onExecutePlan ? <ChatPlanPanel sessionId={session.id} canOperate={!isStreaming}
+      onExecute={async plan => {
+        if (isStreaming || sendingRef.current || selectingFileRef.current) return false;
+        const admitted = await onExecutePlan(plan);
+        if (admitted && mountedRef.current) setPlanOpen(false);
+        return admitted;
+      }} /> : inputBox(hero)}
+  </>;
+
   const admissionBanner = admissionNotice && <div className="composer-notice">
     <span role="status">{admissionNotice.message}</span>
     {admissionNotice.action && <button type="button" disabled={sending} onClick={admissionNotice.action.run}>
@@ -470,7 +487,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
           <h1 className="chat-hero-title">{greeting()}</h1>
           <p className="chat-hero-sub">{apiDirect ? 'API 直连：写文案、策划选题、分析附件。本机工具和自动发布未启用。'
             : '从选题到发布，一站式帮你把想法做成能发的内容。'}</p>
-          {queueDock}{inputBox(true)}
+          {queueDock}{composerWithPlan(true)}
           {admissionBanner}
           {historyNotice && <p className="chat-history-notice" role="status">{historyNotice}</p>}
           <div className="suggestions">
@@ -535,7 +552,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
               if (msg.role === 'user') {
                 actions = {
                   onCopy: copy,
-                  onRetry: isLastFinal
+                  onRetry: isLastFinal && !msg.planRef
                     ? () => onResend(i, msg.content, msg.attachments, msg.agentContent)
                     : undefined,
                   canModify: !isStreaming,
@@ -545,7 +562,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 const prevUser = pi >= 0 && session.messages[pi]?.role === 'user' ? session.messages[pi] : null;
                 actions = {
                   onCopy: copy,
-                  onRetry: (isLastFinal && prevUser)
+                  onRetry: (isLastFinal && prevUser && !prevUser.planRef)
                     ? () => onResend(pi, prevUser.content, prevUser.attachments, prevUser.agentContent)
                     : undefined,
                   canModify: !isStreaming,
@@ -589,7 +606,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
       <div className="chat-input-area">
         {!reading.following && <button className="chat-back-to-bottom" onClick={reading.backToBottom}>
           {reading.unread ? '有新内容 · 回到底部' : '回到底部'} <span>↓</span></button>}
-        <div className="chat-input-inner">{queueDock}{inputBox(false)}
+        <div className="chat-input-inner">{queueDock}{composerWithPlan(false)}
           {admissionBanner}
           {historyNotice && <p className="chat-history-notice" role="status">{historyNotice}</p>}
           <p className="chat-autonomy-hint">{apiDirect ? '文字与附件分析模式' : 'AI 持续推进任务；需要你补充信息时会显示输入卡。'}</p></div>

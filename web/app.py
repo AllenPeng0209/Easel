@@ -755,6 +755,12 @@ from web.access_control import AccessControlMiddleware
 app.include_router(_access_router(lambda: PROJECT_ROOT, lambda: _project_registry(PROJECT_ROOT)))
 app.add_middleware(AccessControlMiddleware, get_root=lambda: PROJECT_ROOT)
 
+from web.chat_plan_routes import create_router as _chat_plan_router, plan_scope, PlanReference
+from easel.chat_plans import ChatPlanError, ChatPlanStore
+
+app.include_router(_chat_plan_router(lambda: _sessions_dir(), settings_provider=lambda: _chat_api_settings(),
+                                     require_operation=lambda: _require_operation()))
+
 from web.workshop_routes import create_router as _workshop_router
 from easel.beeftv_bridge import (runtime_status as _beeftv_status,
                                create_canvas as _beeftv_canvas,
@@ -3055,6 +3061,7 @@ class ChatRequest(BaseModel):
     topicRef: ChatTopicRef | None = None
     workshopRef: ChatWorkshopRef | None = None
     command: ChatCommand | None = None
+    planRef: PlanReference | None = None
 
 
 async def _resolve_chat_topic(ref: ChatTopicRef | None) -> dict | None:
@@ -4844,6 +4851,17 @@ async def api_chat_sessions_merge(req: ChatSessionsRequest):
         # server-verified ownership check as a fresh chat submission.
         for session in sessions:
             for message in [*session["messages"], *session.get("queued", [])]:
+                if "planRef" in message:
+                    ref = PlanReference.model_validate(message["planRef"])
+                    try:
+                        plan = ChatPlanStore(_sessions_dir()).get(**plan_scope(session["id"]),
+                            plan_id=ref.planId, revision=ref.revision)
+                    except ChatPlanError:
+                        raise ValueError("计划执行历史不属于当前会话") from None
+                    if (message.get("role") != "user" or plan["digest"] != ref.digest
+                            or plan["text"] != message.get("content") or not plan.get("executionTurnId")
+                            or plan["executionTurnId"] != message.get("clientTurnId")):
+                        raise ValueError("计划执行历史与批准版本不一致")
                 if (message.get("attachments") or "references" in message
                         or "sessionReferences" in message or "command" in message):
                     history_request = ChatRequest(
@@ -5028,6 +5046,14 @@ async def api_chat_stream(req: ChatRequest):
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
     if req.turnId and not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", req.turnId):
         raise HTTPException(400, "无效的任务标识")
+    if req.planRef is not None:
+        plan = req.planRef
+        expected_turn = f"plan-{plan.planId}-{plan.revision}"
+        if (req.turnId != expected_turn or not req.sessionId or req.attachments or req.references
+                or req.sessionReferences or req.topicRef or req.workshopRef or req.command):
+            raise HTTPException(422, "计划执行必须绑定批准版本和原执行编号")
+    elif req.turnId and req.turnId.startswith("plan-"):
+        raise HTTPException(422, "计划执行缺少批准版本")
     req = req.model_copy(update={"turnId": req.turnId or uuid.uuid4().hex,
                                  "sessionId": req.sessionId or "web-" + uuid.uuid4().hex})
     runtime = _chat_backend(req.sessionId)
@@ -5046,12 +5072,31 @@ async def api_chat_stream(req: ChatRequest):
         request_payload.pop("sessionReferences")
     if req.command is None:
         request_payload.pop("command")
+    if req.planRef is None:
+        request_payload.pop("planRef")
     payload_hash = hashlib.sha256(json.dumps({"request": request_payload, "runtime": runtime},
         sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
     catalog = ChatHistoryStore(_sessions_dir())
     existing = catalog.turn_claim(req.turnId)
     if existing is not None:
         return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId)
+    plan_store = None
+    if req.planRef is not None:
+        _require_operation()
+        ref = req.planRef
+        scope = plan_scope(req.sessionId)
+        plan_store = ChatPlanStore(_sessions_dir())
+        try:
+            record = plan_store.get(**scope, plan_id=ref.planId, revision=ref.revision)
+            if record["digest"] != ref.digest or req.message != record["text"]:
+                raise HTTPException(409, "计划正文或版本摘要不一致")
+        except ChatPlanError as error:
+            raise HTTPException(error.status_code, str(error)) from None
+        except (OSError, sqlite3.Error):
+            raise HTTPException(503, "计划记录暂时无法读取") from None
+        req = req.model_copy(update={"message":
+            "按以下已批准的生产计划执行制作。计划批准仅适用于制作；公开发布仍须另行确认具体内容和版本。"
+            f"\n\n【已批准方案 V{ref.revision}】\n" + record["text"]})
     try:
         topic, workshop = await _resolve_chat_references(req)
         captures = await asyncio.to_thread(_capture_session_references, req, catalog) if req.sessionReferences else []
@@ -5071,6 +5116,15 @@ async def api_chat_stream(req: ChatRequest):
         if existing is not None:
             return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId)
         raise
+    if plan_store is not None and req.planRef is not None:
+        _require_operation()
+        try:
+            plan_store.claim_execution(**scope, plan_id=ref.planId, revision=ref.revision,
+                                       digest=ref.digest, turn_id=req.turnId, request_id=payload_hash)
+        except ChatPlanError as error:
+            raise HTTPException(error.status_code, str(error)) from None
+        except (OSError, sqlite3.Error):
+            raise HTTPException(503, "计划执行记录暂时无法保存") from None
     event_path = _job_event_file(req.turnId)
     try:
         admitted, claim = catalog.claim_turn(req.turnId, req.sessionId, payload_hash, event_path)
@@ -5994,6 +6048,8 @@ async def api_chat_stop(req: StopRequest):
 @app.post("/api/chat")
 async def api_chat(req: ChatRequest):
     """非流式对话（备选）。"""
+    if req.planRef is not None or (req.turnId and req.turnId.startswith("plan-")):
+        raise HTTPException(409, "请通过流式对话执行已批准的计划")
     runtime = _chat_backend(req.sessionId)
     topic, workshop = await _resolve_chat_references(req)
     captures = await asyncio.to_thread(_capture_session_references, req, ChatHistoryStore(_sessions_dir())) if req.sessionReferences else []

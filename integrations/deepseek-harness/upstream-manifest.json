@@ -7917,12 +7917,34 @@
     "reuse_kind": "adapted",
     "changes": "适配取消动作的明确请求和精确状态查询，接 Easel 权限及持久回执。",
     "verification_status": "B21_single_bound_task_cancel_and_chat_receipt_verified"
+  },
+  {
+    "feature_id": "B26",
+    "upstream_path": "packages/client/ui-plan/src/client/PlanCard.tsx",
+    "upstream_sha256": "8ff2881d16c904805f3e14aa1aa37c37453f83b8574ecf1c9f3340d502df971b",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ChatPlanPanel.tsx",
+    "destination_sha256": "c3e431c4cc269e468b7afc127dd7e98daf9edb6197d99e4eace2cdf40c1870d5",
+    "reuse_kind": "adapted",
+    "changes": "适配计划卡、全文查看和独立审批入口，接入持久版本与明确执行。",
+    "verification_status": "B26_exact_plan_review_and_chat_execution_verified"
+  },
+  {
+    "feature_id": "B26",
+    "upstream_path": "packages/client/ui-plan/src/client/review-store.ts",
+    "upstream_sha256": "cb0edde79572f70bee971453f897f57b27d0219dc2b13a1698a5eb1024c8c0a2",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/lib/chatPlans.ts",
+    "destination_sha256": "1d850385210258c42cd915cbcb7faf4b8e2d69a77465c47d986f6ac002704704",
+    "reuse_kind": "adapted",
+    "changes": "适配计划审核状态和精确版本绑定，读取 Easel 用户/IP/会话的计划历史。",
+    "verification_status": "B26_exact_plan_review_and_chat_execution_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 93,
+    "source_migration_files": 95,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 78,
+    "adapted_upstream_files": 80,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

@@ -34,6 +34,12 @@ export interface ReasoningSummary {
   truncated: boolean;
 }
 
+export interface ChatPlanRef {
+  planId: string;
+  revision: number;
+  digest: string;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -42,6 +48,7 @@ export interface ChatMessage {
   references?: ChatReference[];
   sessionReferences?: ChatSessionReference[];
   command?: ChatCommand;
+  planRef?: ChatPlanRef;
   topicRef?: { id: string; snapshotHash: string };
   workshopRef?: WorkshopReference;
   reasoningSummary?: ReasoningSummary;

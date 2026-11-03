@@ -44,6 +44,7 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
         projectFetch: async (url, options) => url.endsWith('/upload/validate') && validate
           ? validate(options) : ({ json: async () => ({ max_mb: 50 }) }) };
       if (name.endsWith('/api')) return { uploadFiles: async () => [], adoptOversize: async () => [], mediaUrl: path => `/api/media/${path}` };
+      if (name === './ChatPlanPanel') return { __esModule: true, default: 'chat-plan-panel' };
       if (name === './StructuredComposerEditor') return { __esModule: true, default: 'structured-editor' };
       if (name === './MessageBubble') return { __esModule: true, default: 'message-bubble' };
       if (name.includes('QuestionCards') || name.includes('BrushEntry')) return { default: () => null };
@@ -477,4 +478,23 @@ test('work details preference controls persist and defer folding until the selec
   assert.equal(select(nodes, '工作细节').props.value, 'detailed');
   assert.equal(select(nodes, '简洁模式自动折叠').props.value, 'next-input');
   assert.equal(assistantRows(nodes)[1].props.detailMode, 'detailed');
+});
+
+
+test('plan review is explicit and preserves the ordinary composer draft', async () => {
+  const dispatched = [];
+  const ui = view({ initial: 'ordinary draft', queueProps: {
+    onExecutePlan: async plan => { dispatched.push(plan); return true; },
+  } });
+  let nodes = await ui.ready();
+  const toggle = nodes.find(node => node.type === 'button' && text(node) === '计划审阅');
+  toggle.props.onClick();
+  nodes = ui.render();
+  assert.equal(nodes.find(node => node.type === 'structured-editor'), undefined);
+  const panel = nodes.find(node => node.type === 'chat-plan-panel');
+  const plan = { planId: 'a'.repeat(32), revision: 1, digest: 'b'.repeat(64), text: 'reviewed text' };
+  assert.equal(await panel.props.onExecute(plan), true);
+  assert.deepEqual(dispatched, [plan]);
+  nodes = ui.render();
+  assert.equal(nodes.find(node => node.type === 'structured-editor').props.value, 'ordinary draft');
 });

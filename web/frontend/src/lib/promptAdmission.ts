@@ -69,12 +69,13 @@ function sameCommand(first?: ChatCommand, second?: ChatCommand): boolean {
 }
 
 function promptIdentity(attempt: PromptAttempt): string {
-  const { topicRef, workshopRef, attachments } = attempt.message;
+  const { topicRef, workshopRef, attachments, planRef } = attempt.message;
   return JSON.stringify([attempt.wireText, attempt.persona || null, attempt.message.content,
     fileIdentity(attachments), attempt.message.references || [], attempt.message.sessionReferences || [],
     attempt.message.command ? [attempt.message.command.id, attempt.message.command.token] : null, topicRef ? [topicRef.id, topicRef.snapshotHash] : null,
     workshopRef ? [workshopRef.id, workshopRef.revision, workshopRef.engineRevision,
-      workshopRef.artifactId, workshopRef.artifactSha256] : null, attempt.truncateAt ?? null]);
+      workshopRef.artifactId, workshopRef.artifactSha256] : null,
+    planRef ? [planRef.planId, planRef.revision, planRef.digest] : null, attempt.truncateAt ?? null]);
 }
 
 export function samePromptAttempt(first: PromptAttempt, second: PromptAttempt): boolean {

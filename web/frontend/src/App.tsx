@@ -43,7 +43,7 @@ import {
   loadActiveId,
   saveActiveId,
 } from './lib/store';
-import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ReasoningSummary, AnswerCompletion, ChatFailure } from './lib/store';
+import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef } from './lib/store';
 
 const TAB_SESSION_KEY = projectStorageKey('easel_tab_session');
 const ONBOARDING_SEEN_KEY = projectStorageKey('easel_onboarding_seen');
@@ -749,6 +749,7 @@ export default function App() {
         owner.answerCompletion = answerCompletion;
         setStreams(p => p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], answerCompletion } } : p);
       },
+      prompt?.message.planRef,
     );
     return owner;
   }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage, confirmPromptAdmission, failPromptAdmission]);
@@ -903,12 +904,13 @@ export default function App() {
     references?: ChatReference[],
     sessionReferences?: ChatSessionReference[],
     command?: ChatCommand,
+    planRef?: ChatPlanRef,
   ) => {
     const trimmed = trimChatReferenceText(displayText, references, sessionReferences);
     const visible = trimmed.text;
     const claim = command ? validateChatCommand(displayText, command) : null;
     if (command && !claim) return false;
-    const agentMessage = legacyAgentText ? legacyAgentText.trim() : visible;
+    const agentMessage = planRef ? displayText : legacyAgentText ? legacyAgentText.trim() : visible;
     if (!agentMessage && attachments.length === 0) return false;
     const cur = sessionsRef.current.find((s) => s.id === sessionId);
     const persona = cur ? cur.persona : selectedPersona || undefined;
@@ -925,11 +927,12 @@ export default function App() {
       state: 'sending', wireText: agentMessage, persona, composer, truncateAt,
       baseline: truncateAt !== undefined && cur ? JSON.stringify(cur.messages.slice(truncateAt)) : undefined,
       message: {
-        role: 'user', content: visible, created: Date.now(),
+        role: 'user', content: planRef ? displayText : visible, created: Date.now(),
         ...(attachments.length ? { attachments: attachments.map(item => ({ ...item })) } : {}),
         ...(trimmed.references?.length ? { references: trimmed.references } : {}),
         ...(trimmed.sessionReferences?.length ? { sessionReferences: toWireSessionReferences(trimmed.sessionReferences) } : {}),
         ...(claim ? { command: claim } : {}),
+        ...(planRef ? { planRef: { ...planRef } } : {}),
         ...(topicRef ? { topicRef: { ...topicRef } } : {}),
         ...(workshopRef ? { workshopRef: { ...workshopRef } } : {}),
         ...(legacyAgentText && legacyAgentText !== visible ? { agentContent: legacyAgentText } : {}),
@@ -954,10 +957,20 @@ export default function App() {
     if (streamCtl.current[sessionId] || streamAcc.current[sessionId]) return false;
     savePromptAttempt(sessionId, attempt);
     setAdmissionFeedback(value => ({ ...value, [sessionId]: '' }));
+    const waitForAdmission = composer || !!planRef;
     const owner = startStream(sessionId, attempt.wireText, attempt.persona, attempt.message.attachments,
-      attempt.turnId, attempt.message.topicRef, attempt.message.workshopRef, undefined, undefined, attempt, composer);
-    return composer ? owner.admissionPromise! : true;
+      attempt.turnId, attempt.message.topicRef, attempt.message.workshopRef, undefined, undefined, attempt, waitForAdmission);
+    return waitForAdmission ? owner.admissionPromise! : true;
   }, [selectedPersona, startStream]);
+
+  const handleExecutePlan = useCallback((sessionId: string, plan: ChatPlanRef & { text: string }) => {
+    if (!canOperate || !sessionsRef.current.some(session => session.id === sessionId)
+        || !/^[a-f0-9]{32}$/.test(plan.planId) || !Number.isSafeInteger(plan.revision) || plan.revision < 1
+        || !/^[a-f0-9]{64}$/.test(plan.digest)) return false;
+    const ref = { planId: plan.planId, revision: plan.revision, digest: plan.digest };
+    return sendUserAndStream(sessionId, plan.text, [], undefined, undefined,
+      `plan-${ref.planId}-${ref.revision}`, undefined, undefined, false, undefined, undefined, undefined, ref);
+  }, [canOperate, sendUserAndStream]);
 
   const handleSendMessage = useCallback((sessionId: string, displayText: string, attachments?: UploadedFile[], references?: ChatReference[], sessionReferences?: ChatSessionReference[], command?: ChatCommand) => {
     const session = sessionsRef.current.find(item => item.id === sessionId);
@@ -1132,7 +1145,7 @@ export default function App() {
     const original = messages?.[userIndex];
     const last = messages?.at(-1);
     const latestUserIndex = (messages?.length ?? 0) - (last?.role === 'assistant' ? 2 : 1);
-    if (original?.role !== 'user' || userIndex !== latestUserIndex || last?.status === 'unconfirmed') return;
+    if (original?.role !== 'user' || original.planRef || userIndex !== latestUserIndex || last?.status === 'unconfirmed') return;
     const failed = last?.status === 'failed' || !!last?.failure;
     if (failed && (last?.failure?.retryable !== true || last.failure.phase !== 'startup'
       || !['network', 'timeout', 'rate_limit'].includes(last.failure.code)
@@ -1498,6 +1511,7 @@ export default function App() {
                 ? { action: { label: '核对上一条发送', run: () => reconcilePromptAttempt(activeSession.id) } } : {}),
             } : undefined}
             sessionReferenceCandidates={sessions.filter(item => item.id !== activeSession.id && item.messages.length > 0)}
+            onExecutePlan={canOperate ? plan => handleExecutePlan(activeSession.id, plan) : undefined}
             onSend={(displayText, attachments, references, sessionReferences, command) =>
               handleSendMessage(activeSession.id, displayText, attachments, references, sessionReferences, command)}
             onSteer={streams[activeSession.id]?.steerTurnId && streams[activeSession.id]?.lifecycle === 'running'

@@ -166,7 +166,7 @@ def test_failed_preflight_rechecks_identical_concurrent_claim(artifact_http_envi
     prompts = install_runner(monkeypatch, 'api')
 
     def concurrent(req, catalog):
-        payload = req.model_dump(exclude={'topicRef', 'workshopRef', 'references', 'command'})
+        payload = req.model_dump(exclude={'topicRef', 'workshopRef', 'references', 'command', 'planRef'})
         digest = hashlib.sha256(json.dumps({'request': payload, 'runtime': 'api'},
             ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         path = web._job_event_file(req.turnId)

@@ -142,6 +142,8 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
     return (
       <div className="message-row user">
         <div className="msg-col user">
+          {message.planRef && Number.isSafeInteger(message.planRef.revision) && message.planRef.revision > 0 &&
+            <small className="agent-event__note" data-chat-plan-execution>已批准方案 V{message.planRef.revision}</small>}
           {message.attachments?.length ? <UserAttachments files={message.attachments} /> : null}
           {message.content.trim() && <UserMessageBubble className="message-bubble user"><UserText message={message} /></UserMessageBubble>}
           {actions && message.content.trim() && <ActionBar actions={actions} text={message.content} />}
