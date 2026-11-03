@@ -34,6 +34,12 @@ _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}
 MAX_TEXT = 32000
 _TRUNCATED = "\n[truncated: remaining content omitted]"
 
+_SETTLED_TOOL_STATUSES = ("completed", "failed", "declined", "interrupted", "unconfirmed")
+_CODEX_STATUSLESS_TOOLS = ("webSearch", "imageView", "sleep", "functionCallOutput")
+_ACP_TOOL_STATUSES = {
+    "pending": "preparing", "in_progress": "running", "completed": "completed", "failed": "failed",
+}
+
 _COLLAB_TOOLS = frozenset({
     "spawnAgent", "sendInput", "resumeAgent", "wait", "closeAgent",
     "sendMessage", "followupTask", "interruptAgent", "listAgents",
@@ -102,6 +108,16 @@ def native_subagent_descriptors(item, *, parent_id=None, live=False) -> list[dic
 
 def _now() -> int:
     return int(time.time() * 1000)
+
+
+def _codex_tool_status(kind, native_status, completed: bool) -> str:
+    if native_status in ("failed", "declined", "interrupted"):
+        return native_status
+    if not completed:
+        return "running"
+    if native_status == "completed" or (native_status is None and kind in _CODEX_STATUSLESS_TOOLS):
+        return "completed"
+    return "unconfirmed"
 
 
 def _valid_tool_parent(value, child_id) -> bool:
@@ -210,6 +226,11 @@ class EventProjector:
         if not isinstance(call_id, str) or not call_id or len(call_id) > 240:
             return
         previous = self.calls.get(call_id, {})
+        before, after = previous.get("status"), fields.get("status")
+        if (before in _SETTLED_TOOL_STATUSES and after not in _SETTLED_TOOL_STATUSES
+                or before in _SETTLED_TOOL_STATUSES and before != "unconfirmed" and after == "unconfirmed"
+                or before == "running" and after == "preparing"):
+            return
         # An explicit null exit code is a settled engine observation, not a missing update.
         merged = {**previous, "callId": call_id,
                   **{key: value for key, value in fields.items() if value is not None or key == "exitCode"}}
@@ -224,19 +245,6 @@ class EventProjector:
             safe["truncated"] = True
         self.calls[call_id] = safe
         self.event("tool", **safe)
-
-    @staticmethod
-    def _status(value, completed=False):
-        status = str(value or "").lower().replace("_", "")
-        if status in ("failed", "error", "declined", "rejected"):
-            return "failed"
-        if status in ("interrupted", "cancelled", "canceled", "stopped"):
-            return "interrupted"
-        if status in ("completed", "success", "succeeded"):
-            return "completed"
-        if status in ("pending", "preparing", "queued"):
-            return "preparing"
-        return "completed" if completed else "running"
 
     @staticmethod
     def _plan_steps(items, *fields):
@@ -258,6 +266,8 @@ class EventProjector:
             command_output = method == "item/commandExecution/outputDelta"
             identifier = params.get("itemId")
             prior = self.calls.get(identifier, {})
+            if prior.get("status") in _SETTLED_TOOL_STATUSES:
+                return
             delta = params.get("delta")
             if isinstance(delta, str):
                 existing = prior.get("output") if isinstance(prior.get("output"), str) else ""
@@ -280,6 +290,8 @@ class EventProjector:
         if method == "item/mcpToolCall/progress":
             identifier = params.get("itemId")
             prior = self.calls.get(identifier, {})
+            if prior.get("status") in _SETTLED_TOOL_STATUSES:
+                return
             self.tool(identifier, name=prior.get("name", "mcp"), status=prior.get("status", "running"),
                       progress=params.get("message"))
             return
@@ -302,7 +314,8 @@ class EventProjector:
                        summary="上下文已整理" if completed else "正在整理上下文")
             return
         identifier = item.get("id")
-        status = self._status(item.get("status"), completed)
+        native_status = item.get("status")
+        status = _codex_tool_status(kind, native_status, completed)
         if kind == "collabAgentToolCall":
             if not isinstance(identifier, str) or not identifier or len(identifier) > 240:
                 return
@@ -327,29 +340,21 @@ class EventProjector:
                 exit_code = item["exitCode"]
                 if exit_code is None or type(exit_code) is int and -(2**31) <= exit_code < 2**31:
                     fields["exitCode"] = exit_code
-                    if status != "interrupted" and exit_code not in (None, 0):
+                    if status not in ("interrupted", "declined") and exit_code not in (None, 0):
                         fields["status"] = "failed"
         elif kind == "fileChange":
-            previous = self.calls.get(identifier, {}) if isinstance(identifier, str) else {}
-            terminal_statuses = ("completed", "failed", "declined", "interrupted", "unconfirmed")
-            if (not completed and "fileChangeApplied" in previous and previous.get("status") in terminal_statuses):
-                return
-            native_status = item.get("status")
-            if completed:
-                status = native_status if native_status in terminal_statuses else "unconfirmed"
-            else:
-                status = "running"
             fields.update(name="apply_patch", status=status,
                           fileChangeApplied=completed and native_status == "completed",
                           input={"changes": _file_changes(item.get("changes"))})
         elif kind in ("mcpToolCall", "dynamicToolCall"):
             fields.update(input=item.get("arguments"),
                           output=item.get("result") if kind == "mcpToolCall" else item.get("contentItems"))
-            if item.get("error"):
-                fields.update(status="failed", error=item["error"])
-            if isinstance(item.get("result"), dict) and item["result"].get("isError") is True:
-                fields["status"] = "failed"
-            if item.get("success") is False:
+            error, result = item.get("error"), item.get("result")
+            if error:
+                fields["error"] = error
+            if (status not in ("interrupted", "declined") and
+                    (error or isinstance(result, dict) and result.get("isError") is True
+                     or item.get("success") is False)):
                 fields["status"] = "failed"
         elif kind == "webSearch":
             fields.update(name="web_search", input={"query": item.get("query"), "action": item.get("action")},
@@ -382,8 +387,21 @@ class EventProjector:
                 provider_parent = claude.get("parentToolUseId") if isinstance(claude, dict) else None
                 if _valid_tool_parent(provider_parent, identifier):
                     parent = provider_parent
-        self.tool(identifier, name=update.get("kind") or prior.get("name") or update.get("title") or "tool",
-                  title=update.get("title"),
-                  status=self._status(update.get("status")) if update.get("status") is not None else prior.get("status", "preparing"),
-                  input=update.get("rawInput"), output=update.get("rawOutput", update.get("content")),
+        native_status = update.get("status")
+        status = prior.get("status", "preparing" if native_status is None else "unknown")
+        if isinstance(native_status, str):
+            status = _ACP_TOOL_STATUSES.get(native_status, status)
+        name, title, tool_kind = (update.get(field) for field in ("name", "title", "kind"))
+        name = name if isinstance(name, str) and name else None
+        title = title if isinstance(title, str) else None
+        tool_kind = tool_kind if isinstance(tool_kind, str) else None
+        content = update.get("content")
+        content = content if isinstance(content, list) else None
+        output = update.get("rawOutput")
+        output_source = "raw" if output is not None else None
+        if output is None and content is not None and prior.get("outputSource") != "raw":
+            output, output_source = content, "content"
+        self.tool(identifier, name=name or prior.get("name") or tool_kind or title or "tool",
+                  title=title, toolKind=tool_kind, status=status, input=update.get("rawInput"),
+                  output=output, outputSource=output_source, content=content,
                   locations=update.get("locations"), parentCallId=parent)

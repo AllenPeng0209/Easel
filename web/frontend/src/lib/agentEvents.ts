@@ -113,7 +113,28 @@ export function commandStatus(event: AgentEvent, status: string): string {
 }
 
 const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business', 'steer', 'subagent']);
-const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped', 'denied', 'declined']);
+const terminalStatuses = ['completed', 'failed', 'interrupted', 'cancelled', 'stopped', 'denied', 'declined'] as const;
+type ObservedTerminalStatus = typeof terminalStatuses[number];
+const terminal = new Set<string>([...terminalStatuses, 'unconfirmed']);
+type ToolStatus = ObservedTerminalStatus | 'preparing' | 'pending' | 'running' | 'unconfirmed';
+type ToolPhase = 'preparing' | 'running' | 'terminal' | 'unconfirmed';
+
+function knownToolStatus(value: unknown): ToolStatus | undefined {
+  if (value === 'in_progress') return 'running';
+  if (value === 'preparing' || value === 'pending' || value === 'running') return value;
+  return typeof value === 'string' && terminal.has(value) ? value as ToolStatus : undefined;
+}
+
+/** DeepSeek ToolRow's preparing/start/result split, using Easel's observed Host statuses. */
+export function toolLifecycle(value: unknown, settled: boolean): {
+  status: ToolStatus; phase: ToolPhase; awaitingTerminal: boolean;
+} {
+  const status = knownToolStatus(value) ?? 'unconfirmed';
+  const phase = status === 'preparing' || status === 'pending' ? 'preparing'
+    : status === 'running' ? 'running' : status === 'unconfirmed' ? 'unconfirmed' : 'terminal';
+  const awaitingTerminal = settled && (phase === 'preparing' || phase === 'running');
+  return { status, phase: awaitingTerminal ? 'unconfirmed' : phase, awaitingTerminal };
+}
 
 function isSubagentHandle(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{32}$/.test(value);
@@ -171,14 +192,18 @@ export function agentToolKey(event: AgentEvent, callId = event.callId || event.i
   return JSON.stringify([...scope, callId]);
 }
 
-function terminalToolSnapshot(event: AgentEvent): boolean {
-  return terminal.has(event.status || '') || (event.fileChangeApplied === false && event.status === 'unconfirmed');
-}
-
 export function mergeToolSnapshots(previous: AgentEvent, incoming: AgentEvent): AgentEvent {
   const parentCallId = previous.parentCallId || incoming.parentCallId;
-  if (!terminalToolSnapshot(previous) || terminalToolSnapshot(incoming)) {
-    return { ...previous, ...incoming, parentCallId };
+  const previousStatus = knownToolStatus(previous.status);
+  const incomingStatus = knownToolStatus(incoming.status);
+  const previousTerminal = terminal.has(previousStatus ?? '');
+  const incomingTerminal = terminal.has(incomingStatus ?? '');
+  const older = typeof previous.timestamp === 'number' && Number.isFinite(previous.timestamp) &&
+    typeof incoming.timestamp === 'number' && Number.isFinite(incoming.timestamp) && incoming.timestamp < previous.timestamp;
+  const regresses = previousTerminal && (!incomingTerminal || (previousStatus !== 'unconfirmed' && incomingStatus === 'unconfirmed'))
+    || previousStatus === 'running' && (incomingStatus === 'preparing' || incomingStatus === 'pending');
+  if (!older && !regresses) {
+    return { ...previous, ...incoming, parentCallId, status: incomingStatus ?? previousStatus };
   }
   // A result can arrive first. Recover only the earlier call's missing context.
   const name = previous.name ?? incoming.name;

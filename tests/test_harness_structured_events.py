@@ -109,6 +109,43 @@ def test_codex_command_ignores_invalid_timing_and_exit_metadata(tmp_path, invali
     assert "durationMs" not in event
 
 
+@pytest.mark.parametrize("kind,native_status", [
+    ("commandExecution", None), ("commandExecution", "inProgress"), ("mcpToolCall", "success"),
+    ("dynamicToolCall", None), ("collabAgentToolCall", "inProgress"), ("imageGeneration", "future"),
+])
+def test_status_bearing_codex_terminal_without_explicit_result_stays_unconfirmed(tmp_path, kind, native_status):
+    [event] = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={"id": "tool", "type": kind, "status": native_status}),
+    ])
+    assert event["status"] == "unconfirmed"
+
+
+@pytest.mark.parametrize("kind", ["webSearch", "imageView", "sleep", "functionCallOutput"])
+def test_known_statusless_codex_tools_complete_on_native_terminal_frame(tmp_path, kind):
+    started, finished = run_wire(tmp_path, "codex", [
+        codex("item/started", item={"id": "tool", "type": kind}),
+        codex("item/completed", item={"id": "tool", "type": kind}),
+    ])
+    assert started["status"] == "running" and finished["status"] == "completed"
+
+
+def test_codex_decline_interruption_and_failure_do_not_get_overwritten_by_late_progress(tmp_path):
+    events = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={"id": "cmd", "type": "commandExecution", "status": "declined",
+                                      "exitCode": 1, "aggregatedOutput": "known"}),
+        codex("item/started", item={"id": "cmd", "type": "commandExecution", "status": "inProgress"}),
+        codex("item/commandExecution/outputDelta", itemId="cmd", delta="stale duplicate"),
+        codex("item/completed", item={"id": "cmd", "type": "commandExecution", "status": "future",
+                                      "aggregatedOutput": "unconfirmed duplicate"}),
+        codex("item/completed", item={"id": "dynamic", "type": "dynamicToolCall",
+                                      "status": "interrupted", "success": False}),
+        codex("item/completed", item={"id": "mcp", "type": "mcpToolCall", "status": "failed"}),
+        codex("item/mcpToolCall/progress", itemId="mcp", message="stale progress"),
+    ])
+    assert [event["status"] for event in events] == ["declined", "interrupted", "failed"]
+    assert events[0]["output"] == "known" and events[0]["exitCode"] == 1
+
+
 def test_codex_preserves_file_diff_and_mcp_parent_but_filters_foreign_thread(tmp_path):
     events = run_wire(tmp_path, "codex", [
         codex("item/completed", item={"id": "patch-1", "type": "fileChange", "status": "completed",
@@ -198,7 +235,7 @@ def test_codex_file_change_progress_and_stale_start_preserve_terminal_evidence(t
         codex("item/started", item={**native, "status": "inProgress", "changes": []}),
         codex("item/fileChange/outputDelta", itemId="edit", delta="done"),
     ])
-    assert len(events) == 3
+    assert len(events) == 2
     assert events[0]["fileChangeApplied"] is False
     assert events[-1]["fileChangeApplied"] is True and events[-1]["status"] == "completed"
     assert events[-1]["input"]["changes"][0]["diff"] == "recorded"
@@ -234,6 +271,26 @@ def test_acp_partial_updates_keep_tool_input_title_and_result(tmp_path):
     assert tools[-1]["input"] == {"path": "notes.md"}
     assert tools[-1]["title"] == "读取素材"
     assert tools[-1]["output"][0]["content"]["text"] == "source facts"
+
+
+def test_acp_uses_exact_status_and_keeps_programmatic_name_and_raw_context(tmp_path):
+    content = [{"type": "content", "content": {"type": "text", "text": "display only"}}]
+    events = run_wire(tmp_path, "acp", [
+        acp(sessionUpdate="tool_call", toolCallId="call", title="Reading", name="read_file", kind="read",
+            rawInput={"path": "first.txt"}, rawOutput={"provider": "raw"}, status="pending"),
+        acp(sessionUpdate="tool_call_update", toolCallId="call", status="in_progress",
+            rawOutput=None, content=content, kind="other"),
+        acp(sessionUpdate="tool_call_update", toolCallId="call", status="success"),
+        acp(sessionUpdate="tool_call_update", toolCallId="call", status="completed"),
+        acp(sessionUpdate="tool_call_update", toolCallId="call", status="pending",
+            rawInput={"path": "stale.txt"}, rawOutput="stale output"),
+        acp(sessionUpdate="tool_call", toolCallId="unknown", title="Unknown", status="succeeded"),
+    ])
+    assert [event["status"] for event in events] == ["preparing", "running", "running", "completed", "unknown"]
+    result = events[-2]
+    assert result["name"] == "read_file" and result["title"] == "Reading" and result["toolKind"] == "other"
+    assert result["input"] == {"path": "first.txt"} and result["output"] == {"provider": "raw"}
+    assert result["content"] == content
 
 
 def test_claude_acp_parent_extension_survives_terminal_update_in_same_session(tmp_path):

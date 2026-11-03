@@ -552,6 +552,17 @@ class CodexAdapter:
                 return {"success": True, "contentItems": [{"type": "inputText", "text": json.dumps(
                     {"answers": answers}, ensure_ascii=False)}]}
             if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
+                item_id = params.get("itemId")
+                if (turn_id and params.get("turnId") == turn_id and isinstance(item_id, str)
+                        and item_id not in events.calls):
+                    # A correlated approval request is evidence of preparation.
+                    # Leave a tool already reported by the engine in its observed phase.
+                    command = method == "item/commandExecution/requestApproval"
+                    events.tool(item_id, name="bash" if command else "apply_patch", status="preparing",
+                                outputStream="merged" if command else None,
+                                fileChangeApplied=False if not command else None,
+                                input={"command": params["command"]} if command and
+                                isinstance(params.get("command"), str) else None)
                 if can_auto_approve(method, params, request):
                     emit("activity", "Codex：已自动通过普通操作授权")
                     return {"decision": "accept"}

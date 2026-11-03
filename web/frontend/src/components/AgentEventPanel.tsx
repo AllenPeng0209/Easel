@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
-import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots, commandStatus, isCommandExecution, fileMutationLabel, fileMutationState } from '../lib/agentEvents';
+import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots, commandStatus, isCommandExecution, fileMutationLabel, fileMutationState, toolLifecycle } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
 import ToolValueInspector from './ToolValueInspector';
 import FileMutationCard from './FileMutationCard';
@@ -15,9 +15,9 @@ import { DisclosureRow } from '../vendor/deepseek-harness/message/DisclosureRow'
 import { projectToolCallTree, type ToolCallBranch } from '../vendor/deepseek-harness/tool/tool-call-tree';
 
 const statusText: Record<string, string> = {
-  preparing: '准备中', pending: '等待中', running: '执行中', in_progress: '执行中',
+  preparing: '准备参数', pending: '等待执行', running: '执行中',
   completed: '已完成', failed: '失败', interrupted: '已中断', cancelled: '已取消',
-  stopped: '已停止', denied: '未授权', declined: '已拒绝',
+  stopped: '已停止', denied: '未授权', declined: '已拒绝', unconfirmed: '工具状态未确认',
 };
 const names: Record<string, string> = {
   commandExecution: '运行命令', fileChange: '修改文件', mcpToolCall: '调用工具',
@@ -56,29 +56,30 @@ function ToolEvent({ event, open, settled, children, childCount, onToggle }: {
 }) {
   const isCommand = isCommandExecution(event);
   const mutationState = fileMutationState(event, settled);
-  const reportedState = event.status || 'pending';
-  const state = isCommand ? commandStatus(event, reportedState) : reportedState;
-  const active = state === 'running' || state === 'in_progress' || state === 'preparing' || state === 'pending';
-  const unconfirmed = settled && active;
-  const running = !settled && active;
-  const visualState = unconfirmed || (mutationState === 'unconfirmed')
-    ? 'unconfirmed' : state;
+  const reportedState = isCommand ? commandStatus(event, event.status || '') : event.status;
+  const { status: state, phase, awaitingTerminal: unconfirmed } = toolLifecycle(reportedState, settled);
+  const running = phase === 'running' || (phase === 'preparing' && state === 'preparing');
+  const visualState = phase === 'unconfirmed' || mutationState === 'unconfirmed' ? 'unconfirmed' : state;
+  const publication = event.name === 'easel_publish' || event.name === 'easel_publication_status';
+  const stateLabel = mutationState ? fileMutationLabel[mutationState] : unconfirmed ? '未收到工具终态'
+    : publication && state === 'completed' ? '调用已结束 · 查看发布回执' : statusText[state];
   const title = isCommand ? '运行命令' : mutationState ? '修改文件' : names[event.name || ''] || event.name || '工具调用';
   const duration = !isCommand && typeof event.startedAt === 'number' && typeof event.completedAt === 'number'
     ? Math.max(0, event.completedAt - event.startedAt) : undefined;
   return <div className="agent-tool" data-tool-call={event.callId || event.id}
-    data-chat-anchor-key={`call:${agentToolKey(event)}`} data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={visualState} data-tool-status={state}>
+    data-chat-anchor-key={`call:${agentToolKey(event)}`} data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={visualState} data-tool-status={state} data-tool-phase={phase}>
     <DisclosureRow icon={<span className="agent-status-dot" data-state={visualState} />}
       title={title} open={open} expandable expandOnRowClick running={running}
       onToggle={onToggle}
-      headerAccessory={<span className="agent-tool__status">{mutationState ? fileMutationLabel[mutationState] : unconfirmed ? '未收到工具终态' : statusText[state] || state}
+      headerAccessory={<span className="agent-tool__status">{stateLabel}
         {duration !== undefined && <span> · {(duration / 1000).toFixed(1)}s</span>}
         {childCount > 0 && <span className="agent-tool__child-count">{childCount} 个子调用</span>}</span>}
       collapsedContent={event.parentCallId ? <span className="agent-tool__nested">子调用</span> : undefined}>
       {children}
       <div className="agent-tool__details">
         {unconfirmed && <p className="agent-event__note">本轮已结束，此工具的最终状态仍未确认。</p>}
-        {isCommand ? <CommandExecutionCard event={event} showExit={!active} />
+        {publication && <p className="agent-event__note">平台结果以发布回执为准。</p>}
+        {isCommand ? <CommandExecutionCard event={event} showExit={phase === 'terminal' || settled} />
           : mutationState ? <FileMutationCard event={event} state={mutationState} /> : <>
           <ToolValueInspector label="输入" value={event.input} />
           <ToolValueInspector label="结果" value={event.output} />

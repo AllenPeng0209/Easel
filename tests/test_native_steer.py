@@ -38,7 +38,7 @@ for line in sys.stdin:
             done()
         send({'id': message['id'], 'result': {'turn': {'id': 'steer-turn'}}})
         if mode in ('approval', 'user-input'):
-            params = {'threadId': 'steer-thread', 'turnId': 'steer-turn', 'command': 'read file',
+            params = {'threadId': 'steer-thread', 'turnId': 'steer-turn', 'itemId': 'permission-tool', 'command': 'read file',
                       'questions': [{'id': 'native-question', 'question': 'Which title?'}]}
             send({'id': 'native-question', 'method':
                   'item/commandExecution/requestApproval' if mode == 'approval'
@@ -126,6 +126,7 @@ def test_pending_native_question_prevents_steering(tmp_path, mode):
         from easel.harnesses.base import SteerRejected
 
         bindings, waiting, answer = [], asyncio.Event(), asyncio.Event()
+        emitted = []
 
         async def ask(questions):
             waiting.set()
@@ -133,9 +134,14 @@ def test_pending_native_question_prevents_steering(tmp_path, mode):
             return {question['questionId']: ['拒绝'] for question in questions}
 
         task = asyncio.create_task(CodexAdapter().run(
-            request_for(tmp_path, mode, bindings.append), lambda *_: None, ask, lambda _: None))
+            request_for(tmp_path, mode, bindings.append), lambda *event: emitted.append(event), ask, lambda _: None))
         try:
             await asyncio.wait_for(waiting.wait(), 2)
+            tools = [event for kind, event in emitted if kind == 'agent_event' and event.get('kind') == 'tool']
+            if mode == 'approval':
+                assert [(event['callId'], event['status']) for event in tools] == [('permission-tool', 'preparing')]
+            else:
+                assert tools == []
             with pytest.raises(SteerRejected):
                 await bindings[0]('不要借此通过授权')
             answer.set()
