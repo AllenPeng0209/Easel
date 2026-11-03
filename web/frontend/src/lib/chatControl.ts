@@ -13,5 +13,6 @@ export function enqueueMessage(session: ChatSession, message: QueuedMessage): Ch
 }
 
 export function nextQueuedMessage(session: ChatSession, running: boolean): QueuedMessage | null {
-  return running || session.queuePaused || session.archived ? null : session.queued?.[0] || null;
+  const next = session.queued?.[0];
+  return running || session.queuePaused || session.archived || next?.delivery === 'sending' ? null : next || null;
 }

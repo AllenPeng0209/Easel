@@ -102,6 +102,38 @@ def test_dead_nonterminal_claim_rejects_get_and_same_request_post_replay(event_l
     asyncio.run(scenario())
 
 
+def test_admission_can_be_replayed_after_owner_loss_before_terminal(event_log, monkeypatch):
+    monkeypatch.setattr(web, "_ACTIVE_TURN_IDS", set())
+    admitted = {"turnId": "recovery-turn", "sessionId": "session"}
+    claim = claim_recovery_turn(event_log, {"id": 1, "event": "admitted", "data": admitted})
+
+    async def scenario():
+        for response in (await web.api_chat_job_stream("recovery-turn"),
+                         await web._replay_claimed_turn(claim, "session", "hash", "recovery-turn")):
+            events = [event async for event in response.body_iterator]
+            assert [event["event"] for event in events] == ["admitted", "error"]
+            assert events[0]["id"] == "1" and json.loads(events[0]["data"]) == admitted
+            assert "原任务状态未确认" in events[1]["data"]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('has_claim', [False, True])
+def test_replay_filters_an_admission_without_matching_claim_identity(event_log, has_claim):
+    events = [{"id": 1, "event": "admitted", "data": {"turnId": "recovery-turn", "sessionId": "other"}},
+              {"id": 2, "event": "done", "data": {"sessionKey": "session"}}]
+    if has_claim:
+        claim_recovery_turn(event_log, *events)
+    else:
+        event_log.write_bytes(b"".join(encoded(event) for event in events))
+
+    async def scenario():
+        response = await web.api_chat_job_stream("recovery-turn")
+        assert [event["event"] async for event in response.body_iterator] == ["done"]
+
+    asyncio.run(scenario())
+
+
 def test_dead_terminal_claim_replays_and_already_consumed_cursor_closes(event_log, monkeypatch):
     monkeypatch.setattr(web, "_ACTIVE_TURN_IDS", set())
     claim_recovery_turn(event_log, {"id": 1, "event": "done", "data": {"sessionKey": "session"}})

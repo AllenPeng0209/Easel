@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import MessageBubble from './MessageBubble';
 import QuestionCards from './QuestionCards';
 import BrushEntry from './BrushEntry';
-import type { ChatSession, ChatMessage, StreamState } from '../lib/store';
+import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from '../lib/store';
 import { uploadFiles, adoptOversize, mediaUrl } from '../lib/api';
 import type { UploadedFile } from '../lib/api';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
@@ -29,7 +29,9 @@ interface ChatPageProps {
   ) => void; // 重试：仅对最后一轮
   onQuestionAnswered?: (questionId: string) => void;   // 某道问答题提交成功（App 记录答过，重放不再出现）
   onQuestionClosed?: (id: string, status: string) => void;
-  queue?: { id: string; text: string; attachments?: UploadedFile[] }[];
+  queue?: QueuedMessage[];
+  onEditQueued?: (id: string, text: string) => boolean;
+  onQueueEditChange?: (id: string | null) => void;
   onRemoveQueued?: (id: string) => void;
   queuePaused?: boolean;
   onResumeQueue?: () => void;
@@ -51,7 +53,21 @@ function greeting(): string {
 }
 
 export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onQuestionAnswered, onQuestionClosed,
-  queue = [], onRemoveQueued, queuePaused, onResumeQueue, historyNotice }: ChatPageProps) {
+  queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice }: ChatPageProps) {
+  const [queueEdit, setQueueEdit] = useState<{ id: string; text: string } | null>(null);
+  const queueEditChange = useRef(onQueueEditChange);
+  queueEditChange.current = onQueueEditChange;
+  useEffect(() => () => queueEditChange.current?.(null), [session.id]);
+  const changeQueueEdit = (next: typeof queueEdit) => {
+    setQueueEdit(next);
+    queueEditChange.current?.(next?.id ?? null);
+  };
+  useEffect(() => {
+    if (queueEdit && !queue.some(item => item.id === queueEdit.id && item.delivery !== 'sending' && item.delivery !== 'unconfirmed')) {
+      setQueueEdit(null);
+      queueEditChange.current?.(null);
+    }
+  }, [queue, queueEdit]);
   const [initialDraft] = useState(() => loadChatDraft(session.id));
   const [input, setInput] = useState(initialDraft.text);
   const [uploadItems, setUploadItems] = useState(initialDraft.attachments);
@@ -231,7 +247,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
         <span className="composer-hint">{uploading ? '附件全部就绪后可发送' : sending ? '正在接收…'
           : isStreaming ? '继续输入，下一条会加入队列' : 'Enter 发送 · Shift+Enter 换行'}</span>
         <div className="composer-send-controls">
-          {isStreaming && <button className="composer-stop-btn" onClick={onStop} title="停止当前任务" disabled={stream?.lifecycle === 'stopping'}>
+          {isStreaming && <button className="composer-stop-btn" onClick={onStop} title="停止当前任务"
+            disabled={stream?.lifecycle === 'stopping' || queue.some(item => item.delivery === 'sending')}>
             <IconStop size={14} /><span>{stream?.lifecycle === 'stopping' ? '停止中' : stream?.lifecycle === 'stop_failed' ? '重试停止' : '停止'}</span></button>}
           {showSteer && <button type="button" className="composer-attach-btn" title="立即指导"
             onClick={() => submitDraft('steer')} disabled={!canSend}>立即指导</button>}
@@ -261,12 +278,37 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     labels={{ dialog: previewImage.name, close: '关闭图片预览' }} onClose={closePreview} />;
   const queueDock = queue.length > 0 && <div className="chat-queue" aria-label="待执行消息队列">
     <div className="chat-queue-title"><strong>{queuePaused ? '队列已暂停' : '接下来执行'}</strong><span>{queue.length} 条</span>
-      {queuePaused && onResumeQueue && <button type="button" onClick={onResumeQueue}>继续执行</button>}
+      {queuePaused && onResumeQueue && <button type="button" disabled={!!queueEdit} onClick={onResumeQueue}>
+        {queue[0]?.delivery === 'unconfirmed' ? '重新核对' : '继续执行'}</button>}
     </div>
-    {queue.map((item, index) => <div key={item.id} className="chat-queue-row"><span>{index + 1}</span>
-      <div><p>{item.text || '处理附件'}</p>{!!item.attachments?.length && <small>{item.attachments.map(file => file.name).join('、')}</small>}</div>
-      {onRemoveQueued && <button type="button" aria-label={`移除第 ${index + 1} 条排队消息`} onClick={() => onRemoveQueued(item.id)}>×</button>}
-    </div>)}
+    {queue.map((item, index) => {
+      const editable = item.delivery !== 'sending' && item.delivery !== 'unconfirmed';
+      const editing = editable && queueEdit?.id === item.id;
+      const label = item.delivery === 'sending' ? '等待服务端接收' : item.delivery === 'unconfirmed' ? '回执待核对'
+        : item.delivery === 'rejected' ? '服务端未接收' : '排队中';
+      const saveEdit = () => {
+        if (queueEdit && onEditQueued?.(item.id, queueEdit.text)) changeQueueEdit(null);
+      };
+      return <div key={item.id} className="chat-queue-row"><span>{index + 1}</span>
+        <div>
+          {editing ? <textarea className="field" rows={2} aria-label={`编辑第 ${index + 1} 条排队消息`} value={queueEdit.text}
+            onChange={event => setQueueEdit({ id: item.id, text: event.target.value })}
+            onKeyDown={event => {
+              if (event.key === 'Escape') { event.preventDefault(); changeQueueEdit(null); }
+            }} /> : <p>{item.text || '处理附件'}</p>}
+          {!!item.attachments?.length && <small>{item.attachments.map(file => file.name).join('、')}</small>}
+          <small role="status">{label}</small>
+        </div>
+        {editing ? <>
+          <button type="button" disabled={!queueEdit.text.trim() && !item.attachments?.length} onClick={saveEdit}>保存</button>
+          <button type="button" onClick={() => changeQueueEdit(null)}>取消</button>
+        </> : editable && <>
+          {onEditQueued && <button type="button" disabled={!!queueEdit} aria-label={`编辑第 ${index + 1} 条排队消息`}
+            onClick={() => changeQueueEdit({ id: item.id, text: item.text })}>编辑</button>}
+          {onRemoveQueued && <button type="button" className="chat-queue-remove" aria-label={`移除第 ${index + 1} 条排队消息`} onClick={() => onRemoveQueued(item.id)}>×</button>}
+        </>}
+      </div>;
+    })}
   </div>;
 
   // ---- 空态：居中欢迎页 ----

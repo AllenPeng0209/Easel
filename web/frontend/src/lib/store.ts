@@ -8,6 +8,7 @@ export interface QueuedMessage {
   text: string;
   attachments?: UploadedFile[];
   created: number;
+  delivery?: 'sending' | 'rejected' | 'unconfirmed';
 }
 
 export interface ChatMessage {

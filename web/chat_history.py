@@ -38,6 +38,7 @@ def validated_session(value: dict) -> dict:
     if not isinstance(queued, list) or any(
         not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]
         or not isinstance(item.get("text"), str) or not isinstance(item.get("attachments", []), list)
+        or ("delivery" in item and item["delivery"] not in ("sending", "rejected", "unconfirmed"))
         for item in queued):
         raise ValueError("无效的排队请求")
     if "queuePaused" in value and not isinstance(value["queuePaused"], bool):

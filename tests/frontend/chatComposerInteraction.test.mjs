@@ -9,7 +9,7 @@ const text = node => typeof node === 'string' || typeof node === 'number' ? Stri
   : !node || typeof node !== 'object' ? '' : [node.props?.children].flat(Infinity).map(text).join('');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
-function view({ onSend = () => true, onSteer, stream, initial = '', interruptedFiles = [] } = {}) {
+function view({ onSend = () => true, onSteer, stream, initial = '', interruptedFiles = [], queueProps = {} } = {}) {
   const local = new Map(initial ? [['scope:easel_chat_draft:s1', JSON.stringify({ text: initial, attachments: [], interruptedFiles })]] : []);
   const localStorage = { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key) };
   const slots = []; let cursor = 0; let effects = []; let nodes = [];
@@ -56,7 +56,7 @@ function view({ onSend = () => true, onSteer, stream, initial = '', interruptedF
   }
   const component = load(new URL('../../web/frontend/src/components/ChatPage.tsx', import.meta.url).pathname).default;
   const props = { apiDirect: false, session: { id: 's1', title: 'Draft', created: 1, messages: [] }, stream,
-    onSend, onSteer, onStop() {}, onResend() {} };
+    onSend, onSteer, onStop() {}, onResend() {}, ...queueProps };
   const render = () => { cursor = 0; effects = []; nodes = [];
     const walk = node => { if (!node || typeof node !== 'object') return;
       // Child components are outside this test's scope; host nodes expose ChatPage behavior.
@@ -183,4 +183,42 @@ test('guidance cannot discard pending attachments', async () => {
   const interrupted = view({ stream: running, initial: 'restore later', onSteer: async () => true,
     interruptedFiles: [{ name: 'previous.txt', size: 12, mime: 'text/plain' }] });
   assert.ok(!control(await interrupted.ready(), '立即指导'));
+});
+
+test('queue editor isolates the text edit and locks rows awaiting an admission receipt', async () => {
+  const changes = [];
+  const edits = [];
+  const removals = [];
+  let sends = 0;
+  const ui = view({ onSend: () => { sends++; return true; }, queueProps: {
+    queue: [
+      { id: 'editable', text: '旧要求', created: 1, attachments: [{ name: 'reference.pdf' }] },
+      { id: 'sending', text: '派发中', delivery: 'sending', created: 2 },
+      { id: 'unconfirmed', text: '待核对', delivery: 'unconfirmed', created: 3 },
+    ],
+    onQueueEditChange: id => changes.push(id),
+    onEditQueued: (id, draft) => { edits.push([id, draft]); return true; },
+    onRemoveQueued: id => removals.push(id),
+  } });
+  let nodes = await ui.ready();
+  const byLabel = label => nodes.find(node => node.props?.['aria-label'] === label);
+  assert.equal(byLabel('移除第 2 条排队消息'), undefined);
+  assert.equal(byLabel('编辑第 3 条排队消息'), undefined);
+  assert.ok(nodes.some(node => node.props?.role === 'status' && text(node) === '等待服务端接收'));
+  byLabel('编辑第 1 条排队消息').props.onClick();
+  nodes = ui.render();
+  let editor = byLabel('编辑第 1 条排队消息');
+  assert.equal(editor.type, 'textarea');
+  editor.props.onChange({ target: { value: '改为新要求' } });
+  nodes = ui.render();
+  editor = byLabel('编辑第 1 条排队消息');
+  editor.props.onKeyDown({ key: 'Enter' });
+  assert.equal(sends, 0);
+  nodes.find(node => node.type === 'button' && text(node) === '保存').props.onClick();
+  assert.deepEqual(edits, [['editable', '改为新要求']]);
+  assert.deepEqual(changes, ['editable', null]);
+  nodes = ui.render();
+  assert.ok(nodes.some(node => node.type === 'small' && text(node) === 'reference.pdf'));
+  byLabel('移除第 1 条排队消息').props.onClick();
+  assert.deepEqual(removals, ['editable']);
 });

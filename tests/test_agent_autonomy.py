@@ -297,11 +297,55 @@ def test_two_posts_for_same_turn_execute_only_once_and_replay_identically(tmp_pa
         request = web.ChatRequest(message='one-task', sessionId='queue-session', turnId='queue-item')
         first, second = await asyncio.gather(web.api_chat_stream(request), web.api_chat_stream(request))
         async def consume(response):
-            return [json.loads(item['data']) for item in [event async for event in response.body_iterator]
-                    if item['event'] == 'token']
-        assert await asyncio.gather(consume(first), consume(second)) == [['one-result'], ['one-result']]
+            return [(item['id'], item['event'], json.loads(item['data'])) async for item in response.body_iterator]
+        live, repeated_post = await asyncio.gather(consume(first), consume(second))
+        assert live == repeated_post
+        assert live[0] == ('1', 'admitted', {'turnId': 'queue-item', 'sessionId': 'queue-session'})
+        assert [item[2] for item in live if item[1] == 'token'] == ['one-result']
+        assert await consume(await web.api_chat_job_stream('queue-item')) == live
+        assert await consume(await web.api_chat_job_stream('queue-item', after=1)) == live[1:]
         assert calls == ['one-task']
     asyncio.run(scenario())
+
+
+def test_invalid_chat_request_leaves_no_admission_or_execution(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+    from web.chat_history import ChatHistoryStore
+
+    calls = _native_chat_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(web, '_chat_backend', lambda session: 'api')
+    request = web.ChatRequest(message=' ', sessionId='queue-session', turnId='invalid-input')
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(web.api_chat_stream(request))
+    assert error.value.status_code == 400
+    assert ChatHistoryStore(web._sessions_dir()).turn_claim('invalid-input') is None
+    assert not web._job_event_file('invalid-input').exists()
+    assert calls == []
+
+
+def test_unwritable_admission_journal_never_starts_or_retries_the_turn(tmp_path, monkeypatch):
+    from pathlib import Path
+    from fastapi import HTTPException
+    from web.chat_history import ChatHistoryStore
+
+    calls = _native_chat_fixture(tmp_path, monkeypatch)
+    path = web._job_event_file('journal-failure')
+    original = Path.open
+
+    def fail_admission(self, mode='r', *args, **kwargs):
+        if self == path and mode == 'a':
+            raise OSError('fixture journal write failure')
+        return original(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'open', fail_admission)
+    request = web.ChatRequest(message='one-task', sessionId='queue-session', turnId='journal-failure')
+    for _ in range(2):
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(web.api_chat_stream(request))
+        assert error.value.status_code == 409
+    assert ChatHistoryStore(web._sessions_dir()).turn_claim('journal-failure')['sessionId'] == 'queue-session'
+    assert path.read_bytes() == b''
+    assert calls == []
 
 
 def test_turn_id_cannot_be_reused_for_different_payload(tmp_path, monkeypatch):

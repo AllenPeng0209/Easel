@@ -4357,6 +4357,10 @@ def _job_owner_alive(claim: dict, turn_id: str) -> bool:
     return False
 
 
+def _turn_admission_event(turn_id: str, session_id: str) -> dict:
+    return {"id": 1, "event": "admitted", "data": {"turnId": turn_id, "sessionId": session_id}}
+
+
 def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = None):
     replay = claim is not None
     if not _job_event_file(turn_id).is_file():
@@ -4368,8 +4372,10 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
         claim = ChatHistoryStore(_sessions_dir()).turn_claim(turn_id)
     owner_alive = claim is not None and _job_owner_alive(claim, turn_id)
     initial = _read_job_events(turn_id)
+    admission = _turn_admission_event(turn_id, claim["sessionId"]) if claim is not None else None
+    has_admission = bool(initial and initial[0] == admission)
     terminal = any(event["event"] in ("done", "error") for event in initial)
-    if claim is not None and not owner_alive and not terminal:
+    if claim is not None and not owner_alive and not terminal and not has_admission:
         if replay:
             raise HTTPException(409, "原任务执行状态未确认，未重新执行；请先核对已有产物和发布回执")
         raise HTTPException(404, "原任务状态未确认，请核对已有产物和发布回执")
@@ -4382,6 +4388,9 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
             if batch:
                 idle_since = time.monotonic()
                 for event in batch:
+                    if event["event"] == "admitted" and (event != admission or cursor != 0):
+                        cursor = max(cursor, event["id"])
+                        continue
                     cursor = int(event["id"])
                     raw = event.get("data")
                     # job 日志里 question 的 data 已是序列化 JSON 字符串（实时流
@@ -4478,12 +4487,22 @@ async def api_chat_stream(req: ChatRequest):
             raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
         message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
 
+    event_path = _job_event_file(req.turnId)
     try:
-        admitted, claim = catalog.claim_turn(req.turnId, req.sessionId, payload_hash, _job_event_file(req.turnId))
+        admitted, claim = catalog.claim_turn(req.turnId, req.sessionId, payload_hash, event_path)
     except (OSError, sqlite3.Error):
         raise HTTPException(409, "任务准入记录不可用，未启动执行；请检查已有任务与本地存储") from None
     if not admitted:
         return await _replay_claimed_turn(claim, req.sessionId, payload_hash, req.turnId)
+    admission = _turn_admission_event(req.turnId, req.sessionId)
+    try:
+        # Commit admission before running the model or acknowledging the queue row.
+        with event_path.open("a", encoding="utf-8") as journal:
+            journal.write(json.dumps(admission, ensure_ascii=False) + "\n")
+            journal.flush()
+            os.fsync(journal.fileno())
+    except OSError:
+        raise HTTPException(409, "任务准入事件不可用，未启动执行；请核对原任务记录") from None
     _ACTIVE_TURN_IDS.add(req.turnId)
 
     # supervisor（跑 openclaw run）与 forward（转发 SSE 给浏览器）之间的事件通道。
@@ -4491,22 +4510,23 @@ async def api_chat_stream(req: ChatRequest):
     # openclaw 照常跑到底、结果落盘，前端断线后 /api/chat/last 取回。
     loop = asyncio.get_event_loop()
     client_q: asyncio.Queue = asyncio.Queue()
+    client_q.put_nowait({"t": admission["event"], "text": admission["data"], "id": admission["id"]})
     CLIENT_DONE = object()
 
     async def supervisor():
         sk = req.sessionId or f"web-{int(time.time() * 1000)}"
         pk = f"web:{sk}"                 # 落盘 key（与 /api/chat/last 一致）
         turn_id = req.turnId or uuid.uuid4().hex
-        event_seq = 0
+        event_seq = admission["id"]
         full_text: list[str] = []        # 累积完整回答，供断线取回
         structured_events: list[dict] = []
         timed_out = False                # 只有真·超时才 terminate 进程；断线绝不杀
         stream_error = False
 
-        event_path = _job_event_file(turn_id)
-
         def to_client(kind, text=None):
             nonlocal event_seq, stream_error
+            if kind == "admitted":
+                return  # Admission comes only from the committed claim above.
             event_seq += 1
             if kind == "error":
                 stream_error = True
@@ -4530,7 +4550,7 @@ async def api_chat_stream(req: ChatRequest):
             outcome = snapshot.get("outcome") if isinstance(snapshot, dict) and snapshot.get("status") == "done" else None
             finish_stream(outcome if outcome in ("completed", "failed", "stopped") else None)
 
-        # 秒级反馈：发出即亮「已收到」，不等 agent 冷启动（首个 SSE 事件，随流回放必达）
+        # 准入后立即显示「已收到」，不等 agent 冷启动。
         to_client("activity", "⏳ 已收到…" if direct else "⏳ 已收到，正在唤醒 agent…")
         initial_events = []
         for name, reference in (("topic", topic), ("workshop", workshop)):
@@ -5100,7 +5120,7 @@ async def api_chat_stream(req: ChatRequest):
                 yield {"id": str(item["id"]), "event": "activity", "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t in ("question", "question_closed"):
                 yield {"id": str(item["id"]), "event": t, "data": item["text"]}
-            elif t == "agent_event":
+            elif t in ("admitted", "agent_event"):
                 yield {"id": str(item["id"]), "event": t, "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t == "error":
                 yield {"id": str(item["id"]), "event": "error", "data": json.dumps(item["text"], ensure_ascii=False)}

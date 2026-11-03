@@ -98,6 +98,25 @@ def test_catalog_preserves_queued_work_and_pause_state(tmp_path):
     assert store.sessions()[0]['queuePaused'] is True
 
 
+def test_catalog_round_trips_delivery_state_and_legacy_queue_rows(tmp_path):
+    from web.chat_history import ChatHistoryStore
+    queue = [{'id': 'legacy', 'text': 'legacy request'}]
+    queue.extend({'id': state, 'text': state, 'delivery': state}
+                 for state in ('sending', 'rejected', 'unconfirmed'))
+    ChatHistoryStore(tmp_path).merge([{**entry('a', 1), 'queued': queue}])
+    assert ChatHistoryStore(tmp_path).sessions()[0]['queued'] == queue
+
+
+@pytest.mark.parametrize('state', ['admitted', 'pending', '', False, None, []])
+def test_invalid_queue_delivery_state_rejects_the_catalog_batch(tmp_path, state):
+    from web.chat_history import ChatHistoryStore
+    store = ChatHistoryStore(tmp_path)
+    value = {**entry('a', 1), 'queued': [{'id': 'next', 'text': 'work', 'delivery': state}]}
+    with pytest.raises(ValueError):
+        store.merge([entry('valid', 1), value])
+    assert store.sessions() == []
+
+
 def test_missing_historical_attachment_does_not_prevent_catalog_sync(tmp_path, monkeypatch):
     import asyncio
     from web import app as web

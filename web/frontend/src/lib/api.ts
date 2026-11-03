@@ -670,6 +670,7 @@ export function streamChat(
   onAgentEvent?: (event: AgentEvent) => void,
   topicRef?: { id: string; snapshotHash: string },
   workshopRef?: import('./workshop').WorkshopReference,
+  onAdmitted?: (receipt: { turnId: string; sessionId: string }) => void,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -700,6 +701,10 @@ export function streamChat(
         const data = dataLines.join('\n');
         if (currentEvent === 'token') {
           try { onToken(JSON.parse(data) as string); } catch { onToken(data); }
+        } else if (currentEvent === 'admitted' && onAdmitted) {
+          let receipt: { turnId?: string; sessionId?: string } | undefined;
+          try { receipt = JSON.parse(data); } catch { /* Ignore malformed receipts. */ }
+          if (turnId && receipt?.turnId === turnId && receipt.sessionId === sessionId) onAdmitted({ turnId, sessionId });
         } else if (currentEvent === 'thinking' && onThinking) {
           try { onThinking(JSON.parse(data) as string); } catch { onThinking(data); }
         } else if (currentEvent === 'activity' && onActivity) {

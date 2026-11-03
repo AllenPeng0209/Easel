@@ -66,7 +66,7 @@ function appBoundary(initial, overrides = {}) {
   const context = vm.createContext({
     Date, Math, Error, Boolean, Array, undefined, nextSessionRevision, mergeSessionCatalog, nextQueuedMessage,
     sessions: plain(initial), sessionsRef: { current: plain(initial) }, streams: {},
-    streamCtl: { current: {} }, streamAcc: { current: {} }, typingBuf: { current: {} },
+    streamCtl: { current: {} }, streamAcc: { current: {} }, typingBuf: { current: {} }, queueEdits: { current: {} },
     selectedPersona: 'another-brand-persona', historyReady: true, canOperate: true,
     projectStorageKey: value => `scope:${value}`, sessionStorage: { setItem() {} },
     saveSessions: value => saved.push(plain(value)), updateSessionTitle() {},
@@ -84,6 +84,8 @@ function appBoundary(initial, overrides = {}) {
   context.setStreams = update => {
     context.streams = typeof update === 'function' ? update(context.streams) : update;
   };
+  context.confirmQueuedMessage = compileExpression(callbackNode('confirmQueuedMessage'), context);
+  context.failQueuedAdmission = compileExpression(callbackNode('failQueuedAdmission'), context);
   context.startStream = compileExpression(callbackNode('startStream'), context);
   context.sendUserAndStream = compileExpression(callbackNode('sendUserAndStream'), context);
   return { context, requests, saved,
@@ -108,6 +110,8 @@ test('a background queued conversation preserves its own explicit persona', () =
     queued: [{ id: 'q1', text: 'write lesson one', created: 2 }] }]);
   ui.effect('nextQueuedMessage')();
   assert.equal(ui.requests[0][1], 'education-brand');
+  assert.equal(ui.context.sessions[0].messages.length, 0);
+  ui.requests[0][19]({ sessionId: 'education', turnId: 'queue-q1' });
   assert.equal(ui.context.sessions[0].messages[0].content, 'write lesson one');
 });
 
@@ -125,7 +129,12 @@ test('the same persisted queue entry has one stable transport identity in two br
   assert.equal(first.requests[0][9], 'queue-persisted-q7');
   assert.equal(second.requests[0][9], 'queue-persisted-q7');
   assert.equal(first.context.sessions[0].pendingTurnId, 'queue-persisted-q7');
+  assert.equal(first.context.sessions[0].queued[0].delivery, 'sending');
+  assert.equal(first.context.sessions[0].messages.length, 0);
+  first.requests[0][19]();
+  first.requests[0][19]();
   assert.equal(first.context.sessions[0].queued.length, 0);
+  assert.equal(first.context.sessions[0].messages.length, 1);
   assert.equal(first.context.sessions[0].messages[0].attachments[0].name, 'source.pdf');
   // The active in-memory owner prevents an effect rerun from submitting again.
   first.effect('nextQueuedMessage')();
@@ -265,7 +274,7 @@ test('saved idea starts a conversation with the exact inspected snapshot and ret
   });
   await ui.callback('handleUseSavedIdea')(idea.id);
   const ref = { id: idea.id, snapshotHash: idea.snapshotHash };
-  assert.deepEqual(plain(ui.requests[0].at(-2)), ref);
+  assert.deepEqual(plain(ui.requests[0][17]), ref);
   assert.deepEqual(plain(ui.saved.at(-1)[0].messages[0].topicRef), ref);
   assert.equal(ui.context.sessions[0].title, idea.title);
 
@@ -273,7 +282,7 @@ test('saved idea starts a conversation with the exact inspected snapshot and ret
   ui.context.streamAcc.current = {};
   ui.context.streamCtl.current = {};
   ui.callback('handleResend')('topic-chat', 0, '重新起草');
-  assert.deepEqual(plain(ui.requests[1].at(-2)), ref);
+  assert.deepEqual(plain(ui.requests[1][17]), ref);
 });
 
 test('workshop handoff sends the selected delivery into its originating chat and keeps it on retry', () => {
@@ -291,7 +300,7 @@ test('workshop handoff sends the selected delivery into its originating chat and
   delete ui.context.sessionsRef.current[0].pendingTurnId;
   handoff(reference, 'origin');
   assert.equal(ui.requests[0][2], 'origin');
-  assert.deepEqual(plain(ui.requests[0].at(-1)), reference);
+  assert.deepEqual(plain(ui.requests[0][18]), reference);
   assert.deepEqual(plain(ui.saved.at(-1)[0].messages[0].workshopRef), reference);
   assert.deepEqual(plain(ui.saved.at(-1)[1].messages), []);
 
@@ -299,7 +308,7 @@ test('workshop handoff sends the selected delivery into its originating chat and
   ui.context.streamAcc.current = {};
   ui.context.streamCtl.current = {};
   ui.callback('handleResend')('origin', 0, '核对这个版本');
-  assert.deepEqual(plain(ui.requests[1].at(-1)), reference);
+  assert.deepEqual(plain(ui.requests[1][18]), reference);
 });
 
 test('completed results outside the visible chat persist unread without mislabeling failures', () => {
@@ -383,4 +392,31 @@ test('Steer reuses the same request after an uncertain reply and binds to the ru
   assert.equal(await steer('chat', '调整方向'), true);
   assert.deepEqual(sent.at(-1), ['chat', 'active-turn', 'steer-request', '调整方向']);
   assert.equal(ui.requests.length, 0);
+});
+
+test('queue dispatch waits for editing and retains an unconfirmed row for exact retry', () => {
+  const item = { id: 'q1', text: 'next task', created: 2 };
+  const ui = appBoundary([{ id: 's1', title: 'Draft', created: 1, messages: [], queued: [item] }], {
+    clearStream(id) {
+      delete ui.context.streamAcc.current[id];
+      delete ui.context.streamCtl.current[id];
+    },
+  });
+  ui.context.queueEdits.current.s1 = 'q1';
+  ui.effect('nextQueuedMessage')();
+  assert.equal(ui.requests.length, 0);
+  delete ui.context.queueEdits.current.s1;
+  ui.effect('nextQueuedMessage')();
+  const owner = ui.context.streamAcc.current.s1;
+  assert.equal(ui.context.failQueuedAdmission('s1', owner, new Error('connection lost')), true);
+  assert.equal(ui.context.sessions[0].queued[0].delivery, 'unconfirmed');
+  assert.equal(ui.context.sessions[0].queuePaused, true);
+  assert.equal(ui.context.sessions[0].messages.length, 0);
+  ui.context.sessionsRef.current = plain(ui.context.sessions);
+  assert.equal(ui.callback('editQueued')('s1', 'q1', 'changed'), false);
+  ui.callback('resumeQueue')('s1');
+  ui.context.sessionsRef.current = plain(ui.context.sessions);
+  ui.effect('nextQueuedMessage')();
+  assert.equal(ui.requests[1][9], ui.requests[0][9]);
+  assert.equal(ui.requests[1][0], ui.requests[0][0]);
 });

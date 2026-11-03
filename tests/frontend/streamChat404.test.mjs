@@ -125,3 +125,24 @@ test('terminal SSE preserves the host outcome alongside the existing session key
   });
   assert.deepEqual(result, { key: 'saved-chat', outcome: 'unconfirmed' });
 });
+
+test('queue admission accepts only a receipt for the requested session and turn', async () => {
+  const events = [
+    { turnId: 'old-turn', sessionId: 'chat' },
+    { turnId: 'queue-q1', sessionId: 'other' },
+    { turnId: 'queue-q1', sessionId: 'chat' },
+  ];
+  const { api } = loadApi(() => new Response(
+    events.map(data => `event: admitted\ndata: ${JSON.stringify(data)}\n\n`).join('') +
+      'event: done\ndata: {"sessionKey":"chat"}\n\n',
+  ));
+  const received = [];
+  await new Promise((resolve, reject) => {
+    const args = Array(20).fill(undefined);
+    args.splice(0, 6, 'next task', undefined, 'chat', () => {}, resolve, reject);
+    args[9] = 'queue-q1';
+    args[19] = receipt => received.push(JSON.parse(JSON.stringify(receipt)));
+    api.streamChat(...args);
+  });
+  assert.deepEqual(received, [events[2]]);
+});

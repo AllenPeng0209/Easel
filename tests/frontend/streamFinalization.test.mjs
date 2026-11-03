@@ -46,7 +46,8 @@ function setup(stopReceipt) {
     clearStream: session => { finalizers.current.delete(session); delete streamAcc.current[session]; },
   };
   const output = ts.transpileModule(
-    `const ${declarations.get('finalizeStream')}; const ${declarations.get('handleStopStream')}; ({finalizeStream,handleStopStream});`,
+    `const ${declarations.get('confirmQueuedMessage')}; const ${declarations.get('failQueuedAdmission')};
+     const ${declarations.get('finalizeStream')}; const ${declarations.get('handleStopStream')}; ({finalizeStream,handleStopStream});`,
     { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
   ).outputText;
   return { ...runInNewContext(output, context), owner, streamAcc, typingBuf, finalizers,

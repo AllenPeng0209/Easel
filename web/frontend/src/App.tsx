@@ -37,7 +37,7 @@ import {
   loadActiveId,
   saveActiveId,
 } from './lib/store';
-import type { ChatSession, ChatMessage, StreamState } from './lib/store';
+import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from './lib/store';
 
 const TAB_SESSION_KEY = projectStorageKey('easel_tab_session');
 const ONBOARDING_SEEN_KEY = projectStorageKey('easel_onboarding_seen');
@@ -47,6 +47,9 @@ const InteractionCenterPage = lazy(() => import('./components/InteractionCenterP
 interface LiveTurnAccumulator {
   content: string; thinking: string; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[];
   turnId?: string;
+  queuedId?: string;
+  queueAdmitted?: boolean;
+  queueRetry?: boolean;
   steering?: boolean;
   steerAttempt?: { turnId: string; requestId: string; message: string; accepted?: boolean };
   stopRequested?: boolean;
@@ -358,6 +361,8 @@ export default function App() {
   const [streams, setStreams] = useState<Record<string, StreamState>>({});
   const streamCtl = useRef<Record<string, AbortController>>({});
   const streamAcc = useRef<Record<string, LiveTurnAccumulator>>({});
+  const queueEdits = useRef<Record<string, string>>({});
+  const [queueEditRevision, setQueueEditRevision] = useState(0);
   const finalizers = useRef(new Map<string, { owner: object; finish: () => void; timer?: ReturnType<typeof setTimeout> }>());
   const answeredRef = useRef<Set<string>>(new Set());   // 已提交答案的 question id：重放/恢复不再重现
   // ---- 打字机：分批到达的 token 按节奏吐给界面 ----
@@ -426,9 +431,50 @@ export default function App() {
     });
   }, []);
 
+  const confirmQueuedMessage = useCallback((sessionId: string, owner: LiveTurnAccumulator) => {
+    if (!owner.queuedId || owner.queueAdmitted || streamAcc.current[sessionId] !== owner) return;
+    owner.queueAdmitted = true;
+    setSessions(previous => {
+      const next = previous.map(session => {
+        if (session.id !== sessionId || session.pendingTurnId !== owner.turnId) return session;
+        const item = session.queued?.find(row => row.id === owner.queuedId);
+        if (!item) return session;
+        const message: ChatMessage = { role: 'user', content: item.text.trim(), attachments: item.attachments, created: Date.now() };
+        const updated = { ...session, updated: nextSessionRevision(session),
+          queued: session.queued?.filter(row => row.id !== item.id), messages: [...session.messages, message] };
+        updateSessionTitle(updated);
+        return updated;
+      });
+      saveSessions(next);
+      return next;
+    });
+  }, []);
+
+  const failQueuedAdmission = useCallback((sessionId: string, owner: LiveTurnAccumulator, error?: Error): boolean => {
+    if (!owner.queuedId || owner.queueAdmitted || streamAcc.current[sessionId] !== owner) return false;
+    const status = (error as { status?: number } | undefined)?.status;
+    const delivery: QueuedMessage['delivery'] = !owner.queueRetry && (status === 400 || status === 422)
+      ? 'rejected' : 'unconfirmed';
+    setSessions(previous => {
+      const next = previous.map(session => session.id === sessionId && session.pendingTurnId === owner.turnId
+        ? { ...session, pendingTurnId: undefined, queuePaused: true, updated: nextSessionRevision(session),
+          queued: session.queued?.map(row => row.id === owner.queuedId ? { ...row, delivery } : row) }
+        : session);
+      saveSessions(next);
+      return next;
+    });
+    clearStream(sessionId);
+    try { sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${sessionId}`)); } catch { /* Storage is optional. */ }
+    return true;
+  }, [clearStream]);
+
   const finalizeStream = useCallback((sessionId: string, owner: typeof streamAcc.current[string],
     sessionKey?: string, error?: Error, outcome?: ChatTurnOutcome) => {
     if (streamAcc.current[sessionId] !== owner || finalizers.current.has(sessionId)) return;
+    if (owner.queuedId) {
+      if (error && failQueuedAdmission(sessionId, owner, error)) return;
+      if (!error) confirmQueuedMessage(sessionId, owner);
+    }
     const pending: { owner: object; finish: () => void; timer?: ReturnType<typeof setTimeout> } = {
       owner,
       finish: () => {
@@ -459,7 +505,7 @@ export default function App() {
       } else pending.finish();
     };
     poll();
-  }, [appendAssistant, clearStream]);
+  }, [appendAssistant, clearStream, confirmQueuedMessage, failQueuedAdmission]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -531,14 +577,18 @@ export default function App() {
     requestedTurnId?: string,
     topicRef?: ChatMessage['topicRef'],
     workshopRef?: WorkshopReference,
+    queuedId?: string,
+    queueRetry?: boolean,
   ) => {
     const turnId = requestedTurnId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try { sessionStorage.setItem(projectStorageKey(`easel_pending_turn:${sessionId}`), turnId); } catch { /* ignore */ }
     setSessions((prev) => {
-      const next = prev.map((s) => (s.id === sessionId ? { ...s, pendingTurnId: turnId, updated: nextSessionRevision(s) } : s));
+      const next = prev.map(s => s.id === sessionId ? { ...s, pendingTurnId: turnId, updated: nextSessionRevision(s),
+        ...(queuedId ? { queued: s.queued?.map(row => row.id === queuedId ? { ...row, delivery: 'sending' as const } : row) } : {}),
+      } : s);
       saveSessions(next); return next;
     });
-    const owner: LiveTurnAccumulator = { turnId, content: '', thinking: '', steps: [], questions: [], events: [] };
+    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry, content: '', thinking: '', steps: [], questions: [], events: [] };
     streamAcc.current[sessionId] = owner;
     setStreams((prev) => ({ ...prev, [sessionId]: { content: '', thinking: '', activity: '', questions: [], events: [], lifecycle: 'recovering' } }));
     // 打字机队列：流式事件按批到达（OpenClaw 攒批），前端按字符节奏显示，体验逐字浮现。
@@ -595,23 +645,27 @@ export default function App() {
       (event) => receiveAgentEvent(sessionId, owner, event),
       topicRef,
       workshopRef,
+      () => confirmQueuedMessage(sessionId, owner),
     );
-  }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent]);
+  }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage]);
 
   // 刷新/重开页面后按 eventId=0 重放当前 job，再继续实时 tail；旧任务无事件日志时退回最终快照。
   const resumePendingTurn = useCallback((sessionId: string) => {
     if (streamCtl.current[sessionId] || streamAcc.current[sessionId]) return;  // 本标签正在跑，不插手
     const s = sessionsRef.current.find((x) => x.id === sessionId);
-    const last = s?.messages[s.messages.length - 1];
-    if (!last || last.role !== 'user') return;   // 没有悬空的用户消息 = 无需恢复
+    if (!s) return;
+    const last = s.messages.at(-1);
     let turnId = s.pendingTurnId;
     try { turnId = sessionStorage.getItem(projectStorageKey(`easel_pending_turn:${sessionId}`)) || turnId; } catch { /* use persisted id */ }
-    const owner: LiveTurnAccumulator = { turnId, content: '', thinking: '', steps: [], questions: [], events: [] };
+    const queuedId = s.queued?.find(row => turnId === `queue-${row.id}`)?.id;
+    if (!queuedId && last?.role !== 'user') return;
+    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry: !!queuedId, content: '', thinking: '', steps: [], questions: [], events: [] };
     streamAcc.current[sessionId] = owner;
     setStreams((p) => ({ ...p, [sessionId]: { content: '', thinking: '', activity: '⏳ 正在接回上一轮结果…', questions: [], lifecycle: 'recovering' } }));
     typingBuf.current[sessionId] = '';
     startTypingPump(sessionId);
     const appendRecovered = (result: Awaited<ReturnType<typeof fetchLastTurn>>) => {
+      confirmQueuedMessage(sessionId, owner);
       const status = result.outcome ?? (result.stop_reason === 'user_stopped' ? 'stopped'
         : result.clean_end === true ? 'completed' : undefined);
       appendAssistant(sessionId, { role: 'assistant', content: result.text || '（无输出）',
@@ -657,6 +711,7 @@ export default function App() {
           if (r.status === 'done') {
             appendRecovered(r);
           } else {
+            if (failQueuedAdmission(sessionId, owner)) return;
             appendAssistant(sessionId, {
               role: 'assistant',
               content: '上一轮任务记录已失效，无法继续恢复。请重新发送上一条消息。',
@@ -666,6 +721,7 @@ export default function App() {
           try { sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${sessionId}`)); } catch { /* ignore */ }
         }).catch(() => {
           if (streamAcc.current[sessionId] !== owner) return;
+          if (failQueuedAdmission(sessionId, owner)) return;
           appendAssistant(sessionId, {
             role: 'assistant', content: '上一轮任务记录已失效，请重新发送上一条消息。',
           });
@@ -680,8 +736,9 @@ export default function App() {
       (note) => { if (streamAcc.current[sessionId] === owner) setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)); },
       (closed) => closeQuestion(sessionId, closed),
       (event) => receiveAgentEvent(sessionId, owner, event),
+      undefined, undefined, () => confirmQueuedMessage(sessionId, owner),
     );
-  }, [appendAssistant, clearStream, finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent]);
+  }, [appendAssistant, clearStream, finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage, failQueuedAdmission]);
 
   // 活跃会话确定后（含挂载首刷）尝试恢复它悬空的一轮
   useEffect(() => {
@@ -715,6 +772,12 @@ export default function App() {
     if ((!agentMessage && attachments.length === 0) || streamCtl.current[sessionId] || streamAcc.current[sessionId]) return false;
     const cur = sessionsRef.current.find((s) => s.id === sessionId);
     const persona = cur ? cur.persona : selectedPersona || undefined;
+    const queuedItem = requestedTurnId && cur?.queued?.find(row => requestedTurnId === `queue-${row.id}`);
+    if (queuedItem) {
+      startStream(sessionId, agentMessage, persona, attachments, requestedTurnId, topicRef, workshopRef,
+        queuedItem.id, queuedItem.delivery === 'unconfirmed');
+      return true;
+    }
     setSessions((prev) => {
       const next = prev.map((s) => {
         if (s.id !== sessionId) return s;
@@ -748,7 +811,7 @@ export default function App() {
     if (streamCtl.current[sessionId] || streamAcc.current[sessionId] || session.queued?.length) {
       const queued = { id: crypto.randomUUID(), text: displayText, attachments, created: Date.now() };
       setSessions(previous => {
-        const next = previous.map(item => item.id === sessionId ? { ...enqueueMessage(item, queued), queuePaused: false } : item);
+        const next = previous.map(item => item.id === sessionId ? enqueueMessage(item, queued) : item);
         saveSessions(next);
         return next;
       });
@@ -821,23 +884,41 @@ export default function App() {
     for (const session of sessions) {
       if (session.pendingTurnId && session.queued?.length) resumePendingTurn(session.id);
       const next = nextQueuedMessage(session, Boolean(streamAcc.current[session.id] || streamCtl.current[session.id] || session.pendingTurnId));
-      if (!next) continue;
-      setSessions(previous => {
-        const updated = previous.map(item => item.id === session.id
-          ? { ...item, queued: item.queued?.filter(entry => entry.id !== next.id), updated: nextSessionRevision(item) } : item);
-        saveSessions(updated);
-        return updated;
-      });
+      if (!next || queueEdits.current[session.id]) continue;
       sendUserAndStream(session.id, next.text, next.attachments || [], undefined, undefined, `queue-${next.id}`);
     }
-  }, [sessions, streams, historyReady, canOperate, resumePendingTurn, sendUserAndStream]);
+  }, [sessions, streams, queueEditRevision, historyReady, canOperate, resumePendingTurn, sendUserAndStream]);
 
   const removeQueued = useCallback((sessionId: string, messageId: string) => {
+    if (streamAcc.current[sessionId]?.queuedId === messageId) return;
     setSessions(previous => {
       const next = previous.map(session => session.id === sessionId
-        ? { ...session, queued: session.queued?.filter(message => message.id !== messageId), updated: nextSessionRevision(session) } : session);
+        ? { ...session, queued: session.queued?.filter(message => message.id !== messageId ||
+          message.delivery === 'sending' || message.delivery === 'unconfirmed'), updated: nextSessionRevision(session) } : session);
       saveSessions(next); return next;
     });
+  }, []);
+
+  const editQueued = useCallback((sessionId: string, messageId: string, text: string): boolean => {
+    const row = sessionsRef.current.find(session => session.id === sessionId)?.queued?.find(item => item.id === messageId);
+    if (!row || row.delivery === 'sending' || row.delivery === 'unconfirmed' ||
+        streamAcc.current[sessionId]?.queuedId === messageId || (!text.trim() && !row.attachments?.length)) return false;
+    setSessions(previous => {
+      const next = previous.map(session => session.id === sessionId
+        ? { ...session, updated: nextSessionRevision(session), queued: session.queued?.map(item =>
+          item.id === messageId && item.delivery !== 'sending' && item.delivery !== 'unconfirmed'
+            ? { ...item, text: text.trim(), delivery: undefined } : item) } : session);
+      saveSessions(next);
+      return next;
+    });
+    return true;
+  }, []);
+
+  const changeQueueEdit = useCallback((sessionId: string, id: string | null) => {
+    if (queueEdits.current[sessionId] === (id ?? undefined)) return;
+    if (id) queueEdits.current[sessionId] = id;
+    else delete queueEdits.current[sessionId];
+    setQueueEditRevision(value => value + 1);
   }, []);
 
   const resumeQueue = useCallback((sessionId: string) => {
@@ -1147,6 +1228,8 @@ export default function App() {
             queue={activeSession.queued || []}
             queuePaused={activeSession.queuePaused}
             onRemoveQueued={id => removeQueued(activeSession.id, id)}
+            onEditQueued={(id, text) => editQueued(activeSession.id, id, text)}
+            onQueueEditChange={id => changeQueueEdit(activeSession.id, id)}
             onResumeQueue={() => resumeQueue(activeSession.id)}
             historyNotice={historyNotice}
             onSend={(displayText, attachments) => handleSendMessage(activeSession.id, displayText, attachments)}
