@@ -5,6 +5,8 @@ import type { AgentEvent, AgentSubagent } from '../lib/agentEvents';
 import { IconCopy, IconCheck, IconRetry } from './icons';
 import ArtifactGallery from './ArtifactGallery';
 import DeliverableCards from './DeliverableCards';
+import TurnFileChanges from './TurnFileChanges';
+import { latestAgentFileChanges } from '../lib/agentEvents';
 import { deliverablesFromEvents, legacyArchivesForDeliverables, omitDeclaredArtifacts,
   rejectedSnapshotPaths } from '../lib/deliverables';
 import UserAttachments from './UserAttachments';
@@ -144,6 +146,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, inherit
   const waitingQuestions = isStreaming ? pendingTimelineQuestions
     : message.questions?.filter(question => question.status === 'pending').length;
   const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
+  const fileChanges = useMemo(() => isStreaming ? null : latestAgentFileChanges(effEvents), [effEvents, isStreaming]);
   const assistantContent = visibleAssistantContent(message);
   const rejectedPaths = useMemo(() => rejectedSnapshotPaths(effEvents), [effEvents]);
   const rendered = useAnswerMarkdown(message.role === 'assistant' && !inheritedAssistant ? assistantContent : '',
@@ -243,10 +246,11 @@ export default function MessageBubble({ message, sessionId, isStreaming, inherit
           {publicSummary && <ReasoningSummaryDisclosure summary={publicSummary} defaultOpen={workDetailsOpen} />}
           {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} defaultOpen={workDetailsOpen}
             onLocateTool={(runId, callId) => toolLocator.current?.locate(runId, callId) ?? false} /> : null}
-          <AgentEventPanel toolLocatorRef={toolLocator} defaultOpen={workDetailsOpen} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
+          <AgentEventPanel toolLocatorRef={toolLocator} defaultOpen={workDetailsOpen} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact' && event.kind !== 'changes')} settled={!isStreaming} />
           {assistantContent && <AnswerQuoteSelection blocks={rendered.blocks} highlightCode={!isStreaming} settled={!isStreaming}
             onQuoteAnswer={isStreaming ? undefined : onQuoteAnswer} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
+          {fileChanges && <TurnFileChanges changes={fileChanges.changes} status={fileChanges.status} />}
           <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />
           {!isStreaming && (legacyArtifacts.length > 0 || legacyArchives.length > 0) && (
             <ArtifactGallery artifacts={legacyArtifacts} archives={legacyArchives} />

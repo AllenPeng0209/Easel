@@ -82,6 +82,7 @@ from web.chat_session_references import (
     valid_session_reference_id, validate_session_reference_spans,
 )
 from web.chat_turn_evidence import valid_catalog_turn_id
+from web.output_turn_changes import OutputTurnRecorder
 from web.chat_subagents import ChatSubagentStore
 try:
     from easel.gateway_questions import (
@@ -4168,6 +4169,46 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
         _HARNESS_QUESTIONS.pop(identifier, None)
 
 
+async def _begin_output_turn_changes() -> OutputTurnRecorder | None:
+    try:
+        _require_host_tools()
+        recorder = OutputTurnRecorder(_outputs_dir())
+    except Exception:
+        return None  # Optional observation cannot change chat startup.
+    try:
+        await asyncio.to_thread(recorder.begin)
+    except asyncio.CancelledError:
+        recorder.close()
+        raise
+    except Exception:
+        pass  # A missing baseline becomes partial observation; chat can continue.
+    return recorder
+
+
+async def _finish_output_turn_changes(recorder: OutputTurnRecorder, turn_id: str, outcome: str | None, emit) -> None:
+    try:
+        _require_host_tools()
+        try:
+            summary = await asyncio.to_thread(recorder.finish)
+        except Exception:
+            summary = {"files": [], "total": 0, "coverage": "partial", "warnings": ["shared_workspace", "unreadable"]}
+        _require_host_tools()
+        if summary is not None:
+            safe_files = [file for file in summary["files"] if _scrub_secrets(file["path"]) == file["path"]]
+            if len(safe_files) != len(summary["files"]):
+                summary["total"] -= len(summary["files"]) - len(safe_files)
+                summary["files"] = safe_files
+                summary["coverage"] = "partial"
+                if "unreadable" not in summary["warnings"]:
+                    summary["warnings"].append("unreadable")
+            emit("agent_event", {"id": f"changes:{turn_id}", "kind": "changes", "source": "outputs_snapshot",
+                                 "turnId": turn_id, "status": outcome or "unconfirmed", "changes": summary})
+    except (Exception, asyncio.CancelledError):
+        pass  # Revocation or shutdown must not publish evidence or prevent lock release.
+    finally:
+        recorder.close()
+
+
 async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: str,
                             config: dict, emit, timeout: int = TIMEOUT_CHAT, *, interactive=True,
                             initial_events: tuple[dict, ...] = (), run_id: str | None = None,
@@ -4193,6 +4234,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     _HARNESS_TASKS.add(task)
     privilege_watch = None
     permission_revoked = False
+    output_changes = None
 
     def receive(kind, text):
         nonlocal failure, reasoning_summary, answer_completed
@@ -4440,6 +4482,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                              business_objects=business_objects,
                              bind_steer=bind_steer if runtime == "codex" and interactive else None,
                              record_subagent=record_subagent if runtime == "codex" and interactive else None)
+        if interactive and config["sandbox"] == "workspace-write":
+            output_changes = await _begin_output_turn_changes()
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
             lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
@@ -4471,6 +4515,10 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             await asyncio.gather(privilege_watch, return_exceptions=True)
         if claimed:
             snapshot = "".join(full_text)
+            outcome = _chat_snapshot_outcome(stopped=reason == "stopped", failed=failure is not None or permission_revoked,
+                                             completed=clean_end)
+            if output_changes is not None:
+                await _finish_output_turn_changes(output_changes, turn_id, outcome.get("outcome"), receive)
             _save_turn(pk, "done", snapshot, {
                 "turn_id": turn_id, "stop_turn_id": stop_turn_id, "runtime": runtime,
                 "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
@@ -4478,9 +4526,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 **({"reasoning_summary": reasoning_summary} if reasoning_summary is not None else {}),
                 **({"answer_completed": answer_completed} if answer_completed is not None else {}),
                 **({"error": failure} if failure is not None else {}),
-                **_chat_snapshot_outcome(stopped=reason == "stopped",
-                                         failed=failure is not None or permission_revoked,
-                                         completed=clean_end)})
+                **outcome})
         # 注意：claim 失败（锁被占/底座已切换）时刻意**不**落盘——保留上一轮的
         # 结果快照不被失败轮覆盖（见 test_failed_ownership_check_does_not_overwrite_
         # previous_result）；错误经 SSE 事件流（job log）回放可见。
@@ -5648,6 +5694,7 @@ async def api_chat_stream(req: ChatRequest):
         locked = claimed = started = False
         startup_reason = "spawn_failed"
         startup_error = None
+        output_changes = None
         try:
             await lock.acquire()
             locked = True
@@ -5688,6 +5735,8 @@ async def api_chat_stream(req: ChatRequest):
                 proc = _GatewayHttpProc()
             else:
                 cmd, env = _project_agent_command(cmd, env)
+                if project_id() != "default" and "--local" in cmd:
+                    output_changes = await _begin_output_turn_changes()
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     cwd=str(_workspace_root()), text=True, bufsize=1, env=env,
@@ -5701,6 +5750,8 @@ async def api_chat_stream(req: ChatRequest):
             return
         finally:
             if not started:
+                if output_changes is not None:
+                    output_changes.close()
                 # A queued/cancelled waiter never owns the previous snapshot.
                 # Persist an owned failure before releasing either lock.
                 startup_outcome = _chat_snapshot_outcome(failed=bool(startup_error))
@@ -6012,6 +6063,11 @@ async def api_chat_stream(req: ChatRequest):
             outcome = _chat_snapshot_outcome(stopped=user_stopped, failed=failed, completed=completed)
             if outcome.get("outcome") == "failed" and stream_failure is None:
                 to_client("error", chat_failure(phase="finalization"))
+            if output_changes is not None:
+                if final_rc is not None:
+                    await _finish_output_turn_changes(output_changes, turn_id, outcome.get("outcome"), to_client)
+                else:
+                    output_changes.close()
             _save_turn(pk, "done", "".join(full_text), {
                 "turn_id": turn_id, "stop_turn_id": turn_id,
                 "clean_end": clean_end,

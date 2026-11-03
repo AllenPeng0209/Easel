@@ -33,9 +33,87 @@ export interface AgentSubagent {
   updatedAt: number;
 }
 
+const changeKinds = ['added', 'modified', 'deleted'] as const;
+const changeDiffStates = ['text', 'binary', 'oversized', 'unavailable'] as const;
+const changeOutcomes = ['completed', 'stopped', 'failed', 'unconfirmed'] as const;
+const changeWarnings = ['shared_workspace', 'concurrent_observation', 'scan_limit', 'unreadable', 'summary_limit', 'unsupported'] as const;
+
+export type AgentFileChangeOutcome = typeof changeOutcomes[number];
+export interface AgentFileChanges {
+  files: {
+    path: string;
+    kind: typeof changeKinds[number];
+    diffStatus: typeof changeDiffStates[number];
+    added?: number;
+    deleted?: number;
+  }[];
+  coverage: 'complete' | 'partial';
+  warnings: (typeof changeWarnings[number])[];
+  total: number;
+}
+
+function enumValue<T extends string>(values: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && values.includes(value as T);
+}
+
+function validChangePath(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || value.length > 1024) return false;
+  let path = value;
+  for (let pass = 0; pass < 4; pass++) {
+    if (path.startsWith('_') || /^[a-z][a-z0-9+.-]*:/i.test(path) || /[\\\p{Cc}\p{Cs}]/u.test(path)
+        || path.split('/').some(part => !part || part.startsWith('.'))) return false;
+    try {
+      const decoded = decodeURIComponent(path);
+      if (decoded === path) break;
+      path = decoded;
+    } catch { break; }
+  }
+  return true;
+}
+
+function nonnegativeCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function normalizeAgentFileChanges(value: unknown): AgentFileChanges | null {
+  if (!value || typeof value !== 'object') return null;
+  const { files, coverage, warnings, total } = value as Record<string, unknown>;
+  if ((coverage !== 'complete' && coverage !== 'partial') || !Array.isArray(files) || files.length > 200
+      || !nonnegativeCount(total) || total < files.length || (coverage === 'complete' && total !== files.length)
+      || !Array.isArray(warnings) || warnings.length > changeWarnings.length
+      || !warnings.every(warning => enumValue(changeWarnings, warning))) return null;
+  const paths = new Set<string>();
+  const rows: AgentFileChanges['files'] = [];
+  for (const file of files) {
+    if (!file || typeof file !== 'object') return null;
+    const { path, kind, diffStatus, added, deleted } = file;
+    if (!validChangePath(path) || paths.has(path) || !enumValue(changeKinds, kind)
+        || !enumValue(changeDiffStates, diffStatus)) return null;
+    paths.add(path);
+    if (diffStatus === 'text' && (!nonnegativeCount(added) || !nonnegativeCount(deleted))) return null;
+    rows.push({ path, kind, diffStatus, ...(diffStatus === 'text' ? { added, deleted } : {}) });
+  }
+  return { files: rows, coverage, warnings: [...new Set(warnings)], total };
+}
+
+export function latestAgentFileChanges(events: readonly unknown[]): {
+  status: AgentFileChangeOutcome; changes: AgentFileChanges;
+} | null {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const candidate = events[index];
+    if (!candidate || typeof candidate !== 'object' || (candidate as AgentEvent).kind !== 'changes') continue;
+    const event = normalizeAgentEvent(candidate);
+    if (event?.kind === 'changes' && event.changes && enumValue(changeOutcomes, event.status)) {
+      return event.changes.files.length || event.changes.coverage === 'partial'
+        ? { status: event.status, changes: event.changes } : null;
+    }
+  }
+  return null;
+}
+
 export interface AgentEvent {
   id: string;
-  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication' | 'business' | 'steer' | 'steer_capability' | 'subagent';
+  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication' | 'business' | 'steer' | 'steer_capability' | 'subagent' | 'changes';
   runId?: string;
   turnId?: string;
   text?: string;
@@ -62,6 +140,7 @@ export interface AgentEvent {
   questionId?: string;
   answers?: Record<string, string[]>;
   source?: string;
+  changes?: AgentFileChanges;
   artifacts?: AgentArtifact[];
   [key: string]: unknown;
 }
@@ -114,7 +193,7 @@ export function commandStatus(event: AgentEvent, status: string): string {
     ? 'failed' : status;
 }
 
-const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business', 'steer', 'subagent']);
+const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business', 'steer', 'subagent', 'changes']);
 const terminalStatuses = ['completed', 'failed', 'interrupted', 'cancelled', 'stopped', 'denied', 'declined'] as const;
 type ObservedTerminalStatus = typeof terminalStatuses[number];
 const terminal = new Set<string>([...terminalStatuses, 'unconfirmed']);
@@ -179,6 +258,13 @@ export function normalizeAgentEvent(value: unknown): AgentEvent | null {
   if (candidate.runId !== undefined && (typeof candidate.runId !== 'string'
     || !/^[A-Za-z0-9_-]{1,512}$/.test(candidate.runId))) return null;
   if (candidate.kind === 'tool' && (typeof candidate.callId !== 'string' || !candidate.callId)) return null;
+  if (candidate.kind === 'changes') {
+    const changes = normalizeAgentFileChanges(candidate.changes);
+    if (!changes || candidate.source !== 'outputs_snapshot' || !enumValue(changeOutcomes, candidate.status)) return null;
+    return { id: candidate.id, kind: 'changes', source: 'outputs_snapshot', status: candidate.status, changes,
+      ...(typeof candidate.runId === 'string' ? { runId: candidate.runId } : {}),
+      ...(isSubagentRouteSegment(candidate.turnId) ? { turnId: candidate.turnId } : {}) };
+  }
   if (candidate.kind === 'subagent') {
     const subagent = normalizeAgentSubagent(candidate.subagent);
     if (!subagent || !isSubagentRouteSegment(candidate.turnId)) return null;

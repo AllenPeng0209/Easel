@@ -41,7 +41,7 @@ function append(previous: AgentTimelineObservation[], row: AgentTimelineObservat
 export function observeAgentTimeline(previous: AgentTimelineObservation[], value: unknown): AgentTimelineObservation[] {
   const event = normalizeAgentEvent(value);
   const id = text(event?.id, 512);
-  if (!event || !id || event.kind === 'usage' || event.kind === 'task' || event.kind === 'steer_capability') return previous;
+  if (!event || !id || event.kind === 'usage' || event.kind === 'task' || event.kind === 'changes' || event.kind === 'steer_capability') return previous;
   const callId = text(event.callId, 256);
   const reported = text(event.subagent?.status ?? event.publication?.result?.status ?? event.publication?.state ?? event.status, 32);
   const status = event.kind === 'tool' && reported && isCommandExecution(event) ? commandStatus(event, reported) : reported;

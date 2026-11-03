@@ -8093,12 +8093,34 @@
     "reuse_kind": "adapted",
     "changes": "沿用占用计算，绑定同一条引擎实测事件，压缩后等待新读数。",
     "verification_status": "C32_native_context_observation_and_browser_recovery_verified"
+  },
+  {
+    "feature_id": "D06",
+    "upstream_path": "packages/client/ui-deliverables/src/client/ChangedFiles.tsx",
+    "upstream_sha256": "563e61f5bc3317c96eda89227ccac506ee8d68795a62f004f896df2416382891",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/TurnFileChanges.tsx",
+    "destination_sha256": "0e4d9ef96745c99c2bc75fd19eeb3fdabb04ddce473287c40aab60110969a454",
+    "reuse_kind": "adapted",
+    "changes": "迁移回合变更尾卡与四行折叠，适配实际增删行数、二进制、超限与停止说明。",
+    "verification_status": "D06_public_output_net_changes_and_browser_recovery_verified"
+  },
+  {
+    "feature_id": "D06",
+    "upstream_path": "packages/deliverables/workspace-changes/src/recorder.ts",
+    "upstream_sha256": "7241b4c3e2c9dbbb7f33993b0a35fa6cfab76551a898a97acf698e343899e5c7",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/output_turn_changes.py",
+    "destination_sha256": "e46f4b443ede48d8add83ba432a597f802590d6cfed5e86031b7f99333e0cd51",
+    "reuse_kind": "adapted",
+    "changes": "适配回合前后快照与净差异；Easel 仅扫描当前 IP 公共输出并明确共享范围及上限。",
+    "verification_status": "D06_public_output_net_changes_and_browser_recovery_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 109,
+    "source_migration_files": 111,
     "verbatim_original_bodies": 14,
-    "adapted_upstream_files": 95,
+    "adapted_upstream_files": 94,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",
