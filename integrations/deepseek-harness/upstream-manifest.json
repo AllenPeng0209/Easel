@@ -19,7 +19,7 @@
     ],
     "managed_clone_is_gitignored": true
   },
-  "status_notice": "Package 07 D30 structured receipt core verified in a feature-only candidate, including real native status tool with a mocked callback and isolated browser refresh; real social platform acceptance, process recovery and other original requirements remain open.",
+  "status_notice": "Package 05/07 publication cancellation now waits for owned process-range termination before unlocking; frozen macOS process and isolated UI acceptance verified. Real platform acceptance, crash recovery, OS containment and the other original requirements remain open.",
   "selected_packages": [
     {
       "upstream_path": "packages/client/ui-conversation",
@@ -7396,7 +7396,7 @@
     "sha_notice": "All recorded target hashes refreshed after the final dynamic-tool and countdown changes were frozen on 2026-11-03."
   },
   "baseline_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
-  "current_feature": "D30",
+  "current_feature": "B18-publication-process",
   "feature_work": {
     "D01": {
       "status": "verified_committed",
@@ -8101,6 +8101,101 @@
         "strict MP/Kuaishou stable account identity gaps",
         "process cancellation, lease ownership and crash recovery",
         "durable autonomous goals and all other original 144/AUT requirements"
+      ],
+      "commit": "07541153a20b915881bd7feb2e8b41875e26383b"
+    },
+    "B18-publication-process": {
+      "status": "verified_macos_owned_process_scope",
+      "baseline_commit": "07541153a20b915881bd7feb2e8b41875e26383b",
+      "acceptance_record": "docs/agent-feature-acceptance/B18-publication-process.md",
+      "source_kind": "Python adaptation of fixed DeepSeek managed-owner settlement and bash-local TERM/KILL/bounded-output contract; not a verbatim TypeScript migration.",
+      "upstream_sources": [
+        {
+          "path": "packages/subprocess/subprocess-local/src/managed-owner.ts",
+          "sha256": "c8153bbb1093f2ed69b45170f59ebadc9ac770210fff23e4a99c6228522a286d"
+        },
+        {
+          "path": "packages/shell/bash-local/src/index.ts",
+          "sha256": "03f7d8c0a6162aec6c71c719c937ab8b6b7fa011b7fcdc386e513c4d0aeab353"
+        }
+      ],
+      "files": [
+        {
+          "path": "easel/publication_process.py",
+          "sha256": "db314e1d3deae479a673f747b4978a15229f41ec90fdccc1b7c509ca7ebc8032"
+        },
+        {
+          "path": "easel/publication_approvals.py",
+          "sha256": "8f1c6f98f2bb9994a1f019d201b5618a7894a8d889ad7e367c227ef6ad3fedd6"
+        },
+        {
+          "path": "web/publication_workflow.py",
+          "sha256": "b6c81ea9968ea78d331545606890e9d4464472f1af2329f53950edaf5802df96"
+        },
+        {
+          "path": "web/frontend/src/lib/publicationReceipt.ts",
+          "sha256": "8f9e762b2426c304ddefcfe527e53383ab8421e489dfa81375ce582c1f6b1015"
+        },
+        {
+          "path": "tests/frontend/publicationReceipt.test.mjs",
+          "sha256": "4d8d31a807fc5a226de39ab780c303900e37e52f51db5edcecf1e56543554f43"
+        },
+        {
+          "path": "tests/test_publication_process.py",
+          "sha256": "8c2481a85406193503f8747175df2740c17af5477d87fabc93f7a2c5646bc4a3"
+        },
+        {
+          "path": "tests/test_publication_process_workflow.py",
+          "sha256": "f70085a9c392b5442cc847333bc29875527768843bdc4c03c321ef905055c103"
+        },
+        {
+          "path": "tests/test_publication_dispatch.py",
+          "sha256": "38677f76b34b0dbb54605519389e594263897fe06bd0e6c59110e7699eba722b"
+        },
+        {
+          "path": "tests/test_publication_receipt_integration.py",
+          "sha256": "b6af3ef14f713695c8b020eccd9027a23a9862cb78877101f56ed6a21a65f75e"
+        },
+        {
+          "path": "tests/test_publication_receipt_progression.py",
+          "sha256": "7f1aff1b74443c1c71ff995cdb37914e92ec94a8cd9d8990125c5fd5de905ffc"
+        },
+        {
+          "path": "tests/test_publication_workflow_http.py",
+          "sha256": "c372d88883702241d7f0821fe1dd0beb88736dda4ea3140329ce169ddd2f078e"
+        },
+        {
+          "path": "web/app.py",
+          "sha256": "fd67bf57ecd41fb083b270d990ac16410c770891786910bc81e57a78a460dab1"
+        }
+      ],
+      "verification": {
+        "candidate_code_tree": "982e247ee207e8a5d317620d1ff91e61573cdc79",
+        "backend_passed": 2760,
+        "backend_skipped": 17,
+        "backend_warnings": 2,
+        "backend_exit": 0,
+        "frontend_passed": 475,
+        "frontend_exit": 0,
+        "build_exit": 0,
+        "lint_exit": 0,
+        "compile_exit": 0,
+        "diff_check_exit": 0,
+        "real_local_process_tests": true,
+        "real_platform_publication": false,
+        "macos_live_acceptance": true,
+        "linux_live_acceptance": false,
+        "windows_live_acceptance": false,
+        "windows_protocol_fixture": true,
+        "ui_environment": "7865 isolated simulated process states; dispatcher disabled",
+        "parallel_social_changes_excluded": true
+      },
+      "remaining": [
+        "crash/lease recovery",
+        "full chat/media job stopping matrix",
+        "strong containment for deliberate process-group escape",
+        "Linux/Windows live acceptance",
+        "real social platform acceptance"
       ]
     }
   }

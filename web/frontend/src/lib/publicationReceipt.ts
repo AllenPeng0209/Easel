@@ -89,7 +89,17 @@ export function publicationReceiptView(record: PublicationApprovalRecord): Publi
   const result = record.result;
   if (!result || hasCorrelationMismatch(record)) return view('unknown', '结果待核实', 'warning', 'abnormal', '尚未取得与此版本及操作一致的回执，请勿重复发布。');
   const status = result.status;
-  if (status === 'executing') return view('executing', '正在执行', 'running', 'running', '尚未取得平台终态。');
+  if (status === 'executing') {
+    if (result.processState === 'stopping') {
+      return view('stopping', '正在停止，等待进程结束', 'running', 'running',
+        '停止请求已提交；发布进程结束前账号仍保持锁定，请勿重复提交。');
+    }
+    if (result.processState === 'termination_unconfirmed') {
+      return view('termination_unconfirmed', '停止未确认，账号仍锁定', 'warning', 'abnormal',
+        '尚未确认发布进程已经结束；账号仍保持锁定，请勿重复提交。');
+    }
+    return view('executing', '正在执行', 'running', 'running', '尚未取得平台终态。');
+  }
   if (status === 'failed') return view('failed', '执行失败', 'error', 'abnormal',
     result.notStarted === true ? 'Host 已记录未启动平台提交。' : '请核对执行阶段与回执，不要把失败当作可以安全重发的依据。');
   if (status === 'draft_created' && record.subject.mode === 'create_draft') {

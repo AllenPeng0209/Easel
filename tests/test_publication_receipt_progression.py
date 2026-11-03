@@ -247,3 +247,19 @@ def test_strong_same_object_provider_rejection_can_advance_to_failed(tmp_path, i
     assert observed['result']['externalId'] == 'post-one'
     assert observed['result']['notStarted'] is False
     assert any(item['result']['status'] == initial for item in observed['observations'])
+
+
+def test_late_platform_readback_cannot_erase_host_process_termination_facts(tmp_path):
+    store, record = started(tmp_path)
+    process = {'processState':'terminated', 'terminationConfirmed':True,
+               'runnerTimedOut':False, 'outputTruncated':True}
+    store.finish(record['id'], record['operationId'], result(record, 'unknown', **process), **SCOPE)
+    observed = store.observe(record['id'], record['operationId'], result(record, 'confirmed',
+        processState='stopping', terminationConfirmed=False), **SCOPE)
+    assert observed['result']['status'] == 'confirmed'
+    for key, value in process.items():
+        assert observed['result'][key] == value
+    # Receipt digests remain about platform evidence, not the host process facts.
+    assert all(not any(key in item['result'] for key in process) for item in observed['observations'])
+    replay = store.observe(record['id'], record['operationId'], result(record, 'confirmed'), **SCOPE)
+    assert replay == observed

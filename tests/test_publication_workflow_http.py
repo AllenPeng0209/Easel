@@ -15,6 +15,9 @@ def publication_environment(artifact_http_environment, monkeypatch):
     def unexpected_process(*args, **kwargs):
         pytest.fail('Workflow contract tests must never launch a real platform process')
     monkeypatch.setattr(web.subprocess, 'run', unexpected_process)
+    async def unexpected_managed_process(*args, **kwargs):
+        unexpected_process()
+    monkeypatch.setattr(web, 'run_publication_process', unexpected_managed_process, raising=False)
     async def identity(platform):
         return {'id': 'actual-account-1', 'name': 'Verified Account'}
     monkeypatch.setattr(web, '_publication_account', identity, raising=False)

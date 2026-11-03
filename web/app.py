@@ -483,6 +483,7 @@ if str(SHARED_SCRIPTS) not in sys.path:
 from model_registry import model_group
 from publication_receipt import PublicationReceiptFiles, PublicationReceiptError as ReceiptFileError
 from easel.publication_receipts import normalize_receipt, PublicationReceiptError as ReceiptEvidenceError
+from easel.publication_process import run_publication_process, PublicationProcessStartError
 
 BROWSER_PROFILES = Path.home() / ".easel-browser-profiles"
 LOGIN_DIR = OUTPUTS_DIR / "_login"
@@ -3564,7 +3565,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 'artifactIds': [item['artifactId'] for item in subject['media']],
                 'approvalId': record['id'], 'payloadHash': record['payloadHash']})
             receive('activity', '正在执行已批准的具体版本；断线不会重发该操作')
-            while (record.get('result') or {}).get('status') == 'executing':
+            while ((record.get('result') or {}).get('status') == 'executing'
+                    and (record.get('result') or {}).get('processState') != 'termination_unconfirmed'):
                 await asyncio.sleep(.5)
                 _require_host_tools()
                 record = workflow.get(record['id'])
@@ -6166,38 +6168,46 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
         raise HTTPException(409, '登录账号已变化，未执行旧批准')
     _require_operation()
     pub_env = _proxy_env() if platform == 'wechat-oa' else _publish_env()
-    def run_checked_publish():
-        # A conversion/probe await may outlive membership. Recheck inside the
-        # worker immediately before launching the external runner.
+    def check_publish_authority():
+        # Conversion/probe awaits may outlive membership. The managed runner
+        # executes this final check immediately before creating its process.
         _require_operation()
         _require_automated_publishing()
-        return subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=pub_env,
-            capture_output=True, text=True, timeout=600)
     proc = None
     process_error = None
+    not_started_reason = None
     try:
-        proc = await asyncio.to_thread(run_checked_publish)
-    except subprocess.TimeoutExpired:
-        process_error = 'timeout'
-    except OSError:
-        process_error = 'io_error'
+        proc = await run_publication_process(cmd, cwd=PROJECT_ROOT, env=pub_env,
+            timeout=600, preflight=check_publish_authority)
+        if proc.timed_out:
+            process_error = 'timeout'
+    except PublicationProcessStartError:
+        not_started_reason = 'runner_unavailable'
+    except asyncio.CancelledError:
+        # The runner raises cancellation only after its owned process range has
+        # stopped and the direct child has been reaped. Keep any actual receipt.
+        process_error = 'cancelled'
     ok = proc is not None and proc.returncode == 0
-    tail = ((proc.stderr or proc.stdout or '') if proc is not None else '').strip().splitlines()
-    detail = '\n'.join(tail[-8:])
+    process_outcome = process_error or not_started_reason or 'exited'
     try:
         with (_outputs_dir() / '_publish.log').open('a', encoding='utf-8') as lf:
-            lf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {platform} rc={proc.returncode if proc else 'timeout'} ok={ok} =====\n")
+            lf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {platform} rc={proc.returncode if proc else process_outcome} ok={ok} =====\n")
             lf.write('CMD: ' + ' '.join(cmd) + '\n')
-            lf.write('STDOUT:\n' + _scrub_secrets((proc.stdout or '')[-2000:]) + '\n' if proc else 'TIMEOUT\n')
+            lf.write('PROCESS: ' + process_outcome + '\n')
+            lf.write('STDOUT:\n' + _scrub_secrets((proc.stdout or '')[-2000:]) + '\n' if proc else '')
             lf.write('STDERR:\n' + _scrub_secrets((proc.stderr or '')[-2000:]) + '\n' if proc else '')
     except Exception:
         pass
     try:
-        return normalize_receipt(receipt_context, receipt_files.read(),
-            returncode=proc.returncode if proc is not None else None, process_error=process_error)
+        result = normalize_receipt(receipt_context, receipt_files.read(),
+            returncode=proc.returncode if proc is not None else None, process_error=process_error,
+            not_started_reason=not_started_reason)
     except (ReceiptFileError, ReceiptEvidenceError):
         result = normalize_receipt(receipt_context, returncode=proc.returncode if proc is not None else None)
-        return {**result, 'reason': 'machine_receipt_invalid'}
+        result = {**result, 'reason': 'machine_receipt_invalid'}
+    return {**result, 'processState': 'not_started' if not_started_reason else 'terminated',
+        'terminationConfirmed': True, 'runnerTimedOut': process_error == 'timeout',
+        'outputTruncated': proc.output_truncated if proc is not None else False}
 
 
 class ProfileBuildRequest(BaseModel):

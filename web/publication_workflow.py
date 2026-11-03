@@ -24,6 +24,7 @@ from easel.request_identity import current_user
 from easel.publication_approvals import PublicationApprovalStore, PublicationApprovalError
 from easel.publication_media import capture_publication_media, stage_publication_media
 from easel.publication_article import prepare_publication_article
+from easel.publication_process import PublicationProcessCleanupError
 
 _TASKS: set[asyncio.Task] = set()
 
@@ -153,7 +154,8 @@ class PublicationWorkflow:
                 except HTTPException:
                     record['receiptNotice'] = '新回执与原操作不一致，未覆盖既有结果'
             self.host._record_confirmed_publication(record)
-        if record.get('operationId') and (record.get('result') or {}).get('status') == 'executing':
+        if (record.get('operationId') and (record.get('result') or {}).get('status') == 'executing'
+                and (record.get('result') or {}).get('processState') not in {'stopping', 'termination_unconfirmed'}):
             status = self.status_path(record)
             try:
                 import json
@@ -256,12 +258,35 @@ class PublicationWorkflow:
                 raise HTTPException(409, '登录账号已变化，未执行旧批准')
             request = self.host.PublishRequest(**{key: subject[key] for key in ('title', 'body', 'tags', 'persona')})
             dispatched = True
-            result = await self.host._dispatch_publish(subject['platform']['id'], request,
+            dispatch = asyncio.create_task(self.host._dispatch_publish(subject['platform']['id'], request,
                 media_paths=media, operation_id=operation, expected_account=subject['account'],
-                approved_article=subject.get('article'), approved_media=subject['media'], payload_hash=record['payloadHash'])
+                approved_article=subject.get('article'), approved_media=subject['media'], payload_hash=record['payloadHash']))
+            try:
+                result = await asyncio.shield(dispatch)
+            except asyncio.CancelledError:
+                # The profile remains executing while the owned runner is
+                # terminating. A second cancellation cannot skip this barrier.
+                try:
+                    self.store().finish(identifier, operation_id=operation,
+                        result={'status': 'executing', 'processState': 'stopping', 'terminationConfirmed': False},
+                        actor_id=record['actorId'], project_id=record['projectId'])
+                except Exception:
+                    pass  # The already durable executing claim still holds.
+                dispatch.cancel()
+                while not dispatch.done():
+                    try:
+                        await asyncio.shield(dispatch)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                result = dispatch.result()
             if not isinstance(result, dict) or result.get('status') not in (
                     'submitted', 'confirmed', 'unknown', 'failed', 'draft_created', 'exported', 'scheduled'):
                 result = {'status': 'unknown', 'message': '发布进程结果尚未核实，请核对平台，勿重复提交'}
+        except PublicationProcessCleanupError:
+            result = {'status': 'executing', 'processState': 'termination_unconfirmed',
+                'terminationConfirmed': False, 'message': '无法确认发布进程已停止，账号仍锁定；未自动重发'}
         except asyncio.CancelledError:
             result = ({'status': 'unknown', 'message': '执行进程中断，结果待核实；未自动重发'} if dispatched
                 else {'status': 'failed', 'message': '已停止，未启动平台提交', 'notStarted': True})

@@ -20,7 +20,9 @@ def run_case(environment, monkeypatch, *, platform='zhihu', evidence='missing', 
     monkeypatch.setitem(ACCOUNT, 'id', 'id:verified-account-one')
     seen = []
     scripts = {'zhihu': 'web_publisher.py', 'wechat-oa': 'weixin_mp_stats.py', 'bilibili': 'bili_upload.py'}
-    def fake(command, **kwargs):
+    async def fake(command, *, preflight=None, **kwargs):
+        if preflight:
+            preflight()
         assert isinstance(command, list) and len(command) > 1
         assert Path(command[1]).name == scripts[platform], 'unrecognized process blocked'
         seen.append(command)
@@ -48,8 +50,9 @@ def run_case(environment, monkeypatch, *, platform='zhihu', evidence='missing', 
                         'evidence':{'method':'authenticated_readback','account':account,'matchMethod':'ack_id',
                         'unique':True,'statusSource':'explicit','visibility':'public','baselineCaptured':True,
                         'sinceMs':now-500,'checkedAtMs':now}})
-        return SimpleNamespace(returncode=code, stdout='发布成功 https://example.invalid/not-proof BV_FAKE', stderr='')
-    monkeypatch.setattr(web.subprocess, 'run', fake)
+        return SimpleNamespace(returncode=code, stdout='发布成功 https://example.invalid/not-proof BV_FAKE', stderr='',
+            timed_out=False, output_truncated=False)
+    monkeypatch.setattr(web, 'run_publication_process', fake)
     async def scenario():
         with actor_context(actor), project_context('default', root):
             workflow = web._publication_workflow()

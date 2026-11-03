@@ -429,6 +429,10 @@ class PublicationApprovalStore:
             old_status = previous.get('status')
             if (old_status in (None, 'unknown') or old_status == status
                     or old_status in {'submitted', 'scheduled'} and status in {'confirmed', 'failed'}):
-                record['result'] = value
+                # Read-only platform observations cannot replace independent
+                # Host facts about process termination or output truncation.
+                process = {key: previous[key] for key in ('processState', 'terminationConfirmed',
+                    'runnerTimedOut', 'outputTruncated') if key in previous}
+                record['result'] = {**value, **process}
             self._save(database, record)
         return record

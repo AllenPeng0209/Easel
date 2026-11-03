@@ -46,6 +46,9 @@ def dispatch_environment(tmp_path, monkeypatch):
     def unexpected_process(*args, **kwargs):
         pytest.fail('Dispatch tests must never start a real platform process')
     monkeypatch.setattr(web.subprocess, 'run', unexpected_process)
+    async def unexpected_managed_process(*args, **kwargs):
+        unexpected_process()
+    monkeypatch.setattr(web, 'run_publication_process', unexpected_managed_process, raising=False)
     monkeypatch.setattr(web, '_record_successful_publish',
         lambda *args, **kwargs: pytest.fail('Runner exit zero is not a published-calendar receipt'))
     return tmp_path, actor, access, image, video
@@ -55,17 +58,18 @@ def fake_runner(monkeypatch, platform, *, returncode=0, timeout=False):
     calls = []
     allowed = {'zhihu':'web_publisher.py', 'wechat-oa':'weixin_mp_stats.py',
                'douyin':'douyin_publish.py', 'xiaohongshu':'xhs_publish.py'}
-    def run(command, **kwargs):
+    async def run(command, *, preflight=None, **kwargs):
+        if preflight:
+            preflight()
         if not isinstance(command, list) or len(command) < 2:
             pytest.fail('Only an explicit runner argument array is allowed')
         script = Path(command[1]).name
         if script != allowed[platform] or not any(value in command for value in ('publish', 'publish-video')):
             pytest.fail(f'Process outside hard whitelist: {script}')
         calls.append({'kind':'platform', 'command':command})
-        if timeout:
-            raise subprocess.TimeoutExpired(command, 600)
-        return SimpleNamespace(returncode=returncode, stdout='fake local runner result', stderr='')
-    monkeypatch.setattr(web.subprocess, 'run', run)
+        return SimpleNamespace(returncode=-9 if timeout else returncode, stdout='fake local runner result',
+            stderr='', timed_out=timeout, output_truncated=False)
+    monkeypatch.setattr(web, 'run_publication_process', run)
     return calls
 
 

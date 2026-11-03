@@ -75,6 +75,67 @@ for(const [status,label,overrides] of [
   });
 }
 
+for(const [processState,label,tone] of [
+  ['stopping','正在停止，等待进程结束','running'],
+  ['termination_unconfirmed','停止未确认，账号仍锁定','warning'],
+]) {
+  test(`the executing runner's ${processState} state stays locked and exposes its exact receipt metadata`,async()=>{
+    const value=record({result:result('executing',{processState,terminationConfirmed:false,
+      phase:'submit_attempted',reason:'timeout_after_submission',publicationState:'unknown',
+      externalId:undefined,evidenceMethod:undefined,message:'进程已停止，可安全重发'})});
+    await cardDOM({record:value},async({window,card})=>{
+      assert.equal(card().getAttribute('data-state'),processState);
+      assert.equal(card().getAttribute('data-tone'),tone);
+      assert.match(window.document.body.textContent,new RegExp(label));
+      for(const metadata of ['教育 IP','抖音','教育账号','给家长的一句话',operationId,payloadHash,
+        'submit_attempted','timeout_after_submission','V3','b'.repeat(64)]) {
+        assert.ok(window.document.body.textContent.includes(metadata),metadata);
+      }
+      assert.match(window.document.body.textContent,/账号仍保持锁定/);
+      assert.match(window.document.body.textContent,/请勿重复提交/);
+      assert.equal(card().getAttribute('data-public-confirmed'),null);
+      assert.doesNotMatch(window.document.body.textContent,/可安全重发|进程已停止|平台已确认公开发布/);
+      assert.equal(window.document.querySelectorAll('[data-decision]').length,0);
+    });
+  });
+}
+
+test('readonly refresh can expose stopping and unconfirmed termination without changing the underlying operation',async()=>{
+  const initial=record({result:result('executing',{phase:'submit_attempted',reason:'timeout_after_submission',
+    externalId:undefined,publicationState:'unknown',evidenceMethod:undefined})});
+  const states=['stopping','termination_unconfirmed'];
+  const calls=[];
+  await cardDOM({record:initial,onRefresh:async id=>{
+    calls.push(id);return {...initial,result:{...initial.result,processState:states.shift(),terminationConfirmed:false}};
+  }},async({window,card,refresh})=>{
+    await React.act(async()=>refresh().click());
+    assert.equal(card().getAttribute('data-state'),'stopping');
+    assert.match(window.document.body.textContent,/正在停止，等待进程结束/);
+    await React.act(async()=>refresh().click());
+    assert.equal(card().getAttribute('data-state'),'termination_unconfirmed');
+    assert.match(window.document.body.textContent,/停止未确认，账号仍锁定/);
+    assert.ok(window.document.body.textContent.includes(operationId));
+    assert.ok(window.document.body.textContent.includes(payloadHash));
+    assert.equal(window.document.querySelector('[role="alert"]'),null);
+    assert.deepEqual(calls,['receipt-one','receipt-one']);
+    assert.equal(card().getAttribute('data-public-confirmed'),null);
+  });
+});
+
+test('an unknown process-state enum remains executing, while terminal failed and unknown receipts keep their own meaning',()=>{
+  for(const processState of ['future-stop-state','stopped',null,{},undefined]) {
+    const rendered=html(record({result:result('executing',{processState,terminationConfirmed:false})}));
+    assert.match(rendered,/data-state="executing"/);
+    assert.match(rendered,/正在执行/);
+    assert.ok(!rendered.includes('data-public-confirmed="true"'));
+  }
+  for(const [status,label] of [['failed','执行失败'],['unknown','结果待核实']]) {
+    const rendered=html(record({result:result(status,{processState:'stopping',terminationConfirmed:false})}));
+    assert.ok(rendered.includes(label));
+    assert.ok(!rendered.includes('正在停止，等待进程结束'));
+  }
+});
+
 for(const [mode,status,audience,label] of [
   ['create_draft','draft_created','platform_draft','草稿已创建，尚未公开'],
   ['manual_export','exported','manual','发布包已导出，尚未发布'],
