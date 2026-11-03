@@ -3,7 +3,7 @@
  * ui-trajectory/src/client/TrajectoryTimeline.tsx @ ce7073d (MIT).
  * Easel uses recorded transport order and exposes timestamps only when supplied.
  */
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { AgentTimelineObservation } from '../lib/agentTimeline';
 import { inspectTerminalText } from '../lib/toolValueInspection';
 import { projectAgentTimeline } from '../vendor/deepseek-harness/trajectory/timeline';
@@ -43,10 +43,12 @@ function ObservationTime({ observedAt }: { observedAt?: number }) {
   })}</time>;
 }
 
-export default function AgentTimeline({ observations, pendingQuestions }: {
+export default function AgentTimeline({ observations, pendingQuestions, onLocateTool }: {
   observations: readonly AgentTimelineObservation[];
   pendingQuestions?: number;
+  onLocateTool?: (runId: string | undefined, callId: string) => boolean;
 }) {
+  const [locateMissing, setLocateMissing] = useState(false);
   const { observations: rows, summary } = useMemo(() => projectAgentTimeline(
     observations.filter(event => event && typeof event.id === 'string' && Object.hasOwn(kindLabels, event.kind)),
   ), [observations]);
@@ -64,13 +66,18 @@ export default function AgentTimeline({ observations, pendingQuestions }: {
     <ol aria-label="按观测顺序记录">
       {rows.map(({ event, ordinal }) => {
         const status = event.status && Object.hasOwn(statusLabels, event.status) ? event.status : undefined;
+        const callId = typeof event.callId === 'string' && event.callId.trim() ? event.callId : undefined;
         return <li key={JSON.stringify([event.runId ?? null, event.turnId ?? null, event.id, event.callId ?? null])}
           data-timeline-observation={ordinal} data-observation-kind={event.kind} data-observation-status={status}>
           <span className={css.title}>{observationTitle(event)}</span>
           {status && <span className={css.status}>{statusLabels[status]}</span>}
           <ObservationTime observedAt={event.observedAt} />
+          {event.kind === 'tool' && status === 'failed' && callId && onLocateTool &&
+            <button type="button" className={css.locate} data-locate-failed-tool
+              onClick={() => setLocateMissing(!onLocateTool(event.runId, callId))}>定位失败工具</button>}
         </li>;
       })}
     </ol>
+    {locateMissing && <p className={css.omitted} data-tool-locate-missing role="status">这条消息的历史记录中没有对应的工具详情。</p>}
   </details>;
 }

@@ -1,10 +1,9 @@
 // Adapted from DeepSeek Harness ui-chat's ordered conversation timeline.
 // Keep observation metadata separate from the latest result snapshots.
-import { agentToolKey, normalizeAgentEvent } from './agentEvents';
+import { agentToolKey, commandStatus, isCommandExecution, isConfirmedToolStatus, normalizeAgentEvent } from './agentEvents';
 
 const kinds = ['tool', 'decision', 'plan', 'context', 'subagent', 'artifact', 'business', 'publication', 'steer'] as const;
 const MAX_OBSERVATIONS = 256;
-const settled = new Set(['completed', 'failed', 'interrupted', 'declined', 'cancelled', 'denied', 'stopped', 'unconfirmed']);
 
 export interface AgentTimelineObservation {
   id: string;
@@ -29,8 +28,8 @@ function append(previous: AgentTimelineObservation[], row: AgentTimelineObservat
   if (previous.some(item => agentToolKey(item, item.id) === agentToolKey(row, row.id))) return previous;
   if (row.kind === 'tool') {
     const last = previous.findLast(item => item.kind === 'tool' && agentToolKey(item) === agentToolKey(row));
-    if (last?.status && row.status && (last.status === row.status
-        || settled.has(last.status) && (!settled.has(row.status) || row.status === 'unconfirmed')
+    if (last?.status && row.status && (last.status === row.status || isConfirmedToolStatus(last.status)
+        || last.status === 'unconfirmed' && !isConfirmedToolStatus(row.status)
         || last.status === 'running' && row.status === 'preparing')) return previous;
   }
   if (previous.length < MAX_OBSERVATIONS) return [...previous, row];
@@ -44,7 +43,8 @@ export function observeAgentTimeline(previous: AgentTimelineObservation[], value
   const id = text(event?.id, 512);
   if (!event || !id || event.kind === 'usage' || event.kind === 'task' || event.kind === 'steer_capability') return previous;
   const callId = text(event.callId, 256);
-  const status = text(event.subagent?.status ?? event.publication?.result?.status ?? event.publication?.state ?? event.status, 32);
+  const reported = text(event.subagent?.status ?? event.publication?.result?.status ?? event.publication?.state ?? event.status, 32);
+  const status = event.kind === 'tool' && reported && isCommandExecution(event) ? commandStatus(event, reported) : reported;
   if (event.kind === 'tool' && (!callId || !status)) return previous;
   const name = text(event.name, 120);
   const turnId = text(event.turnId, 256);

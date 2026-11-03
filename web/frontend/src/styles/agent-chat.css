@@ -83,3 +83,8 @@
   text-decoration: underline;
   overflow-wrap: anywhere;
 }
+.agent-tool[data-tool-located] > * > [data-disclosure-header] {
+  outline: 2px solid var(--accent-start);
+  outline-offset: 1px;
+  border-radius: 5px;
+}

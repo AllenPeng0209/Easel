@@ -127,6 +127,11 @@ function knownToolStatus(value: unknown): ToolStatus | undefined {
   return typeof value === 'string' && terminal.has(value) ? value as ToolStatus : undefined;
 }
 
+export function isConfirmedToolStatus(value: unknown): boolean {
+  const status = knownToolStatus(value);
+  return status !== undefined && status !== 'unconfirmed' && terminal.has(status);
+}
+
 /** DeepSeek ToolRow's preparing/start/result split, using Easel's observed Host statuses. */
 export function toolLifecycle(value: unknown, settled: boolean): {
   status: ToolStatus; phase: ToolPhase; awaitingTerminal: boolean;
@@ -218,20 +223,34 @@ export function mergeToolSnapshots(previous: AgentEvent, incoming: AgentEvent): 
   const incomingStatus = knownToolStatus(incoming.status);
   const previousTerminal = terminal.has(previousStatus ?? '');
   const incomingTerminal = terminal.has(incomingStatus ?? '');
+  const upgradesUnconfirmed = previousStatus === 'unconfirmed' && isConfirmedToolStatus(incomingStatus);
   const older = typeof previous.timestamp === 'number' && Number.isFinite(previous.timestamp) &&
     typeof incoming.timestamp === 'number' && Number.isFinite(incoming.timestamp) && incoming.timestamp < previous.timestamp;
-  const regresses = previousTerminal && (!incomingTerminal || (previousStatus !== 'unconfirmed' && incomingStatus === 'unconfirmed'))
+  const regresses = isConfirmedToolStatus(previousStatus) || previousTerminal && !incomingTerminal
     || previousStatus === 'running' && (incomingStatus === 'preparing' || incomingStatus === 'pending');
-  if (!older && !regresses) {
-    return { ...previous, ...incoming, parentCallId, status: incomingStatus ?? previousStatus };
+  if (upgradesUnconfirmed || !older && !regresses) {
+    const context = upgradesUnconfirmed
+      ? { ...previous, completedAt: undefined, durationMs: undefined, exitCode: undefined, signal: undefined }
+      : previous;
+    return { ...context, ...incoming, parentCallId, status: incomingStatus ?? previousStatus };
   }
-  // A result can arrive first. Recover only the earlier call's missing context.
-  const name = previous.name ?? incoming.name;
-  const input = previous.input === undefined ? incoming.input : previous.input;
-  const startedAt = previous.startedAt ?? incoming.startedAt;
-  return parentCallId !== previous.parentCallId || name !== previous.name ||
-      input !== previous.input || startedAt !== previous.startedAt
-    ? { ...previous, parentCallId, name, input, startedAt } : previous;
+
+  // A terminal result can arrive first. Recover only missing call context.
+  const context: Partial<AgentEvent> = {};
+  const name = previous.name && previous.name !== 'tool' ? previous.name : incoming.name ?? previous.name;
+  if (name !== previous.name) context.name = name;
+  if (parentCallId !== previous.parentCallId) context.parentCallId = parentCallId;
+  for (const field of ['input', 'title', 'toolKind', 'locations', 'startedAt'] as const) {
+    if (previous[field] === undefined && incoming[field] !== undefined) {
+      Object.assign(context, { [field]: incoming[field] });
+    }
+  }
+  if (name && name === incoming.name) {
+    for (const flag of ['nativeBusinessTool', 'nativePublicationTool', 'nativeWebSearch'] as const) {
+      if (previous[flag] !== true && incoming[flag] === true) Object.assign(context, { [flag]: true });
+    }
+  }
+  return Object.keys(context).length ? { ...previous, ...context } : previous;
 }
 
 export function publicationEventKey(event: AgentEvent): string | null {

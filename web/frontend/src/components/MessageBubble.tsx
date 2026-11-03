@@ -1,4 +1,4 @@
-import { Fragment, useMemo } from 'react';
+import { Fragment, useMemo, useRef } from 'react';
 import type { AnswerCompletion, ChatMessage, ReasoningSummary, StreamState } from '../lib/store';
 import type { AgentTimelineObservation } from '../lib/agentTimeline';
 import type { AgentEvent, AgentSubagent } from '../lib/agentEvents';
@@ -14,7 +14,7 @@ import UserAttachments from './UserAttachments';
 import { validateChatCommand } from '../lib/chatCommands';
 import { validateChatReferences, validateChatSessionReferenceSpans } from '../lib/chatReferences';
 import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
-import AgentEventPanel from './AgentEventPanel';
+import AgentEventPanel, { type AgentToolLocator } from './AgentEventPanel';
 import AgentTimeline from './AgentTimeline';
 import ReasoningSummaryDisclosure from './ReasoningSummaryDisclosure';
 import AnswerTurnPhase from './AnswerTurnPhase';
@@ -106,6 +106,7 @@ function visibleAssistantContent(message: ChatMessage): string {
 }
 
 export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenFailureSettings, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
+  const toolLocator = useRef<AgentToolLocator>(null);
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const recordedTimeline = isStreaming ? timeline : message.timeline;
   const effTimeline = Array.isArray(recordedTimeline) ? recordedTimeline : undefined;
@@ -203,8 +204,9 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
             onRetry={actions?.canModify && !uncertainTurn && !hasPublicationReceipt ? actions.onRetry : undefined} />}
           {livePanel}
           {publicSummary && <ReasoningSummaryDisclosure summary={publicSummary} />}
-          {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} /> : null}
-          <AgentEventPanel sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
+          {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions}
+            onLocateTool={(runId, callId) => toolLocator.current?.locate(runId, callId) ?? false} /> : null}
+          <AgentEventPanel toolLocatorRef={toolLocator} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
           {assistantContent && <div data-assistant-answer dangerouslySetInnerHTML={{ __html: rendered.html }} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
           <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />

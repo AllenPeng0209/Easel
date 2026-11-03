@@ -31,3 +31,13 @@
 .timeline time { color: var(--text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .omitted { margin: 0; padding: 0 8px 5px; font-size: 11px; }
+.locate {
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--accent-end);
+  font: inherit;
+  cursor: pointer;
+}
+.locate:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 1px; }

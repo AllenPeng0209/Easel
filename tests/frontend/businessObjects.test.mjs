@@ -326,3 +326,30 @@ test('stable event keys preserve exact identity and independent observation fact
   assert.notEqual(module.businessObjectEventKey(initial),module.businessObjectEventKey(next));
   assert.notEqual(module.businessObjectIdentity(initial),module.businessObjectIdentity({...initial,projectId:'foreign'}));
 });
+
+test('workshop attempt history shows safe errors and verifies which exact render artifact was adopted', async () => {
+  const record = workshop();
+  const project = record.details.project;
+  const item = project.renders[0];
+  item.status = 'succeeded';
+  item.artifact_id = 'delivery-one';
+  item.collected_revision = 3;
+  const started_at = '2026-11-03T10:00:00Z';
+  item.submission_attempts = [
+    { number: 1, status: 'unconfirmed', started_at, error_code: 'source_revision_mismatch', task_id: 'forged-task' },
+    { number: 2, status: 'confirmed', started_at, task_id: 'render-task', message: 'raw engine diagnostic' },
+  ];
+  project.deliverables[0].render_id = item.id;
+  project.deliverables[0].engine_revision = item.engine_revision;
+  project.renders.push({ id: 'unconfirmed-render', task_id: 'unverified-task-from-mismatched-receipt',
+    submission_state: 'unconfirmed', status: 'failed' });
+  await cardDOM({ record }, async ({window, expand}) => {
+    await expand();
+    const card = window.document;
+    assert.equal(card.querySelectorAll('[data-render-attempt]').length, 2);
+    assert.match(card.body.textContent, /尝试 1.*来源版本不一致/);
+    assert.match(card.body.textContent, /尝试 2.*已确认提交/);
+    assert.match(card.querySelector('[data-adopted-render-artifact]').textContent, /delivery-one/);
+    assert.doesNotMatch(card.body.textContent, /forged-task|raw engine diagnostic|unverified-task-from-mismatched-receipt/);
+  });
+});

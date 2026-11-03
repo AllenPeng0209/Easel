@@ -767,6 +767,7 @@ def test_explicit_retry_recovers_an_interrupted_saved_render_intent(tmp_path):
     observed = client.get(base + "/renders/" + original["id"])
     assert observed.json()["status"] == "failed"
     assert observed.json()["submission_state"] == "unconfirmed"
+    assert observed.json()["submission_attempts"][0]["error_code"] == "submission_interrupted"
     assert operations == [original["operation_id"]]
     recovered = client.post(base + "/renders", json={"expected_revision": 1})
     assert recovered.status_code == 200, recovered.text
@@ -806,6 +807,7 @@ def test_concurrent_explicit_retries_do_not_duplicate_an_unknown_submission(tmp_
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["task_id"] == "only-task"
     assert calls == [receipt["operation_id"], receipt["operation_id"]]
+    assert len(recovered.json()["submission_attempts"]) == 2
     assert len(client.get(base).json()["renders"]) == 1
 
 
@@ -842,3 +844,46 @@ def test_unknown_task_cannot_be_confirmed_by_polling_during_explicit_reconciliat
     assert recovered.json()["task_id"] == "correct-source-task"
     assert recovered.json()["submission_state"] == "confirmed"
     assert operations == [original["operation_id"], original["operation_id"]]
+
+
+def test_render_retry_freezes_attempts_and_reuses_only_unconfirmed_operation(tmp_path):
+    from easel.video_workshop import WorkshopError, WorkshopStore
+
+    operations = []
+
+    def start(_project, operation_id):
+        operations.append(operation_id)
+        if len(operations) == 1:
+            raise WorkshopError("unknown-credential-value-from-provider", 503)
+        return {"task_id": f"task-{len(operations)}", "engine_revision": 4,
+                "status": "failed" if len(operations) == 2 else "succeeded",
+                "message": "unknown-credential-value-from-provider"}
+
+    client = workshop_client(tmp_path, canvas_creator=lambda _project: "canvas",
+                             canvas_state=lambda _project: {"revision": 4}, render_start=start)
+    project = create_project(client)
+    base = f"/api/workshop/projects/{project['id']}"
+    original = client.post(base + "/renders", json={"expected_revision": 1})
+    assert original.status_code == 503
+    first = client.get(base).json()["renders"][0]
+    prior = first["submission_attempts"]
+    assert len(prior) == 1
+    assert prior[0]["status"] == "unconfirmed" and prior[0]["error_code"] == "submission_unconfirmed"
+    assert "unknown-credential-value" not in original.text
+    assert "unknown-credential-value" not in str(prior)
+
+    failed = client.post(base + "/renders", json={"expected_revision": 1}).json()
+    assert failed["status"] == "failed" and failed["submission_state"] == "confirmed"
+    assert "unknown-credential-value" not in str(failed)
+    assert failed["id"] == first["id"]
+    assert failed["submission_attempts"][0] == prior[0]
+    assert failed["submission_attempts"][1]["task_id"] == "task-2"
+    assert [attempt["number"] for attempt in failed["submission_attempts"]] == [1, 2]
+
+    recovered = client.post(base + "/renders", json={"expected_revision": 1}).json()
+    assert recovered["id"] != failed["id"]
+    assert recovered["submission_attempts"][0]["number"] == 1
+    assert operations == [failed["operation_id"], failed["operation_id"], recovered["operation_id"]]
+    assert WorkshopStore(tmp_path).get(project["id"])["renders"][0] == failed
+    assert client.post(base + "/renders", json={"expected_revision": 1}).json() == recovered
+    assert len(operations) == 3

@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from easel.chat_artifacts import ArtifactError
 from easel.projects import project_id
 from easel.request_identity import current_user
-from easel.video_workshop import WorkshopError, WorkshopStore
+from easel.video_workshop import WorkshopError, WorkshopStore, public_render_submission_attempts
 
 
 class IdeaProvenance(BaseModel):
@@ -189,6 +189,11 @@ class BusinessObjectService:
             if not isinstance(values, list) or any(not isinstance(value, dict) for value in values):
                 raise HTTPException(503, '工坊项目的嵌套记录损坏，请保留源记录核对')
             safe[key] = [_scalars(value, fields) for value in values]
+            if key == 'renders':
+                for source, projected in zip(values, safe[key]):
+                    attempts = public_render_submission_attempts(source)
+                    if attempts is not None:
+                        projected['submission_attempts'] = attempts
         details = {'project': safe, 'engineVerification': 'not_checked', 'publishEligibility': 'unverified',
                    'deliveryVerification': 'not_available', 'publicationEvidence': 'stored_records_only'}
         try:

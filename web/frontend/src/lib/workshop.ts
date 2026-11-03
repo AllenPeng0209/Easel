@@ -57,6 +57,44 @@ export interface WorkshopComment {
   created_at: string;
 }
 
+export const workshopSubmissionErrors = {
+  submission_unconfirmed: '提交结果未确认',
+  submission_timeout: '提交等待超时',
+  invalid_receipt: '任务回执无效',
+  source_revision_mismatch: '来源版本不一致',
+  submission_interrupted: '提交过程已中断',
+} as const;
+
+export interface WorkshopSubmissionAttempt {
+  number: number;
+  status: 'submitting' | 'unconfirmed' | 'confirmed';
+  started_at: string;
+  settled_at?: string;
+  task_id?: string;
+  error_code?: keyof typeof workshopSubmissionErrors;
+}
+
+const submissionTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:\+00:00|Z)$/;
+
+export function normalizeWorkshopSubmissionAttempts(value: unknown): WorkshopSubmissionAttempt[] {
+  if (!Array.isArray(value)) return [];
+  const attempts = new Map<number, WorkshopSubmissionAttempt>();
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { number, status, started_at, settled_at, task_id, error_code } = entry as Partial<WorkshopSubmissionAttempt>;
+    if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1 || attempts.has(number)
+      || (status !== 'submitting' && status !== 'unconfirmed' && status !== 'confirmed')
+      || typeof started_at !== 'string' || !submissionTime.test(started_at)) continue;
+    attempts.set(number, {
+      number, status, started_at,
+      ...(status !== 'submitting' && typeof settled_at === 'string' && submissionTime.test(settled_at) ? { settled_at } : {}),
+      ...(status === 'confirmed' && typeof task_id === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(task_id) ? { task_id } : {}),
+      ...(status === 'unconfirmed' && typeof error_code === 'string' && Object.hasOwn(workshopSubmissionErrors, error_code) ? { error_code } : {}),
+    });
+  }
+  return [...attempts.values()].sort((first, next) => first.number - next.number);
+}
+
 export interface WorkshopRenderReceipt {
   id: string;
   operation_id: string;
@@ -65,6 +103,7 @@ export interface WorkshopRenderReceipt {
   engine_revision: number;
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   submission_state?: 'unconfirmed' | 'confirmed';
+  submission_attempts?: WorkshopSubmissionAttempt[];
   progress: number;
   message?: string;
   created_at: string;

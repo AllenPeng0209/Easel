@@ -18,6 +18,7 @@ import DraftSnapshotPreview from './DraftSnapshotPreview';
 import { useIpPermissions } from './ProjectSpace';
 import { IconIdea, IconOutputs, IconVideo } from './icons';
 import '../styles/businessObjects.css';
+import { normalizeWorkshopSubmissionAttempts, workshopSubmissionErrors } from '../lib/workshop';
 
 interface Props {
   record: BusinessObject;
@@ -62,6 +63,18 @@ function VersionRelation({ current, observed }: { current: number | null; observ
   return typeof observed === 'number' && current !== null && observed < current
     ? <small className="business-object__historical">历史版本 · {revision(observed)}</small> : <small>{revision(observed)}</small>;
 }
+const attemptLabels = { submitting: '提交中', unconfirmed: '结果待核对', confirmed: '已确认提交' };
+
+function WorkshopRenderAttempts({ value }: { value: unknown }) {
+  const attempts = normalizeWorkshopSubmissionAttempts(value);
+  if (!attempts.length) return null;
+  return <ol aria-label="渲染提交尝试">{attempts.map(attempt => <li key={attempt.number} data-render-attempt={attempt.number}>
+    <strong>尝试 {attempt.number} · {attemptLabels[attempt.status]}</strong>
+    {attempt.error_code && <span>{workshopSubmissionErrors[attempt.error_code]}</span>}
+    {attempt.task_id && <code>{attempt.task_id}</code>}
+  </li>)}</ol>;
+}
+
 function WorkshopDetails({ record }: { record: BusinessObject }) {
   const project = isRecord(record.details.project) ? record.details.project : {};
   const handoff = isRecord(record.details.handoff) ? record.details.handoff : null;
@@ -82,16 +95,25 @@ function WorkshopDetails({ record }: { record: BusinessObject }) {
     <section><h4>成片记录 · {deliverables.length}</h4>{deliverables.length ? <ul>{deliverables.map((item, index) => <li key={String(item.id ?? index)}>
       <strong>{valueText(item.id)}</strong><VersionRelation current={record.version.revision} observed={item.revision} />
       <code>{valueText(item.sha256)}</code></li>)}</ul> : <p>没有保存成片记录。</p>}</section>
-    <section><h4>渲染记录 · {renders.length}</h4>{renders.length ? <ul>{renders.map((item, index) => <li key={String(item.id ?? index)}>
+    <section><h4>渲染记录 · {renders.length}</h4>{renders.length ? <ul>{renders.map((item, index) => {
+      const adopted = typeof item.artifact_id === 'string' && typeof item.collected_revision === 'number'
+        && deliverables.find(file => file.id === item.artifact_id && file.render_id === item.id
+          && file.revision === item.collected_revision && file.engine_revision === item.engine_revision
+          && typeof file.sha256 === 'string' && /^[a-f0-9]{64}$/.test(file.sha256));
+      return <li key={String(item.id ?? index)}>
       <strong>{valueText(item.id)}</strong><span>{valueText(item.status)}</span>
       {typeof item.progress === 'number' && item.progress >= 0 && item.progress <= 1 && <span>{Math.round(item.progress * 100)}%</span>}
       <VersionRelation current={record.version.revision} observed={item.content_revision} />
       <span>引擎版本：{valueText(item.engine_revision)}</span>
       {typeof item.operation_id === 'string' && <span>操作编号：<code>{item.operation_id}</code></span>}
-      {typeof item.task_id === 'string' && <span>渲染任务：<code>{item.task_id}</code></span>}
+      {item.submission_state !== 'unconfirmed' && typeof item.task_id === 'string' && item.task_id
+        && <span>渲染任务：<code>{item.task_id}</code></span>}
       {typeof item.submission_state === 'string' && <span>提交记录：{item.submission_state}</span>}
-      {typeof item.artifact_id === 'string' && <span>对应成片：<code>{item.artifact_id}</code></span>}
-      </li>)}</ul> : <p>没有保存渲染回执。</p>}</section>
+      {adopted ? <span data-adopted-render-artifact>已收取成片：<code>{valueText(adopted.id)}</code> · {revision(adopted.revision)}</span>
+        : typeof item.artifact_id === 'string' && <span>回执关联成片：<code>{item.artifact_id}</code></span>}
+      <WorkshopRenderAttempts value={item.submission_attempts} />
+      </li>;
+    })}</ul> : <p>没有保存渲染回执。</p>}</section>
     <section><h4>审核记录 · {reviews.length}</h4>{reviews.length ? <ul>{reviews.map((item, index) => {
       const actor = item.actorId ?? item.actor_id ?? item.reviewerId ?? item.reviewer_id ?? item.reviewer
         ?? (isRecord(item.actor) ? item.actor.display_name ?? item.actor.name ?? item.actor.id : undefined);

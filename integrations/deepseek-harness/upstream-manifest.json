@@ -7686,12 +7686,34 @@
     "reuse_kind": "adapted",
     "changes": "适配上游回合错误与恢复入口的布局，按可信错误阶段显示设置或手动重试。",
     "verification_status": "B38_sanitized_errors_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B39",
+    "upstream_path": "packages/client/ui-tool/src/client/tool/models/tool-call-model.ts",
+    "upstream_sha256": "402b8a687d7364fcb66404a550e7fd1800b4635a10f018b746b4808fb7c1b9f4",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "easel/harnesses/events.py",
+    "destination_sha256": "c98c623cdff4bef17d0b77e98a54884639a85d728a1d818ca4f861f0720cefb5",
+    "reuse_kind": "adapted",
+    "changes": "复用工具调用与终态结果分离的语义，以 Easel 原生调用作用域冻结首次确认结果。",
+    "verification_status": "B39_frozen_result_and_attempt_history_verified"
+  },
+  {
+    "feature_id": "B39",
+    "upstream_path": "packages/client/ui-trajectory/src/client/TrajectoryTable.tsx",
+    "upstream_sha256": "7a35f595a2ea61b6d7186f9d2b5039162940e9a9037d59cb56f763b52a96aa7f",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/AgentTimeline.tsx",
+    "destination_sha256": "94ae81790efab97bc77b87eca88d57661334a5c12a02c6a6bf90a4eb018de5c4",
+    "reuse_kind": "adapted",
+    "changes": "适配按 callId 检视轨迹的逻辑，增加同消息、同运行的失败定位和键盘焦点。",
+    "verification_status": "B39_frozen_result_and_attempt_history_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 72,
+    "source_migration_files": 74,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 57,
+    "adapted_upstream_files": 59,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

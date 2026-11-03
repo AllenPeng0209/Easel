@@ -9,6 +9,7 @@
 import { ACTIVE_PROJECT_ID, ACTIVE_USER_ID } from './projectScope';
 import { normalizeDeliverable } from './deliverables';
 import type { ChatDeliverable } from './deliverables';
+import { normalizeWorkshopSubmissionAttempts } from './workshop';
 
 export type BusinessObjectKind = 'idea' | 'draft' | 'workshop';
 export interface BusinessObjectAction {
@@ -87,7 +88,9 @@ function details(kind: BusinessObjectKind, value: unknown): Record<string, unkno
     ['renders', RENDER_FIELDS], ['publications', PUBLICATION_FIELDS]] as const) {
     const entries = value.project[key];
     if (Array.isArray(entries)) project[key] = entries.filter(isRecord).map(entry => ({ ...fields(entry, allowed),
-      ...(key === 'reviews' && isRecord(entry.actor) ? { actor: fields(entry.actor, ['id', 'name', 'display_name']) } : {}) }));
+      ...(key === 'reviews' && isRecord(entry.actor) ? { actor: fields(entry.actor, ['id', 'name', 'display_name']) } : {}),
+      ...(key === 'renders' && Array.isArray(entry.submission_attempts)
+        ? { submission_attempts: normalizeWorkshopSubmissionAttempts(entry.submission_attempts) } : {}) }));
   }
   return { project, ...fields(value, VERIFICATION_FIELDS),
     ...(isRecord(value.handoff) ? { handoff: fields(value.handoff,

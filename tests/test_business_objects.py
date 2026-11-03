@@ -348,3 +348,23 @@ def test_legacy_render_receipt_without_status_stays_unknown(host):
     _, project = workshop(host, renders=[{'id': 'a' * 32, 'task_id': 'legacy-task'}])
     item = service(host).query({'action': 'inspect', 'kind': 'workshop', 'id': project['id']})['items'][0]
     assert item['status']['code'] == 'unknown' and item['status']['source'] == 'unknown'
+
+
+def test_workshop_chat_projects_only_safe_render_attempt_evidence(host):
+    start = '2026-11-03T04:00:00+00:00'
+    end = '2026-11-03T04:00:01+00:00'
+    _, project = workshop(host, renders=[{'id': 'a' * 32, 'status': 'running', 'content_revision': 1,
+        'engine_revision': 4, 'submission_state': 'confirmed', 'task_id': 'observed-task',
+        'submission_attempts': [
+            {'number': 1, 'status': 'unconfirmed', 'started_at': start, 'settled_at': end,
+             'error_code': 'submission_interrupted', 'raw': 'secret-upstream', 'task_id': 'unverified'},
+            {'number': 2, 'status': 'confirmed', 'started_at': end, 'settled_at': end,
+             'task_id': 'observed-task', 'message': 'secret-upstream'},
+        ]}])
+    item = service(host).query({'action': 'inspect', 'kind': 'workshop', 'id': project['id']})['items'][0]
+    assert item['details']['project']['renders'][0]['submission_attempts'] == [
+        {'number': 1, 'status': 'unconfirmed', 'started_at': start, 'settled_at': end,
+         'error_code': 'submission_interrupted'},
+        {'number': 2, 'status': 'confirmed', 'started_at': end, 'settled_at': end,
+         'task_id': 'observed-task'},
+    ]

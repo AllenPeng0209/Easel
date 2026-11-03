@@ -204,6 +204,51 @@ def test_codex_decline_interruption_and_failure_do_not_get_overwritten_by_late_p
     assert events[0]["output"] == "known" and events[0]["exitCode"] == 1
 
 
+def test_codex_first_confirmed_terminal_freezes_output_exit_code_and_timing(tmp_path):
+    command = {"id": "attempt", "type": "commandExecution", "command": "render"}
+    [failed, next_attempt] = run_wire(tmp_path, "codex", [
+        codex("item/completed", completedAtMs=30, item={**command, "status": "failed", "exitCode": 7,
+                                                      "durationMs": 3, "aggregatedOutput": "first failure"}),
+        codex("item/completed", completedAtMs=60, item={**command, "status": "failed", "exitCode": 8,
+                                                      "durationMs": 5, "aggregatedOutput": "duplicate failure"}),
+        codex("item/completed", completedAtMs=90, item={**command, "status": "completed", "exitCode": 0,
+                                                      "durationMs": 7, "aggregatedOutput": "contradiction"}),
+        codex("item/completed", completedAtMs=100, item={**command, "id": "retry", "status": "completed",
+                                                       "exitCode": 0, "aggregatedOutput": "separate call"}),
+    ])
+    assert (failed["status"], failed["output"], failed["exitCode"], failed["durationMs"], failed["completedAt"]) == (
+        "failed", "first failure", 7, 3, 30)
+    assert next_attempt["callId"] == "retry" and next_attempt["status"] == "completed"
+
+
+def test_codex_unconfirmed_can_upgrade_then_fill_only_missing_context(tmp_path):
+    call = {"id": "tool", "type": "dynamicToolCall", "tool": "easel_publish"}
+    observations = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={**call, "status": "future"}),
+        codex("item/completed", item={**call, "status": "completed", "contentItems": ["accepted result"]}),
+        codex("item/started", startedAtMs=10, item={**call, "status": "inProgress",
+            "parentCallId": "parent", "arguments": {"title": "approved"}, "contentItems": ["stale result"]}),
+        codex("item/completed", item={**call, "status": "failed", "parentCallId": "other",
+            "arguments": {"title": "other"}, "contentItems": ["different result"]}),
+    ])
+    assert [item["status"] for item in observations] == ["unconfirmed", "completed", "completed"]
+    final = observations[-1]
+    assert final["output"] == ["accepted result"] and final["nativePublicationTool"] is True
+    assert final["parentCallId"] == "parent" and final["input"] == {"title": "approved"} and final["startedAt"] == 10
+
+
+def test_codex_upgrade_does_not_promote_provisional_exit_or_duration(tmp_path):
+    call = {"id": "cmd", "type": "commandExecution", "command": "render"}
+    unconfirmed, failed = run_wire(tmp_path, "codex", [
+        codex("item/completed", completedAtMs=30, item={**call, "exitCode": 0, "durationMs": 7,
+                                                      "aggregatedOutput": "partial output"}),
+        codex("item/completed", completedAtMs=90, item={**call, "status": "failed"}),
+    ])
+    assert unconfirmed["status"] == "unconfirmed" and unconfirmed["exitCode"] == 0
+    assert failed["status"] == "failed" and failed["output"] == "partial output" and failed["completedAt"] == 90
+    assert "exitCode" not in failed and "durationMs" not in failed
+
+
 def test_codex_preserves_file_diff_and_mcp_parent_but_filters_foreign_thread(tmp_path):
     events = run_wire(tmp_path, "codex", [
         codex("item/completed", item={"id": "patch-1", "type": "fileChange", "status": "completed",

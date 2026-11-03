@@ -34,7 +34,10 @@ _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}
 MAX_TEXT = 32000
 _TRUNCATED = "\n[truncated: remaining content omitted]"
 
-_SETTLED_TOOL_STATUSES = ("completed", "failed", "declined", "interrupted", "unconfirmed")
+_CONFIRMED_TOOL_STATUSES = ("completed", "failed", "declined", "interrupted")
+_SETTLED_TOOL_STATUSES = (*_CONFIRMED_TOOL_STATUSES, "unconfirmed")
+_LATE_TOOL_CONTEXT = ("input", "title", "toolKind", "locations", "startedAt")
+_NATIVE_TOOL_MARKERS = ("nativeBusinessTool", "nativePublicationTool", "nativeWebSearch")
 _CODEX_STATUSLESS_TOOLS = ("webSearch", "imageView", "sleep", "functionCallOutput")
 _WEB_ACTION_TEXT_FIELDS = {
     "search": ("query",),
@@ -257,17 +260,34 @@ class EventProjector:
             return
         previous = self.calls.get(call_id, {})
         before, after = previous.get("status"), fields.get("status")
-        if (before in _SETTLED_TOOL_STATUSES and after not in _SETTLED_TOOL_STATUSES
-                or before in _SETTLED_TOOL_STATUSES and before != "unconfirmed" and after == "unconfirmed"
+        if (before == "unconfirmed" and after not in _SETTLED_TOOL_STATUSES
                 or before == "running" and after == "preparing"):
             return
+        if before in _CONFIRMED_TOOL_STATUSES:
+            # The first confirmed result is the durable observation. Reordered
+            # call data can only fill fields that were missing when it arrived.
+            context = {key: fields[key] for key in _LATE_TOOL_CONTEXT
+                       if key not in previous and fields.get(key) is not None}
+            if "parentCallId" not in previous and _valid_tool_parent(fields.get("parentCallId"), call_id):
+                context["parentCallId"] = fields["parentCallId"]
+            if previous.get("name") in (None, "tool") and isinstance(fields.get("name"), str):
+                context["name"] = fields["name"]
+            if context.get("name", previous.get("name")) == fields.get("name"):
+                context.update({key: True for key in _NATIVE_TOOL_MARKERS
+                                if key not in previous and fields.get(key) is True})
+            if not context:
+                return
+            fields = context
+        if before == "unconfirmed" and after in _CONFIRMED_TOOL_STATUSES:
+            previous = {key: value for key, value in previous.items()
+                        if key not in ("exitCode", "durationMs", "completedAt")}
         # Preserve explicit null observations where the provider distinguishes them from omission.
         nullable_fields = ("exitCode", "output") if fields.get("nativeWebSearch") else ("exitCode",)
         merged = {**previous, "callId": call_id,
                   **{key: value for key, value in fields.items() if value is not None or key in nullable_fields}}
         if merged.get("status") == "running" and "startedAt" not in merged:
             merged["startedAt"] = _now()
-        if merged.get("status") in ("completed", "failed", "interrupted") and "completedAt" not in merged:
+        if merged.get("status") in _CONFIRMED_TOOL_STATUSES and "completedAt" not in merged:
             merged["completedAt"] = _now()
         # Store only the safe, bounded state too: an unlimited stream cannot
         # retain secrets or accumulate unbounded output between notifications.

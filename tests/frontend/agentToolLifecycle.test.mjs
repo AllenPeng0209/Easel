@@ -69,3 +69,48 @@ test('a completed native publication tool uses receipt wording without claiming 
   assert.match(result.textContent, /发布回执/);
   assert.doesNotMatch(result.textContent, /已发布|发布成功/);
 });
+
+test('first confirmed tool result stays frozen while a later attempt with its own identity remains visible', () => {
+  const { reduceAgentEvents } = componentModule('lib/agentEvents.ts');
+  const failed = tool('failure', 'failed', { output: 'frozen error', exitCode: 23, completedAt: 40 });
+  const rows = [
+    failed,
+    tool('changed-result', 'completed', { output: 'conflicting completion', exitCode: 0, completedAt: 50, parentCallId: 'parent' }),
+    tool('same-status-changed-result', 'failed', { output: 'replacement', exitCode: 1, completedAt: 55 }),
+    tool('later-attempt', 'completed', { callId: 'retry', output: 'accepted later output' }),
+  ].reduce(reduceAgentEvents, []);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].status, 'failed');
+  assert.equal(rows[0].output, 'frozen error');
+  assert.equal(rows[0].exitCode, 23);
+  assert.equal(rows[0].completedAt, 40);
+  assert.equal(rows[0].parentCallId, 'parent');
+  assert.equal(rows[1].output, 'accepted later output');
+});
+
+test('a verified result can settle an unconfirmed call and exact native markers can enrich the frozen tool', () => {
+  const { reduceAgentEvents } = componentModule('lib/agentEvents.ts');
+  const rows = [
+    tool('lost', 'unconfirmed', { timestamp: 50, name: 'easel_publish' }),
+    tool('confirmed', 'failed', { timestamp: 40, name: 'easel_publish', output: 'failure' }),
+    tool('enrichment', 'completed', { name: 'easel_publish', nativePublicationTool: true, output: 'overwrite' }),
+  ].reduce(reduceAgentEvents, []);
+  assert.equal(rows[0].status, 'failed');
+  assert.equal(rows[0].nativePublicationTool, true);
+  assert.equal(rows[0].output, 'failure');
+});
+
+test('timeline does not show contradictory same-call terminal as a new attempt', () => {
+  const { observeAgentTimeline } = componentModule('lib/agentTimeline.ts');
+  const rows = [tool('failed', 'failed'), tool('completed', 'completed'),
+    tool('actual-new-call', 'completed', { callId: 'retry' })].reduce(observeAgentTimeline, []);
+  assert.deepEqual(Array.from(rows, row => [row.callId, row.status]), [['stable', 'failed'], ['retry', 'completed']]);
+});
+
+test('timeline locates a confirmed command with nonzero exit as failure', () => {
+  const { observeAgentTimeline } = componentModule('lib/agentTimeline.ts');
+  const [entry] = observeAgentTimeline([], tool('command-result', 'completed', {
+    name: 'bash', outputStream: 'merged', input: { command: 'fixture' }, output: 'failed', exitCode: 9,
+  }));
+  assert.equal(entry.status, 'failed');
+});

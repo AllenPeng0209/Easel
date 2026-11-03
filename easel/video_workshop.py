@@ -29,6 +29,36 @@ _VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 _LOCKS: dict[str, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
 _RENDER_TERMINAL = {"succeeded", "failed", "cancelled"}
+_RENDER_SUBMISSION_ERRORS = {
+    "submission_unconfirmed", "submission_timeout", "invalid_receipt",
+    "source_revision_mismatch", "submission_interrupted",
+}
+_ATTEMPT_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:\+00:00|Z)")
+
+
+def public_render_submission_attempts(receipt: dict) -> list[dict] | None:
+    attempts = receipt.get("submission_attempts")
+    if not isinstance(attempts, list):
+        return None
+    safe = []
+    for entry in attempts:
+        if not isinstance(entry, dict):
+            continue
+        number, status, started = entry.get("number"), entry.get("status"), entry.get("started_at")
+        if (type(number) is not int or number < 1 or status not in ("submitting", "unconfirmed", "confirmed")
+                or not isinstance(started, str) or not _ATTEMPT_TIME.fullmatch(started)):
+            continue
+        observation = {"number": number, "status": status, "started_at": started}
+        ended, task_id, code = entry.get("settled_at"), entry.get("task_id"), entry.get("error_code")
+        if status != "submitting" and isinstance(ended, str) and _ATTEMPT_TIME.fullmatch(ended):
+            observation["settled_at"] = ended
+        if status == "confirmed" and isinstance(task_id, str) and _CANVAS_ID.fullmatch(task_id):
+            observation["task_id"] = task_id
+        if status == "unconfirmed" and isinstance(code, str) and code in _RENDER_SUBMISSION_ERRORS:
+            observation["error_code"] = code
+        safe.append(observation)
+    return safe
+
 
 
 def _now() -> str:
@@ -438,9 +468,11 @@ class WorkshopStore:
         progress = min(1.0, max(0.0, float(progress)))
         if status == "succeeded":
             progress = 1.0
-        message = result.get("message", "")
-        return {"status": status, "progress": progress,
-                "message": message[:2000] if isinstance(message, str) else ""}
+        message = {
+            "queued": "渲染已排队", "running": "渲染进行中", "succeeded": "渲染成功",
+            "failed": "渲染失败", "cancelled": "渲染已取消",
+        }[status]
+        return {"status": status, "progress": progress, "message": message}
 
     def start_render(self, identifier: str, expected_revision: int, canvas_state=None, render_start=None) -> dict:
         if canvas_state is None or render_start is None:
@@ -477,6 +509,12 @@ class WorkshopStore:
         # response. Reconcile their original operation before allowing a new one.
         return bool(receipt.get("task_id")) and receipt["status"] in {"queued", "running", "succeeded"}
 
+    @staticmethod
+    def _settle_render_submission(receipt: dict, status: str, **evidence) -> None:
+        attempts = receipt.get("submission_attempts")
+        if attempts and attempts[-1]["status"] == "submitting":
+            attempts[-1].update(status=status, settled_at=_now(), **evidence)
+
     def _submit_render(self, identifier: str, expected_revision: int, canvas_state, render_start) -> dict:
         with self._locked():
             project = self._read(identifier)
@@ -506,18 +544,27 @@ class WorkshopStore:
                     "created_at": _now(), "updated_at": _now(),
                 }
                 project["renders"].append(receipt)
+            self._settle_render_submission(receipt, "unconfirmed", error_code="submission_interrupted")
+            attempts = receipt.setdefault("submission_attempts", [])
+            attempts.append({"number": len(attempts) + 1, "status": "submitting", "started_at": _now()})
             self._write(project)
             snapshot = {**project, "engine_current_revision": engine_revision}
         # Never keep the project writer lock over an external operation.
         result = None
+        error_code = "submission_unconfirmed"
         try:
             result = render_start(snapshot, receipt["operation_id"])
             if not isinstance(result, dict) or not isinstance(result.get("task_id"), str) or not _CANVAS_ID.fullmatch(result["task_id"]):
+                error_code = "invalid_receipt"
                 raise WorkshopError("BeefTV 未提供有效任务回执，提交结果待核对", 503)
             if type(result.get("engine_revision")) is not int or result["engine_revision"] != engine_revision:
+                error_code = "source_revision_mismatch"
                 raise WorkshopError("渲染来源版本与请求不一致，未采用结果", 409)
+            error_code = "invalid_receipt"
             update = self._render_result(result)
         except Exception as error:
+            if isinstance(error, TimeoutError):
+                error_code = "submission_timeout"
             with self._locked():
                 project = self._read(identifier)
                 saved = self._render_entry(project, receipt["id"])
@@ -528,14 +575,16 @@ class WorkshopStore:
                         saved["task_id"] = result["task_id"]
                     if type(result.get("engine_revision")) is int:
                         saved["reported_engine_revision"] = result["engine_revision"]
+                self._settle_render_submission(saved, "unconfirmed", error_code=error_code)
                 self._write(project)
-            if isinstance(error, WorkshopError):
-                raise
-            raise WorkshopError("BeefTV 渲染提交失败，已保留回执且未自动重发", 503) from None
+            if error_code == "source_revision_mismatch":
+                raise WorkshopError("渲染来源版本与请求不一致，未采用结果", 409) from None
+            raise WorkshopError("BeefTV 渲染提交结果待核对，已保留原操作回执", 503) from None
         with self._locked():
             project = self._read(identifier)
             saved = self._render_entry(project, receipt["id"])
             saved.update(update, task_id=result["task_id"], submission_state="confirmed", updated_at=_now())
+            self._settle_render_submission(saved, "confirmed", task_id=result["task_id"])
             self._write(project)
             return saved
 
@@ -556,6 +605,7 @@ class WorkshopStore:
                         if not self._submission_confirmed(saved) and saved["status"] not in _RENDER_TERMINAL:
                             saved.update(status="failed", submission_state="unconfirmed", updated_at=_now(),
                                          message="原渲染提交已中断，结果待核对；请点击重试核对原操作。")
+                            self._settle_render_submission(saved, "unconfirmed", error_code="submission_interrupted")
                             self._write(project)
                         return saved
             return receipt
