@@ -44,6 +44,8 @@ interface MessageBubbleProps {
   events?: AgentEvent[];
   timeline?: AgentTimelineObservation[];
   pendingTimelineQuestions?: number;
+  detailMode?: 'compact' | 'detailed';
+  foldWorkDetails?: boolean;
   actions?: BubbleActions;
   onOpenFailureSettings?: () => void;
   onQuoteAnswer?: (text: string) => boolean;
@@ -118,7 +120,7 @@ function visibleAssistantContent(message: ChatMessage): string {
   return error === -1 ? message.content : message.content.slice(0, error);
 }
 
-export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenFailureSettings, onQuoteAnswer, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
+export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, detailMode, foldWorkDetails, actions, onOpenFailureSettings, onQuoteAnswer, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const toolLocator = useRef<AgentToolLocator>(null);
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const recordedTimeline = isStreaming ? timeline : message.timeline;
@@ -158,6 +160,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
   const uncertainTurn = !isStreaming && message.status === 'unconfirmed';
   const hasPublicationReceipt = effEvents.some(event => event.kind === 'publication' && event.publication);
   const suppliedSummary = isStreaming ? reasoningSummary : message.reasoningSummary;
+  const workDetailsOpen = detailMode === undefined ? undefined : detailMode === 'detailed' || foldWorkDetails === false;
   const publicSummary = typeof suppliedSummary?.text === 'string' && typeof suppliedSummary.truncated === 'boolean'
     && (suppliedSummary.text.trim() || suppliedSummary.truncated) ? suppliedSummary : undefined;
   const liveActivity = isStreaming ? (activity || '') : '';
@@ -208,10 +211,10 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
           {failedTurn && <ChatFailureNotice failure={message.failure} onOpenSettings={onOpenFailureSettings}
             onRetry={actions?.canModify && !uncertainTurn && !hasPublicationReceipt ? actions.onRetry : undefined} />}
           {livePanel}
-          {publicSummary && <ReasoningSummaryDisclosure summary={publicSummary} />}
-          {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions}
+          {publicSummary && <ReasoningSummaryDisclosure summary={publicSummary} defaultOpen={workDetailsOpen} />}
+          {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} defaultOpen={workDetailsOpen}
             onLocateTool={(runId, callId) => toolLocator.current?.locate(runId, callId) ?? false} /> : null}
-          <AgentEventPanel toolLocatorRef={toolLocator} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
+          <AgentEventPanel toolLocatorRef={toolLocator} defaultOpen={workDetailsOpen} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
           {assistantContent && <AnswerQuoteSelection blocks={rendered.blocks} highlightCode={!isStreaming} settled={!isStreaming}
             onQuoteAnswer={isStreaming ? undefined : onQuoteAnswer} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}

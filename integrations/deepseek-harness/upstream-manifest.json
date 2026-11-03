@@ -7851,12 +7851,34 @@
     "reuse_kind": "adapted",
     "changes": "复用按块键与缓存，保留已稳定的答复节点和选区。",
     "verification_status": "A32_streaming_markdown_block_identity_verified"
+  },
+  {
+    "feature_id": "A36",
+    "upstream_path": "packages/client/ui-chat/src/chat-settings.ts",
+    "upstream_sha256": "60e3ccc9a1e550fa5c00d079b38f89ebd9e7f2b94a4ffc82958bba10b5903e60",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/lib/chatWorkDetails.ts",
+    "destination_sha256": "fe46c571802f9f7faa745e85c5951b83fb8f379aa928f4b0cbdaef29ed51c606",
+    "reuse_kind": "adapted",
+    "changes": "复用工作细节模式和独立折叠时机，接入 Easel 用户和 IP 范围的浏览器偏好。",
+    "verification_status": "A36_work_details_persistence_and_reading_anchor_verified"
+  },
+  {
+    "feature_id": "A36",
+    "upstream_path": "packages/client/ui-chat/src/client/chat/use-disclosure.ts",
+    "upstream_sha256": "2855d4d62ea556b37e53efdaac6dc0e589f2b22e81abc0f00f413bca35f1cddf",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/useWorkDisclosure.ts",
+    "destination_sha256": "b11cfa1e683a483295fbc7351539a27af09b34697e948f0db4a3a371b0f33baa",
+    "reuse_kind": "adapted",
+    "changes": "适配自动折叠和手动展开所有权，保留正在操作的详情焦点。",
+    "verification_status": "A36_work_details_persistence_and_reading_anchor_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 87,
+    "source_migration_files": 89,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 72,
+    "adapted_upstream_files": 74,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

@@ -456,3 +456,25 @@ test('quoting a settled answer inserts into the current draft without sending', 
   assert.equal(messages[1].props.onQuoteAnswer('插入被阻止'), false);
   assert.equal(quotes.length, 1);
 });
+
+test('work details preference controls persist and defer folding until the selected point', async () => {
+  const drafts = new Map();
+  const queueProps = { session: { id: 's1', title: 'Work details', created: 1, messages: [
+    { role: 'user', content: 'first' }, { role: 'assistant', content: 'previous result' },
+    { role: 'user', content: 'second' }, { role: 'assistant', content: 'latest result' },
+  ] } };
+  const ui = view({ queueProps, sharedDrafts: drafts });
+  const select = (nodes, label) => nodes.find(node => node.type === 'select' && node.props['aria-label'] === label);
+  let nodes = await ui.ready();
+  assert.equal(select(nodes, '工作细节').props.value, 'compact');
+  const assistantRows = nodes => nodes.filter(node => node.type === 'message-bubble' && node.props.message.role === 'assistant');
+  assert.deepEqual(assistantRows(nodes).map(node => node.props.foldWorkDetails), [true, true]);
+  select(nodes, '简洁模式自动折叠').props.onChange({ target: { value: 'next-input' } });
+  nodes = ui.render();
+  assert.deepEqual(assistantRows(nodes).map(node => node.props.foldWorkDetails), [true, false]);
+  select(nodes, '工作细节').props.onChange({ target: { value: 'detailed' } });
+  nodes = await view({ queueProps, sharedDrafts: drafts }).ready();
+  assert.equal(select(nodes, '工作细节').props.value, 'detailed');
+  assert.equal(select(nodes, '简洁模式自动折叠').props.value, 'next-input');
+  assert.equal(assistantRows(nodes)[1].props.detailMode, 'detailed');
+});

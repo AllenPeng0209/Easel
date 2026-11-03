@@ -1,5 +1,5 @@
 import { projectUrl, projectFetch } from '../lib/projectScope';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import MessageBubble from './MessageBubble';
 import DeliverablePreviewPane, { ChatInspectionPane } from './DeliverablePreviewPane';
 import { SubagentTranscript } from './AgentSubagentLineage';
@@ -22,6 +22,7 @@ import { AttachmentUploadQueue } from '../lib/uploadQueue';
 import { validateRestoredAttachments } from '../lib/restoredAttachments';
 import { loadChatDraft, saveChatDraft, consumeChatDraft } from '../lib/chatDrafts';
 import { useChatReading } from '../lib/chatReading';
+import { loadWorkDetailsPreferences, saveWorkDetailsPreferences, type WorkDetailsPreferences } from '../lib/chatWorkDetails';
 import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
 import { fileSizeText } from '../vendor/deepseek-harness/composer/file-size';
 import { ImageLightbox } from '../vendor/deepseek-harness/composer/ImageLightbox';
@@ -136,6 +137,17 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const isStreaming = !!stream;
   const isEmpty = session.messages.length === 0 && !isStreaming;
   const reading = useChatReading(session.id, session.messages, stream, !isEmpty);
+  const [workDetails, setWorkDetails] = useState(loadWorkDetailsPreferences);
+  const restoreReadingAnchor = useRef<(() => void) | undefined>(undefined);
+  useLayoutEffect(() => {
+    restoreReadingAnchor.current?.();
+    restoreReadingAnchor.current = undefined;
+  }, [workDetails]);
+  const changeWorkDetails = (next: WorkDetailsPreferences) => {
+    restoreReadingAnchor.current = reading.captureReadingAnchor();
+    setWorkDetails(next);
+    saveWorkDetailsPreferences(next);
+  };
   const openDeliverable = (file: ChatDeliverable, trigger: HTMLElement) => {
     inspectionTrigger.current = trigger;
     setInspection({ kind: 'file', file });
@@ -483,6 +495,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   }
 
   // ---- 对话态 ----
+  const lastUserIndex = session.messages.findLastIndex(message => message.role === 'user');
   const displayMessages: ChatMessage[] = [...session.messages];
   if (isStreaming) displayMessages.push({ role: 'assistant', content: stream!.content || '' });
 
@@ -490,11 +503,24 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
     <div className="chat-page agent-chat" {...dragProps}>
       {dragOverlay}{preview}
       <div className="chat-session-header"><div><span>AI 对话</span><h1>{session.title === 'New Chat' ? '新对话' : session.title}</h1></div>
-        <span className={`chat-session-status ${isStreaming ? 'is-active' : ''} ${stream?.lifecycle === 'waiting_input' ? 'is-waiting' : ''}
+        <div className="chat-session-controls">
+          <label><span>工作细节</span><select aria-label="工作细节" value={workDetails.mode}
+            onChange={event => changeWorkDetails({ ...workDetails, mode: event.target.value === 'detailed' ? 'detailed' : 'compact' })}>
+            <option value="compact">简洁</option>
+            <option value="detailed">详细</option>
+          </select></label>
+          <label><span>简洁模式自动折叠</span><select aria-label="简洁模式自动折叠" value={workDetails.collapseTiming}
+            onChange={event => changeWorkDetails({ ...workDetails,
+              collapseTiming: event.target.value === 'next-input' ? 'next-input' : 'completion' })}>
+            <option value="completion">完成时</option>
+            <option value="next-input">下一次提问时</option>
+          </select></label>
+          <span className={`chat-session-status ${isStreaming ? 'is-active' : ''} ${stream?.lifecycle === 'waiting_input' ? 'is-waiting' : ''}
           ${stream?.lifecycle === 'stop_failed' ? 'is-error' : ''}`} aria-live="polite">
-          <i />{lifecycleLabel}</span>
+            <i />{lifecycleLabel}</span>
+        </div>
       </div>
-      <div className="chat-messages" ref={reading.scrollRef} onScroll={reading.onScroll} onWheel={reading.onWheel}
+      <div className="chat-messages" data-reading-detached={!reading.following || undefined} ref={reading.scrollRef} onScroll={reading.onScroll} onWheel={reading.onWheel}
         onTouchStart={reading.interrupt} onPointerDown={reading.interrupt} onKeyDown={reading.onKeyDown} tabIndex={0} aria-label="对话消息">
         <div className="chat-thread" ref={reading.threadRef}>
           {displayMessages.map((msg, i) => {
@@ -527,12 +553,14 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
               }
             }
             return (
-              <div key={`${i}-${msg.role}`}>
+              <div key={`${i}-${msg.role}`} data-chat-message>
               <MessageBubble
                 key={`${i}-${msg.role}`}
                 sessionId={session.id}
                 message={msg}
                 isStreaming={live}
+                detailMode={workDetails.mode}
+                foldWorkDetails={isFinal && (workDetails.collapseTiming === 'completion' || i < lastUserIndex)}
                 reasoningSummary={live ? stream!.reasoningSummary : undefined}
                 answerCompletion={live ? stream!.answerCompletion : undefined}
                 turnLifecycle={live ? stream!.lifecycle : undefined}

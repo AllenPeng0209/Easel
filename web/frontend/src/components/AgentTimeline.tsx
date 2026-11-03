@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react';
 import type { AgentTimelineObservation } from '../lib/agentTimeline';
 import { inspectTerminalText } from '../lib/toolValueInspection';
 import { projectAgentTimeline } from '../vendor/deepseek-harness/trajectory/timeline';
+import { useWorkDisclosure } from './useWorkDisclosure';
 import css from './AgentTimeline.module.css';
 
 const kindLabels: Record<AgentTimelineObservation['kind'], string> = {
@@ -43,12 +44,15 @@ function ObservationTime({ observedAt }: { observedAt?: number }) {
   })}</time>;
 }
 
-export default function AgentTimeline({ observations, pendingQuestions, onLocateTool }: {
+export default function AgentTimeline({ observations, pendingQuestions, onLocateTool, defaultOpen }: {
   observations: readonly AgentTimelineObservation[];
   pendingQuestions?: number;
+  defaultOpen?: boolean;
   onLocateTool?: (runId: string | undefined, callId: string) => boolean;
 }) {
   const [locateMissing, setLocateMissing] = useState(false);
+  const [manual, setManual] = useState<boolean>();
+  const disclosure = useWorkDisclosure(manual ?? defaultOpen ?? false, manual === undefined && defaultOpen !== undefined);
   const { observations: rows, summary } = useMemo(() => projectAgentTimeline(
     observations.filter(event => event && typeof event.id === 'string' && Object.hasOwn(kindLabels, event.kind)),
   ), [observations]);
@@ -56,8 +60,12 @@ export default function AgentTimeline({ observations, pendingQuestions, onLocate
   const waiting = Math.max(pendingQuestions ?? 0, summary.waiting);
   const omitted = rows[0].event.earlierObservationsOmitted === true;
 
-  return <details className={css.timeline} data-agent-timeline aria-label="执行时间线">
-    <summary>
+  return <details className={css.timeline} data-agent-timeline aria-label="执行时间线" open={disclosure.open}
+    onFocusCapture={disclosure.onFocusCapture} onBlurCapture={disclosure.onBlurCapture}>
+    <summary onClick={event => {
+      event.preventDefault();
+      setManual(!disclosure.open);
+    }}>
       <span>执行时间线 · {omitted ? '保留记录中 ' : ''}{summary.tools} 次工具调用</span>
       {summary.failed > 0 && <span className={css.failed} data-timeline-failed={summary.failed}>{summary.failed} 个失败</span>}
       {waiting > 0 && <span className={css.waiting} data-timeline-waiting={waiting}>{waiting} 项待答复</span>}

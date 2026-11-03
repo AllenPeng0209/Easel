@@ -95,6 +95,33 @@ export function useChatReading(sessionId: string, messages: readonly ChatMessage
     return () => { remember(); release(); element.removeEventListener('scrollend', settle); observer?.disconnect(); };
   }, [enabled, follow, remember, backToBottom]);
 
+  const captureReadingAnchor = (): (() => void) | undefined => {
+    const viewport = scrollRef.current;
+    if (!viewport || follow.active) return;
+    const { top, bottom } = viewport.getBoundingClientRect();
+    const anchors: { element: HTMLElement; top: number }[] = [];
+    for (const element of viewport.querySelectorAll<HTMLElement>(
+      '[data-chat-message], [data-assistant-answer] :is(p, pre, table, h1, h2, h3, li)',
+    )) {
+      const rect = element.getBoundingClientRect();
+      if (rect.height > 0 && rect.bottom > top && rect.top < bottom) {
+        anchors.push({ element, top: rect.top });
+      }
+    }
+    // Prefer a fully visible text position inside long messages over a row
+    // whose beginning is already above the viewport.
+    anchors.sort((first, second) => (first.top < top ? 1 : 0) - (second.top < top ? 1 : 0));
+    return () => {
+      if (!viewport.isConnected || follow.active) return;
+      const anchor = anchors.find(item => item.element.isConnected && item.element.getBoundingClientRect().height > 0);
+      if (!anchor) return;
+      const delta = anchor.element.getBoundingClientRect().top - anchor.top;
+      if (Math.abs(delta) > 0.5) viewport.scrollTop += delta;
+      follow.sample(scrollMetrics(viewport), false);
+      remember();
+    };
+  };
+
   const onScroll = () => {
     const element = scrollRef.current;
     if (!element) return;
@@ -120,5 +147,5 @@ export function useChatReading(sessionId: string, messages: readonly ChatMessage
       interrupt(); follow.setFollowing(false); setFollowing(false);
     }
   };
-  return { scrollRef, threadRef, following, unread, backToBottom, onScroll, onWheel, onKeyDown, interrupt };
+  return { scrollRef, threadRef, following, unread, backToBottom, captureReadingAnchor, onScroll, onWheel, onKeyDown, interrupt };
 }
