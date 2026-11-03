@@ -730,7 +730,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
                 onOpenDeliverable={openDeliverable}
                 onOpenSubagent={openSubagent}
               />
-              {!live && msg.questions && <QuestionCards sessionId={session.id} questions={msg.questions} onDone={onQuestionAnswered} />}
+              {!live && msg.questions && <QuestionCards historical sessionId={session.id} questions={msg.questions} onDone={onQuestionAnswered} />}
               </div>
             );
           })}

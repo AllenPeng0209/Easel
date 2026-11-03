@@ -95,8 +95,9 @@ test('a pending status read unlocks a retry, while a revoked receipt closes only
     assert.equal(done.length, 0);
     assert.equal(document.querySelector('.question-card').dataset.questionPhase, 'checking');
     await React.act(async () => status().at(-1).resolve(Response.json({ questions: { harness_same: { status: 'revoked' } } })));
-    assert.equal(document.querySelector('.question-card').dataset.questionPhase, 'revoked');
-    assert.match(document.querySelector('.question-card').textContent, /权限已撤销/);
+    assert.equal(document.querySelector('.question-card__submit'), null);
+    assert.equal(document.querySelector('.question-resolution').dataset.questionPhase, 'revoked');
+    assert.match(document.querySelector('.question-resolution').textContent, /权限已撤销/);
     assert.deepEqual(JSON.parse(JSON.stringify(done)), [{ id: 'harness_same', status: 'revoked' }]);
   });
 });

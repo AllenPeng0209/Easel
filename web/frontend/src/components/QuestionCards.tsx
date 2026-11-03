@@ -27,10 +27,16 @@ function requestIdentity(question: QuestionDetails, sessionId: string): string {
     question.questions.map(item => [item.questionId, item.question, item.multiSelect === true, item.options?.map(option => option.label) ?? []])]);
 }
 
-function matchingReceipt(value: unknown, id: string): ChatQuestionClosed | null {
+function isExecutionApproval(question: QuestionDetails): boolean {
+  return !question.publication && (question.kind === 'approval' || question.requiresHuman === true
+    || question.questions.some(item => item.header === '执行授权'));
+}
+
+function matchingReceipt(value: unknown, id: string, allowClosed = false): ChatQuestionClosed | null {
   if (!value || typeof value !== 'object') return null;
   const receipt = value as Partial<ChatQuestionClosed>;
-  if (receipt.id !== id || typeof receipt.status !== 'string' || !definitiveStatuses.has(receipt.status)) return null;
+  if (receipt.id !== id || typeof receipt.status !== 'string'
+      || !(allowClosed ? terminalStatuses : definitiveStatuses).has(receipt.status)) return null;
   const answers = receipt.answers && typeof receipt.answers === 'object' && !Array.isArray(receipt.answers)
     && Object.values(receipt.answers).every(values => Array.isArray(values) && values.every(value => typeof value === 'string'))
     ? receipt.answers : undefined;
@@ -42,6 +48,12 @@ const replyLabels: Record<string, string> = {
 };
 
 function QuestionResolution({ question }: { question: QuestionDetails }) {
+  const executionApproval = isExecutionApproval(question);
+  const closedLabels: Record<string, string> = {
+    historical: '历史授权请求无法在此提交', revoked: '操作权限已撤销',
+    replaced: '该授权请求已被替换', cancelled: '该授权请求已取消',
+  };
+  const closedLabel = closedLabels[question.status || ''] || '该授权请求已过期或关闭';
   const data: QuestionReplyData = {
     callId: question.id, outcome: 'answered', time: question.resolvedAtMs || 0, text: '',
     questions: question.questions.map(item => ({ id: item.questionId, question: item.question, header: item.header })),
@@ -51,10 +63,11 @@ function QuestionResolution({ question }: { question: QuestionDetails }) {
     {question.publication && <PublicationSubjectView subject={question.publication.subject} />}
     <div className="question-resolution__status">{question.status === 'blocked' ? '等待确认超时，任务在需要授权的步骤受阻'
       : question.status === 'declined' ? '未获授权，操作未执行'
-      : question.resolvedBy === 'default' || question.status === 'defaulted' ? '已按默认答案继续' : '已答复'}</div>
-    {question.answers ? <QuestionReplyBubble data={data} t={key => replyLabels[key] || key} />
-      : question.status !== 'blocked' && question.status !== 'declined'
-        ? <p className="agent-event__note">答复已被服务端接受，正在同步记录。</p> : null}
+      : !settledStatuses.has(question.status || '') ? closedLabel
+        : question.resolvedBy === 'default' || question.status === 'defaulted' ? '已按默认答案继续' : '已答复'}</div>
+    {!executionApproval && (question.answers ? <QuestionReplyBubble data={data} t={key => replyLabels[key] || key} />
+      : ['answered', 'resolved', 'defaulted'].includes(question.status || '')
+        ? <p className="agent-event__note">答复已被服务端接受，正在同步记录。</p> : null)}
   </div>;
 }
 
@@ -110,7 +123,8 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
       .filter(value => !(item.options || []).some(option => option.label === value))])));
   const [showCustom, setShowCustom] = useState<Record<string, boolean>>({});
   const [now, setNow] = useState(Date.now());
-  const requiresApproval = question.kind === 'approval' || question.requiresHuman === true;
+  const executionApproval = isExecutionApproval(question);
+  const requiresApproval = executionApproval || question.kind === 'approval' || question.requiresHuman === true;
   const defaultScheduled = !requiresApproval && typeof question.autoResolveAtMs === 'number'
     && !!question.defaultAnswers && Object.keys(question.defaultAnswers).length > 0;
   const deadlineReached = !defaultScheduled && typeof question.expiresAtMs === 'number' && now >= question.expiresAtMs;
@@ -120,7 +134,7 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
   const expired = deadlineReached || terminalStatuses.has(status);
   const locked = phase !== 'idle' || expired || status !== 'pending';
   const applyReceipt = useCallback((value: unknown): boolean => {
-    const receipt = matchingReceipt(value, original.id);
+    const receipt = matchingReceipt(value, original.id, executionApproval);
     if (!receipt || !mounted.current || received.current || originalStatus.current) return false;
     received.current = true;
     setResolution(receipt);
@@ -129,7 +143,7 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
     draftStore.clear(draftKey);
     receiptCallback.current?.(receipt);
     return true;
-  }, [changePhase, draftKey, draftStore, original.id]);
+  }, [changePhase, draftKey, draftStore, original.id, executionApproval]);
 
   useEffect(() => {
     if (terminalStatuses.has(status)) { draftStore.clear(draftKey); return; }
@@ -148,12 +162,12 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
       if (polling || Date.now() - lastPoll < 4500) return;
       polling = true;
       lastPoll = Date.now();
-      void questionStatus([original.id]).then(states => {
+      void questionStatus([original.id], executionApproval && sessionId !== 'legacy' ? sessionId : undefined).then(states => {
         if (!active || !mounted.current || originalStatus.current || received.current) return;
         const details = states[original.id] as (Partial<ChatQuestionClosed> & { status: string }) | undefined;
         if (details?.id !== undefined && details.id !== original.id) return;
         const next = details?.status;
-        if (next && definitiveStatuses.has(next)) {
+        if (next && (executionApproval ? terminalStatuses : definitiveStatuses).has(next)) {
           applyReceipt({ ...details, id: original.id });
         } else if (next === 'pending') {
           setPendingConfirmed(true);
@@ -168,7 +182,7 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
     tick();
     const timer = setInterval(tick, 1000);
     return () => { active = false; clearInterval(timer); };
-  }, [applyReceipt, changePhase, original.id, reconcile, status]);
+  }, [applyReceipt, changePhase, original.id, reconcile, executionApproval, sessionId, status]);
 
   const items: ChatQuestionItem[] = question.questions || [];
   const valsOf = (it: ChatQuestionItem): string[] => selected[it.questionId] || [];
@@ -229,7 +243,7 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
     setReconcile(value => value + 1);
   };
 
-  if (settled) return <QuestionResolution question={{ ...question, status }} />;
+  if (settled || executionApproval && terminalStatuses.has(status)) return <QuestionResolution question={{ ...question, status }} />;
   const seconds = Math.max(0, Math.ceil(((question.autoResolveAtMs || 0) - now) / 1000));
   return (
     <div className="message-row assistant">
@@ -337,15 +351,20 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
 }
 
 /** Keep a request visible until its exact terminal observation arrives. */
-export default function QuestionCards({ questions, sessionId = 'legacy', onDone }: {
+export default function QuestionCards({ questions, sessionId = 'legacy', onDone, historical = false }: {
   questions: ChatQuestion[];
   sessionId?: string;
+  historical?: boolean;
   onDone?: (receipt: ChatQuestionClosed) => void;
 }) {
   if (!questions.length) return null;
   return <>
     {questions.map(question => {
       const key = requestIdentity(question, sessionId);
+      if (historical && isExecutionApproval(question)) {
+        const status = terminalStatuses.has(question.status || '') ? question.status : 'historical';
+        return <QuestionResolution key={key} question={{ ...question, status }} />;
+      }
       return <QuestionCard key={key} question={question} sessionId={sessionId} requestKey={key} onReceipt={onDone} />;
     })}
   </>;
