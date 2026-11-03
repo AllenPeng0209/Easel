@@ -20,6 +20,23 @@ function redactText(text: string): string {
     .replace(assignment, `$1${HIDDEN}`);
 }
 
+/** Strip terminal controls before scrubbing so color escapes cannot split a secret. */
+export function inspectTerminalText(input: string, structured = false): { text: string; truncated: boolean } {
+  const source = input.slice(0, MAX_SOURCE)
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)|(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g, '')
+    .replace(/\r\n/g, '\n')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
+  if (structured) {
+    const inspected = inspectToolValue(source);
+    return { text: inspected.text, truncated: inspected.truncated || input.length > MAX_SOURCE };
+  }
+  const safe = redactText(source);
+  return { text: safe.length > MAX_TEXT ? safe.slice(0, MAX_TEXT - OMITTED.length) + OMITTED : safe,
+    truncated: safe.length > MAX_TEXT || input.length > MAX_SOURCE };
+}
+
 export interface ToolValueInspection {
   kind: 'missing' | 'json' | 'text';
   text: string;

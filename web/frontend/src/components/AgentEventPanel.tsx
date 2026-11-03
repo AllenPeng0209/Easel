@@ -1,8 +1,9 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
-import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots } from '../lib/agentEvents';
+import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots, commandStatus, isCommandExecution } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
 import ToolValueInspector from './ToolValueInspector';
+import CommandExecutionCard from './CommandExecutionCard';
 import { inspectToolValue } from '../lib/toolValueInspection';
 import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
 import BusinessObjectCard from './BusinessObjectCard';
@@ -52,12 +53,14 @@ function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
 function ToolEvent({ event, open, settled, children, childCount, onToggle }: {
   event: AgentEvent; open: boolean; settled: boolean; children?: ReactNode; childCount: number; onToggle: () => void;
 }) {
-  const state = event.status || 'pending';
+  const isCommand = isCommandExecution(event);
+  const reportedState = event.status || 'pending';
+  const state = isCommand ? commandStatus(event, reportedState) : reportedState;
   const active = state === 'running' || state === 'in_progress' || state === 'preparing' || state === 'pending';
   const unconfirmed = settled && active;
   const running = !settled && active;
-  const title = names[event.name || ''] || event.name || '工具调用';
-  const duration = typeof event.startedAt === 'number' && typeof event.completedAt === 'number'
+  const title = isCommand ? '运行命令' : names[event.name || ''] || event.name || '工具调用';
+  const duration = !isCommand && typeof event.startedAt === 'number' && typeof event.completedAt === 'number'
     ? Math.max(0, event.completedAt - event.startedAt) : undefined;
   return <div className="agent-tool" data-tool-call={event.callId || event.id}
     data-chat-anchor-key={`call:${agentToolKey(event)}`} data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={unconfirmed ? 'unconfirmed' : state} data-tool-status={state}>
@@ -71,10 +74,12 @@ function ToolEvent({ event, open, settled, children, childCount, onToggle }: {
       {children}
       <div className="agent-tool__details">
         {unconfirmed && <p className="agent-event__note">本轮已结束，此工具的最终状态仍未确认。</p>}
-        <ToolValueInspector label="输入" value={event.input} />
-        <ToolValueInspector label="结果" value={event.output} />
-        {event.exitCode !== undefined && <p className="agent-tool__exit">退出码：{event.exitCode === null ? '未提供' : event.exitCode}</p>}
-        {event.truncated && <p className="agent-event__note">引擎输出已截断，以上不是完整日志。</p>}
+        {isCommand ? <CommandExecutionCard event={event} showExit={!active} /> : <>
+          <ToolValueInspector label="输入" value={event.input} />
+          <ToolValueInspector label="结果" value={event.output} />
+          {event.exitCode !== undefined && <p className="agent-tool__exit">退出码：{event.exitCode === null ? '未提供' : event.exitCode}</p>}
+          {event.truncated && <p className="agent-event__note">引擎输出已截断，以上不是完整日志。</p>}
+        </>}
       </div>
     </DisclosureRow>
   </div>;

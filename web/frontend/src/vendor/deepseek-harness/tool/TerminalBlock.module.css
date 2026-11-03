@@ -1,0 +1,53 @@
+/*
+ * Copyright (c) 2026 DeepSeek. MIT License.
+ * Adapted from ui-primitives/src/TerminalBlock.module.css @ ce7073d51254c26cd63b22a60835b8f948deb447.
+ * Easel uses the app theme and host-supplied safe output.
+ * License: integrations/deepseek-harness/LICENSE.
+ */
+.block {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code-bg, var(--bg-elev));
+  color: var(--text);
+}
+
+.header {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 9px 10px;
+}
+
+.prompt { min-width: 0; }
+.prompt pre { overflow-wrap: anywhere; }
+.cwd { overflow-wrap: anywhere; }
+.block p { margin: 2px 0; color: var(--text-tertiary); font-size: 12px; }
+
+.output {
+  max-height: 32rem;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 8px 10px;
+}
+
+.block pre { margin: 0; }
+.output pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.notice { padding: 0 10px 8px; }
+
+.action {
+  margin: 0 0 3px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev);
+  color: var(--text);
+  white-space: nowrap;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.action:hover { background: var(--accent-soft); }
+.action:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 1px; }

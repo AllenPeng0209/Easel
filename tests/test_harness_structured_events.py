@@ -7,6 +7,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 from easel.harnesses.acp import ACPAdapter
 from easel.harnesses.base import RunRequest
 from easel.harnesses.codex import CodexAdapter
@@ -72,12 +74,39 @@ def test_codex_command_keeps_one_call_with_incremental_output_and_actual_exit(tm
     assert len({call["id"] for call in calls}) == 4
     assert calls[0]["name"] == "bash"
     assert calls[0]["input"]["command"] == "python render.py"
+    assert all(call["outputStream"] == "merged" for call in calls)
+    assert "exitCode" not in calls[0]
     assert calls[1]["output"] == "frame 1\n"
     assert calls[2]["output"] == "frame 1\ncodec unavailable\n"
     assert calls[-1]["status"] == "failed"
     assert calls[-1]["exitCode"] == 7
     assert calls[-1]["startedAt"] == 1000
     assert calls[-1]["completedAt"] == 2500
+    assert calls[-1]["durationMs"] == 1500
+
+
+def test_codex_command_preserves_explicit_null_exit_only_on_terminal_record(tmp_path):
+    command = {"id": "cmd-null", "type": "commandExecution", "command": "render", "exitCode": None}
+    started, completed = run_wire(tmp_path, "codex", [
+        codex("item/started", item={**command, "status": "inProgress"}),
+        codex("item/completed", item={**command, "status": "completed", "durationMs": 0}),
+    ])
+    assert "exitCode" not in started
+    assert "exitCode" in completed and completed["exitCode"] is None
+    assert completed["durationMs"] == 0
+
+
+@pytest.mark.parametrize("invalid_duration", [True, -1, "42", 1.5, 2**53])
+def test_codex_command_ignores_invalid_timing_and_exit_metadata(tmp_path, invalid_duration):
+    [event] = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={"id": "cmd-invalid", "type": "commandExecution",
+              "command": "render", "status": "completed", "exitCode": "7",
+              "durationMs": invalid_duration, "aggregatedOutput": ""}),
+    ])
+    assert event["status"] == "completed"
+    assert event["output"] == ""
+    assert "exitCode" not in event
+    assert "durationMs" not in event
 
 
 def test_codex_preserves_file_diff_and_mcp_parent_but_filters_foreign_thread(tmp_path):
@@ -206,13 +235,26 @@ def test_tool_output_is_bounded_and_explicitly_marks_truncation(tmp_path):
     assert "truncated" in events[0]["output"].lower()
 
 
-def test_interrupted_command_is_not_relabelled_failed_by_its_signal_exit_code(tmp_path):
+def test_interrupted_command_does_not_infer_signal_from_exit_code_or_text(tmp_path):
     events = run_wire(tmp_path, "codex", [
         codex("item/completed", item={"id": "cancel-1", "type": "commandExecution", "command": "render",
-              "status": "interrupted", "exitCode": 143, "aggregatedOutput": "cancelled"}),
+              "status": "interrupted", "exitCode": 143,
+              "aggregatedOutput": "cancelled\n[killed by signal: SIGTERM]"}),
     ])
     assert events[0]["status"] == "interrupted"
     assert events[0]["exitCode"] == 143
+    assert events[0]["output"] == "cancelled\n[killed by signal: SIGTERM]"
+    assert not {"signal", "stdout", "stderr"}.intersection(events[0])
+
+
+def test_acp_execute_keeps_provider_output_without_inventing_terminal_fields(tmp_path):
+    raw = {"stdout": "a", "stderr": "b", "signal": "SIGTERM", "exitCode": 7}
+    [event] = run_wire(tmp_path, "acp", [
+        acp(sessionUpdate="tool_call", toolCallId="exec-1", kind="execute", status="completed",
+            rawInput={"command": "render"}, rawOutput=raw),
+    ])
+    assert event["output"] == raw
+    assert not {"outputStream", "exitCode", "signal", "stdout", "stderr"}.intersection(event)
 
 
 def test_mcp_error_result_cannot_be_displayed_as_completed(tmp_path):

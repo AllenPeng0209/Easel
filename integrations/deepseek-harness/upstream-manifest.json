@@ -7368,12 +7368,56 @@
     "reuse_kind": "adapted",
     "changes": "复用上游输入与输出的 JSON、文本及缺失分流，接入 Easel 脱敏投影和剪贴板。",
     "verification_status": "B07_verified_isolated_browser_and_frontend_regressions"
+  },
+  {
+    "feature_id": "B04",
+    "upstream_path": "packages/client/ui-primitives/src/TerminalBlock.tsx",
+    "upstream_sha256": "7fdb922e064bc4db6cb07a9695101ea96719a5c1080c3fd6d46cf054209c469c",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/TerminalBlock.tsx",
+    "destination_sha256": "69423456163f4b839aef1c347d825624e76e27bf7190e04ac0bbf16a7aafc7e6",
+    "reuse_kind": "adapted",
+    "changes": "复用终端命令、输出及长日志展开结构，接入 Easel 脱敏文本。",
+    "verification_status": "B04_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B04",
+    "upstream_path": "packages/client/ui-primitives/src/TerminalBlock.module.css",
+    "upstream_sha256": "2222cf3fe4bb3ed72a9eaeea3663978d51bbc45af054035b82bcbe244410e3c5",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/TerminalBlock.module.css",
+    "destination_sha256": "e58dcda52a502eb41d94cf13fb69ec7ffefdde0eb54807f91bc56e76a3f4291c",
+    "reuse_kind": "adapted",
+    "changes": "适配终端区域、布局和主题。",
+    "verification_status": "B04_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B04",
+    "upstream_path": "packages/client/ui-primitives/src/head-tail-cap.ts",
+    "upstream_sha256": "1bede50ddacde225b92dfd8d5cf9621f4e39f7febbfc4363cf3446cab6953eed",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/head-tail-cap.ts",
+    "destination_sha256": "1da16919368ea50084ba1280e1e65b83770d9f73f14ce3048fc2e29775027fb4",
+    "reuse_kind": "verbatim",
+    "changes": "保留上游首尾行折叠算法和来源注释。",
+    "verification_status": "B04_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B04",
+    "upstream_path": "packages/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx",
+    "upstream_sha256": "bd96993fca5928b8dd4f471fa61f799aff70bc215da071f156d94ffd90f942e5",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/CommandExecutionCard.tsx",
+    "destination_sha256": "6c17b6ea4137633c3b1d540568565b00ab8335ed9afd1aac4bad9ebb7a7c62e6",
+    "reuse_kind": "adapted",
+    "changes": "复用命令工具分派和退出状态展示，按 Codex 已记录字段映射。",
+    "verification_status": "B04_verified_protocol_and_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 46,
-    "verbatim_original_bodies": 14,
-    "adapted_upstream_files": 32,
+    "source_migration_files": 50,
+    "verbatim_original_bodies": 15,
+    "adapted_upstream_files": 35,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

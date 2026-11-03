@@ -183,7 +183,9 @@ class EventProjector:
         if not isinstance(call_id, str) or not call_id or len(call_id) > 240:
             return
         previous = self.calls.get(call_id, {})
-        merged = {**previous, "callId": call_id, **{key: value for key, value in fields.items() if value is not None}}
+        # An explicit null exit code is a settled engine observation, not a missing update.
+        merged = {**previous, "callId": call_id,
+                  **{key: value for key, value in fields.items() if value is not None or key == "exitCode"}}
         if merged.get("status") == "running" and "startedAt" not in merged:
             merged["startedAt"] = _now()
         if merged.get("status") in ("completed", "failed", "interrupted") and "completedAt" not in merged:
@@ -226,6 +228,7 @@ class EventProjector:
             self.event("usage", usage=usage, capacity=usage.get("modelContextWindow"))
             return
         if method in ("item/commandExecution/outputDelta", "item/fileChange/outputDelta"):
+            command_output = method == "item/commandExecution/outputDelta"
             identifier = params.get("itemId")
             prior = self.calls.get(identifier, {})
             delta = params.get("delta")
@@ -242,8 +245,9 @@ class EventProjector:
                 pending = _PRIVATE_KEY_START.search(existing + delta)
                 if pending and f"-----END {pending[1]}-----" not in (existing + delta)[pending.end():]:
                     self.private_streams[identifier] = pending[1]
-                self.tool(identifier, name=prior.get("name", "bash" if "commandExecution" in method else "apply_patch"),
-                          status=prior.get("status", "running"), output=existing + delta)
+                self.tool(identifier, name=prior.get("name", "bash" if command_output else "apply_patch"),
+                          status=prior.get("status", "running"), output=existing + delta,
+                          outputStream="merged" if command_output else None)
             return
         if method == "item/mcpToolCall/progress":
             identifier = params.get("itemId")
@@ -281,15 +285,22 @@ class EventProjector:
             self.tool(call_id, name=tool if isinstance(tool, str) and tool in _COLLAB_TOOLS else kind,
                       status=status)
             return
+        duration = item.get("durationMs")
         fields = {"name": item.get("tool") or kind or "tool", "status": status,
                   "parentCallId": item.get("parentCallId") or params.get("parentCallId"),
                   "startedAt": params.get("startedAtMs"), "completedAt": params.get("completedAtMs"),
-                  "durationMs": item.get("durationMs")}
+                  "durationMs": duration if type(duration) is int and 0 <= duration < 2**53 else None}
         if kind == "commandExecution":
-            fields.update(name="bash", input={"command": item.get("command", ""), "cwd": item.get("cwd")},
-                          output=item.get("aggregatedOutput"), exitCode=item.get("exitCode"))
-            if completed and status != "interrupted" and item.get("exitCode") not in (None, 0):
-                fields["status"] = "failed"
+            command, cwd, output = item.get("command"), item.get("cwd"), item.get("aggregatedOutput")
+            fields.update(name="bash", outputStream="merged", output=output if isinstance(output, str) else None)
+            if isinstance(command, str):
+                fields["input"] = {"command": command, "cwd": cwd if isinstance(cwd, str) else None}
+            if completed and "exitCode" in item:
+                exit_code = item["exitCode"]
+                if exit_code is None or type(exit_code) is int and -(2**31) <= exit_code < 2**31:
+                    fields["exitCode"] = exit_code
+                    if status != "interrupted" and exit_code not in (None, 0):
+                        fields["status"] = "failed"
         elif kind == "fileChange":
             fields.update(name="apply_patch", input={"changes": item.get("changes") or []})
         elif kind in ("mcpToolCall", "dynamicToolCall"):

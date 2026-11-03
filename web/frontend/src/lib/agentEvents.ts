@@ -48,7 +48,10 @@ export interface AgentEvent {
   status?: string;
   input?: unknown;
   output?: unknown;
+  outputStream?: 'merged';
   exitCode?: number | null;
+  durationMs?: number;
+  signal?: string;
   startedAt?: number;
   completedAt?: number;
   timestamp?: number;
@@ -58,6 +61,28 @@ export interface AgentEvent {
   source?: string;
   artifacts?: AgentArtifact[];
   [key: string]: unknown;
+}
+
+export function isCommandExecution(event: AgentEvent): boolean {
+  return event.outputStream === 'merged' && (event.output === undefined || typeof event.output === 'string')
+    && (event.input === undefined || (event.input !== null && typeof event.input === 'object'
+      && typeof (event.input as Record<string, unknown>).command === 'string'));
+}
+
+export function commandSignal(event: AgentEvent): string | undefined {
+  return typeof event.signal === 'string' && /^SIG[A-Z0-9]{1,16}$/.test(event.signal) ? event.signal : undefined;
+}
+
+export function commandExitCode(event: AgentEvent): number | null | undefined {
+  return event.exitCode === null || (typeof event.exitCode === 'number' && Number.isSafeInteger(event.exitCode))
+    ? event.exitCode : undefined;
+}
+
+/** Upstream bash-sample dispatches verified terminal calls and promotes nonzero exits to failure. */
+export function commandStatus(event: AgentEvent, status: string): string {
+  const code = commandExitCode(event);
+  return status === 'completed' && (commandSignal(event) || (typeof code === 'number' && code !== 0))
+    ? 'failed' : status;
 }
 
 const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business', 'steer', 'subagent']);
