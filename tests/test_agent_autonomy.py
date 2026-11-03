@@ -24,7 +24,15 @@ def test_unanswered_preference_uses_default_and_records_one_decision(monkeypatch
         assert question['requiresHuman'] is False
         assert question['defaultAnswers'] == {'tone': ['专业']}
         assert question['autoResolveAtMs'] > 0
-        decisions = [value for kind, value in events if kind == 'agent_event']
+        pending = next(value for kind, value in events
+                       if kind == 'agent_event' and value['status'] == 'pending')
+        assert pending == {'id': 'decision_pending_' + question['id'], 'kind': 'decision',
+                           'questionId': question['id'], 'status': 'pending',
+                           'startedAt': pending['startedAt']}
+        assert [kind for kind, _ in events] == [
+            'agent_event', 'question', 'agent_event', 'question_closed',
+        ]
+        decisions = [value for kind, value in events if kind == 'agent_event' and value['status'] != 'pending']
         assert len(decisions) == 1
         assert decisions[0]['kind'] == 'decision'
         assert decisions[0]['source'] == 'default'
@@ -32,6 +40,27 @@ def test_unanswered_preference_uses_default_and_records_one_decision(monkeypatch
         closed = json.loads(next(value for kind, value in events if kind == 'question_closed'))
         assert closed['answers'] == {'tone': ['专业']}
         assert closed['resolvedBy'] == 'default'
+        assert not web._HARNESS_QUESTIONS
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_preference_settles_timeline_observation(monkeypatch):
+    monkeypatch.setattr(web, '_HARNESS_QUESTIONS', ActorMap())
+    events = []
+
+    async def scenario():
+        task = asyncio.create_task(web._harness_ask('pref', [{
+            'questionId': 'tone', 'question': '口播语气？',
+            'options': [{'label': '轻松'}, {'label': '专业'}],
+        }], lambda kind, value: events.append((kind, value))))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        observations = [value for kind, value in events if kind == 'agent_event']
+        assert [item['status'] for item in observations] == ['pending', 'cancelled']
+        assert observations[0]['questionId'] == observations[1]['questionId']
         assert not web._HARNESS_QUESTIONS
 
     asyncio.run(scenario())
@@ -54,7 +83,7 @@ def test_manual_answer_wins_and_no_later_default_is_emitted(monkeypatch):
         assert result['ok']
         assert await task == {'tone': ['专业']}
         await asyncio.sleep(0.05)
-        decisions = [value for kind, value in events if kind == 'agent_event']
+        decisions = [value for kind, value in events if kind == 'agent_event' and value['status'] != 'pending']
         assert len(decisions) == 1
         assert decisions[0]['source'] == 'human'
 
@@ -76,7 +105,7 @@ def test_unanswered_permission_is_declined_never_first_option(monkeypatch):
         assert question['requiresHuman'] is True
         assert question['autoResolveAtMs'] is None
         assert question['defaultAnswers'] == {}
-        decision = next(value for kind, value in events if kind == 'agent_event')
+        decision = next(value for kind, value in events if kind == 'agent_event' and value['status'] != 'pending')
         assert decision['status'] == 'declined'
         assert decision['source'] == 'timeout'
 

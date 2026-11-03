@@ -8,6 +8,7 @@ import { componentModule } from './agentMessagesHarness.mjs';
 const require = createRequire(new URL('../../web/frontend/package.json', import.meta.url));
 const ts = require('typescript');
 const { reduceAgentEvents } = componentModule('lib/agentEvents.ts');
+const { recoverAgentTimeline } = componentModule('lib/agentTimeline.ts');
 const source = readFileSync(new URL('../../web/frontend/src/App.tsx', import.meta.url), 'utf8');
 const parsed = ts.createSourceFile('App.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const declarations = new Map();
@@ -18,7 +19,7 @@ function visit(node) {
 visit(parsed);
 
 function setup(stopReceipt, readFinal = async () => undefined) {
-  const owner = { turnId: 'turn-old', content: 'shown', thinking: 'thinking', steps: ['step'], questions: [{ id: 'question' }], events: [] };
+  const owner = { turnId: 'turn-old', content: 'shown', thinking: 'thinking', steps: ['step'], questions: [{ id: 'question' }], events: [], timeline: [] };
   const streamAcc = { current: { session: owner } };
   const finalizers = { current: new Map() };
   const typingBuf = { current: { session: ' buffered' } };
@@ -35,7 +36,7 @@ function setup(stopReceipt, readFinal = async () => undefined) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText, { exports: control, Date, Error });
   const context = {
-    useCallback: callback => callback, finalizers, streamAcc, typingBuf, AbortSignal, reduceAgentEvents, fetchLastTurn: readFinal,
+    useCallback: callback => callback, finalizers, streamAcc, typingBuf, AbortSignal, reduceAgentEvents, recoverAgentTimeline, fetchLastTurn: readFinal,
     streamCtl: { current: { session: { abort() { aborted += 1; } } } },
     document: { visibilityState: 'visible' },
     setTimeout: callback => { callbacks.push(callback); return callbacks.length; },

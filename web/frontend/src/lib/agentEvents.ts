@@ -204,7 +204,10 @@ export function agentEventKey(event: AgentEvent): string {
     : JSON.stringify([event.runId ?? null, event.id]);
 }
 
-export function agentToolKey(event: AgentEvent, callId = event.callId || event.id): string {
+export function agentToolKey(
+  event: Pick<AgentEvent, 'id' | 'callId' | 'runId' | 'turnId'>,
+  callId = event.callId || event.id,
+): string {
   const scope = event.runId ? ['run', event.runId] : ['turn', event.turnId ?? null];
   return JSON.stringify([...scope, callId]);
 }

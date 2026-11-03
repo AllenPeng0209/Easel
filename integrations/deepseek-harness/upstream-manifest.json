@@ -12,6 +12,7 @@
     "managed_clone_status": "verified_present_at_fixed_commit",
     "production_migration_root": "web/frontend/src/vendor/deepseek-harness",
     "production_migration_directories": [
+      "trajectory",
       "composer",
       "message",
       "navigation",
@@ -7588,13 +7589,44 @@
     "reuse_kind": "adapted",
     "changes": "复用上游 keyed 工具详情分派和通用回退，接入 Easel 原生证据校验。",
     "verification_status": "B09_registry_verified_isolated_browser"
+  },
+  {
+    "feature_id": "B10",
+    "upstream_path": "packages/client/ui-trajectory/src/client/timeline.ts",
+    "upstream_sha256": "ed2ebfd8b4233022115d9757d50d3af6cf399690ccc4fcf36f9f3edcf8e7b173",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/trajectory/timeline.ts",
+    "destination_sha256": "effcb28ed71461d613737064a25e24c8d6bcee5b2fd3afab2179ad4f3727837c",
+    "reuse_kind": "adapted",
+    "changes": "复用按记录顺序投影的逻辑，以 Easel 原生事件替换上游轨迹表行，添加工具和决策状态摘要。",
+    "verification_status": "B10_sequence_verified_with_isolated_fixture"
+  },
+  {
+    "feature_id": "B10",
+    "destination_path": "web/frontend/src/components/AgentTimeline.tsx",
+    "destination_sha256": "6961c088d02161c493d0b3a1088c4715c64043724e3c7d60ccef2138f658e351",
+    "source_reference": "packages/client/ui-trajectory/src/client/TrajectoryTimeline.tsx",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "reuse_kind": "easel_integration_adapter",
+    "changes": "将上游轨迹总览适配为 Easel 对话内的可折叠顺序列表。",
+    "verification_status": "B10_sequence_verified_with_isolated_fixture"
+  },
+  {
+    "feature_id": "B10",
+    "destination_path": "web/frontend/src/lib/agentTimeline.ts",
+    "destination_sha256": "5866d4fdbe9d75ad241de83ce9c59599045f758a68d1389577e36fe759d820fb",
+    "source_reference": "packages/client/ui-trajectory/README.md",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "reuse_kind": "easel_integration_adapter",
+    "changes": "把实时及回放事件转换为按顺序保存的精简记录。",
+    "verification_status": "B10_sequence_verified_with_isolated_fixture"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 65,
+    "source_migration_files": 66,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 50,
-    "integration_adapters": 33,
+    "adapted_upstream_files": 51,
+    "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",
     "sha_notice": "Destination hashes are from the feature-only prospective commit tree, excluding parallel account changes.",

@@ -3627,6 +3627,8 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
     _HARNESS_QUESTIONS[identifier] = record
     try:
         public = {key: value for key, value in record.items() if key not in ("future", "session", "resolvedBy")}
+        emit("agent_event", {"id": "decision_pending_" + identifier, "kind": "decision",
+            "questionId": identifier, "status": "pending", "startedAt": int(time.time() * 1000)})
         emit("question", _scrub_secrets(json.dumps({"id": identifier, **public}, ensure_ascii=False)))
         try:
             answers = await asyncio.wait_for(asyncio.shield(future), policy.wait_seconds)
@@ -3663,6 +3665,10 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
             **({'publication': publication} if publication is not None else {})})
         emit("question_closed", _scrub_secrets(json.dumps(closed, ensure_ascii=False)))
         return answers
+    except asyncio.CancelledError:
+        emit("agent_event", {"id": "decision_" + identifier, "kind": "decision",
+            "questionId": identifier, "status": "cancelled", "completedAt": int(time.time() * 1000)})
+        raise
     finally:
         _HARNESS_QUESTIONS.pop(identifier, None)
 

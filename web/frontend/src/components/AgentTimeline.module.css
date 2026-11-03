@@ -1,0 +1,33 @@
+.timeline {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+  color: var(--text-secondary);
+  background: var(--bg-elev);
+}
+.timeline summary {
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+}
+.timeline summary:focus-visible { outline: 2px solid var(--accent-start); outline-offset: -2px; border-radius: 8px; }
+.timeline summary span + span { display: inline-block; margin-inline-start: 7px; padding: 1px 5px; border-radius: 4px; }
+.failed { color: var(--red); background: var(--red-soft); }
+.waiting { color: var(--amber); background: var(--amber-soft); }
+.timeline ol { margin: 0; padding: 0 8px 4px; list-style: none; max-height: 19rem; overflow: auto; }
+.timeline li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+  padding: 5px 2px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.title { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.timeline li[data-observation-status="failed"] .status { color: var(--red); }
+.timeline time { color: var(--text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.omitted { margin: 0; padding: 0 8px 5px; font-size: 11px; }

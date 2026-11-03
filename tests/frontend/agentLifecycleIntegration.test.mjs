@@ -62,6 +62,51 @@ const chatCommands = helper('chatCommands');
 const plain = value => JSON.parse(JSON.stringify(value));
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('actual live timeline preserves ordered phases without retaining private output', () => {
+  const events = helper('agentEvents');
+  const timeline = helper('agentTimeline', { require: () => events });
+  const owner = { turnId: 'turn', events: [], timeline: [] };
+  const closed = [];
+  const ui = appBoundary([], { ...events, ...timeline, closeQuestion: (_, question) => closed.push(question.id) });
+  ui.context.streamAcc.current.chat = owner;
+  ui.context.streams.chat = { events: [] };
+  const receive = ui.callback('receiveAgentEvent');
+  const send = (id, kind, fields) => receive('chat', owner, { id, runId: 'run', kind, ...fields });
+  send('prepare', 'tool', { callId: 'tool', name: 'bash', status: 'preparing', output: 'private output' });
+  send('question', 'decision', { questionId: 'q', status: 'pending' });
+  send('decision', 'decision', { questionId: 'q', status: 'resolved', answers: { q: ['private answer'] } });
+  send('run', 'tool', { callId: 'tool', name: 'bash', status: 'running' });
+  send('progress', 'tool', { callId: 'tool', status: 'running', output: 'more private output' });
+  send('done', 'tool', { callId: 'tool', name: 'bash', status: 'completed' });
+  send('late', 'tool', { callId: 'tool', name: 'bash', status: 'running' });
+  assert.deepEqual(plain(ui.context.streams.chat.timeline.map(row => row.id)), ['prepare', 'question', 'decision', 'run', 'done']);
+  assert.doesNotMatch(JSON.stringify(ui.context.streams.chat.timeline), /private|answers|output/);
+  assert.equal(owner.events.filter(event => event.kind === 'tool').length, 1);
+  assert.equal(owner.events.some(event => event.status === 'pending'), false);
+  assert.deepEqual(closed, ['q']);
+});
+
+test('timeline distinguishes reused tool IDs when native events only have turn scope', () => {
+  const events = helper('agentEvents');
+  const { recoverAgentTimeline } = helper('agentTimeline', { require: () => events });
+  const wire = ['turn-a', 'turn-b'].map(turnId => ({
+    id: 'same-event', callId: 'same-call', turnId, kind: 'tool', status: 'running',
+  }));
+  assert.deepEqual(plain(recoverAgentTimeline(wire).map(row => row.turnId)), ['turn-a', 'turn-b']);
+});
+
+test('timeline clipping is explicit and full recovery does not re-add clipped rows', () => {
+  const events = helper('agentEvents');
+  const { recoverAgentTimeline } = helper('agentTimeline', { require: () => events });
+  const wire = Array.from({ length: 260 }, (_, index) => ({ id: String(index), runId: 'r', kind: 'context' }));
+  const live = recoverAgentTimeline(wire.slice(0, 256));
+  const restored = recoverAgentTimeline(wire, live);
+  assert.equal(restored.length, 256);
+  assert.equal(restored[0].id, '4');
+  assert.equal(restored[0].earlierObservationsOmitted, true);
+  assert.equal(restored.at(-1).id, '259');
+});
+
 function appBoundary(initial, overrides = {}) {
   const requests = [];
   const saved = [];
@@ -274,16 +319,22 @@ test('closing one question keeps another pending question visible and never over
 });
 
 test('confirmed stop persists a turn containing only tool events and an input card', async () => {
+  const agentEvents = helper('agentEvents');
+  const timeline = helper('agentTimeline', { require: () => agentEvents });
+  const nativeEvent = { id: 'event1', kind: 'tool', callId: 'render1', name: 'render', status: 'running',
+    output: 'Submitted task-123' };
+  const stopped = { ...nativeEvent, id: 'event2', status: 'interrupted' };
   const ui = appBoundary([{ id: 's1', title: 'Draft', created: 1, pendingTurnId: 'active-turn',
     messages: [{ role: 'user', content: 'prepare a draft' }] }], {
-    confirmChatStop, AbortSignal, fetchLastTurn: async () => undefined,
+    ...agentEvents, ...timeline, confirmChatStop, AbortSignal,
+    fetchLastTurn: async () => ({ status: 'done', turn_id: 'active-turn', outcome: 'stopped', text: '',
+      events: [nativeEvent, stopped] }),
     stopChat: async () => ({ stopped: true, status: 'stopped' }),
     finalizers: { current: new Map() }, activeIdRef: { current: 's1' }, flushTyping() {},
   });
-  const nativeEvent = { id: 'event1', kind: 'tool', callId: 'render1', name: 'render', status: 'running',
-    output: 'Submitted task-123' };
   ui.context.streamAcc.current.s1 = {
     turnId: 'active-turn', content: '', thinking: '', steps: [], events: [nativeEvent],
+    timeline: timeline.observeAgentTimeline([], nativeEvent),
     questions: [{ id: 'question1', status: 'pending', questions: [] }],
   };
   ui.context.streamCtl.current.s1 = new AbortController();
@@ -296,11 +347,13 @@ test('confirmed stop persists a turn containing only tool events and an input ca
   assert.equal(saved.messages[1].status, 'stopped');
   assert.equal(saved.messages[1].events[0].callId, 'render1');
   assert.equal(saved.messages[1].events[0].output, 'Submitted task-123');
+  assert.deepEqual(plain(saved.messages[1].timeline.map(row => row.status)), ['running', 'interrupted']);
   assert.equal(saved.messages[1].questions[0].id, 'question1');
   assert.equal(saved.pendingTurnId, undefined);
   assert.equal(saved.queuePaused, true);
   assert.equal(ui.context.streams.s1, undefined);
   assert.ok(ui.saved.some(catalog => catalog[0].messages[1]?.events?.[0]?.callId === 'render1'));
+  assert.ok(ui.saved.some(catalog => catalog[0].messages[1]?.timeline?.length === 2));
 });
 
 test('fast server hydration waits for delayed tab ownership before restoring remote history', async () => {

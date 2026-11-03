@@ -1,5 +1,6 @@
 import { Fragment, useMemo } from 'react';
 import type { ChatMessage } from '../lib/store';
+import type { AgentTimelineObservation } from '../lib/agentTimeline';
 import type { AgentEvent, AgentSubagent } from '../lib/agentEvents';
 import { renderMarkdown } from '../lib/sanitize';
 import { linkifyOutputs, externalizeMediaLinks } from '../lib/linkifyOutputs';
@@ -14,6 +15,7 @@ import { validateChatCommand } from '../lib/chatCommands';
 import { validateChatReferences, validateChatSessionReferenceSpans } from '../lib/chatReferences';
 import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
 import AgentEventPanel from './AgentEventPanel';
+import AgentTimeline from './AgentTimeline';
 import { UserMessageBubble } from '../vendor/deepseek-harness/message/UserMessageBubble';
 import { useClipboardCopy } from '../vendor/deepseek-harness/message/use-clipboard-copy';
 import '../styles/agent-chat.css';
@@ -34,6 +36,8 @@ interface MessageBubbleProps {
   activity?: string;
   stillWorking?: string;   // 防呆心跳提示（未卡住）；仅流式时的独立提示，不替代思考/活动
   events?: AgentEvent[];
+  timeline?: AgentTimelineObservation[];
+  pendingTimelineQuestions?: number;
   actions?: BubbleActions;
   onOpenSubagent?: (child: AgentSubagent, trigger: HTMLElement) => void;
   onOpenDeliverable?: (file: import('../lib/deliverables').ChatDeliverable, trigger: HTMLElement) => void;
@@ -86,8 +90,12 @@ function UserText({ message }: { message: ChatMessage }) {
     title="已选命令">{leadingCommand.token}</span>}{parts}{content.slice(offset)}</>;
 }
 
-export default function MessageBubble({ message, sessionId, isStreaming, thinking, activity, stillWorking, events, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
+export default function MessageBubble({ message, sessionId, isStreaming, thinking, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
+  const recordedTimeline = isStreaming ? timeline : message.timeline;
+  const effTimeline = Array.isArray(recordedTimeline) ? recordedTimeline : undefined;
+  const waitingQuestions = isStreaming ? pendingTimelineQuestions
+    : message.questions?.filter(question => question.status === 'pending').length;
   const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
   const rejectedPaths = useMemo(() => rejectedSnapshotPaths(effEvents), [effEvents]);
   const rendered = useMemo(() => {
@@ -123,7 +131,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, thinkin
   const effThinking = isStreaming ? (thinking || '') : (message.thinking || '');
   const liveActivity = isStreaming ? (activity || '') : '';
   const liveHint = isStreaming ? (stillWorking || '') : '';   // 防呆「未卡住」提示，附着显示、不顶掉真实状态
-  const doneSteps = !isStreaming ? (message.activity || '') : '';
+  const doneSteps = !isStreaming && !effTimeline?.length ? (message.activity || '') : '';
 
   const livePanel = (effThinking || liveActivity || liveHint || doneSteps) ? (
     <div className="live-panel">
@@ -137,7 +145,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, thinkin
       ) : null}
       {doneSteps && !effEvents.length && (
         <details className="thinking-block">
-          <summary>🧠 执行过程（{doneSteps.split('\n').length} 步）</summary>
+          <summary>🧠 执行记录（历史文本）</summary>
           <div className="thinking-text">{doneSteps}</div>
         </details>
       )}
@@ -151,7 +159,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, thinkin
   ) : null;
 
   // 等待回复中（还没有正文、思考、活动）
-  if (isStreaming && !message.content && !effThinking && !liveActivity && !liveHint && !effEvents.length) {
+  if (isStreaming && !message.content && !effThinking && !liveActivity && !liveHint && !effEvents.length && !effTimeline?.length) {
     return (
       <div className="message-row assistant">
         <div className="message-bubble assistant">
@@ -170,6 +178,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, thinkin
       <div className="msg-col assistant">
         <div className="message-bubble assistant">
           {livePanel}
+          {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} /> : null}
           <AgentEventPanel sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
           {message.content && <div dangerouslySetInnerHTML={{ __html: rendered.html }} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}

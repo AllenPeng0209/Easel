@@ -20,6 +20,7 @@ import SettingsPanel from './components/SettingsPanel';
 import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed, ChatTurnOutcome } from './lib/api';
 import { reduceAgentEvents } from './lib/agentEvents';
+import { observeAgentTimeline, recoverAgentTimeline, type AgentTimelineObservation } from './lib/agentTimeline';
 import { fetchBusinessObject, parseBusinessHash } from './lib/businessObjectApi';
 import type { BusinessTarget } from './lib/businessObjectApi';
 import type { WorkshopReference } from './lib/workshop';
@@ -50,7 +51,7 @@ const VideoWorkshopPage = lazy(() => import('./components/VideoWorkshopPage'));
 const InteractionCenterPage = lazy(() => import('./components/InteractionCenterPage'));
 
 interface LiveTurnAccumulator {
-  content: string; thinking: string; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[];
+  content: string; thinking: string; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[]; timeline: AgentTimelineObservation[];
   turnId?: string;
   queuedId?: string;
   queueAdmitted?: boolean;
@@ -557,6 +558,7 @@ export default function App() {
           thinking: owner.thinking || undefined, activity: owner.steps.join('\n') || undefined,
           questions: owner.questions.length ? [...owner.questions] : undefined,
           events: owner.events.length ? [...owner.events] : undefined,
+          timeline: owner.timeline?.length ? owner.timeline : undefined,
           status: owner.stopConfirmed ? 'stopped' : error ? 'failed' : outcome === 'unconfirmed' ? undefined : outcome ?? 'completed',
         }, sessionKey);
         if (error) setSessions(previous => previous.map(session => session.id === sessionId
@@ -628,10 +630,12 @@ export default function App() {
       }
       return;
     }
-    owner.events = reduceAgentEvents(owner.events, event);
+    owner.timeline = observeAgentTimeline(owner.timeline, event);
+    const pendingDecision = event.kind === 'decision' && event.status === 'pending';
+    if (!pendingDecision) owner.events = reduceAgentEvents(owner.events, event);
     setStreams(previous => previous[sessionId] ? { ...previous,
-      [sessionId]: { ...previous[sessionId], events: [...owner.events], stillWorking: undefined } } : previous);
-    if (event.kind === 'decision' && event.questionId) closeQuestion(sessionId, {
+      [sessionId]: { ...previous[sessionId], events: [...owner.events], timeline: owner.timeline, stillWorking: undefined } } : previous);
+    if (event.kind === 'decision' && !pendingDecision && event.questionId) closeQuestion(sessionId, {
       id: event.questionId, status: event.status || 'answered', answers: event.answers,
       resolvedBy: event.source || 'human',
     });
@@ -662,7 +666,7 @@ export default function App() {
       } : s);
       saveSessions(next); return next;
     });
-    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry, prompt, content: '', thinking: '', steps: [], questions: [], events: [] };
+    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry, prompt, content: '', thinking: '', steps: [], questions: [], events: [], timeline: [] };
     if (prompt && waitForAdmission) {
       owner.admissionComposerId = chatDraftOwner(sessionId);
       owner.admissionPromise = new Promise(resolve => { owner.resolveAdmission = resolve; });
@@ -748,7 +752,7 @@ export default function App() {
     const prompt = attempt?.turnId === turnId ? attempt : undefined;
     const queuedId = s.queued?.find(row => turnId === `queue-${row.id}`)?.id;
     if (!queuedId && !prompt && last?.role !== 'user') return;
-    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry: !!queuedId, prompt, content: '', thinking: '', steps: [], questions: [], events: [] };
+    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry: !!queuedId, prompt, content: '', thinking: '', steps: [], questions: [], events: [], timeline: [] };
     streamAcc.current[sessionId] = owner;
     if (prompt?.state === 'accepted') confirmPromptAdmission(sessionId, owner);
     setStreams((p) => ({ ...p, [sessionId]: { content: '', thinking: '', activity: '⏳ 正在接回上一轮结果…', questions: [], lifecycle: 'recovering' } }));
@@ -766,7 +770,9 @@ export default function App() {
       const status = result.outcome ?? (result.stop_reason === 'user_stopped' ? 'stopped'
         : result.clean_end === true ? 'completed' : undefined);
       appendAssistant(sessionId, { role: 'assistant', content: result.text || '（无输出）',
-        events: result.events, questions: result.questions, status });
+        events: result.events?.filter(event => event.kind !== 'decision' || event.status !== 'pending'),
+        timeline: recoverAgentTimeline(result.events, owner.timeline),
+        questions: result.questions, status });
     };
     if (!turnId) {
       void fetchLastTurn(sessionId).then((r) => {
@@ -1233,7 +1239,11 @@ export default function App() {
       if (snapshot?.status === 'done' && snapshot.turn_id === expectedTurnId && snapshot.outcome === 'stopped') {
         owner.content = snapshot.text;
         typingBuf.current[sessionId] = '';
-        if (snapshot.events) owner.events = snapshot.events.reduce(reduceAgentEvents, owner.events);
+        if (snapshot.events) {
+          owner.timeline = recoverAgentTimeline(snapshot.events, owner.timeline);
+          owner.events = snapshot.events.filter(event => event.kind !== 'decision' || event.status !== 'pending')
+            .reduce(reduceAgentEvents, owner.events);
+        }
         if (snapshot.questions) owner.questions = snapshot.questions;
       }
     }
@@ -1250,6 +1260,7 @@ export default function App() {
       activity: owner.steps.join('\n') || undefined,
       questions: owner.questions.length ? [...owner.questions] : undefined,
       events: owner.events.length ? [...owner.events] : undefined,
+      timeline: owner.timeline?.length ? owner.timeline : undefined,
       status: 'stopped',
     });
     clearStream(sessionId);

@@ -518,6 +518,9 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 activity={live ? stream!.stopFeedback?.message ?? stream!.activity : ''}
                 stillWorking={live ? stream!.stillWorking : ''}
                 events={live ? stream!.events : msg.events}
+                timeline={live ? stream!.timeline : undefined}
+                pendingTimelineQuestions={live
+                  ? stream!.questions?.filter(question => !question.status || question.status === 'pending').length : undefined}
                 actions={actions}
                 onOpenDeliverable={openDeliverable}
                 onOpenSubagent={openSubagent}

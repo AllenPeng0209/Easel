@@ -4,6 +4,7 @@ import type { UploadedFile, ChatQuestion } from './api';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
 import type { ChatCommand } from './chatCommands';
 import type { AgentEvent } from './agentEvents';
+import type { AgentTimelineObservation } from './agentTimeline';
 import type { WorkshopReference } from './workshop';
 
 export interface QueuedMessage {
@@ -31,6 +32,7 @@ export interface ChatMessage {
   activity?: string;   // 工具/执行活动步骤（换行分隔），持久保留
   questions?: ChatQuestion[];
   events?: AgentEvent[];
+  timeline?: AgentTimelineObservation[];
   created?: number;
   status?: 'completed' | 'failed' | 'stopped';
 }
@@ -61,6 +63,7 @@ export interface StreamState {
   stillWorking?: string;   // 防呆心跳提示（未卡住）；独立于 activity，不覆盖真实状态
   questions: ChatQuestion[];   // ask_user 问答题卡片（进行中）
   events?: AgentEvent[];
+  timeline?: AgentTimelineObservation[];
   lifecycle?: 'recovering' | 'running' | 'waiting_input' | 'stopping' | 'stop_failed';
 }
 
