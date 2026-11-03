@@ -68,6 +68,7 @@ from easel.artifact_archives import ArchiveSnapshotReader
 from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
 from web.chat_history import ChatHistoryStore, validated_session
+from web.chat_artifact_compare import compare_artifact_snapshots
 from web.chat_commands import ChatCommand, chat_command_catalog, chat_command_message, validate_chat_command
 from web.chat_session_references import (
     ChatSessionReference, MAX_SESSION_REFERENCES, append_session_reference_context,
@@ -4117,6 +4118,22 @@ async def api_chat_artifact_versions(artifact_id: str):
         raise HTTPException(error.status_code, str(error)) from None
     _require_operation()
     return {'versions': versions}
+
+
+@app.get('/api/chat/artifacts/{artifact_id}/compare')
+async def api_chat_artifact_compare(artifact_id: str, request: Request):
+    _require_operation()
+    query = request.query_params.multi_items()
+    if len(query) != 1 or query[0][0] != "beforeId" or not re.fullmatch(r"[a-f0-9]{32}", query[0][1]):
+        raise HTTPException(422, "必须提供有效的 beforeId")
+    try:
+        comparison = await asyncio.to_thread(
+            compare_artifact_snapshots, _chat_artifact_store(), query[0][1], artifact_id, _attachment_scope,
+        )
+    except ArtifactError as error:
+        raise HTTPException(error.status_code, str(error)) from None
+    _require_operation()
+    return comparison
 
 
 def _html_related_response(content: bytes, mime: str) -> Response:

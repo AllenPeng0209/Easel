@@ -11,19 +11,20 @@ import css from './FileDiff.module.css';
 type DiffProjection = ReturnType<typeof projectUnifiedDiff>;
 const marker = { add: '+', del: '-', context: ' ' };
 
-export function FileDiff({ projection }: { projection: DiffProjection }) {
+export function FileDiff({ projection, source = 'engine' }: { projection: DiffProjection; source?: 'engine' | 'snapshot' }) {
   const { copied, onCopy } = useClipboardCopy(projection.kind === 'missing' ? '' : projection.text);
   if (projection.kind === 'missing') return <p className={css.note} data-file-diff-format="missing">未提供差异。</p>;
 
   const unified = projection.kind === 'unified';
-  const label = unified ? '复制差异' : '复制引擎文本';
+  const label = unified ? '复制差异' : source === 'snapshot' ? '复制比较文本' : '复制引擎文本';
   return <div className={css.diff} data-file-diff-format={projection.kind}>
     <div className={css.toolbar}>
       {unified ? <span className={css.count}>
         <span aria-label={`新增 ${projection.added} 行`} data-file-diff-added={projection.added}>+{projection.added}</span>{' '}
         <span aria-label={`删除 ${projection.removed} 行`} data-file-diff-removed={projection.removed}>−{projection.removed}</span>
       </span> : <span className={css.note}>
-        {projection.reason === 'truncated' ? '差异已截断，以下为保留的引擎文本。' : '引擎文本无法按统一差异解析。'}
+        {projection.reason === 'truncated' ? '差异已截断，以下为保留的文本。'
+          : source === 'snapshot' ? '固定版本差异文本无法按统一格式展示。' : '引擎文本无法按统一差异解析。'}
       </span>}
       <button type="button" className={css.copy} data-copy-file-diff onClick={onCopy} aria-label={label}>
         {copied ? '已复制' : label}

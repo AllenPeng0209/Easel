@@ -219,7 +219,7 @@ async function versionDOM(fetch, callback) {
   const root = require('react-dom/client').createRoot(window.document.getElementById('root'));
   try {
     const load = file => componentModule(file, { externals: { dompurify: require('dompurify')(window) },
-      globals: { window, document: window.document, DOMParser: BrowserParser, Headers, Response, crypto, fetch } });
+      globals: { window, document: window.document, DOMParser: BrowserParser, Headers, Response, TextEncoder, TextDecoder, crypto, fetch } });
     await callback({ window, root, load });
   } finally {
     await React.act(async () => root.unmount());
@@ -368,4 +368,113 @@ test('invalid snapshot metadata disables media src, source srcset, poster and SV
     assert.equal(document.querySelector('svg image').getAttribute('href'), null);
     assert.equal(document.querySelector('svg image').getAttribute('xlink:href'), null);
   }, mediaSnapshots().map(file => ({ ...file, sha256: null })));
+});
+
+test('compares two fixed snapshots and pins both comparison downloads to the verified versions', async () => {
+  const first = snapshot();
+  const second = snapshot({ artifactId: 'd'.repeat(32), revision: 2, sha256: 'e'.repeat(64), turnId: 'turn-two',
+    url: `/api/chat/artifacts/${'d'.repeat(32)}/content` });
+  const cross = snapshot({ artifactId: 'f'.repeat(32), revision: 3, sha256: '1'.repeat(64), sessionId: 'other',
+    url: `/api/chat/artifacts/${'f'.repeat(32)}/content` });
+  const requests = [];
+  const summarize = ({ artifactId, revision, sha256 }) => ({ artifactId, revision, sha256 });
+  await versionDOM(async url => {
+    requests.push(String(url));
+    if (String(url).endsWith('/versions')) return Response.json({ versions: [first, second, cross,
+      base({ artifactId: '2'.repeat(32), url: `/api/chat/artifacts/${'2'.repeat(32)}/content` }),
+    ] });
+    return Response.json({ path: first.path, before: summarize(first), after: summarize(second),
+      identical: false, diff: '@@ -1 +1 @@\n-old\n+new\n' });
+  }, async ({ window, root, load }) => {
+    const Cards = load('components/DeliverableCards.tsx').default;
+    await React.act(() => root.render(React.createElement(Cards, { artifacts: [first] })));
+    const document = window.document;
+    await React.act(() => document.querySelector('[aria-label="查看历史交付版本：result.txt"]').click());
+    assert.equal(document.querySelectorAll('[aria-label="比较起始版本"] option').length, 2);
+    assert.equal(requests.length, 1);
+    await React.act(() => [...document.querySelectorAll('button')].find(button => button.textContent === '比较固定版本').click());
+    assert.deepEqual(requests, [
+      `/api/chat/artifacts/${first.artifactId}/versions`,
+      `/api/chat/artifacts/${second.artifactId}/compare?beforeId=${first.artifactId}`,
+    ]);
+    const result = document.querySelector('[data-fixed-version-comparison]');
+    assert.equal(result.dataset.beforeArtifact, first.artifactId);
+    assert.equal(result.dataset.afterArtifact, second.artifactId);
+    assert.match(result.textContent, /b{64}/);
+    assert.match(result.textContent, /e{64}/);
+    assert.match(result.querySelector('[data-diff-line=add]').textContent, /new/);
+    assert.deepEqual([...result.querySelectorAll('a')].map(link => [link.textContent, link.getAttribute('href')]), [
+      ['下载比较起始版本 V1', first.url + '?download=1'], ['下载比较目标版本 V2', second.url + '?download=1'],
+    ]);
+    assert.equal(document.querySelector('.deliverable-download').getAttribute('href'), first.url + '?download=1');
+  });
+});
+
+test('a mismatched comparison receipt stays unavailable while equal bytes and no text hunks are distinct', async () => {
+  const first = snapshot();
+  const second = snapshot({ artifactId: 'd'.repeat(32), revision: 2, turnId: 'turn-two',
+    url: `/api/chat/artifacts/${'d'.repeat(32)}/content` });
+  const different = snapshot({ artifactId: 'e'.repeat(32), revision: 2, sha256: 'a'.repeat(64), turnId: 'turn-two',
+    url: `/api/chat/artifacts/${'e'.repeat(32)}/content` });
+  const summarize = ({ artifactId, revision, sha256 }) => ({ artifactId, revision, sha256 });
+  let mode = 'mismatch';
+  let calls = 0;
+  await versionDOM(async url => {
+    calls++;
+    assert.match(String(url), /\/compare\?beforeId=/);
+    return Response.json({
+      path: first.path, before: summarize(first),
+      after: mode === 'mismatch' ? { ...summarize(second), sha256: '0'.repeat(64) }
+        : summarize(mode === 'equal' ? second : different),
+      identical: mode !== 'different', diff: '',
+    });
+  }, async ({ window, root, load }) => {
+    const Compare = load('components/FixedVersionComparison.tsx').default;
+    const document = window.document;
+    const render = value => React.act(() => root.render(React.createElement(Compare,
+      { key: value.artifactId, anchor: first, versions: [first, value] })));
+    const click = () => React.act(() => [...document.querySelectorAll('button')]
+      .find(button => button.textContent === '比较固定版本').click());
+    await render(second);
+    await click();
+    assert.match(document.querySelector('[role=alert]').textContent, /不匹配/);
+    assert.equal(document.querySelector('[data-fixed-version-comparison]'), null);
+    mode = 'equal';
+    await click();
+    assert.match(document.querySelector('[data-fixed-version-comparison]').textContent, /字节完全相同/);
+    mode = 'different';
+    await render(different);
+    await click();
+    assert.match(document.querySelector('[data-fixed-version-comparison]').textContent, /文件字节不同/);
+    assert.equal(document.querySelector('[data-diff-line]'), null);
+    assert.equal(calls, 3);
+  });
+});
+
+test('closing history aborts the comparison request and never opens a current file', async () => {
+  const first = snapshot();
+  const second = snapshot({ artifactId: 'd'.repeat(32), revision: 2, sha256: 'e'.repeat(64), turnId: 'turn-two',
+    url: `/api/chat/artifacts/${'d'.repeat(32)}/content` });
+  const requests = [];
+  let pending;
+  await versionDOM(async (url, options) => {
+    requests.push(String(url));
+    if (String(url).endsWith('/versions')) return Response.json({ versions: [first, second] });
+    return new Promise(resolve => { pending = { resolve, signal: options.signal }; });
+  }, async ({ window, root, load }) => {
+    const Cards = load('components/DeliverableCards.tsx').default;
+    const document = window.document;
+    await React.act(() => root.render(React.createElement(Cards, { artifacts: [first] })));
+    const history = document.querySelector('[aria-label="查看历史交付版本：result.txt"]');
+    await React.act(() => history.click());
+    await React.act(() => [...document.querySelectorAll('button')].find(button => button.textContent === '比较固定版本').click());
+    assert.ok(pending);
+    await React.act(() => history.click());
+    assert.equal(pending.signal.aborted, true);
+    await React.act(() => pending.resolve(Response.json({}, { status: 409 })));
+    assert.equal(document.querySelector('[data-fixed-version-comparison]'), null);
+    assert.equal(document.querySelector('[role=alert]'), null);
+    assert.equal(requests.length, 2);
+    assert.ok(requests.every(url => url.startsWith('/api/chat/artifacts/')));
+  });
 });

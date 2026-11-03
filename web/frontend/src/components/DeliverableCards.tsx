@@ -12,6 +12,7 @@ import { PresentRow } from '../vendor/deepseek-harness/deliverables/PresentRow';
 import { fileSizeText } from '../vendor/deepseek-harness/message/file-size';
 import css from '../vendor/deepseek-harness/deliverables/Deliverables.module.css';
 import DeliverablePreviewBody from './DeliverablePreviewBody';
+import FixedVersionComparison from './FixedVersionComparison';
 import { HostReadStore } from '../vendor/deepseek-harness/deliverables/HostReadStore';
 import reviewCss from '../vendor/deepseek-harness/deliverables/ReviewTab.module.css';
 import '../styles/deliverables.css';
@@ -88,6 +89,7 @@ function DeliverableVersionDetails({ file }: { file: ChatDeliverable }) {
             {href && item.status === 'available' ? <a href={`${href}?download=1`} download={item.name}>下载此交付</a> : <span>内容不可用</span>}
           </li>;
         })}</ul>
+        <FixedVersionComparison anchor={file} versions={versions} />
         <button type="button" onClick={() => { store.reset(); void store.load(); }}>刷新历史列表</button>
       </>}
     </div>}

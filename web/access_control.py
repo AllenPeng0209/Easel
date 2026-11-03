@@ -137,7 +137,7 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
     if re.fullmatch(r'publish/[^/]+/prepare', resource):
         return 'operate' if method == 'POST' else None
     if resource == 'chat/artifact-related' or re.fullmatch(
-            r"chat/artifacts/[a-f0-9]{32}(?:/(?:content|related|versions|archive)|/archive/[0-9]+/(?:content|related))?", resource):
+            r"chat/artifacts/[a-f0-9]{32}(?:/(?:content|related|versions|compare|archive)|/archive/[0-9]+/(?:content|related))?", resource):
         return "operate" if read else None
     if (resource.startswith(("login/", "logout/"))
             or re.fullmatch(r"accounts/[^/]+/(?:credentials|mp-login(?:/status)?)", resource)
