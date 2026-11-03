@@ -4,6 +4,7 @@
  * A rendered answer owns its visible selection and explicit quote action.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { highlightSettledAnswer } from './highlightAnswerCode';
 import { readTextSelection, selectedText, type TextSelection } from './answerTextSelection';
 import { MAX_ANSWER_QUOTE_LENGTH } from '../vendor/deepseek-harness/composer/quote-text';
 import css from './AnswerQuoteSelection.module.css';
@@ -20,8 +21,9 @@ interface ActiveQuote {
   left: number;
 }
 
-export default function AnswerQuoteSelection({ html, onQuoteAnswer }: {
+export default function AnswerQuoteSelection({ html, onQuoteAnswer, highlightCode }: {
   html: string;
+  highlightCode?: boolean;
   onQuoteAnswer?: (text: string) => boolean;
 }) {
   const answer = useRef<HTMLDivElement>(null);
@@ -32,6 +34,9 @@ export default function AnswerQuoteSelection({ html, onQuoteAnswer }: {
   const enabled = onQuoteAnswer !== undefined;
   // Reusing the html object keeps React from replacing live DOM Range endpoints.
   const body = useMemo(() => ({ __html: html }), [html]);
+  useEffect(() => {
+    if (highlightCode && answer.current) return highlightSettledAnswer(answer.current);
+  }, [html, highlightCode]);
 
   useEffect(() => {
     const source = answer.current;

@@ -7774,12 +7774,56 @@
     "reuse_kind": "adapted",
     "changes": "复用引用区间与去除单层引用标记，结合 ui-primitives 的原文格式化。",
     "verification_status": "A24_answer_quote_insertion_and_restore_verified"
+  },
+  {
+    "feature_id": "A27",
+    "upstream_path": "packages/client/ui-primitives/src/markdown/highlight.ts",
+    "upstream_sha256": "8f641cddd716d1d96908784514e8e557a882d8547a2f2a60f6bb8e19855709b0",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/markdown/highlight.ts",
+    "destination_sha256": "71028195898035df682617958600c5138f92b241628402ab54ab470627fa69a7",
+    "reuse_kind": "adapted",
+    "changes": "复用 Shiki core 和 JavaScript 正则引擎，保留已验收语法并限制分词预算。",
+    "verification_status": "A27_syntax_highlight_and_async_chunk_verified"
+  },
+  {
+    "feature_id": "A27",
+    "upstream_path": "packages/client/ui-primitives/src/markdown/highlight.ts",
+    "upstream_sha256": "8f641cddd716d1d96908784514e8e557a882d8547a2f2a60f6bb8e19855709b0",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/markdown/code-language.ts",
+    "destination_sha256": "4435a530bd6f219eb862914f4f41bd07f3bdad7a4d560cf8f4d0a4957baa7e30",
+    "reuse_kind": "adapted",
+    "changes": "拆出轻量语言别名，使普通答复无需加载分词模块。",
+    "verification_status": "A27_syntax_highlight_and_async_chunk_verified"
+  },
+  {
+    "feature_id": "A27",
+    "upstream_path": "packages/client/ui-primitives/src/markdown/CodeBlock.tsx",
+    "upstream_sha256": "1135af884608fa657213012b566a9ee6b53b97b7c384c748ae73826fb0c89d22",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/highlightAnswerCode.ts",
+    "destination_sha256": "01e7bc6bd00263d16e8e95ae3c8f24c0a8728e8657c3c5e6245edd497e91213d",
+    "reuse_kind": "adapted",
+    "changes": "迁移安全文本 token 呈现，按现有消毒代码节点加载并保留原文。",
+    "verification_status": "A27_syntax_highlight_and_async_chunk_verified"
+  },
+  {
+    "feature_id": "A27",
+    "upstream_path": "packages/client/ui-theme/src/styles/shiki.css",
+    "upstream_sha256": "14f2b00083b035d8f92e26243a669d1b04a8d564c20d91856b20706cc79b8828",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/AnswerQuoteSelection.module.css",
+    "destination_sha256": "84fc579e915fece5fa0296018deddaf7b123d08530fb975cc79f93ecbb458024",
+    "reuse_kind": "adapted",
+    "changes": "复用 Shiki 变量色板并接入 Easel 浅色和深色主题。",
+    "verification_status": "A27_syntax_highlight_and_async_chunk_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 80,
+    "source_migration_files": 84,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 65,
+    "adapted_upstream_files": 69,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",
