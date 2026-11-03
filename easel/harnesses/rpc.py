@@ -9,11 +9,16 @@ import signal
 from contextlib import asynccontextmanager
 
 from .base import HarnessError, RunRequest
+from .diagnostics import classify_provider_failure
 from .workspace import harness_instructions
 
 
 class RpcRejected(HarnessError):
     """A JSON-RPC response explicitly rejected the request."""
+
+    def __init__(self, message: str, failure_code: str = "unknown"):
+        super().__init__(message)
+        self.failure_code = failure_code
 
 
 _POOLS: dict[asyncio.AbstractEventLoop, dict[tuple, dict]] = {}
@@ -232,7 +237,8 @@ class RPC:
                                     if any(marker in key.upper() for marker in ("KEY", "TOKEN", "SECRET", "PASSWORD")):
                                         if len(value) >= 4:
                                             detail = detail.replace(value, "***")
-                            future.set_exception(RpcRejected(f"Agent 协议错误：{detail}"))
+                            failure_code, _ = classify_provider_failure(error)
+                            future.set_exception(RpcRejected(f"Agent 协议错误：{detail}", failure_code))
                         else:
                             future.set_result(message.get("result") or {})
         except asyncio.CancelledError:

@@ -43,7 +43,7 @@ import {
   loadActiveId,
   saveActiveId,
 } from './lib/store';
-import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ReasoningSummary, AnswerCompletion } from './lib/store';
+import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ReasoningSummary, AnswerCompletion, ChatFailure } from './lib/store';
 
 const TAB_SESSION_KEY = projectStorageKey('easel_tab_session');
 const ONBOARDING_SEEN_KEY = projectStorageKey('easel_onboarding_seen');
@@ -553,14 +553,21 @@ export default function App() {
         finalizers.current.delete(sessionId);
         if (pending.timer) clearTimeout(pending.timer);
         flushTyping(sessionId);
+        const reportedError = error as (Error & { failure?: ChatFailure; unconfirmed?: boolean }) | undefined;
+        const failure = !owner.stopConfirmed && (error || outcome === 'failed')
+          ? reportedError?.failure
+            ?? { code: 'unknown', retryable: false, phase: 'execution' } as const
+          : undefined;
         appendAssistant(sessionId, {
-          role: 'assistant', content: owner.content + (owner.stopConfirmed ? '\n\n_（已停止）_' : error ? `\n\nError: ${error.message}` : ''),
+          role: 'assistant', content: owner.content + (owner.stopConfirmed ? '\n\n_（已停止）_' : ''),
+          failure,
           reasoningSummary: owner.reasoningSummary, answerCompletion: owner.answerCompletion,
           activity: owner.steps.join('\n') || undefined,
           questions: owner.questions.length ? [...owner.questions] : undefined,
           events: owner.events.length ? [...owner.events] : undefined,
           timeline: owner.timeline?.length ? owner.timeline : undefined,
-          status: owner.stopConfirmed ? 'stopped' : error ? 'failed' : outcome ?? 'completed',
+          status: owner.stopConfirmed ? 'stopped' : reportedError?.unconfirmed ? 'unconfirmed'
+            : error ? 'failed' : outcome ?? 'completed',
         }, sessionKey);
         if (error) setSessions(previous => previous.map(session => session.id === sessionId
           ? { ...session, queuePaused: true, updated: nextSessionRevision(session) } : session));
@@ -773,13 +780,13 @@ export default function App() {
       }
       confirmQueuedMessage(sessionId, owner);
       const status = result.outcome ?? (result.stop_reason === 'user_stopped' ? 'stopped'
-        : result.clean_end === true ? 'completed' : 'unconfirmed');
+        : result.error ? 'failed' : result.clean_end === true ? 'completed' : 'unconfirmed');
       appendAssistant(sessionId, { role: 'assistant', content: result.text || '（无输出）',
         events: result.events?.filter(event => event.kind !== 'decision' || event.status !== 'pending'),
         timeline: recoverAgentTimeline(result.events, owner.timeline),
         reasoningSummary: result.reasoning_summary ?? owner.reasoningSummary,
         answerCompletion: result.answer_completed ?? owner.answerCompletion,
-        questions: result.questions, status });
+        questions: result.questions, status, failure: status === 'failed' ? result.error : undefined });
     };
     if (!turnId) {
       void fetchLastTurn(sessionId).then((r) => {
@@ -827,8 +834,8 @@ export default function App() {
           } else {
             if (failPromptAdmission(sessionId, owner) || failQueuedAdmission(sessionId, owner)) return;
             appendAssistant(sessionId, {
-              role: 'assistant',
-              content: '上一轮任务记录已失效，无法继续恢复。请重新发送上一条消息。',
+              role: 'assistant', status: 'unconfirmed',
+              content: '上一轮任务记录已失效，执行结果待核对。',
             });
           }
           clearStream(sessionId);
@@ -837,7 +844,7 @@ export default function App() {
           if (streamAcc.current[sessionId] !== owner) return;
           if (failPromptAdmission(sessionId, owner) || failQueuedAdmission(sessionId, owner)) return;
           appendAssistant(sessionId, {
-            role: 'assistant', content: '上一轮任务记录已失效，请重新发送上一条消息。',
+            role: 'assistant', status: 'unconfirmed', content: '上一轮任务记录暂时不可用，执行结果待核对。',
           });
           clearStream(sessionId);
         });
@@ -1111,7 +1118,7 @@ export default function App() {
     });
   }, []);
 
-  // 重试/编辑重发：从该用户消息处截断（丢弃它及其之后），用 text 重新发起。
+  // 有明确安全回执的失败可另起一轮，保留原失败记录。
   const handleResend = useCallback((
     sessionId: string,
     userIndex: number,
@@ -1119,8 +1126,16 @@ export default function App() {
     attachments?: UploadedFile[],
     legacyAgentText?: string,
   ) => {
-    const original = sessionsRef.current.find(session => session.id === sessionId)?.messages[userIndex];
-    sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, userIndex, undefined,
+    const messages = sessionsRef.current.find(session => session.id === sessionId)?.messages;
+    const original = messages?.[userIndex];
+    const last = messages?.at(-1);
+    const latestUserIndex = (messages?.length ?? 0) - (last?.role === 'assistant' ? 2 : 1);
+    if (original?.role !== 'user' || userIndex !== latestUserIndex || last?.status === 'unconfirmed') return;
+    const failed = last?.status === 'failed' || !!last?.failure;
+    if (failed && (last?.failure?.retryable !== true || last.failure.phase !== 'startup'
+      || !['network', 'timeout', 'rate_limit'].includes(last.failure.code)
+      || last.events?.some(event => event.kind === 'publication' && event.publication))) return;
+    sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, failed ? undefined : userIndex, undefined,
       original?.topicRef, original?.workshopRef, false,
       original?.content === displayText ? original.references : undefined,
       original?.content === displayText ? original.sessionReferences : undefined,
@@ -1486,6 +1501,7 @@ export default function App() {
             onSteer={streams[activeSession.id]?.steerTurnId && streams[activeSession.id]?.lifecycle === 'running'
               ? text => handleSteer(activeSession.id, text) : undefined}
             onStop={() => handleStopStream(activeSession.id, stopOwner)}
+            onOpenFailureSettings={isPlatformAdmin ? () => setSettingsOpen(true) : undefined}
             onResend={(userIndex, displayText, attachments, legacyAgentText) => handleResend(
               activeSession.id, userIndex, displayText, attachments, legacyAgentText,
             )}

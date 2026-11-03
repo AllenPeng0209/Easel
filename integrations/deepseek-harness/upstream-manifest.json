@@ -7664,12 +7664,34 @@
     "reuse_kind": "adapted",
     "changes": "复用单个可见任务的观察与卸载释放逻辑，接入 Easel 按确切回执查询的工坊接口。",
     "verification_status": "B15_separate_receipts_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B38",
+    "upstream_path": "packages/llm/llm-deepseek/src/transport.ts",
+    "upstream_sha256": "7d1f6ed8fe861ee71ba2d0c6a2a9e8512ddc1b6dc17d43a8795ab520a38746b6",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "easel/harnesses/diagnostics.py",
+    "destination_sha256": "53721892d022ee465b1bbe848798fb867f356653b052aec67dbefc07b70ed25e",
+    "reuse_kind": "adapted",
+    "changes": "适配上游认证、额度、限流和服务错误分类，接入 Easel 已有安全诊断并输出固定公开文案。",
+    "verification_status": "B38_sanitized_errors_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B38",
+    "upstream_path": "packages/client/ui-chat/src/client/chat/MessageItem.tsx",
+    "upstream_sha256": "b337fd86608b7c22406f794024af8bdc011bd0c51bfd16c575c3b1e7f8aa3d4e",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ChatFailureNotice.tsx",
+    "destination_sha256": "fad1802cba5ef22f1b6ea1907116435e4c6e1ce2d7813dbf50223160444a9248",
+    "reuse_kind": "adapted",
+    "changes": "适配上游回合错误与恢复入口的布局，按可信错误阶段显示设置或手动重试。",
+    "verification_status": "B38_sanitized_errors_verified_protocol_and_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 70,
+    "source_migration_files": 72,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 55,
+    "adapted_upstream_files": 57,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

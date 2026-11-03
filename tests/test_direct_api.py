@@ -122,6 +122,16 @@ def test_failed_stream_is_not_committed(sandbox, monkeypatch, status, events):
     last = sandbox.get("/api/chat/last/failed").json()
     assert last["status"] == "done" and last["clean_end"] is False
     assert last["outcome"] == "failed"
+    payloads = [json.loads(block.split('data: ', 1)[1]) for block in response.text.replace('\r\n', '\n').split('\n\n')
+                if 'event: error\n' in block]
+    [failure] = payloads
+    assert set(failure) == {'code', 'message', 'retryable', 'phase'}
+    assert last['error'] == failure
+    replay = sandbox.get('/api/chat/jobs/failure/stream').text
+    assert json.dumps(failure, ensure_ascii=False) in replay
+    assert 'gateway-secret' not in replay and 'gateway-secret' not in json.dumps(last)
+    if status == 401:
+        assert failure['code'] == 'authentication' and failure['retryable'] is False
 
 
 def test_nonstream_and_model_save_without_openclaw(sandbox, monkeypatch):

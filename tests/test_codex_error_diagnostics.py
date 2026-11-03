@@ -29,6 +29,9 @@ for line in sys.stdin:
         send({'id':message['id'], 'result':{'thread':{'id':'thread-a'}}})
     elif method == 'turn/start':
         common = {'threadId':'thread-a', 'turnId':'turn-a'}
+        if mode == 'rejected':
+            send({'id':message['id'], 'error':{'code':-32000, 'data':payload, 'message':'unknown private upstream detail'}})
+            continue
         if mode == 'filtered':
             send({'method':'error','params':{**common,'threadId':'another-thread','willRetry':False,'error':payload}})
             send({'method':'error','params':{**common,'willRetry':True,'error':payload}})
@@ -92,6 +95,24 @@ def test_empty_fatal_error_preserves_the_generic_fallback(tmp_path):
         run_adapter(tmp_path, {})
 
 
+@pytest.mark.parametrize('mode,phase', [('fatal', 'execution'), ('rejected', 'startup')])
+def test_native_authentication_is_typed_and_safe(tmp_path, mode, phase):
+    with pytest.raises(HarnessError) as caught:
+        run_adapter(tmp_path, {'status': 401, 'message': 'unmapped-private-value'}, mode)
+    assert caught.value.payload['code'] == 'authentication'
+    assert caught.value.payload['phase'] == phase
+    assert caught.value.payload['retryable'] is False
+    assert 'private' not in str(caught.value) and 'private' not in json.dumps(caught.value.payload)
+
+
+def test_only_startup_transient_failures_can_be_retryable():
+    from easel.harnesses.diagnostics import chat_failure, normalize_chat_failure
+
+    assert chat_failure('network', 'startup', safe_to_retry=True)['retryable'] is True
+    assert chat_failure('network', 'execution', safe_to_retry=True)['retryable'] is False
+    assert normalize_chat_failure({'code': 'timeout', 'phase': 'finalization', 'retryable': True})['retryable'] is False
+
+
 def test_retrying_and_foreign_thread_failures_do_not_override_current_success(tmp_path):
     assert run_adapter(tmp_path, {'message':'model_not_found'}, 'filtered') == [('token', 'valid reply')]
 
@@ -112,3 +133,10 @@ def test_default_adapter_command_honors_the_easel_codex_executable(tmp_path, mon
     asyncio.run(asyncio.wait_for(CodexAdapter().run(
         request, lambda kind, text: events.append((kind, text)), reject, lambda identifier: None), timeout=3))
     assert events == [('token', 'valid reply')]
+
+
+def test_provider_payment_required_is_typed_quota_without_payload():
+    from easel.harnesses.diagnostics import classify_provider_failure
+    code, message = classify_provider_failure({"status": 402, "message": "private provider account reference"})
+    assert code == "quota_exhausted"
+    assert "private provider" not in message

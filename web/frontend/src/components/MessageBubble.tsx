@@ -18,6 +18,7 @@ import AgentEventPanel from './AgentEventPanel';
 import AgentTimeline from './AgentTimeline';
 import ReasoningSummaryDisclosure from './ReasoningSummaryDisclosure';
 import AnswerTurnPhase from './AnswerTurnPhase';
+import ChatFailureNotice from './ChatFailureNotice';
 import { UserMessageBubble } from '../vendor/deepseek-harness/message/UserMessageBubble';
 import { useClipboardCopy } from '../vendor/deepseek-harness/message/use-clipboard-copy';
 import '../styles/agent-chat.css';
@@ -43,6 +44,7 @@ interface MessageBubbleProps {
   timeline?: AgentTimelineObservation[];
   pendingTimelineQuestions?: number;
   actions?: BubbleActions;
+  onOpenFailureSettings?: () => void;
   onOpenSubagent?: (child: AgentSubagent, trigger: HTMLElement) => void;
   onOpenDeliverable?: (file: import('../lib/deliverables').ChatDeliverable, trigger: HTMLElement) => void;
 }
@@ -94,24 +96,34 @@ function UserText({ message }: { message: ChatMessage }) {
     title="已选命令">{leadingCommand.token}</span>}{parts}{content.slice(offset)}</>;
 }
 
-export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
+/** Legacy turns appended an unstructured provider error after the visible answer. */
+function visibleAssistantContent(message: ChatMessage): string {
+  if (message.role !== 'assistant' ||
+      (message.status !== 'failed' && message.status !== 'unconfirmed' && !message.failure)) return message.content;
+  if (/^\s*Error:/.test(message.content)) return '';
+  const error = message.content.search(/\r?\n\r?\nError:/);
+  return error === -1 ? message.content : message.content.slice(0, error);
+}
+
+export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenFailureSettings, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const recordedTimeline = isStreaming ? timeline : message.timeline;
   const effTimeline = Array.isArray(recordedTimeline) ? recordedTimeline : undefined;
   const waitingQuestions = isStreaming ? pendingTimelineQuestions
     : message.questions?.filter(question => question.status === 'pending').length;
   const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
+  const assistantContent = visibleAssistantContent(message);
   const rejectedPaths = useMemo(() => rejectedSnapshotPaths(effEvents), [effEvents]);
   const rendered = useMemo(() => {
-    if (message.role === 'user' || !message.content) return { html: '', artifacts: [], archives: [] };
+    if (message.role === 'user' || !assistantContent) return { html: '', artifacts: [], archives: [] };
     // 助手正文里裸露的产物路径先转成前端可用链接（文件直开、图片内联、目录跳内容库）。
     // 流式中不转换：路径/围栏代码块可能被 SSE token 从中间切开（扩展名没收全会被
     // 误判成目录、未闭合的 ``` 会误伤命令示例里的 outputs/），转换只在流式结束后
     // 对完整正文做一次，避免闪烁成错误链接再跳变。
-    const body = isStreaming ? message.content : linkifyOutputs(message.content);
+    const body = isStreaming ? assistantContent : linkifyOutputs(assistantContent);
     const html = pinSnapshotLinks(externalizeMediaLinks(renderMarkdown(body)), declared, rejectedPaths, !isStreaming);
     return isStreaming ? { html, artifacts: [], archives: [] } : extractArtifacts(html);
-  }, [message.content, message.role, isStreaming, declared, rejectedPaths]);
+  }, [assistantContent, message.role, isStreaming, declared, rejectedPaths]);
   const legacyArtifacts = useMemo(() => omitDeclaredArtifacts(rendered.artifacts, declared, rejectedPaths), [rendered.artifacts, declared, rejectedPaths]);
   // Legacy ZIPs retain D22's current-file index. Snapshots use their bound member API.
   const legacyArchives = useMemo(() => legacyArchivesForDeliverables(rendered.archives, declared, rejectedPaths), [rendered.archives, declared, rejectedPaths]);
@@ -136,6 +148,9 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
     && answerItem.length <= 512 && !/\p{Cc}/u.test(answerItem);
   const phase = <AnswerTurnPhase answerCompleted={answerCompleted} active={isStreaming === true}
     lifecycle={turnLifecycle} outcome={message.status} />;
+  const failedTurn = !isStreaming && (message.status === 'failed' || !!message.failure);
+  const uncertainTurn = !isStreaming && message.status === 'unconfirmed';
+  const hasPublicationReceipt = effEvents.some(event => event.kind === 'publication' && event.publication);
   const suppliedSummary = isStreaming ? reasoningSummary : message.reasoningSummary;
   const publicSummary = typeof suppliedSummary?.text === 'string' && typeof suppliedSummary.truncated === 'boolean'
     && (suppliedSummary.text.trim() || suppliedSummary.truncated) ? suppliedSummary : undefined;
@@ -164,7 +179,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
   ) : null;
 
   // 等待回复中，还未收到答复或其他可见执行记录。
-  if (isStreaming && !answerCompleted && !message.content && !publicSummary && !liveActivity && !liveHint && !effEvents.length && !effTimeline?.length) {
+  if (isStreaming && !answerCompleted && !assistantContent && !publicSummary && !liveActivity && !liveHint && !effEvents.length && !effTimeline?.length) {
     return (
       <div className="message-row assistant">
         <div className="message-bubble assistant">
@@ -184,11 +199,13 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
       <div className="msg-col assistant">
         <div className="message-bubble assistant">
           {phase}
+          {failedTurn && <ChatFailureNotice failure={message.failure} onOpenSettings={onOpenFailureSettings}
+            onRetry={actions?.canModify && !uncertainTurn && !hasPublicationReceipt ? actions.onRetry : undefined} />}
           {livePanel}
           {publicSummary && <ReasoningSummaryDisclosure summary={publicSummary} />}
           {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} /> : null}
           <AgentEventPanel sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
-          {message.content && <div data-assistant-answer dangerouslySetInnerHTML={{ __html: rendered.html }} />}
+          {assistantContent && <div data-assistant-answer dangerouslySetInnerHTML={{ __html: rendered.html }} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
           <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />
           {!isStreaming && (legacyArtifacts.length > 0 || legacyArchives.length > 0) && (
@@ -196,7 +213,8 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
           )}
           {isStreaming && !answerCompleted && <span className="streaming-cursor" />}
         </div>
-        {actions && !isStreaming && <ActionBar actions={actions} text={message.content} />}
+        {actions && !isStreaming && (!(failedTurn || uncertainTurn) || assistantContent) &&
+          <ActionBar actions={failedTurn || uncertainTurn ? { ...actions, onRetry: undefined } : actions} text={assistantContent} />}
       </div>
     </div>
   );

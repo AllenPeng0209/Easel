@@ -11,7 +11,7 @@ from easel.agent_policy import requests_secret
 
 from .base import Descriptor, HarnessError, RunRequest, SteerRejected
 from .commands import base_command, codex_override
-from .diagnostics import codex_failure_message
+from .diagnostics import ChatFailure, codex_failure
 from .events import EventProjector, native_subagent_descriptors, valid_native_subagent_id
 from .permissions import can_auto_approve
 from .rpc import RpcRejected, connection
@@ -357,6 +357,10 @@ class CodexAdapter:
     async def run(self, request: RunRequest, emit, ask, bind):
         try:
             await self._run(request, emit, ask, bind)
+        except RpcRejected as error:
+            # Rejected initialize/thread/turn requests never establish an active turn.
+            # Steer rejections are handled separately by the active callback.
+            raise ChatFailure(error.failure_code, "startup") from None
         finally:
             if request.bind_steer is not None:
                 request.bind_steer(None)
@@ -411,7 +415,7 @@ class CodexAdapter:
                 if params.get("willRetry", False) or not _thread_scoped():
                     return
                 if not completion.done():
-                    completion.set_exception(HarnessError(codex_failure_message(params.get("error"))))
+                    completion.set_exception(codex_failure(params.get("error"), "execution" if turn_id else "startup"))
                 return
 
             envelope_thread = params.get("threadId")
@@ -478,7 +482,7 @@ class CodexAdapter:
                 if turn.get("status") == "completed":
                     completion.set_result(None)
                 else:
-                    completion.set_exception(HarnessError(codex_failure_message(turn.get("error"))))
+                    completion.set_exception(codex_failure(turn.get("error")))
 
         async def respond(method, params):
             if params.get("threadId") != thread_id or (

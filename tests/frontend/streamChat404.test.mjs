@@ -205,3 +205,61 @@ test('explicit final answer evidence arrives independently of turn completion', 
   const recovered = await api.fetchLastTurn('answer-session', 'turn');
   assert.deepEqual(JSON.parse(JSON.stringify(recovered.answer_completed)), receipt);
 });
+
+test('live errors and last-turn recovery expose only the allowlisted failure contract', async () => {
+  const expected = { code: 'authentication', retryable: false, phase: 'execution' };
+  const rawProviderText = 'provider diagnostic with hidden account credential';
+  for (const payload of [{ ...expected, message: rawProviderText }, rawProviderText]) {
+    const encoder = new TextEncoder();
+    const events = `event: error\ndata: ${JSON.stringify(payload)}\n\n`;
+    const { api } = loadApi((_url, init) => {
+      if (init?.method !== 'POST') {
+        return { ok: true, json: async () => ({ status: 'done', text: '', error: payload }) };
+      }
+      let read = false;
+      return { ok: true, body: { getReader: () => ({
+        read: async () => read ? { done: true } : (read = true, { done: false, value: encoder.encode(events) }),
+        cancel: async () => {},
+      }) } };
+    });
+    const err = await new Promise((resolve, reject) => {
+      api.streamChat('hi', undefined, 'failure-session', () => {}, reject, resolve);
+    });
+    const failure = payload === rawProviderText ? { code: 'unknown', retryable: false, phase: 'execution' } : expected;
+    assert.deepEqual(JSON.parse(JSON.stringify(err.failure)), failure);
+    assert.doesNotMatch(err.message, /provider diagnostic/);
+    const recovered = await api.fetchLastTurn('failure-session', 'turn');
+    assert.deepEqual(JSON.parse(JSON.stringify(recovered.error)), failure);
+  }
+});
+
+test('a failed stream retains later scoped receipts before reporting its terminal error', async () => {
+  const receipt = { id: 'publication-receipt', kind: 'publication' };
+  const rows = [
+    ['error', { code: 'network', retryable: false, phase: 'execution' }],
+    ['agent_event', receipt],
+    ['done', { outcome: 'failed' }],
+  ].map(([event, data], i) => `id: ${i + 1}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const encoder = new TextEncoder();
+  let next = 0;
+  const { api } = loadApi(() => ({ ok: true, body: { getReader: () => ({
+    read: async () => next < rows.length ? { done: false, value: encoder.encode(rows[next++]) } : { done: true },
+  }) } }));
+  const observed = [];
+  const error = await new Promise((resolve, reject) => {
+    const args = ['hi', undefined, 'receipt-session', () => {}, reject, resolve];
+    args[16] = row => observed.push(row.id);
+    api.streamChat(...args);
+  });
+  assert.equal(error.failure.code, 'network');
+  assert.deepEqual(observed, [receipt.id]);
+});
+
+test('chat admission rejection keeps HTTP status but discards provider diagnostic text', async () => {
+  const { api } = loadApi(() => jsonResponse(400, 'private upstream diagnostic'));
+  const error = await new Promise((resolve, reject) => {
+    api.streamChat('hi', undefined, 'receipt-session', () => {}, reject, resolve);
+  });
+  assert.equal(error.status, 400);
+  assert.doesNotMatch(error.message, /private upstream diagnostic/);
+});

@@ -50,6 +50,7 @@ interface ChatPageProps {
   queuePaused?: boolean;
   onResumeQueue?: () => void;
   historyNotice?: string;
+  onOpenFailureSettings?: () => void;
   admissionNotice?: { message: string; action?: { label: string; run: () => void } };
 }
 
@@ -68,7 +69,7 @@ function greeting(): string {
 }
 
 export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onQuestionAnswered, onQuestionClosed,
-  sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice }: ChatPageProps) {
+  sessionReferenceCandidates, queue = [], onRemoveQueued, onEditQueued, onQueueEditChange, queuePaused, onResumeQueue, historyNotice, admissionNotice, onOpenFailureSettings }: ChatPageProps) {
   const [queueEdit, setQueueEdit] = useState<{ id: string; text: string } | null>(null);
   const queueEditChange = useRef(onQueueEditChange);
   queueEditChange.current = onQueueEditChange;
@@ -524,6 +525,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 pendingTimelineQuestions={live
                   ? stream!.questions?.filter(question => !question.status || question.status === 'pending').length : undefined}
                 actions={actions}
+                onOpenFailureSettings={onOpenFailureSettings}
                 onOpenDeliverable={openDeliverable}
                 onOpenSubagent={openSubagent}
               />

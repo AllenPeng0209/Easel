@@ -18,6 +18,13 @@ export interface QueuedMessage {
   delivery?: 'sending' | 'rejected' | 'unconfirmed';
 }
 
+export interface ChatFailure {
+  code: 'authentication' | 'model_unavailable' | 'rate_limit' | 'quota_exhausted' | 'network'
+    | 'timeout' | 'permission_denied' | 'session_conflict' | 'storage' | 'unknown';
+  retryable: boolean;
+  phase: 'startup' | 'execution' | 'finalization';
+}
+
 export interface AnswerCompletion {
   itemId: string;
 }
@@ -45,6 +52,7 @@ export interface ChatMessage {
   timeline?: AgentTimelineObservation[];
   created?: number;
   status?: 'completed' | 'failed' | 'stopped' | 'unconfirmed';
+  failure?: ChatFailure;
 }
 
 export interface ChatSession {

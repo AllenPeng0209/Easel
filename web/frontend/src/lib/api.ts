@@ -1,6 +1,6 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
-import type { ChatSession, ReasoningSummary, AnswerCompletion } from './store';
+import type { ChatSession, ReasoningSummary, AnswerCompletion, ChatFailure } from './store';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
 import type { ChatCommand, ChatCommandOption } from './chatCommands';
 import { mergeSessionCatalog } from './sessionSync';
@@ -667,6 +667,23 @@ function parseAnswerCompletion(value: unknown): AnswerCompletion | undefined {
   return { itemId };
 }
 
+const chatFailureCodes = new Set<ChatFailure['code']>([
+  'authentication', 'model_unavailable', 'rate_limit', 'quota_exhausted', 'network',
+  'timeout', 'permission_denied', 'session_conflict', 'storage', 'unknown',
+]);
+
+function parseChatFailure(value: unknown): ChatFailure {
+  const fallback: ChatFailure = { code: 'unknown', retryable: false, phase: 'execution' };
+  if (!value || typeof value !== 'object') return fallback;
+  const { code, phase, retryable } = value as Partial<ChatFailure>;
+  if (!code || !chatFailureCodes.has(code) || (phase !== 'startup' && phase !== 'execution' && phase !== 'finalization')) return fallback;
+  return { code, phase, retryable: phase === 'startup' && retryable === true && ['network', 'timeout', 'rate_limit'].includes(code) };
+}
+
+function chatFailureError(failure: ChatFailure, message = '执行失败', unconfirmed = false) {
+  return Object.assign(new Error(message), { failure, unconfirmed });
+}
+
 export function streamChat(
   message: string,
   persona: string | undefined,
@@ -697,6 +714,8 @@ export function streamChat(
   const controller = new AbortController();
   let lastEventId = 0;
   let admitted = false;
+  let pendingFailure: ChatFailure | undefined;
+  let pendingUnconfirmed = false;
   let admissionTimer: ReturnType<typeof setTimeout> | undefined;
   const clearAdmissionTimer = () => {
     if (admissionTimer !== undefined) clearTimeout(admissionTimer);
@@ -705,14 +724,10 @@ export function streamChat(
 
   const consume = async (res: Response, replay: boolean): Promise<boolean> => {
       if (!res.ok) {
-        let detail = `Stream error: ${res.status}`;
-        try {
-          const payload = await res.json() as { detail?: string };
-          if (payload.detail) detail = payload.detail;
-        } catch { /* non-JSON error */ }
-        const error = new Error(detail) as Error & { status?: number };
-        error.status = res.status;
-        throw error;
+        const detail = res.status === 401 ? '平台登录状态已失效，请重新登录。'
+          : res.status === 403 ? '当前账号没有发送权限。'
+          : '服务端未接收这条消息，请核对输入和附件。';
+        throw Object.assign(new Error(detail), { status: res.status });
       }
       const reader = res.body?.getReader();
       if (!reader) throw new Error('No response body');
@@ -784,13 +799,18 @@ export function streamChat(
           // 防呆心跳：独立于 activity/thinking，仅作「未卡住」提示，不覆盖真实状态。
           if (onHeartbeat) { try { onHeartbeat(JSON.parse(data) as string); } catch { onHeartbeat(data); } }
         } else if (currentEvent === 'error') {
-          let msg = '执行失败';
-          try { msg = JSON.parse(data) as string; } catch { msg = data; }
-          onError(new Error(msg));
-          return true;
+          let payload: unknown;
+          try { payload = JSON.parse(data); } catch { /* Legacy text has no safe structured fields. */ }
+          pendingFailure = parseChatFailure(payload);
+          pendingUnconfirmed = pendingFailure.phase === 'finalization' && !!payload && typeof payload === 'object'
+            && (payload as { unconfirmed?: unknown }).unconfirmed === true;
         } else if (currentEvent === 'done') {
           let completion: { sessionKey?: string; outcome?: ChatTurnOutcome } | undefined;
           try { completion = JSON.parse(data); } catch { /* Legacy done event. */ }
+          if (pendingFailure) {
+            onError(chatFailureError(pendingFailure, undefined, pendingUnconfirmed || completion?.outcome === 'unconfirmed'));
+            return true;
+          }
           const outcome = completion?.outcome;
           onDone(completion?.sessionKey, outcome === 'completed' || outcome === 'failed' ||
             outcome === 'stopped' || outcome === 'unconfirmed' ? outcome : undefined);
@@ -818,6 +838,10 @@ export function streamChat(
           else if (line.startsWith('event:')) currentEvent = line.slice(6).trim();
           else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
         }
+      }
+      if (pendingFailure && (replay || !turnId) && !controller.signal.aborted) {
+        onError(chatFailureError(pendingFailure, undefined, pendingUnconfirmed));
+        return true;
       }
       // A disconnect can leave a complete-looking data line with no SSE frame
       // terminator. Never dispatch it or move the recovery cursor past it.
@@ -856,7 +880,8 @@ export function streamChat(
         // 无限重试（1s 一次 ×130 分钟），onError 永不触发，会话卡死在「自动续接」。
         if (!first && res.status === 404) {
           if (onRecoveryUnavailable) onRecoveryUnavailable();
-          else onError(new Error('任务记录不存在或已失效，无法续接；请重新发送'));
+          else if (pendingFailure) onError(chatFailureError(pendingFailure, undefined, pendingUnconfirmed));
+          else onError(chatFailureError({ code: 'network', retryable: false, phase: 'finalization' }, '任务记录不存在或已失效，无法续接', true));
           return;
         }
         if (await consume(res, !first)) return;
@@ -872,7 +897,7 @@ export function streamChat(
       // Backend chat runs may spend 5 minutes waiting for a session lock and then
       // run for 2 hours. Keep reconnecting for the same end-to-end budget.
       if (!turnId || Date.now() - started >= 130 * 60 * 1000) {
-        onError(new Error('连接中断，自动重连超时'));
+        onError(chatFailureError(pendingFailure ?? { code: 'timeout', retryable: false, phase: 'finalization' }, '连接中断，自动重连超时', !pendingFailure || pendingUnconfirmed));
         return;
       }
       onInterrupted?.();
@@ -889,13 +914,15 @@ interface LastChatTurn {
   outcome?: Exclude<ChatTurnOutcome, 'unconfirmed'>; clean_end?: boolean; stop_reason?: string;
   reasoning_summary?: ReasoningSummary;
   answer_completed?: AnswerCompletion;
+  error?: ChatFailure;
 }
 
 export async function fetchLastTurn(sessionId: string, turnId?: string, signal?: AbortSignal): Promise<LastChatTurn> {
   const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
   const result = await request<LastChatTurn>(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`, { signal });
   return { ...result, reasoning_summary: publicReasoningSummary(result.reasoning_summary),
-    answer_completed: parseAnswerCompletion(result.answer_completed) };
+    answer_completed: parseAnswerCompletion(result.answer_completed),
+    error: result.error == null ? undefined : parseChatFailure(result.error) };
 }
 
 interface ChatSessionPage {

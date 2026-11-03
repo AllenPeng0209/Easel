@@ -113,7 +113,9 @@ def test_admission_can_be_replayed_after_owner_loss_before_terminal(event_log, m
             events = [event async for event in response.body_iterator]
             assert [event["event"] for event in events] == ["admitted", "error"]
             assert events[0]["id"] == "1" and json.loads(events[0]["data"]) == admitted
-            assert "原任务状态未确认" in events[1]["data"]
+            error = json.loads(events[1]["data"])
+            assert error['code'] == 'unknown' and error['phase'] == 'finalization'
+            assert error['retryable'] is False and error['unconfirmed'] is True
 
     asyncio.run(scenario())
 
@@ -158,8 +160,30 @@ def test_active_claim_replays_prefix_then_owner_loss_reports_unconfirmed(event_l
         assert (await anext(response.body_iterator))["event"] == "activity"
         active.clear()
         last = await asyncio.wait_for(anext(response.body_iterator), timeout=1)
-        assert last["event"] == "error" and "原任务状态未确认" in last["data"]
+        assert last["event"] == "error"
+        error = json.loads(last["data"])
+        assert error['code'] == 'unknown' and error['phase'] == 'finalization'
+        assert error['retryable'] is False and error['unconfirmed'] is True
         with pytest.raises(StopAsyncIteration):
             await anext(response.body_iterator)
+
+    asyncio.run(scenario())
+
+
+def test_replay_keeps_receipt_written_after_error_before_done(event_log, monkeypatch):
+    monkeypatch.setattr(web, "_ACTIVE_TURN_IDS", set())
+    admitted = {"turnId": "recovery-turn", "sessionId": "session"}
+    receipt = {"id": "saved-publication", "kind": "publication"}
+    claim_recovery_turn(event_log,
+        {"id": 1, "event": "admitted", "data": admitted},
+        {"id": 2, "event": "error", "data": {"code": "network", "phase": "execution", "retryable": False}},
+        {"id": 3, "event": "agent_event", "data": receipt},
+        {"id": 4, "event": "done", "data": {"outcome": "failed"}})
+
+    async def scenario():
+        response = await web.api_chat_job_stream("recovery-turn", after=1)
+        events = [event async for event in response.body_iterator]
+        assert [event["event"] for event in events] == ["error", "agent_event", "done"]
+        assert json.loads(events[1]["data"]) == receipt
 
     asyncio.run(scenario())

@@ -62,6 +62,7 @@ from easel.request_identity import current_user, actor_key, ActorMap, ActorSet
 from easel import harnesses
 from easel.harnesses import store as harness_store
 from easel.harnesses.base import HarnessError, RunRequest, Steer, SteerRejected
+from easel.harnesses.diagnostics import ChatFailure, chat_failure, classify_provider_failure, normalize_chat_failure
 from easel.harnesses.codex_subagents import read_subagent
 from easel.chat_artifacts import ArtifactError, ChatArtifactStore
 from easel.artifact_archives import ArchiveSnapshotReader
@@ -1409,7 +1410,7 @@ def run_agent_sync(msg: str, timeout: int = TIMEOUT_DIRECT, session_id: str | No
             result = await _run_harness_chat(request, sk, msg, runtime, _harness_settings(), emit,
                                              timeout, interactive=False)
             if errors:
-                raise HTTPException(502, errors[0])
+                raise HTTPException(502, normalize_chat_failure(errors[0])["message"])
             return result
         if _HARNESS_LOOP is not None and _HARNESS_LOOP.is_running():
             return asyncio.run_coroutine_threadsafe(execute(), _HARNESS_LOOP).result(timeout + 15)
@@ -1423,32 +1424,21 @@ def run_agent_sync(msg: str, timeout: int = TIMEOUT_DIRECT, session_id: str | No
     xlock = _CrossProcLock(sk)
     if not xlock.acquire(timeout=min(timeout, 300)):
         return '⏳ 这个会话正在另一个窗口运行，请稍候再试'
-    # 同 supervisor：先拿到锁再 heal，避免与正在追加 transcript 的进程并发重写丢行
-    _heal_openclaw_session(sk)
     try:
+        # 同 supervisor：先拿到锁再 heal，避免与正在追加 transcript 的进程并发重写丢行
+        _heal_openclaw_session(sk)
         cmd, agent_env = _project_agent_command(cmd, _proxy_env())
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(_workspace_root()), timeout=timeout + 30, env=agent_env)
-        out = clean_agent_output(r.stdout or '')
-        if out:
-            return out
-        # 以前这里直接 `or '（无输出）'`：returncode 与 stderr 全部丢弃，于是子进程的
-        # 任何失败（参数不被当前 OpenClaw 版本支持、配置校验不过、provider 报错）都长
-        # 成同一句「（无输出）」，排查只能靠手动把整条命令行复现一遍。
-        # 实测 `--session-key` 在老版 OpenClaw 上不存在，就是被这里藏掉一整轮的。
-        err = clean_agent_output(r.stderr or '')
-        if r.returncode != 0:
-            detail = _scrub_secrets(err)[-400:].strip() or f'退出码 {r.returncode}'
-            return f'❌ agent 执行失败（rc={r.returncode}）：{detail}'
-        # rc=0 但没有任何产出：stderr 里通常有线索（如模型拒答、工具被拦）
-        if err:
-            return f'（无输出）\n\n{_scrub_secrets(err)[-400:].strip()}'
-        return '（无输出）'
     except subprocess.TimeoutExpired:
-        return '⏱️ 请求超时'
-    except Exception as e:
-        return f'❌ {e}'
+        raise HTTPException(504, chat_failure("timeout")["message"]) from None
+    except Exception:
+        raise HTTPException(502, chat_failure(phase="startup")["message"]) from None
     finally:
         xlock.release()
+    if r.returncode != 0:
+        code, _ = classify_provider_failure([(r.stderr or "")[-16384:], (r.stdout or "")[-16384:]])
+        raise HTTPException(502, chat_failure(code)["message"])
+    return clean_agent_output(r.stdout or '') or '（无输出）'
 
 
 def check_gateway() -> bool:
@@ -3644,7 +3634,7 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
                         "status": "blocked", "source": "timeout", "resolvedBy": "timeout", "answers": {},
                         "questions": visible_questions, "completedAt": int(time.time() * 1000)})
                     emit("question_closed", json.dumps(closed, ensure_ascii=False))
-                    raise HarnessError("等待人工确认超时，任务在需要授权的步骤受阻，未执行该操作")
+                    raise ChatFailure("permission_denied", diagnostic="等待人工确认超时，任务在需要授权的步骤受阻，未执行该操作")
                 record["resolvedBy"] = "timeout" if policy.requires_human else "default"
                 future.set_result(fallback)
             answers = future.result()
@@ -3683,7 +3673,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     answer_completed = None
     clean_end = False
     reason = "error"
-    error_message = ""
+    failure = None
     lock = _session_lock(sk)
     xlock = _CrossProcLock(sk)
     acquired = False
@@ -3696,7 +3686,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     permission_revoked = False
 
     def receive(kind, text):
-        nonlocal error_message, reasoning_summary, answer_completed
+        nonlocal failure, reasoning_summary, answer_completed
         if kind == "thinking":
             return
         if kind == "reasoning_summary":
@@ -3714,6 +3704,10 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 answer_completed = {"itemId": item_id}
                 emit(kind, answer_completed)
             return
+        if kind == "error":
+            failure = normalize_chat_failure(text)
+            emit(kind, failure)
+            return
         # Preserve a structured event as an object through live SSE, replay and
         # final snapshot. Scrub known secrets without converting it to a string.
         safe = json.loads(_scrub_secrets(json.dumps(text, ensure_ascii=False))) if isinstance(text, dict) else _scrub_secrets(text)
@@ -3723,8 +3717,6 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             safe["runId"] = run_id  # The Host owns run identity across all native engines.
             if safe.get("kind") != "steer_capability":
                 agent_events.append(safe)
-        elif kind == "error":
-            error_message = safe if isinstance(safe, str) and safe else "Agent 执行失败"
         emit(kind, safe)
 
     def record_subagent(update: dict):
@@ -3903,9 +3895,9 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 xlock.release()
                 await asyncio.sleep(0.2)
         if not acquired:
-            raise HarnessError("此会话正在另一个窗口运行，请稍后再试")
+            raise ChatFailure("session_conflict", "startup")
         if _chat_backend(sk) != runtime:
-            raise HarnessError("底座已切换，请使用新对话重试")
+            raise ChatFailure("session_conflict", "startup")
         _require_host_tools()
         record = harness_store.binding(_sessions_dir(), sk)
         native_id = record.get("native_id", "")
@@ -3933,21 +3925,23 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
             lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
-        clean_end = not error_message
+        clean_end = failure is None
         reason = "completed" if clean_end else "error"
     except asyncio.CancelledError:
         reason = "permission_revoked" if permission_revoked else "stopped" if sk in _STOPPED_CHAT else "shutdown"
+        if permission_revoked:
+            receive("error", chat_failure("permission_denied"))
         emit("activity", "权限已变更，本轮已停止" if permission_revoked else "已停止" if reason == "stopped" else "服务关闭，本轮已取消")
     except asyncio.TimeoutError:
         reason = "timeout"
-        error_message = "Agent 执行超时，已终止本轮进程"
-        emit("error", error_message)
-    except (HarnessError, HTTPException) as error:
-        error_message = _scrub_secrets(str(error.detail if isinstance(error, HTTPException) else error))
-        emit("error", error_message)
+        receive("error", chat_failure("timeout", "execution" if claimed else "startup"))
+    except ChatFailure as error:
+        receive("error", error.payload)
+    except HTTPException as error:
+        code = {401: "authentication", 403: "permission_denied", 409: "session_conflict"}.get(error.status_code, "unknown")
+        receive("error", chat_failure(code, "execution" if claimed else "startup"))
     except Exception:
-        error_message = "Agent 执行失败，请检查本机 CLI、登录和模型配置"
-        emit("error", error_message)
+        receive("error", chat_failure(phase="execution" if claimed else "startup"))
     finally:
         bind_steer(None)
         if proc.steer_task is not None:
@@ -3958,14 +3952,15 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             privilege_watch.cancel()
             await asyncio.gather(privilege_watch, return_exceptions=True)
         if claimed:
-            snapshot = "".join(full_text) + (f"\n\n❌ {error_message}" if error_message else "")
+            snapshot = "".join(full_text)
             _save_turn(pk, "done", snapshot, {
                 "turn_id": turn_id, "stop_turn_id": stop_turn_id, "runtime": runtime,
                 "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
                 **({"reasoning_summary": reasoning_summary} if reasoning_summary is not None else {}),
                 **({"answer_completed": answer_completed} if answer_completed is not None else {}),
+                **({"error": failure} if failure is not None else {}),
                 **_chat_snapshot_outcome(stopped=reason == "stopped",
-                                         failed=bool(error_message) or permission_revoked,
+                                         failed=failure is not None or permission_revoked,
                                          completed=clean_end)})
         # 注意：claim 失败（锁被占/底座已切换）时刻意**不**落盘——保留上一轮的
         # 结果快照不被失败轮覆盖（见 test_failed_ownership_check_does_not_overwrite_
@@ -3991,7 +3986,7 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
     full_text = []
     clean_end = False
     reason = "error"
-    error_message = ""
+    failure = None
     lock = _session_lock(sk)
     xlock = _CrossProcLock(sk)
     proc = _GatewayHttpProc()
@@ -4016,13 +4011,13 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
                 break
             await asyncio.sleep(0.2)
         if not acquired:
-            raise DirectAPIError("这个会话正在另一个窗口运行，请稍候再试")
+            raise DirectAPIError("这个会话正在另一个窗口运行，请稍候再试", "session_conflict", "startup")
         # Existing OpenClaw conversations have different histories. Require a new
         # session rather than silently discard their context when switching modes.
         if (_transport_pin_file(sk).is_file()
                 or (_openclaw_sessions_dir() / f"{_openclaw_session_id(sk)}.jsonl").is_file()
                 or (_openclaw_sessions_dir() / f"{_openclaw_session_id(pk)}.jsonl").is_file()):
-            raise DirectAPIError("此会话属于 OpenClaw，请新建会话使用 API 直连")
+            raise DirectAPIError("此会话属于 OpenClaw，请新建会话使用 API 直连", "session_conflict", "startup")
         _save_turn(pk, "running", "", {"turn_id": turn_id})
         claimed = True
         proc._task = asyncio.current_task()
@@ -4047,23 +4042,30 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
         reason = "user_stopped" if sk in _STOPPED_CHAT else "cancelled"
         if reason != "user_stopped":
             raise
-    except (DirectAPIError, asyncio.TimeoutError) as error:
-        error_message = str(error) or "API 请求超时"
-        emit("error", error_message)
+    except DirectAPIError as error:
+        failure = chat_failure(error.code, error.phase, safe_to_retry=True)
+        emit("error", failure)
+    except asyncio.TimeoutError:
+        failure = chat_failure("timeout", safe_to_retry=True)
+        emit("error", failure)
     except OSError:
-        error_message = "会话历史保存失败，请检查项目 outputs 目录权限"
-        emit("error", error_message)
+        failure = chat_failure("storage", "finalization" if claimed else "startup")
+        emit("error", failure)
+    except Exception:
+        failure = chat_failure(phase="execution" if claimed else "startup")
+        emit("error", failure)
     finally:
         proc.finish()
-        snapshot = "".join(full_text) + (f"\n\n❌ {error_message}" if error_message else "")
+        snapshot = "".join(full_text)
         try:
             if claimed:
                 _save_turn(pk, "done", snapshot, {
                     "turn_id": turn_id, "stop_turn_id": stop_turn_id,
                     "clean_end": clean_end, "stop_reason": reason,
                     **({"events": [{**event, "runId": run_id} for event in initial_events]} if initial_events else {}),
+                    **({"error": failure} if failure is not None else {}),
                     **_chat_snapshot_outcome(stopped=reason == "user_stopped",
-                                             failed=bool(error_message), completed=clean_end),
+                                             failed=failure is not None, completed=clean_end),
                 })
         finally:
             xlock.release()
@@ -4632,6 +4634,17 @@ async def api_chat_last(session_id: str, turn_id: str | None = None):
             return {"status": "stale", "text": "", "turn_id": payload.get("turn_id")}
         payload.pop("thinking", None)
         payload.pop("reasoning_content", None)
+        if "error" in payload:
+            payload["error"] = normalize_chat_failure(payload["error"])
+        elif (payload.get("outcome") == "failed" or payload.get("stop_reason") in ("error", "timeout", "spawn_failed")) and isinstance(payload.get("text"), str):
+            # Older native/direct snapshots appended diagnostic strings to the answer.
+            # Keep the answer prefix but do not expose that historical payload again.
+            answer, separator, _ = payload["text"].partition("\n\n❌ ")
+            if separator:
+                payload["text"] = answer
+            elif payload.get("stop_reason") == "spawn_failed":
+                payload["text"] = ""
+            payload["error"] = chat_failure()
         return payload
     except Exception:
         return {"status": "none", "text": ""}
@@ -4673,7 +4686,8 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
     initial = _read_job_events(turn_id)
     admission = _turn_admission_event(turn_id, claim["sessionId"]) if claim is not None else None
     has_admission = bool(initial and initial[0] == admission)
-    terminal = any(event["event"] in ("done", "error") for event in initial)
+    terminal = any(event["event"] == "done" or (not owner_alive and event["event"] == "error")
+                   for event in initial)
     if claim is not None and not owner_alive and not terminal and not has_admission:
         if replay:
             raise HTTPException(409, "原任务执行状态未确认，未重新执行；请先核对已有产物和发布回执")
@@ -4682,6 +4696,7 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
     async def events():
         cursor = max(0, after)
         batch = [event for event in initial if event["id"] > cursor]
+        saw_error = any(event["event"] == "error" and event["id"] <= cursor for event in initial)
         idle_since = time.monotonic()
         while True:
             if batch:
@@ -4694,6 +4709,9 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
                     if event["event"] == "thinking":
                         continue
                     raw = event.get("data")
+                    if event["event"] == "error":
+                        saw_error = True
+                        raw = normalize_chat_failure(raw)
                     # job 日志里 question 的 data 已是序列化 JSON 字符串（实时流
                     # forward() 对 question 原样透传），这里若再 json.dumps 会双层
                     # 转义 → 前端 JSON.parse 拿到字符串而非对象 → ask_user 选项
@@ -4708,9 +4726,9 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
                         "event": event["event"],
                         "data": data_out,
                     }
-                    if event["event"] in ("done", "error"):
+                    if event["event"] == "done":
                         return
-            if terminal:
+            if terminal or (claim is None and saw_error):
                 return  # This cursor had already passed the terminal event.
             if claim is not None and not _job_owner_alive(claim, turn_id):
                 # The owner can append the terminal event between the last read
@@ -4718,8 +4736,9 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
                 batch = _read_job_events(turn_id, cursor)
                 if batch:
                     continue
-                yield {"event": "error", "data": json.dumps(
-                    "原任务状态未确认，请核对已有产物和发布回执", ensure_ascii=False)}
+                if not saw_error:
+                    failure = {**chat_failure(phase="finalization"), "unconfirmed": True}
+                    yield {"event": "error", "data": json.dumps(failure, ensure_ascii=False)}
                 return
             if time.monotonic() - idle_since >= 15:
                 yield {"event": "ping", "data": "{}"}
@@ -4832,15 +4851,15 @@ async def api_chat_stream(req: ChatRequest):
         full_text: list[str] = []        # 累积完整回答，供断线取回
         structured_events: list[dict] = []
         timed_out = False                # 只有真·超时才 terminate 进程；断线绝不杀
-        stream_error = False
+        stream_failure = None
 
         def to_client(kind, text=None):
-            nonlocal event_seq, stream_error
+            nonlocal event_seq, stream_failure
             if kind in ("admitted", "thinking"):
                 return  # Admission is Host-owned. Raw thinking is private.
             event_seq += 1
             if kind == "error":
-                stream_error = True
+                text = stream_failure = normalize_chat_failure(text)
             if kind == "agent_event" and isinstance(text, dict):
                 text = {**text, "runId": run_id}
                 structured_events.append(text)
@@ -4921,8 +4940,8 @@ async def api_chat_stream(req: ChatRequest):
                             "POST", chat_completions_url(),
                             json=body, headers=headers) as resp:
                         if resp.status_code != 200:
-                            raw = (await resp.aread())[:200].decode("utf-8", "replace")
-                            to_client("error", f"❌ 对话失败（HTTP {resp.status_code}）：{raw[:160]}")
+                            code, _ = classify_provider_failure({"status": resp.status_code})
+                            to_client("error", chat_failure(code))
                             return
                         async for line in resp.aiter_lines():
                             if not line.startswith("data:"):
@@ -4936,7 +4955,8 @@ async def api_chat_stream(req: ChatRequest):
                             except ValueError:
                                 continue
                             if isinstance(d.get("error"), dict):   # 200 里夹错误对象：不能当正常流吞掉
-                                to_client("error", f"❌ 网关返回错误：{str(d['error'])[:160]}")
+                                code, _ = classify_provider_failure(d["error"])
+                                to_client("error", chat_failure(code))
                                 return
                             choice = (d.get("choices") or [{}])[0]
                             delta = choice.get("delta") or {}
@@ -4963,16 +4983,18 @@ async def api_chat_stream(req: ChatRequest):
                 # 流正常结束却既没正文也没 [DONE]：多半是端点没真开或中途断了。
                 # 不报错的话这一轮会静默落一条空回答，还会被 /api/chat/last 原样取回。
                 if not got_text and not saw_done:
-                    to_client("error", "❌ 网关流异常结束：没有收到任何内容（检查 "
-                                       "gateway.http.endpoints.chatCompletions 是否开启，"
-                                       "或设 EASEL_CHAT_TRANSPORT=cli 回退）")
+                    to_client("error", chat_failure("network", "finalization"))
                 run_info["http_completed"] = got_text and saw_done and finish_reason == "stop"
                 run_info["http_failed"] = (saw_done and not got_text
                                            or finish_reason not in (None, "stop"))
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001
-                to_client("error", f"❌ 网关连接失败：{str(e)[:140]}")
+            except _httpx.TimeoutException:
+                to_client("error", chat_failure("timeout"))
+            except _httpx.HTTPError:
+                to_client("error", chat_failure("network"))
+            except Exception:
+                to_client("error", chat_failure())
             finally:
                 # 先把 SENTINEL 排进 q（FIFO 保证它排在本轮所有 token 之后），再标记完成：
                 # 主循环读到它时，前面的 token 必然已全部消费过。
@@ -5016,7 +5038,7 @@ async def api_chat_stream(req: ChatRequest):
                     break
                 xlock.release()
                 if time.monotonic() >= lock_deadline:
-                    startup_error = "这个会话正在另一个窗口运行，请稍候再试。"
+                    startup_error = chat_failure("session_conflict", "startup")
                     return
                 await asyncio.sleep(0.2)
 
@@ -5053,7 +5075,7 @@ async def api_chat_stream(req: ChatRequest):
             startup_reason = "cancelled"
             raise
         except Exception:
-            startup_error = "❌ 启动失败，请重试"
+            startup_error = chat_failure(phase="startup")
             return
         finally:
             if not started:
@@ -5061,10 +5083,11 @@ async def api_chat_stream(req: ChatRequest):
                 # Persist an owned failure before releasing either lock.
                 startup_outcome = _chat_snapshot_outcome(failed=bool(startup_error))
                 if claimed:
-                    _save_turn(pk, "done", startup_error or "", {
+                    _save_turn(pk, "done", "", {
                         "turn_id": turn_id, "clean_end": False,
                         "stop_reason": startup_reason,
                         **({"events": structured_events} if structured_events else {}),
+                        **({"error": startup_error} if startup_error is not None else {}),
                         **startup_outcome,
                     })
                 xlock.release()
@@ -5236,7 +5259,7 @@ async def api_chat_stream(req: ChatRequest):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     timed_out = True
-                    to_client("error", "⏱️ 请求超时")
+                    to_client("error", chat_failure("timeout"))
                     break
                 try:
                     item = await asyncio.wait_for(q.get(), timeout=min(10, remaining))
@@ -5270,14 +5293,14 @@ async def api_chat_stream(req: ChatRequest):
                     pass
             sr = run_info.get("stop_reason")
             if not emitted:
-                clean = clean_agent_output("".join(stdout_lines))
-                if clean:
-                    emitted = True
-                    full_text.append(clean)
-                    to_client("token", clean)
-                elif rc not in (0, None):
-                    err = clean_agent_output("".join(stdout_lines))[:200]
-                    to_client("error", f"❌ 执行失败（退出码 {rc}）{' — ' + err if err else ''}")
+                if rc not in (0, None):
+                    to_client("error", chat_failure(phase="finalization"))
+                else:
+                    clean = clean_agent_output("".join(stdout_lines))
+                    if clean:
+                        emitted = True
+                        full_text.append(clean)
+                        to_client("token", clean)
             # 收尾检测：即使已吐了内容，只要不是「正常收尾」就显式告知——
             # 否则被截断（触顶）/被杀（负载）/流被中断，都会被当成「清晰地答完了」，
             # 用户看到的就是「答一半突然停、也不说做完」（本 bug 根因）。
@@ -5360,16 +5383,19 @@ async def api_chat_stream(req: ChatRequest):
             # 落盘完整结果：后端跑完整轮不依赖客户端连接，断线后前端用 /api/chat/last 取回
             clean_end = run_info.get("last_ev") == "assistant_message_end"
             final_rc = proc.poll()
-            failed = (stream_error or timed_out or final_rc not in (0, None)
+            failed = (stream_failure is not None or timed_out or final_rc not in (0, None)
                       or run_info.get("http_failed", False)
                       or run_info.get("stop_reason") in ("max_tokens", "length", "model_length", "tool_use"))
             completed = final_rc == 0 and (run_info.get("http_completed", False) if is_http else clean_end)
             outcome = _chat_snapshot_outcome(stopped=user_stopped, failed=failed, completed=completed)
+            if outcome.get("outcome") == "failed" and stream_failure is None:
+                to_client("error", chat_failure(phase="finalization"))
             _save_turn(pk, "done", "".join(full_text), {
                 "turn_id": turn_id, "stop_turn_id": turn_id,
                 "clean_end": clean_end,
                 "stop_reason": "user_stopped" if user_stopped else run_info.get("stop_reason"),
                 "events": structured_events,
+                **({"error": stream_failure} if stream_failure is not None else {}),
                 **outcome,
             })
             xlock.release()
@@ -5726,7 +5752,7 @@ async def api_chat(req: ChatRequest):
         result = await _run_harness_chat(req, sk, message, runtime, _harness_settings(), emit,
                                          interactive=False)
         if errors:
-            raise HTTPException(502, errors[0])
+            raise HTTPException(502, normalize_chat_failure(errors[0])["message"])
         return {"response": result, "sessionKey": sk}
     if runtime == "api":
         content, system = _direct_chat_content(req)
@@ -5739,7 +5765,7 @@ async def api_chat(req: ChatRequest):
         sk = req.sessionId or uuid.uuid4().hex
         result = await _run_direct_chat(req, sk, content, system, emit)
         if errors:
-            raise HTTPException(502, errors[0])
+            raise HTTPException(502, normalize_chat_failure(errors[0])["message"])
         return {"response": result, "sessionKey": sk}
     if req.sessionId and history_path(_sessions_dir(), req.sessionId).is_file():
         raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")

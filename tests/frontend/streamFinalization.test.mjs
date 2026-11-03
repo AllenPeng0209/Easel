@@ -103,11 +103,15 @@ test('hidden-tab completion flushes all buffered text immediately and ignores du
 
 test('error completion preserves buffered text and activity only once', () => {
   const state = setup();
-  state.finalizeStream('session', state.owner, undefined, new Error('failed'));
+  const error = Object.assign(new Error('private diagnostic'), {
+    failure: { code: 'authentication', retryable: false, phase: 'execution' },
+  });
+  state.finalizeStream('session', state.owner, undefined, error);
   state.handleStopStream('session', state.owner);
   state.callbacks.forEach(callback => callback());
   assert.equal(state.messages.length, 1);
-  assert.equal(state.messages[0].message.content, 'shown buffered\n\nError: failed');
+  assert.equal(state.messages[0].message.content, 'shown buffered');
+  assert.equal(state.messages[0].message.failure?.code, 'authentication');
   assert.equal(state.messages[0].message.activity, 'step');
 });
 
@@ -256,4 +260,14 @@ test('only a completed model item leaves answer evidence in a finalized turn', (
   withEvidence.owner.answerCompletion = { itemId: 'model-final-1' };
   withEvidence.finalizeStream('session', withEvidence.owner, 'native');
   assert.equal(withEvidence.messages[0].message.answerCompletion?.itemId, 'model-final-1');
+});
+
+test('a lost journal is an unconfirmed outcome even when the UI has a typed error', () => {
+  const state = setup();
+  state.document.visibilityState = 'hidden';
+  state.finalizeStream('session', state.owner, undefined, Object.assign(new Error('lost journal'), {
+    failure: { code: 'network', retryable: false, phase: 'finalization' }, unconfirmed: true,
+  }));
+  assert.equal(state.messages[0].message.status, 'unconfirmed');
+  assert.equal(state.messages[0].message.failure?.code, 'network');
 });

@@ -81,11 +81,11 @@ test('a replay terminal without durable receipt is unconfirmed for new drafts bu
   assert.deepEqual(legacy.observed, [['token', 'legacy'], ['done', 'completed']]);
 });
 
-test('initial HTTP rejections preserve status while a lost POST and replay 404 stay statusless', async () => {
+test('initial HTTP rejections preserve status without raw detail while lost POST and replay 404 stay statusless', async () => {
   for (const status of [422, 409]) {
     const result = await scenario([Response.json({ detail: 'Host response' }, { status })]);
     assert.equal(result.requests.length, 1);
-    assert.deepEqual(result.observed, [['error', status, 'Host response']]);
+    assert.deepEqual(result.observed, [['error', status, '服务端未接收这条消息，请核对输入和附件。']]);
   }
   const lost = await scenario([
     new Response('', { status: 502 }),
@@ -158,4 +158,18 @@ test('explicit command claims are serialized, while ordinary prompts omit the fi
   assert.deepEqual(JSON.parse(typed.requests[0].body).command, command);
   const plain = await scenario([admission + done]);
   assert.ok(!Object.hasOwn(JSON.parse(plain.requests[0].body), 'command'));
+});
+
+test('an error before a disconnected live stream resumes the same admitted turn for its tail', async () => {
+  const failure = frame(2, 'error', { code: 'network', retryable: false, phase: 'execution' });
+  const { requests, observed } = await scenario([
+    admission + failure,
+    frame(3, 'token', 'final buffered text') + frame(4, 'done', { outcome: 'failed' }),
+  ]);
+  assert.deepEqual(requests.map(request => [request.method, request.url]), [
+    ['POST', '/api/chat/stream'], ['GET', '/api/chat/jobs/exact-turn/stream?after=2'],
+  ]);
+  assert.deepEqual(observed, [
+    ['admitted', 'exact-turn', 'session'], ['token', 'final buffered text'], ['error', undefined, '执行失败'],
+  ]);
 });

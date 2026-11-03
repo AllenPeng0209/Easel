@@ -651,3 +651,25 @@ test('cold recovery preserves explicit answer evidence and labels missing turn o
   assert.equal(captured[0].answerCompletion.itemId, 'saved-answer');
   assert.equal(captured[0].status, 'unconfirmed');
 });
+
+test('unsafe failed or unconfirmed turns cannot be replayed, and a safe retry retains the previous failure', () => {
+  const create = (status, retryable, events) => appBoundary([{ id: 's', title: 'Failure', created: 1, messages: [
+    { role: 'user', content: 'original' },
+    { role: 'assistant', content: '', status, events, failure: { code: 'network', retryable, phase: 'startup' } },
+  ] }]);
+  for (const [status, retryable] of [['failed', false], ['unconfirmed', true]]) {
+    const ui = create(status, retryable);
+    ui.callback('handleResend')('s', 0, 'original');
+    assert.equal(ui.requests.length, 0);
+  }
+  const withPublication = create('failed', true, [{ kind: 'publication', publication: { state: 'submitted' } }]);
+  withPublication.callback('handleResend')('s', 0, 'original');
+  assert.equal(withPublication.requests.length, 0);
+
+  const ui = create('failed', true);
+  ui.callback('handleResend')('s', 0, 'original');
+  assert.equal(ui.requests.length, 1);
+  ui.requests[0][19]();
+  assert.deepEqual(plain(ui.context.sessions[0].messages.map(row => row.role)), ['user', 'assistant', 'user']);
+  assert.equal(ui.context.sessions[0].messages[1].failure.code, 'network');
+});

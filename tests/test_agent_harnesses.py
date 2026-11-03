@@ -915,6 +915,40 @@ def test_legacy_reasoning_is_filtered_from_replay_snapshot_and_catalog(sandbox):
         assert 'private old trace' not in response.text
 
 
+def test_legacy_error_replay_and_snapshot_hide_raw_diagnostics(sandbox):
+    journal = web._job_event_file('legacy-error-turn')
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    raw = 'authorization failure carrying private upstream detail'
+    journal.write_text(json.dumps({'id': 1, 'event': 'error', 'data': raw}) + '\n')
+    web._save_turn('web:legacy-error', 'done', 'partial output\n\n❌ ' + raw, {'stop_reason': 'error'})
+    replay = sandbox.get('/api/chat/jobs/legacy-error-turn/stream')
+    assert replay.status_code == 200 and raw not in replay.text and '"code": "unknown"' in replay.text
+    snapshot = sandbox.get('/api/chat/last/legacy-error').json()
+    assert snapshot['text'] == 'partial output'
+    assert snapshot['error']['code'] == 'unknown' and raw not in json.dumps(snapshot)
+
+
+@pytest.mark.parametrize('route,body', [('/api/chat', {'message': 'request', 'sessionId': 'nonstream'}),
+                                        ('/api/skill', {'skill': 'fixture', 'input': 'request'})])
+@pytest.mark.parametrize('returncode,expected_status', [(1, 502), (0, 200)])
+def test_openclaw_nonstream_checks_exit_before_stdout(sandbox, monkeypatch, route, body, returncode, expected_status):
+    import subprocess
+
+    raw = 'private-provider-diagnostic'
+    monkeypatch.setattr(web, '_chat_backend', lambda _: 'openclaw')
+    monkeypatch.setattr(web, '_heal_openclaw_session', lambda _: None)
+    monkeypatch.setattr(web, '_agent_thinking_level', lambda: 'off')
+    monkeypatch.setattr(web, 'find_skill', lambda _: 'fixture')
+    monkeypatch.setattr(web.subprocess, 'run', lambda cmd, **_: subprocess.CompletedProcess(
+        cmd, returncode, stdout=raw if returncode else 'valid response', stderr='Unauthorized ' + raw))
+    response = sandbox.post(route, json=body)
+    assert response.status_code == expected_status and raw not in response.text
+    if returncode:
+        assert '登录' in response.json()['detail']
+    else:
+        assert response.json()['response'] == 'valid response'
+
+
 def test_acp_command_config_cannot_be_overwritten_or_deleted_by_content_routes(sandbox):
     config = web.OUTPUTS_DIR / "_harness" / "acp.json"
     store.write_json(config, {"command": ["opencode", "acp"]})
@@ -956,7 +990,7 @@ def test_web_stop_timeout_and_lock_cleanup(sandbox, monkeypatch):
         last = json.loads(web._turn_file("web:stoppable").read_text(encoding="utf-8"))
         assert last["stop_reason"] == "timeout" and not web._session_lock("stoppable").locked()
         assert last["outcome"] == "failed"
-        assert "执行超时" in last["text"]
+        assert last["error"]["code"] == "timeout" and last["error"]["retryable"] is False
 
     asyncio.run(exercise())
 
