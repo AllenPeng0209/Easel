@@ -15,6 +15,7 @@ import { businessObjectCanRefresh, businessObjectDraftArtifact, businessObjectEv
 import { DisclosureRow } from '../vendor/deepseek-harness/message/DisclosureRow';
 import DeliverableCards from './DeliverableCards';
 import DraftSnapshotPreview from './DraftSnapshotPreview';
+import { useIpPermissions } from './ProjectSpace';
 import { IconIdea, IconOutputs, IconVideo } from './icons';
 import '../styles/businessObjects.css';
 
@@ -41,7 +42,11 @@ const VERIFICATION: { key: string; title: string; labels: Record<string, string>
 function IdeaDetails({ record }: { record: BusinessObject }) {
   const idea = isRecord(record.details.idea) ? record.details.idea : record.details;
   return <dl className="business-object__fields"><dt>选题备注</dt><dd>{valueText(idea.note)}</dd>
-    <dt>来源记录</dt><dd>{valueText(idea.source)}</dd><dt>保存状态</dt><dd>{valueText(idea.status)}</dd>
+    <dt>来源记录</dt><dd>{valueText(idea.source)}</dd>
+    {typeof idea.platform === 'string' && <><dt>来源平台</dt><dd>{idea.platform}</dd></>}
+    {typeof idea.url === 'string' && !!idea.url && <><dt>来源链接</dt><dd>{idea.url}</dd></>}
+    {typeof idea.collectedAt === 'number' && <><dt>采集时间</dt><dd>{new Date(idea.collectedAt * 1000).toLocaleString('zh-CN', { hour12: false })}</dd></>}
+    <dt>保存状态</dt><dd>{valueText(idea.status)}</dd>
     <dt>创建记录</dt><dd>{valueText(idea.created ?? idea.createdAt)}</dd></dl>;
 }
 function DraftDetails({ record }: { record: BusinessObject }) {
@@ -111,6 +116,7 @@ export default function BusinessObjectCard({ record, onRefresh }: Props) {
 }
 
 function ScopedBusinessObject({ record, onRefresh }: Props) {
+  const { canOperate } = useIpPermissions();
   const input = useRef(record); input.current = record;
   const mounted = useRef(true);
   const pending = useRef<{ input: BusinessObject } | null>(null);
@@ -121,6 +127,12 @@ function ScopedBusinessObject({ record, onRefresh }: Props) {
   const current = read?.input === record ? read.value : record;
   const error = failure?.input === record ? failure : null;
   const busy = busyFor === record;
+  const canUseIdea = canOperate && current.kind === 'idea' && current.status.code !== 'unavailable' && !error?.missing;
+  const useIdea = () => {
+    if (!canUseIdea || !mounted.current || input.current !== record) return;
+    const { id, projectId, actorId } = current;
+    window.dispatchEvent(new window.CustomEvent('easel:use-idea', { detail: { id, projectId, actorId } }));
+  };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; pending.current = null; }; }, []);
   const refresh = async () => {
     if (!onRefresh || input.current !== record || pending.current?.input === record) return;
@@ -133,7 +145,7 @@ function ScopedBusinessObject({ record, onRefresh }: Props) {
       setRead({ input: record, value: next });
     } catch (error) {
       if (!mounted.current || input.current !== record || pending.current !== owner) return;
-      const missing = !!error && typeof error === 'object' && 'status' in error && error.status === 404;
+      const missing = !!error && typeof error === 'object' && 'status' in error && (error.status === 404 || error.status === 403);
       setFailure({ input: record, missing, message: missing
         ? '原对象已删除或不可访问，保留此历史观测，无法刷新。'
         : '当前无法刷新或未取得更新观测，已保留上次快照，可重试。' });
@@ -175,6 +187,6 @@ function ScopedBusinessObject({ record, onRefresh }: Props) {
     {!error?.missing && <div className="business-object__actions">{current.actions.map(action => {
       const href = businessObjectOpenHref(current, action);
       return href ? <a key={`${action.target}:${action.entityId}`} href={href}>{action.label}</a> : null;
-    })}</div>}
+    })}{canUseIdea && <button type="button" className="btn btn-sm" onClick={useIdea}>用此选题创作</button>}</div>}
   </section>;
 }

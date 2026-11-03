@@ -488,6 +488,7 @@ export default function App() {
     persona: string | undefined,
     attachments: UploadedFile[] = [],
     requestedTurnId?: string,
+    topicRef?: ChatMessage['topicRef'],
   ) => {
     const turnId = requestedTurnId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try { sessionStorage.setItem(projectStorageKey(`easel_pending_turn:${sessionId}`), turnId); } catch { /* ignore */ }
@@ -549,6 +550,7 @@ export default function App() {
       (note) => { if (streamAcc.current[sessionId] === owner) setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], stillWorking: note } } : p)); },
       (closed) => closeQuestion(sessionId, closed),
       (event) => receiveAgentEvent(sessionId, owner, event),
+      topicRef,
     );
   }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent]);
 
@@ -643,6 +645,7 @@ export default function App() {
     legacyAgentText?: string,
     truncateAt?: number,
     requestedTurnId?: string,
+    topicRef?: ChatMessage['topicRef'],
   ) => {
     const visible = displayText.trim();
     const agentMessage = (legacyAgentText || displayText).trim();
@@ -661,6 +664,7 @@ export default function App() {
             content: visible,
             created: Date.now(),
             ...(attachments.length ? { attachments } : {}),
+            ...(topicRef ? { topicRef } : {}),
             ...(legacyAgentText && legacyAgentText !== visible ? { agentContent: legacyAgentText } : {}),
           } as ChatMessage],
         };
@@ -670,7 +674,7 @@ export default function App() {
       saveSessions(next);
       return next;
     });
-    startStream(sessionId, agentMessage, persona, attachments, requestedTurnId);
+    startStream(sessionId, agentMessage, persona, attachments, requestedTurnId, topicRef);
     return true;
   }, [selectedPersona, startStream]);
 
@@ -729,7 +733,8 @@ export default function App() {
     attachments?: UploadedFile[],
     legacyAgentText?: string,
   ) => {
-    sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, userIndex);
+    const topicRef = sessionsRef.current.find(session => session.id === sessionId)?.messages[userIndex]?.topicRef;
+    sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, userIndex, undefined, topicRef);
   }, [sendUserAndStream]);
 
   // 热点「一键做成内容」：新开会话，把选题作为指令发出去，跳到对话页。
@@ -741,6 +746,45 @@ export default function App() {
     setCurrentPage('chat');
     sendUserAndStream(ns.id, prompt);
   }, [selectedPersona, sendUserAndStream]);
+
+  const handleUseSavedIdea = useCallback(async (id: string) => {
+    if (!canOperate) return;
+    const generation = ++businessNavigation.current;
+    setBusinessNotice('正在读取选题…');
+    try {
+      const idea = await fetchBusinessObject('idea', id);
+      if (generation !== businessNavigation.current) return;
+      const session = createSession(selectedPersona || undefined);
+      if (idea.title.trim()) session.title = Array.from(idea.title).slice(0, 60).join('');
+      setSessions(previous => {
+        const next = [session, ...previous];
+        saveSessions(next);
+        return next;
+      });
+      setActiveSessionId(session.id);
+      setCurrentPage('chat');
+      setBusinessNotice('');
+      sendUserAndStream(session.id, '请根据所选选题及来源拟定创作方向，并起草一版内容。', [], undefined,
+        undefined, undefined, { id: idea.id, snapshotHash: idea.snapshotHash });
+    } catch {
+      if (generation === businessNavigation.current) setBusinessNotice('无法读取该选题，请在当前 IP 核对后重试。');
+    }
+  }, [canOperate, selectedPersona, sendUserAndStream]);
+
+  useEffect(() => {
+    const useIdea = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.actorId === ACTIVE_USER_ID && detail?.projectId === ACTIVE_PROJECT_ID
+          && typeof detail.id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(detail.id)) {
+        void handleUseSavedIdea(detail.id);
+      }
+    };
+    window.addEventListener('easel:use-idea', useIdea);
+    return () => {
+      window.removeEventListener('easel:use-idea', useIdea);
+      businessNavigation.current += 1;
+    };
+  }, [handleUseSavedIdea]);
 
   const handleStopStream = useCallback(async (sessionId: string) => {
     setSessions(previous => {
@@ -942,6 +986,7 @@ export default function App() {
             agentRuntime={agentRuntime}
             onNavigate={setCurrentPage}
             onUseTopic={handleUseTopic}
+            onUseSavedIdea={handleUseSavedIdea}
           />
         );
       case 'chat':
@@ -972,9 +1017,9 @@ export default function App() {
           />
         ) : null;
       case 'trends':
-        return <TrendsPage onUseTopic={handleUseTopic} />;
+        return <TrendsPage onUseSavedIdea={handleUseSavedIdea} />;
       case 'ideas':
-        return <IdeasPage onUseTopic={handleUseTopic} initialIdeaId={businessEntry?.kind === 'idea' ? businessEntry.id : undefined} />;
+        return <IdeasPage onUseTopic={handleUseSavedIdea} initialIdeaId={businessEntry?.kind === 'idea' ? businessEntry.id : undefined} />;
       case 'calendar':
         return <CalendarPage />;
       case 'publish':

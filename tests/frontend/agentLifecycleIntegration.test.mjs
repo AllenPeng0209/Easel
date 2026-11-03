@@ -250,3 +250,28 @@ test('fast server hydration waits for delayed tab ownership before restoring rem
   cleanupHydration?.();
   cleanup?.();
 });
+
+test('saved idea starts a conversation with the exact inspected snapshot and retries with the same reference', async () => {
+  const idea = { id: 'legacy-idea', title: '已保存的选题', snapshotHash: 'a'.repeat(64) };
+  const ui = appBoundary([], {
+    businessNavigation: { current: 0 },
+    setBusinessNotice() {}, setActiveSessionId() {}, setCurrentPage() {},
+    createSession: () => ({ id: 'topic-chat', title: 'New Chat', messages: [], created: 1 }),
+    fetchBusinessObject: async (kind, id) => {
+      assert.equal(kind, 'idea');
+      assert.equal(id, idea.id);
+      return idea;
+    },
+  });
+  await ui.callback('handleUseSavedIdea')(idea.id);
+  const ref = { id: idea.id, snapshotHash: idea.snapshotHash };
+  assert.deepEqual(plain(ui.requests[0].at(-1)), ref);
+  assert.deepEqual(plain(ui.saved.at(-1)[0].messages[0].topicRef), ref);
+  assert.equal(ui.context.sessions[0].title, idea.title);
+
+  ui.context.sessionsRef.current = plain(ui.context.sessions);
+  ui.context.streamAcc.current = {};
+  ui.context.streamCtl.current = {};
+  ui.callback('handleResend')('topic-chat', 0, '重新起草');
+  assert.deepEqual(plain(ui.requests[1].at(-1)), ref);
+});

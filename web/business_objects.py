@@ -13,13 +13,37 @@ import math
 import re
 import time
 from pathlib import PurePosixPath
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from easel.chat_artifacts import ArtifactError
 from easel.projects import project_id
 from easel.request_identity import current_user
 from easel.video_workshop import WorkshopError, WorkshopStore
+
+
+class IdeaProvenance(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    platform: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    url: str = Field(default="", max_length=4000)
+    collectedAt: int | None = Field(default=None, gt=0)
+
+    @field_validator("url")
+    @classmethod
+    def validate_source_url(cls, value: str) -> str:
+        if not value:
+            return value
+        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value) or "\\" in value:
+            raise ValueError("来源链接格式无效")
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username is not None:
+            raise ValueError("来源链接必须是无凭据的 HTTP 或 HTTPS 地址")
+        # Accessing port also validates malformed and out-of-range ports.
+        _ = parts.port
+        return value
 
 
 def _digest(value):
@@ -111,6 +135,13 @@ class BusinessObjectService:
                     'doing': _status('idea_doing', '选题进行中', 'stored'),
                     'done': _status('idea_done', '选题已完成', 'stored')}
         stored = _scalars(value, {'id', 'title', 'note', 'source', 'status', 'created'})
+        if value.get('provenance') is not None:
+            try:
+                provenance = IdeaProvenance.model_validate(value['provenance'])
+            except ValidationError:
+                pass  # Old or damaged provenance must not hide the idea.
+            else:
+                stored.update(provenance.model_dump(exclude_none=True))
         state = statuses.get(_text(stored.get('status')), _status('unknown', '选题状态待核对', 'unknown'))
         return self._object(scope, 'idea', stored['id'], _text(stored.get('title'), '未命名选题'),
             _text(stored.get('note')), state, {'revision': None, 'sha256': None}, {'idea': stored})

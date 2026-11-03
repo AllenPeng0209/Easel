@@ -5,7 +5,7 @@ import { IconIdea, IconEdit, IconTrash, IconChat, IconCalendar, IconChevron } fr
 import { useIpPermissions } from './ProjectSpace';
 
 interface IdeasPageProps {
-  onUseTopic: (title: string) => void;
+  onUseTopic: (id: string) => void;
   initialIdeaId?: string;
 }
 
@@ -116,7 +116,7 @@ export default function IdeasPage({ onUseTopic, initialIdeaId }: IdeasPageProps)
                   {it.source && <span className="badge" style={{ marginTop: 6 }}>{it.source}</span>}
                   {it.note && <div className="idea-note">{it.note}</div>}
                   {canOperate && <div className="idea-foot">
-                    <button className="idea-act" onClick={() => { if (canOperate) onUseTopic(it.title); }}><IconChat size={13} /> 做内容</button>
+                    <button className="idea-act" onClick={() => { if (canOperate) onUseTopic(it.id); }}><IconChat size={13} /> 做内容</button>
                     <button className="idea-act" onClick={() => schedule(it)}><IconCalendar size={13} /> 排期</button>
                     <button className="idea-act next" onClick={() => advance(it)} title="推进状态">
                       {COLUMNS.find((c) => c.key === NEXT[it.status])?.label} <IconChevron size={12} />

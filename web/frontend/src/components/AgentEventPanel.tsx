@@ -89,9 +89,16 @@ function ToolEvent({ event, expanded, settled }: { event: AgentEvent; expanded: 
 }
 
 function OtherEvent({ event }: { event: AgentEvent }) {
-  if (event.kind === 'business') return businessEventKey(event) && event.business
-    ? <BusinessObjectCard record={event.business} onRefresh={fetchBusinessObject} />
-    : <p className="agent-event__note" role="status">业务记录格式无效，未显示详情。</p>;
+  if (event.kind === 'business') {
+    if (!businessEventKey(event) || !event.business) {
+      return <p className="agent-event__note" role="status">业务记录格式无效，未显示详情。</p>;
+    }
+    const isTopicSource = event.callId?.startsWith('host:topic:');
+    return <>
+      {isTopicSource && <p className="agent-event__note">本轮创作的选题快照</p>}
+      <BusinessObjectCard record={event.business} onRefresh={isTopicSource ? undefined : fetchBusinessObject} />
+    </>;
+  }
   if (event.kind === 'publication' && event.publication) return <PublicationReceiptCard record={event.publication}
     onRefresh={fetchPublicationApproval} />;
   const automatic = event.source === 'default' || event.resolvedBy === 'default';

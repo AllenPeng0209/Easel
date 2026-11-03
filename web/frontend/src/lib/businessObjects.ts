@@ -65,7 +65,7 @@ function fields(value: unknown, keys: readonly string[]): Record<string, unknown
   return result;
 }
 
-const IDEA_FIELDS = ['id', 'title', 'note', 'source', 'status', 'created', 'createdAt', 'updatedAt', 'updated_at', 'platform', 'topicId'];
+const IDEA_FIELDS = ['id', 'title', 'note', 'source', 'status', 'created', 'createdAt', 'updatedAt', 'updated_at', 'platform', 'topicId', 'url', 'collectedAt'];
 const ARTIFACT_FIELDS = ['artifactId', 'projectId', 'sessionId', 'turnId', 'path', 'name', 'mime', 'size', 'description',
   'status', 'createdAt', 'url', 'storageMode', 'revision', 'sha256', 'bundleSha256', 'reviewStatus'];
 const PROJECT_FIELDS = ['id', 'title', 'brief', 'aspect_ratio', 'revision', 'stage', 'archived_at', 'created_at', 'updated_at'];

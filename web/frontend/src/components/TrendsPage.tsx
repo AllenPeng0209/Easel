@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import { fetchTrends, createIdea } from '../lib/api';
-import type { TrendGroup } from '../lib/api';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { fetchTrends, fetchIdeas, createIdea } from '../lib/api';
+import type { TrendGroup, TrendItem } from '../lib/api';
 import { IconFire, IconRefresh, IconBookmark, IconCheck } from './icons';
+import { useIpPermissions } from './ProjectSpace';
 
 interface TrendsPageProps {
-  onUseTopic: (title: string) => void;   // 一键做成内容 → 跳 chat
+  onUseSavedIdea: (id: string) => void | Promise<void>;
 }
 
 const ALL_PLATFORMS: { key: string; label: string }[] = [
@@ -16,20 +17,68 @@ const ALL_PLATFORMS: { key: string; label: string }[] = [
   { key: 'toutiao', label: '头条' },
 ];
 
-export default function TrendsPage({ onUseTopic }: TrendsPageProps) {
+const trendKey = (platform: string, url: string, title: string) => JSON.stringify([platform, url, title.trim()]);
+
+export default function TrendsPage({ onUseSavedIdea }: TrendsPageProps) {
+  const { canOperate } = useIpPermissions();
   const [selected, setSelected] = useState<string[]>(['weibo', 'douyin', 'zhihu']);
   const [groups, setGroups] = useState<TrendGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [updated, setUpdated] = useState(0);
-  const [saved, setSaved] = useState<Set<string>>(new Set());
+  const saved = useRef(new Map<string, string>());
+  const pending = useRef(new Set<string>());
+  const mounted = useRef(true);
+  const [busyKeys, setBusyKeys] = useState(new Set<string>());
+  const [catalog, setCatalog] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [lookupAttempt, setLookupAttempt] = useState(0);
+  const [saveError, setSaveError] = useState('');
 
-  const save = async (title: string, source: string) => {
-    if (saved.has(title)) return;
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!canOperate) return;
+    let active = true;
+    setCatalog('loading');
+    fetchIdeas().then(ideas => {
+      if (!active) return;
+      const known = new Map<string, string>();
+      for (const { id, title, provenance } of ideas) {
+        if (!id || !provenance) continue;
+        const key = trendKey(provenance.platform, provenance.url, title);
+        if (!known.has(key)) known.set(key, id);
+      }
+      saved.current = known;
+      setCatalog('ready');
+    }).catch(() => { if (active) setCatalog('failed'); });
+    return () => { active = false; };
+  }, [canOperate, lookupAttempt]);
+
+  const save = async (group: TrendGroup, item: TrendItem, start: boolean) => {
+    const key = trendKey(group.platform, item.url, item.title);
+    if (!canOperate || catalog !== 'ready' || pending.current.has(key)) return;
+    pending.current.add(key);
+    setBusyKeys(new Set(pending.current));
+    setSaveError('');
+    let id = saved.current.get(key);
     try {
-      await createIdea({ title, source: `${source}热搜`, status: 'pending' });
-      setSaved((prev) => new Set(prev).add(title));
-    } catch { /* ignore */ }
+      if (!id) {
+        const idea = await createIdea({ title: item.title, source: `${group.label}热搜`, status: 'pending',
+          provenance: { platform: group.platform, url: item.url, collectedAt: updated } });
+        if (!idea.id) throw new Error('Missing saved idea ID');
+        id = idea.id;
+        saved.current.set(key, id);
+      }
+      if (start && mounted.current) await onUseSavedIdea(id);
+    } catch {
+      if (mounted.current) setSaveError(id ? '打开创作失败，请重试。' : '保存选题失败，请重试。');
+    } finally {
+      pending.current.delete(key);
+      if (mounted.current) setBusyKeys(new Set(pending.current));
+    }
   };
 
   const load = useCallback((pfs: string[]) => {
@@ -70,6 +119,10 @@ export default function TrendsPage({ onUseTopic }: TrendsPageProps) {
       </div>
 
       {error && <div className="notice-error">{error}</div>}
+      {saveError && <div className="notice-error" role="alert">{saveError}</div>}
+      {canOperate && catalog === 'failed' && <div className="notice-error" role="alert">
+        读取已保存选题失败。 <button className="btn btn-sm" onClick={() => setLookupAttempt(value => value + 1)}>重试</button>
+      </div>}
 
       <div className="trend-grid">
         {groups.map((g) => (
@@ -81,22 +134,26 @@ export default function TrendsPage({ onUseTopic }: TrendsPageProps) {
                   {g.ok === false ? '该平台暂时取不到（数据源不可用）' : '暂无数据'}
                 </div>
               )}
-              {g.items.map((it, i) => (
-                <div key={i} className="trend-item">
+              {g.items.map((it, i) => {
+                const key = trendKey(g.platform, it.url, it.title);
+                const isSaved = saved.current.has(key);
+                const busy = catalog !== 'ready' || busyKeys.has(key);
+                return <div key={i} className="trend-item">
                   <span className={`trend-rank ${i < 3 ? 'top' : ''}`}>{i + 1}</span>
                   <div className="trend-main">
                     <a className="trend-title" href={it.url || undefined} target="_blank" rel="noreferrer"
                       title={it.title}>{it.title}</a>
                     {it.hot && <span className="trend-hot">{it.hot}</span>}
                   </div>
-                  <button className="trend-save" title={saved.has(it.title) ? '已收藏到选题库' : '收藏到选题库'}
-                    onClick={() => save(it.title, g.label)}>
-                    {saved.has(it.title) ? <IconCheck size={14} /> : <IconBookmark size={14} />}
+                  {canOperate && <><button className="trend-save" title={isSaved ? '已收藏到选题库' : '收藏到选题库'}
+                    disabled={busy || isSaved} onClick={() => void save(g, it, false)}>
+                    {isSaved ? <IconCheck size={14} /> : <IconBookmark size={14} />}
                   </button>
-                  <button className="trend-use" title="做成内容"
-                    onClick={() => onUseTopic(it.title)}>做内容</button>
-                </div>
-              ))}
+                  <button className="trend-use" disabled={busy} onClick={() => void save(g, it, true)}>
+                    {isSaved ? '做内容' : '保存并做内容'}
+                  </button></>}
+                </div>;
+              })}
             </div>
           </div>
         ))}

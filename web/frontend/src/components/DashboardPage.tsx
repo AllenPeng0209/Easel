@@ -38,11 +38,12 @@ interface DashboardProps {
   agentRuntime: string;
   onNavigate: (page: Page) => void;
   onUseTopic: (title: string) => void;
+  onUseSavedIdea: (id: string) => void;
 }
 
 const STATUS_LABEL: Record<string, string> = { idea: '选题', draft: '草稿', scheduled: '待发', published: '已发' };
 
-export default function DashboardPage({ persona, gatewayStatus, apiDirect, agentRuntime, onNavigate, onUseTopic }: DashboardProps) {
+export default function DashboardPage({ persona, gatewayStatus, apiDirect, agentRuntime, onNavigate, onUseTopic, onUseSavedIdea }: DashboardProps) {
   const { canOperate, canManageAccounts } = useIpPermissions();
   const accountPermission = useRef(canManageAccounts);
   accountPermission.current = canManageAccounts;
@@ -214,7 +215,7 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
           </div>
           {pendingIdeas.length === 0 && <div className="dash-empty">还没攒选题，去热点雷达收藏几个吧</div>}
           {pendingIdeas.slice(0, 5).map((it) => (
-            <div key={it.id} className="dash-idea" onClick={canOperate ? () => { if (operationPermission.current) onUseTopic(it.title); } : undefined} title={canOperate ? '点击做成内容' : '已保存选题'}>
+            <div key={it.id} className="dash-idea" onClick={canOperate ? () => { if (operationPermission.current) onUseSavedIdea(it.id); } : undefined} title={canOperate ? '点击做成内容' : '已保存选题'}>
               <span className="dash-idea-title">{it.title}</span>
               {it.source && <span className="badge">{it.source}</span>}
             </div>

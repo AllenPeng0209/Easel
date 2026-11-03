@@ -252,8 +252,10 @@ export function deleteSchedule(id: string): Promise<{ ok: boolean }> {
 // ---- 选题库 ----
 export interface Idea {
   id: string; title: string; note: string; source: string; status: string; created: number;
+  provenance?: { platform: string; url: string; collectedAt: number };
 }
-export type IdeaInput = { title: string; note?: string; source?: string; status?: string };
+export type IdeaInput = { title: string; note?: string; source?: string; status?: string;
+  provenance?: { platform: string; url: string; collectedAt: number } };
 export function fetchIdeas(): Promise<Idea[]> { return request('/api/ideas'); }
 export function createIdea(item: IdeaInput): Promise<Idea> {
   return request('/api/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
@@ -656,6 +658,7 @@ export function streamChat(
   onHeartbeat?: (note: string) => void,
   onQuestionClosed?: (q: ChatQuestionClosed) => void,
   onAgentEvent?: (event: AgentEvent) => void,
+  topicRef?: { id: string; snapshotHash: string },
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -759,7 +762,7 @@ export function streamChat(
         const res = first
           ? await projectFetch(projectUrl(`${BASE}/api/chat/stream`), {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments }),
+              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef }),
               signal: controller.signal,
             })
           : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`), {

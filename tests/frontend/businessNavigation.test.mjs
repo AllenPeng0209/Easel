@@ -28,7 +28,7 @@ function compile(path, dependencies, globals) {
   return exports;
 }
 
-async function mount(file, initialProps = {}, { ideas = [], projects = [], detail, role = 'operator' } = {}) {
+async function mount(file, initialProps = {}, { ideas = [], projects = [], detail, role = 'operator', trends = [], saveIdea } = {}) {
   const { window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   const document = window.document;
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
@@ -47,7 +47,10 @@ async function mount(file, initialProps = {}, { ideas = [], projects = [], detai
         { revision: 2, renders: [{ ...receipt, artifact_id: 'collected' }] }) : receipt };
     } } }, { window, document });
   const componentApi = {
-    fetchIdeas: async () => { reads.push('ideas'); return ideas; }, createIdea: denied, updateIdea: denied, deleteIdea: denied, createSchedule: denied,
+    fetchIdeas: async () => { reads.push('ideas'); return ideas; },
+    fetchTrends: async () => ({ trends, updated: 1234 }),
+    createIdea: saveIdea ? async input => { writes.push(input); return saveIdea(input); } : denied,
+    updateIdea: denied, deleteIdea: denied, createSchedule: denied,
   };
   const workshopApi = { ...workshop,
     fetchWorkshopStatus: async () => ({ state: 'unavailable', message: 'fixture' }),
@@ -103,6 +106,69 @@ test('default idea page retains its ordinary list without automatic focus or wri
   const ui = await mount('IdeasPage', { onUseTopic() {} }, { ideas: [idea('a'.repeat(12), 'Ordinary')] });
   try { assert.match(ui.document.body.textContent, /Ordinary/); assert.equal(ui.document.querySelector('[data-idea-selected="true"]'), null);
     assert.equal(ui.focused.length, 0); assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('starting creation from a saved idea passes its ID on explicit click', async () => {
+  const used = [];
+  const ui = await mount('IdeasPage', { onUseTopic: id => used.push(id) },
+    { ideas: [idea('idea-one', 'Same title'), idea('idea-two', 'Same title')] });
+  try {
+    assert.deepEqual(used, []);
+    const card = [...ui.document.querySelectorAll('.idea-card')][1];
+    const start = [...card.querySelectorAll('button')].find(button => button.textContent.includes('做内容'));
+    assert.ok(start);
+    await act(async () => start.click());
+    assert.deepEqual(used, ['idea-two']);
+    assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+const trendGroups = ['weibo', 'douyin'].map(platform => ({ platform, label: platform,
+  items: [{ title: 'Same title', url: 'https://source.test/' + platform, hot: '' }] }));
+
+test('unsaved trend explicitly saves provenance once before starting with the returned ID', async () => {
+  const pending = deferred();
+  const used = [];
+  const ui = await mount('TrendsPage', { onUseSavedIdea: id => used.push(id) },
+    { trends: trendGroups, saveIdea: () => pending.promise });
+  try {
+    assert.deepEqual(ui.writes, []);
+    const start = ui.document.querySelector('.trend-use');
+    assert.equal(start.textContent, '保存并做内容');
+    await act(async () => { start.click(); start.click(); });
+    assert.equal(ui.writes.length, 1);
+    assert.deepEqual({ ...ui.writes[0].provenance }, { platform: 'weibo', url: 'https://source.test/weibo', collectedAt: 1234 });
+    assert.deepEqual(used, []);
+    await act(async () => pending.resolve({ id: 'host-idea-one' }));
+    assert.deepEqual(used, ['host-idea-one']);
+    await act(async () => ui.document.querySelector('.trend-use').click());
+    assert.deepEqual(used, ['host-idea-one', 'host-idea-one']);
+    assert.equal(ui.writes.length, 1);
+  } finally { await ui.dispose(); }
+});
+
+test('saved trend identity uses platform, URL and title, and failed saves stay retryable', async () => {
+  const used = [];
+  let attempts = 0;
+  const ui = await mount('TrendsPage', { onUseSavedIdea: id => used.push(id) }, {
+    trends: trendGroups, ideas: [{ id: 'existing', title: 'Same title', provenance: {
+      platform: 'weibo', url: 'https://source.test/weibo', collectedAt: 1000 } }],
+    saveIdea: () => { if (!attempts++) throw new Error('unavailable'); return { id: 'new-douyin' }; },
+  });
+  try {
+    const [saved, unsaved] = ui.document.querySelectorAll('.trend-use');
+    assert.equal(saved.textContent, '做内容');
+    assert.equal(unsaved.textContent, '保存并做内容');
+    await act(async () => saved.click());
+    assert.deepEqual(used, ['existing']);
+    assert.equal(ui.writes.length, 0);
+    await act(async () => unsaved.click());
+    assert.match(ui.document.body.textContent, /保存选题失败/);
+    assert.deepEqual(used, ['existing']);
+    await act(async () => unsaved.click());
+    assert.deepEqual(used, ['existing', 'new-douyin']);
+    assert.equal(ui.writes.length, 2);
   } finally { await ui.dispose(); }
 });
 

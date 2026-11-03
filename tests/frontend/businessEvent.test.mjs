@@ -49,3 +49,10 @@ test('denied and incomplete tool calls cannot become successful business cards',
  assert.doesNotMatch(html,/data-business-object=/);
  assert.match(html,/未授权/);
 });
+
+test('the source idea snapshot keeps its historical observation without a live refresh action', () => {
+ const html=render([event('source',10,'host:topic:turn')]);
+ assert.match(html,/本轮创作的选题快照/);
+ assert.match(html,/查看选题/);
+ assert.doesNotMatch(html,/刷新业务对象/);
+});

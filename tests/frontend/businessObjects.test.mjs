@@ -121,6 +121,24 @@ test('existing opaque idea IDs can navigate without being forced into the new he
   });
 });
 
+test('saved idea card emits its current scoped ID only from the explicit creation action',async()=>{
+  const record=object({id:'idea-two',details:{idea:{platform:'weibo',url:'https://source.test/idea-two',collectedAt:1234}},
+    actions:[{kind:'open',target:'ideas',entityId:'idea-two',label:'查看选题'}]});
+  await cardDOM({record},async({window,card,render,expand})=>{
+    const events=[];
+    window.addEventListener('easel:use-idea', event=>events.push({...event.detail}));
+    const start=()=>[...card().querySelectorAll('button')].find(button=>button.textContent==='用此选题创作');
+    assert.deepEqual(events,[]);
+    assert.ok(start());
+    await React.act(async()=>start().click());
+    assert.deepEqual(events,[{id:'idea-two',projectId:'default',actorId:actor}]);
+    await expand();
+    assert.match(card().textContent,/来源平台weibo来源链接https:\/\/source\.test\/idea-two采集时间/);
+    await render({record:workshop()});
+    assert.equal(start(),undefined);
+  });
+});
+
 test('workshop details show actual renders, historical artifacts, simulated and human reviews without inventing an actor',async()=>{
   await cardDOM({record:workshop()},async({window,expand,card})=>{
     assert.equal(card().getAttribute('data-kind'),'workshop');
@@ -257,6 +275,7 @@ test('deletion/404 retains the prior snapshot, labels its history and remains re
   await cardDOM({record:initial,onRefresh:async()=>{if(attempt++===0)throw Object.assign(new Error('server-secret-config'),{status:404});return object({observedAt:initial.observedAt+100});}},async({window,card,refresh})=>{
     await React.act(async()=>refresh().click());
     assert.match(window.document.body.textContent,/历史观测/);assert.match(window.document.body.textContent,/无法刷新/);
+    assert.ok(![...card().querySelectorAll('button')].some(button=>button.textContent==='用此选题创作'));
     assert.match(window.document.body.textContent,/真实选题标题/);assert.ok(!window.document.body.textContent.includes('server-secret-config'));
     assert.equal(refresh().disabled,false);
     await React.act(async()=>refresh().click());
