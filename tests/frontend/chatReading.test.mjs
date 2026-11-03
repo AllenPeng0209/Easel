@@ -11,6 +11,7 @@ const messages = [{ role: 'user', content: '请开始' }];
 async function chatDOM(run) {
   const { window } = require('linkedom').parseHTML('<html><body><div id="root"></div></body></html>');
   window.location = { pathname: '/', origin: 'http://127.0.0.1:7860' };
+  window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   window.getComputedStyle = element => element.style;
   const metrics = new WeakMap();
   const metricNames = ['scrollHeight', 'clientHeight', 'scrollTop'];
@@ -28,7 +29,7 @@ async function chatDOM(run) {
   try {
     const ChatPage = componentModule('components/ChatPage.tsx', { globals: { window, document: window.document, DOMParser: window.DOMParser,
       navigator: { platform: 'MacIntel', userAgent: 'test' }, crypto, queueMicrotask,
-      fetch: async () => new Response(JSON.stringify({ max_mb: 50 })), Response,
+      fetch: async url => new Response(String(url).endsWith('/content') ? '固定版本内容' : JSON.stringify({ max_mb: 50 })), Response, TextDecoder,
     } }).default;
     const render = (stream, history = messages) => React.act(async () => root.render(React.createElement(ChatPage, {
       apiDirect: true, session: { id: 'reading-one', title: '测试会话', created: 1, messages: history },
@@ -111,5 +112,37 @@ test('nested wheel keeps outer follow while consumed, then releases at a chainin
     inner.style.overscrollBehaviorY = 'auto';
     await wheel(child, -20);
     assert.ok(jump());
+  });
+});
+
+test('opening a delivery keeps the original chat and returns focus to its card', async () => {
+  await chatDOM(async ({ window, render, scroll }) => {
+    const id = 'a'.repeat(32);
+    const file = { artifactId: id, projectId: 'default', sessionId: 'reading-one', turnId: 'turn',
+      path: 'report.txt', name: 'report.txt', mime: 'text/plain', size: 18, createdAt: 1,
+      storageMode: 'snapshot', revision: 2, sha256: 'b'.repeat(64), status: 'available',
+      url: `/api/chat/artifacts/${id}/content` };
+    await render(undefined, [...messages, { role: 'assistant', content: '', events: [
+      { id: 'delivery', callId: 'present', kind: 'artifact', artifacts: [file] },
+    ] }]);
+    await scroll(150);
+    const document = window.document;
+    const composer = document.querySelector('.chat-input');
+    const chat = document.querySelector('.chat-messages');
+    const trigger = document.querySelector('[aria-label="查看文件：report.txt"]');
+    let restored = false;
+    trigger.focus = options => { restored = options?.preventScroll === true; };
+    await React.act(async () => trigger.click());
+    const pane = document.querySelector('.deliverable-preview-pane');
+    assert.ok(pane);
+    assert.match(pane.textContent, /固定版本内容/);
+    assert.equal(document.querySelector('.chat-input'), composer);
+    assert.equal(document.querySelector('.chat-messages'), chat);
+    assert.equal(chat.scrollTop, 150);
+    await React.act(async () => pane.querySelector('[aria-label="关闭预览"]').click());
+    assert.equal(document.querySelector('.deliverable-preview-pane'), null);
+    assert.equal(document.querySelector('.chat-input'), composer);
+    assert.equal(chat.scrollTop, 150);
+    assert.equal(restored, true);
   });
 });

@@ -32,6 +32,13 @@ export function safeDeliverableHref(file: ChatDeliverable): string | null {
   return file.url === route || file.url === scoped ? scoped : null;
 }
 
+export function draftSnapshotHref(file: ChatDeliverable): string | null {
+  const mime = file.mime.toLowerCase().split(';')[0].trim();
+  const isText = mime.startsWith('text/') || ['application/json', 'application/xml'].includes(mime);
+  return file.storageMode === 'snapshot' && file.status === 'available' && isText
+    && mime !== 'text/html' && !/\.html?$/i.test(file.path) ? safeDeliverableHref(file) : null;
+}
+
 /** Validate persisted/streamed metadata before it reaches any preview or link. */
 export function normalizeDeliverable(value: unknown): ChatDeliverable | null {
   if (!isPresentedFile(value)) return null;

@@ -1,11 +1,13 @@
 import { projectUrl, projectFetch } from '../lib/projectScope';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import MessageBubble from './MessageBubble';
+import DeliverablePreviewPane from './DeliverablePreviewPane';
 import QuestionCards from './QuestionCards';
 import BrushEntry from './BrushEntry';
 import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from '../lib/store';
 import { uploadFiles, adoptOversize, mediaUrl } from '../lib/api';
 import type { UploadedFile } from '../lib/api';
+import type { ChatDeliverable } from '../lib/deliverables';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
 import { AttachmentUploadQueue } from '../lib/uploadQueue';
 import { loadChatDraft, saveChatDraft, clearChatDraft } from '../lib/chatDrafts';
@@ -76,6 +78,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const [submitError, setSubmitError] = useState('');
   const [draftError, setDraftError] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const [deliverablePreview, setDeliverablePreview] = useState<ChatDeliverable | null>(null);
+  const deliverableTrigger = useRef<HTMLElement | null>(null);
   const closePreview = useCallback(() => setPreviewImage(null), []);
   const [dragOver, setDragOver] = useState(false);
   const [maxMb, setMaxMb] = useState(50);
@@ -98,6 +102,16 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const isStreaming = !!stream;
   const isEmpty = session.messages.length === 0 && !isStreaming;
   const reading = useChatReading(session.id, session.messages, stream, !isEmpty);
+  const openDeliverable = (file: ChatDeliverable, trigger: HTMLElement) => {
+    deliverableTrigger.current = trigger;
+    setDeliverablePreview(file);
+  };
+  useEffect(() => {
+    if (deliverablePreview || !deliverableTrigger.current) return;
+    const trigger = deliverableTrigger.current;
+    deliverableTrigger.current = null;
+    (trigger.isConnected ? trigger : reading.scrollRef.current)?.focus({ preventScroll: true });
+  }, [deliverablePreview, reading.scrollRef]);
   const uploading = uploadItems.some(item => item.status === 'queued' || item.status === 'uploading');
   const failedUploads = uploadItems.some(item => item.status === 'failed');
   const attachments = uploads.ready;
@@ -347,7 +361,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
   const displayMessages: ChatMessage[] = [...session.messages];
   if (isStreaming) displayMessages.push({ role: 'assistant', content: stream!.content || '' });
 
-  return (
+  const chat = (
     <div className="chat-page agent-chat" {...dragProps}>
       {dragOverlay}{preview}
       <div className="chat-session-header"><div><span>AI 对话</span><h1>{session.title === 'New Chat' ? '新对话' : session.title}</h1></div>
@@ -398,6 +412,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
                 stillWorking={live ? stream!.stillWorking : ''}
                 events={live ? stream!.events : msg.events}
                 actions={actions}
+                onOpenDeliverable={openDeliverable}
               />
               {!live && msg.questions && <QuestionCards sessionId={session.id} questions={msg.questions} onDone={onQuestionAnswered} onClosed={onQuestionClosed} />}
               </div>
@@ -418,4 +433,9 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, 
       </div>
     </div>
   );
+  return <div className="chat-deliverable-layout">
+    {chat}
+    {deliverablePreview && <DeliverablePreviewPane key={deliverablePreview.artifactId} file={deliverablePreview}
+      onClose={() => setDeliverablePreview(null)} />}
+  </div>;
 }

@@ -4,14 +4,14 @@
  * from ui-deliverables/PresentedFileCard.tsx and Deliverables.tsx @ ce7073d.
  */
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import type { MouseEvent } from 'react';
 import { deliverablePreview, deliverableVersionsUrl, normalizeDeliverable, normalizeDeliverableVersions,
   safeDeliverableHref, type ChatDeliverable } from '../lib/deliverables';
 import { PresentedFileCard } from '../vendor/deepseek-harness/deliverables/PresentedFileCard';
 import { PresentRow } from '../vendor/deepseek-harness/deliverables/PresentRow';
 import { fileSizeText } from '../vendor/deepseek-harness/message/file-size';
 import css from '../vendor/deepseek-harness/deliverables/Deliverables.module.css';
-import ArtifactGallery from './ArtifactGallery';
-import SnapshotArchivePreview from './SnapshotArchivePreview';
+import DeliverablePreviewBody from './DeliverablePreviewBody';
 import { HostReadStore } from '../vendor/deepseek-harness/deliverables/HostReadStore';
 import reviewCss from '../vendor/deepseek-harness/deliverables/ReviewTab.module.css';
 import '../styles/deliverables.css';
@@ -94,20 +94,24 @@ function DeliverableVersionDetails({ file }: { file: ChatDeliverable }) {
   </div>;
 }
 
-export default function DeliverableCards({ artifacts }: { artifacts: ChatDeliverable[] }) {
+export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
+  artifacts: ChatDeliverable[];
+  onOpenDeliverable?: (file: ChatDeliverable, trigger: HTMLElement) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
   const files = useMemo(() => artifacts.map(normalizeDeliverable).filter((file): file is ChatDeliverable => !!file), [artifacts]);
   const selected = files.find(file => file.artifactId === selectedId);
-  const preview = useMemo(() => selected ? deliverablePreview(selected) : null, [selected]);
-  const previewFiles = useMemo(() => preview ? [preview] : [], [preview]);
-  const snapshotArchive = selected?.storageMode === 'snapshot' && /\.zip$/i.test(selected.path);
   if (!files.length) return null;
   const collapsible = files.length > 4;
   const presented = collapsible && !expanded ? files.slice(0, 4) : files;
-  const openFile = (file: ChatDeliverable) => {
+  const openFile = (file: ChatDeliverable, trigger?: HTMLElement) => {
     const href = safeDeliverableHref(file);
     if (!href || file.status !== 'available') return;
+    if (onOpenDeliverable && trigger) {
+      onOpenDeliverable(file, trigger);
+      return;
+    }
     if (deliverablePreview(file) || file.storageMode === 'snapshot' && /\.zip$/i.test(file.path)) setSelectedId(file.artifactId);
     else window.open(href, '_blank', 'noopener,noreferrer');
   };
@@ -124,7 +128,7 @@ export default function DeliverableCards({ artifacts }: { artifacts: ChatDeliver
           return <div key={`${file.turnId}:${file.path}`} data-artifact-id={file.artifactId}>
             <PresentedFileCard file={{ path: file.path, description: file.description, seq: file.createdAt, index }}
               cwd={undefined} phase={available ? undefined : 'error'} host={null} t={t} disabled={!available}
-              onPreview={() => openFile(file)} contextMenuProps={{}}
+              onPreview={(event?: MouseEvent<HTMLButtonElement>) => openFile(file, event?.currentTarget)} contextMenuProps={{}}
               actions={<div className="deliverable-actions">
                 <span className="deliverable-size">{fileSizeText(file.size)}</span>
                 {available ? <a className="deliverable-download" href={`${href}?download=1`}
@@ -138,10 +142,10 @@ export default function DeliverableCards({ artifacts }: { artifacts: ChatDeliver
       {collapsible && <button type="button" className={css.toggle} aria-expanded={expanded}
         onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : `查看全部 ${files.length} 个文件`}</button>}
     </div>
-    {(previewFiles.length > 0 || snapshotArchive) && <div className="deliverable-preview">
+    {selected && <div className="deliverable-preview">
       <div className="deliverable-preview__heading"><span>{selected?.name}{selected?.storageMode === 'snapshot' ? ` · 交付 V${selected.revision}` : ''}</span>
         <button type="button" onClick={() => setSelectedId(undefined)}>收起预览</button></div>
-      {snapshotArchive && selected ? <SnapshotArchivePreview artifact={selected} /> : <ArtifactGallery artifacts={previewFiles} />}
+      <DeliverablePreviewBody key={selected.artifactId} file={selected} />
     </div>}
   </section>;
 }

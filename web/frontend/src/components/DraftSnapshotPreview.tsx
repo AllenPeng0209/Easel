@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { safeDeliverableHref, type ChatDeliverable } from '../lib/deliverables';
+import { draftSnapshotHref, type ChatDeliverable } from '../lib/deliverables';
 import { HostReadStore } from '../vendor/deepseek-harness/deliverables/HostReadStore';
 
 const MAX_BYTES = 1024 * 1024;
@@ -34,21 +34,18 @@ class DraftReadStore extends HostReadStore<DraftRead> {
   load(url: string) { return this.loadUrl(url); }
 }
 
-export default function DraftSnapshotPreview({ file }: { file: ChatDeliverable }) {
-  const mime = file.mime.toLowerCase().split(';')[0].trim();
-  const isText = mime.startsWith('text/') || ['application/json', 'application/xml'].includes(mime);
-  const href = file.storageMode === 'snapshot' && file.status === 'available' && isText
-    && mime !== 'text/html' && !/\.html?$/i.test(file.path) ? safeDeliverableHref(file) : null;
-  const [open, setOpen] = useState(false);
+export default function DraftSnapshotPreview({ file, initialOpen = false }: { file: ChatDeliverable; initialOpen?: boolean }) {
+  const href = draftSnapshotHref(file);
+  const [open, setOpen] = useState(initialOpen);
   const [store] = useState(() => new DraftReadStore());
   const reads = useSyncExternalStore(store.state.subscribe, store.state.getSnapshot, store.state.getSnapshot);
   useEffect(() => () => store.reset(), [store]);
+  useEffect(() => { if (open && href) void store.load(href); }, [href, open, store]);
   if (!href) return null;
   const read = reads[href];
   return <section className="business-object__draft-preview" aria-label="固定稿件内容">
     <button type="button" className="btn btn-sm" aria-expanded={open} onClick={() => {
       setOpen(!open);
-      if (!open) void store.load(href);
     }}>{open ? '收起稿件内容' : '查看稿件内容'}</button>
     {open && read?.state === 'loading' && <p role="status">正在读取固定稿件…</p>}
     {open && read?.state === 'ready' && <pre tabIndex={0}>{read.text || '此稿件为空。'}</pre>}

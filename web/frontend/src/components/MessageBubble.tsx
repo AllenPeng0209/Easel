@@ -31,6 +31,7 @@ interface MessageBubbleProps {
   stillWorking?: string;   // 防呆心跳提示（未卡住）；仅流式时的独立提示，不替代思考/活动
   events?: AgentEvent[];
   actions?: BubbleActions;
+  onOpenDeliverable?: (file: import('../lib/deliverables').ChatDeliverable, trigger: HTMLElement) => void;
 }
 
 function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) {
@@ -49,7 +50,7 @@ function ActionBar({ actions, text }: { actions: BubbleActions; text: string }) 
   );
 }
 
-export default function MessageBubble({ message, isStreaming, thinking, activity, stillWorking, events, actions }: MessageBubbleProps) {
+export default function MessageBubble({ message, isStreaming, thinking, activity, stillWorking, events, actions, onOpenDeliverable }: MessageBubbleProps) {
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const declared = useMemo(() => deliverablesFromEvents(effEvents), [effEvents]);
   const rejectedPaths = useMemo(() => rejectedSnapshotPaths(effEvents), [effEvents]);
@@ -136,7 +137,7 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
           <AgentEventPanel events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
           {message.content && <div dangerouslySetInnerHTML={{ __html: rendered.html }} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
-          <DeliverableCards artifacts={declared} />
+          <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />
           {!isStreaming && (legacyArtifacts.length > 0 || legacyArchives.length > 0) && (
             <ArtifactGallery artifacts={legacyArtifacts} archives={legacyArchives} />
           )}
