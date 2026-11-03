@@ -222,7 +222,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, reasoni
           {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions}
             onLocateTool={(runId, callId) => toolLocator.current?.locate(runId, callId) ?? false} /> : null}
           <AgentEventPanel toolLocatorRef={toolLocator} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
-          {assistantContent && <AnswerQuoteSelection html={rendered.html} highlightCode={!isStreaming}
+          {assistantContent && <AnswerQuoteSelection html={rendered.html} highlightCode={!isStreaming} settled={!isStreaming}
             onQuoteAnswer={isStreaming ? undefined : onQuoteAnswer} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
           <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />

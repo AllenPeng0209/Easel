@@ -51,3 +51,20 @@
   --shiki-token-punctuation: #ced4da;
   --shiki-token-link: #74c0fc;
 }
+
+/* Per-block controls adapted from the pinned CodeBlock header. */
+.codeCopyToolbar { display: flex; justify-content: flex-end; position: relative; margin-top: 6px; }
+.codeCopyButton {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.codeCopyButton:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 1px; }
+.codeCopyButton[data-code-copy-state="failed"] { color: var(--red); }
+.codeCopyButton[data-code-copy-state="copied"] { color: var(--green); }
+.codeCopyStatus { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

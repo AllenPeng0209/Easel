@@ -7818,12 +7818,23 @@
     "reuse_kind": "adapted",
     "changes": "复用 Shiki 变量色板并接入 Easel 浅色和深色主题。",
     "verification_status": "A27_syntax_highlight_and_async_chunk_verified"
+  },
+  {
+    "feature_id": "A28",
+    "upstream_path": "packages/client/ui-primitives/src/markdown/CodeBlock.tsx",
+    "upstream_sha256": "1135af884608fa657213012b566a9ee6b53b97b7c384c748ae73826fb0c89d22",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/answerCodeCopy.ts",
+    "destination_sha256": "b5bffff402e8c5a1b40f4a6cdd937413bc1df927cdcf659d066ee2b76eb1fcb6",
+    "reuse_kind": "adapted",
+    "changes": "复用独立代码块工具栏和剪贴板回执，读取已显示的代码原文并隔离按钮状态。",
+    "verification_status": "A28_individual_code_clipboard_verified"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 84,
+    "source_migration_files": 85,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 69,
+    "adapted_upstream_files": 70,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

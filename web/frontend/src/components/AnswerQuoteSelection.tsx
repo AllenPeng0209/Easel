@@ -4,6 +4,7 @@
  * A rendered answer owns its visible selection and explicit quote action.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { bindAnswerCodeCopy } from './answerCodeCopy';
 import { highlightSettledAnswer } from './highlightAnswerCode';
 import { readTextSelection, selectedText, type TextSelection } from './answerTextSelection';
 import { MAX_ANSWER_QUOTE_LENGTH } from '../vendor/deepseek-harness/composer/quote-text';
@@ -21,9 +22,10 @@ interface ActiveQuote {
   left: number;
 }
 
-export default function AnswerQuoteSelection({ html, onQuoteAnswer, highlightCode }: {
+export default function AnswerQuoteSelection({ html, onQuoteAnswer, highlightCode, settled }: {
   html: string;
   highlightCode?: boolean;
+  settled?: boolean;
   onQuoteAnswer?: (text: string) => boolean;
 }) {
   const answer = useRef<HTMLDivElement>(null);
@@ -37,6 +39,11 @@ export default function AnswerQuoteSelection({ html, onQuoteAnswer, highlightCod
   useEffect(() => {
     if (highlightCode && answer.current) return highlightSettledAnswer(answer.current);
   }, [html, highlightCode]);
+  useEffect(() => {
+    if (settled && answer.current) return bindAnswerCodeCopy(answer.current, {
+      toolbar: css.codeCopyToolbar, button: css.codeCopyButton, status: css.codeCopyStatus,
+    });
+  }, [html, settled]);
 
   useEffect(() => {
     const source = answer.current;
