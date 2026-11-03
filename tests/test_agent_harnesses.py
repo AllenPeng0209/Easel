@@ -155,7 +155,8 @@ def test_web_reuses_native_process_and_resumes_after_cleanup(tmp_path, runtime, 
             assert all(message["params"]["clientInfo"]["version"] == __version__
                        for message in audit(tmp_path) if message.get("method") == "initialize")
             assert methods.count("thread/resume" if runtime == "codex" else "session/load") == 1
-            assert events == [("thinking", "思考"), ("token", "你好")] * 3
+            thought = ("reasoning_summary", {"text": "思考", "truncated": False}) if runtime == "codex" else ("thinking", "思考")
+            assert events == [thought, ("token", "你好")] * 3
         finally:
             await close_sessions()
 
@@ -316,6 +317,18 @@ def test_settings_blocking_probes_are_offloaded():
         assert "asyncio.to_thread" in inspect.getsource(endpoint)
 
 
+def test_codex_completed_summary_replaces_delta_and_explicitly_reports_clipping(tmp_path):
+    events = []
+
+    async def reject(questions):
+        pytest.fail("No permissions expected")
+
+    asyncio.run(CodexAdapter().run(request_for(tmp_path, "codex", mode="public-summary"),
+                                  lambda kind, value: events.append((kind, value)), reject, lambda _: None))
+    assert events == [("reasoning_summary", {"text": "思考", "truncated": False}),
+                      ("reasoning_summary", {"text": "s" * 4000, "truncated": True}), ("token", "你好")]
+
+
 @pytest.mark.parametrize("runtime,adapter", [("codex", CodexAdapter), ("acp", ACPAdapter)])
 @pytest.mark.parametrize("native_id", ["", "old-native"])
 def test_native_events_resume_model_and_binding(tmp_path, runtime, adapter, native_id):
@@ -327,7 +340,8 @@ def test_native_events_resume_model_and_binding(tmp_path, runtime, adapter, nati
 
     asyncio.run(adapter().run(request_for(tmp_path, runtime, mode="stable-resume", native_id=native_id),
                               lambda kind, text: events.append((kind, text)), reject, identifiers.append))
-    assert events == [("thinking", "思考"), ("token", "你好")]
+    thought = ("reasoning_summary", {"text": "思考", "truncated": False}) if runtime == "codex" else ("thinking", "思考")
+    assert events == [thought, ("token", "你好")]
     assert identifiers == [native_id or ("native-thread" if runtime == "codex" else "native-session")]
     messages = audit(tmp_path)
     if runtime == "codex":
@@ -802,6 +816,7 @@ def test_web_stream_replay_resume_and_delete(sandbox, monkeypatch):
             requests.append(request)
             bind("durable-native")
             emit("thinking", "思考")
+            emit("reasoning_summary", {"text": "公开摘要", "truncated": False})
             emit("token", "成功")
 
     monkeypatch.setattr(web.harnesses, "adapter", lambda runtime: Fake())
@@ -809,14 +824,17 @@ def test_web_stream_replay_resume_and_delete(sandbox, monkeypatch):
         response = sandbox.post("/api/chat/stream", json={"message": "hello", "sessionId": "same", "turnId": turn_id})
         assert response.status_code == 200
         assert "event: token" in response.text and "成功" in response.text
-        assert "event: thinking" in response.text and "event: done" in response.text
+        assert "event: thinking" not in response.text and "思考" not in response.text
+        assert "event: reasoning_summary" in response.text and "event: done" in response.text
     assert requests[0].native_id == "" and requests[1].native_id == "durable-native"
     assert all(request.model == "test-model" for request in requests)
     last = sandbox.get("/api/chat/last/same").json()
     assert last["text"] == "成功" and last["clean_end"] is True
     assert last["outcome"] == "completed"
+    assert last['reasoning_summary'] == {'text': '公开摘要', 'truncated': False}
     replay = sandbox.get("/api/chat/jobs/second/stream").text
     assert "成功" in replay and '"outcome": "completed"' in replay
+    assert "event: reasoning_summary" in replay and "公开摘要" in replay and "思考" not in replay
     assert sandbox.post("/api/settings/harness", json={"runtime": "opencode"}).status_code == 200
     assert sandbox.post("/api/chat", json={"sessionId": "same", "message": "hello"}).status_code == 409
     assert sandbox.delete("/api/session/same").json()["deleted"]
@@ -833,6 +851,7 @@ def test_native_stream_disconnect_keeps_background_turn_and_result(sandbox, monk
                 bind("disconnect-native")
                 started.set()
                 await finish.wait()
+                emit("reasoning_summary", {"text": "断线后公开摘要", "truncated": False})
                 emit("token", "断线后完成")
 
         monkeypatch.setattr(web.harnesses, "adapter", lambda runtime: Fake())
@@ -849,12 +868,31 @@ def test_native_stream_disconnect_keeps_background_turn_and_result(sandbox, monk
         await asyncio.sleep(0)
         result = await web.api_chat_last("disconnect")
         assert result["text"] == "断线后完成" and result["clean_end"] is True
+        assert result['reasoning_summary'] == {'text': '断线后公开摘要', 'truncated': False}
         assert not web._RUNNING_CHAT and not web._HARNESS_TASKS and not web._BG_TASKS
         events = web._read_job_events("disconnect-turn", 0)
         assert any(event["event"] == "token" and event["data"] == "断线后完成" for event in events)
         assert events[-1]["event"] == "done"
 
     asyncio.run(exercise())
+
+
+def test_legacy_reasoning_is_filtered_from_replay_snapshot_and_catalog(sandbox):
+    journal = web._job_event_file('legacy-summary-turn')
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    events = [{'id': 1, 'event': 'thinking', 'data': 'private old trace'},
+              {'id': 2, 'event': 'done', 'data': {'sessionKey': 'legacy-summary'}}]
+    journal.write_text(''.join(json.dumps(event) + '\n' for event in events))
+    web._save_turn('web:legacy-summary', 'done', 'visible answer', {'thinking': 'private old trace'})
+    session = {'id': 'legacy-summary', 'messages': [{'role': 'assistant', 'content': 'visible answer',
+                                                     'thinking': 'private old trace'}]}
+    web.ChatHistoryStore(web._sessions_dir()).merge([session])
+    for response in (sandbox.get('/api/chat/jobs/legacy-summary-turn/stream'),
+                     sandbox.get('/api/chat/last/legacy-summary'), sandbox.get('/api/chat/sessions'),
+                     sandbox.get('/api/chat/sessions?limit=1'),
+                     sandbox.put('/api/chat/sessions', json={'sessions': [session]})):
+        assert response.status_code == 200, response.text
+        assert 'private old trace' not in response.text
 
 
 def test_acp_command_config_cannot_be_overwritten_or_deleted_by_content_routes(sandbox):

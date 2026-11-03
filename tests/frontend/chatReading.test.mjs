@@ -73,18 +73,19 @@ test('away reader gets no unread badge from heartbeat, status, or an unchanged f
   await chatDOM(async ({ render, jump, scroll }) => {
     await scroll(150);
     assert.ok(jump());
-    await render({ ...initial, stillWorking: '仍在执行', activity: '等待中', lifecycle: 'waiting_input' });
+    await render({ ...initial, stillWorking: '仍在执行', activity: '等待中', thinking: 'legacy private text', lifecycle: 'waiting_input' });
     assert.doesNotMatch(jump().textContent, /有新内容/);
     await render(undefined, [...messages, { role: 'assistant', content: initial.content, status: 'completed' }]);
     assert.doesNotMatch(jump().textContent, /有新内容/);
   });
 });
 
-test('new text, tool, question and answer updates each mark content unread while away', async () => {
+test('new text, public summary, tool, question and answer updates each mark content unread while away', async () => {
   await chatDOM(async ({ render, jump, scroll, scroller }) => {
     let state = initial;
     const question = { id: 'ask-one', questions: [{ questionId: 'q1', question: '选择风格', options: [{ label: '简洁' }] }] };
     for (const change of [{ content: '新增正文' },
+      { reasoningSummary: { text: '新增公开摘要', truncated: false } },
       { events: [{ id: 'tool-1', callId: 'call-1', kind: 'tool', name: 'read', status: 'completed', output: '结果' }] },
       { questions: [question] }, { questions: [{ ...question, status: 'answered', answers: { q1: ['简洁'] } }] }]) {
       await scroll(150);

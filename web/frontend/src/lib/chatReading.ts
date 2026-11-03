@@ -10,9 +10,11 @@ function eventContent(event: AgentEvent) {
   return content;
 }
 
-function messageContent({ role, content, thinking, attachments, questions, events }: ChatMessage): string | null {
-  if (!content && !thinking && !attachments?.length && !questions?.length && !events?.length) return null;
-  return JSON.stringify([role, content || '', thinking || '', attachments || [], questions || [], events?.map(eventContent) || []]);
+function messageContent({ role, content, reasoningSummary, attachments, questions, events }: ChatMessage): string | null {
+  const summary = typeof reasoningSummary?.text === 'string' && typeof reasoningSummary.truncated === 'boolean'
+    && (reasoningSummary.text.trim() || reasoningSummary.truncated) ? [reasoningSummary.text, reasoningSummary.truncated] : null;
+  if (!content && !summary && !attachments?.length && !questions?.length && !events?.length) return null;
+  return JSON.stringify([role, content || '', summary, attachments || [], questions || [], events?.map(eventContent) || []]);
 }
 
 function nestedScrollConsumes(target: EventTarget, scrollport: HTMLElement, direction: number): boolean {
@@ -38,9 +40,9 @@ export function useChatReading(sessionId: string, messages: readonly ChatMessage
   const [unread, setUnread] = useState(false);
   const restored = useRef(false);
   const history = useMemo(() => messages.map(messageContent).filter(token => token !== null), [messages]);
-  const { content, thinking, questions, events } = stream || {};
-  const live = useMemo(() => messageContent({ role: 'assistant', content: content || '', thinking, questions, events }),
-    [content, thinking, questions, events]);
+  const { content, reasoningSummary, questions, events } = stream || {};
+  const live = useMemo(() => messageContent({ role: 'assistant', content: content || '', reasoningSummary, questions, events }),
+    [content, reasoningSummary, questions, events]);
   const transcript = useMemo(() => live === null ? history : [...history, live], [history, live]);
   const lastTranscript = useRef(transcript);
   const key = projectStorageKey(`easel_chat_reading:${sessionId}`);

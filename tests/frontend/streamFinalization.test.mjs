@@ -223,10 +223,23 @@ test('a confirmed stop recovers final output that has not arrived on the live st
   const state = setup(undefined, async (session, turn) => {
     reads.push([session, turn]);
     return { status: 'done', outcome: 'stopped', turn_id: turn, text: 'complete stopped output',
+      reasoning_summary: { text: '停止前最后的公开摘要', truncated: true },
       events: [{ id: 'final-tool', kind: 'tool', callId: 'call', status: 'completed' }] };
   });
   await state.handleStopStream('session', state.owner);
   assert.deepEqual(reads, [['session', 'turn-old']]);
   assert.equal(state.messages[0].message.content, 'complete stopped output\n\n_（已停止）_');
   assert.equal(state.messages[0].message.events[0].id, 'final-tool');
+  assert.equal(state.messages[0].message.reasoningSummary?.text, '停止前最后的公开摘要');
+});
+
+test('finalized turn persists its public reasoning summary without legacy thinking', () => {
+  const state = setup();
+  state.document.visibilityState = 'hidden';
+  state.owner.reasoningSummary = { text: '公开摘要', truncated: true };
+  state.finalizeStream('session', state.owner, 'native');
+  state.callbacks.forEach(callback => callback());
+  assert.equal(state.messages[0].message.reasoningSummary?.text, '公开摘要');
+  assert.equal(state.messages[0].message.reasoningSummary?.truncated, true);
+  assert.equal(state.messages[0].message.thinking, undefined);
 });

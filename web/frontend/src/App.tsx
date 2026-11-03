@@ -43,7 +43,7 @@ import {
   loadActiveId,
   saveActiveId,
 } from './lib/store';
-import type { ChatSession, ChatMessage, QueuedMessage, StreamState } from './lib/store';
+import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ReasoningSummary } from './lib/store';
 
 const TAB_SESSION_KEY = projectStorageKey('easel_tab_session');
 const ONBOARDING_SEEN_KEY = projectStorageKey('easel_onboarding_seen');
@@ -51,7 +51,7 @@ const VideoWorkshopPage = lazy(() => import('./components/VideoWorkshopPage'));
 const InteractionCenterPage = lazy(() => import('./components/InteractionCenterPage'));
 
 interface LiveTurnAccumulator {
-  content: string; thinking: string; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[]; timeline: AgentTimelineObservation[];
+  content: string; reasoningSummary?: ReasoningSummary; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[]; timeline: AgentTimelineObservation[];
   turnId?: string;
   queuedId?: string;
   queueAdmitted?: boolean;
@@ -555,7 +555,7 @@ export default function App() {
         flushTyping(sessionId);
         appendAssistant(sessionId, {
           role: 'assistant', content: owner.content + (owner.stopConfirmed ? '\n\n_（已停止）_' : error ? `\n\nError: ${error.message}` : ''),
-          thinking: owner.thinking || undefined, activity: owner.steps.join('\n') || undefined,
+          reasoningSummary: owner.reasoningSummary, activity: owner.steps.join('\n') || undefined,
           questions: owner.questions.length ? [...owner.questions] : undefined,
           events: owner.events.length ? [...owner.events] : undefined,
           timeline: owner.timeline?.length ? owner.timeline : undefined,
@@ -666,13 +666,13 @@ export default function App() {
       } : s);
       saveSessions(next); return next;
     });
-    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry, prompt, content: '', thinking: '', steps: [], questions: [], events: [], timeline: [] };
+    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry, prompt, content: '', steps: [], questions: [], events: [], timeline: [] };
     if (prompt && waitForAdmission) {
       owner.admissionComposerId = chatDraftOwner(sessionId);
       owner.admissionPromise = new Promise(resolve => { owner.resolveAdmission = resolve; });
     }
     streamAcc.current[sessionId] = owner;
-    setStreams((prev) => ({ ...prev, [sessionId]: { content: '', thinking: '', activity: '', questions: [], events: [], lifecycle: 'recovering' } }));
+    setStreams((prev) => ({ ...prev, [sessionId]: { content: '', activity: '', questions: [], events: [], lifecycle: 'recovering' } }));
     // 打字机队列：流式事件按批到达（OpenClaw 攒批），前端按字符节奏显示，体验逐字浮现。
     typingBuf.current[sessionId] = '';
     startTypingPump(sessionId);
@@ -692,11 +692,10 @@ export default function App() {
       (err) => {
         if (!failPromptAdmission(sessionId, owner, err)) finalizeStream(sessionId, owner, undefined, err);
       },
-      (thinkChunk) => {
-        const a = streamAcc.current[sessionId]; if (a !== owner) return;
-        a.thinking = (a.thinking + thinkChunk).slice(-4000);
-        // 有真实思考流 → 清掉防呆提示（不再显示「未卡住」）
-        setStreams((p) => (p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], thinking: a.thinking, stillWorking: undefined } } : p));
+      (reasoningSummary) => {
+        if (streamAcc.current[sessionId] !== owner) return;
+        owner.reasoningSummary = reasoningSummary;
+        setStreams(p => p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], reasoningSummary, stillWorking: undefined } } : p);
       },
       (status) => {
         const a = streamAcc.current[sessionId]; if (a !== owner) return;
@@ -752,10 +751,10 @@ export default function App() {
     const prompt = attempt?.turnId === turnId ? attempt : undefined;
     const queuedId = s.queued?.find(row => turnId === `queue-${row.id}`)?.id;
     if (!queuedId && !prompt && last?.role !== 'user') return;
-    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry: !!queuedId, prompt, content: '', thinking: '', steps: [], questions: [], events: [], timeline: [] };
+    const owner: LiveTurnAccumulator = { turnId, queuedId, queueRetry: !!queuedId, prompt, content: '', steps: [], questions: [], events: [], timeline: [] };
     streamAcc.current[sessionId] = owner;
     if (prompt?.state === 'accepted') confirmPromptAdmission(sessionId, owner);
-    setStreams((p) => ({ ...p, [sessionId]: { content: '', thinking: '', activity: '⏳ 正在接回上一轮结果…', questions: [], lifecycle: 'recovering' } }));
+    setStreams((p) => ({ ...p, [sessionId]: { content: '', activity: '⏳ 正在接回上一轮结果…', questions: [], lifecycle: 'recovering' } }));
     typingBuf.current[sessionId] = '';
     startTypingPump(sessionId);
     const appendRecovered = (result: Awaited<ReturnType<typeof fetchLastTurn>>) => {
@@ -772,6 +771,7 @@ export default function App() {
       appendAssistant(sessionId, { role: 'assistant', content: result.text || '（无输出）',
         events: result.events?.filter(event => event.kind !== 'decision' || event.status !== 'pending'),
         timeline: recoverAgentTimeline(result.events, owner.timeline),
+        reasoningSummary: result.reasoning_summary ?? owner.reasoningSummary,
         questions: result.questions, status });
     };
     if (!turnId) {
@@ -795,7 +795,11 @@ export default function App() {
       (err) => {
         if (!failPromptAdmission(sessionId, owner, err)) finalizeStream(sessionId, owner, undefined, err);
       },
-      (chunk) => { const a = streamAcc.current[sessionId]; if (a === owner) a.thinking = (a.thinking + chunk).slice(-4000); },
+      (reasoningSummary) => {
+        if (streamAcc.current[sessionId] !== owner) return;
+        owner.reasoningSummary = reasoningSummary;
+        setStreams(p => p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], reasoningSummary, stillWorking: undefined } } : p);
+      },
       (status) => {
         const a = streamAcc.current[sessionId]; if (a !== owner) return;
         if (a.steps[a.steps.length - 1] !== status) a.steps.push(status);
@@ -1238,6 +1242,7 @@ export default function App() {
       if (streamAcc.current[sessionId] !== owner) return;
       if (snapshot?.status === 'done' && snapshot.turn_id === expectedTurnId && snapshot.outcome === 'stopped') {
         owner.content = snapshot.text;
+        owner.reasoningSummary = snapshot.reasoning_summary ?? owner.reasoningSummary;
         typingBuf.current[sessionId] = '';
         if (snapshot.events) {
           owner.timeline = recoverAgentTimeline(snapshot.events, owner.timeline);
@@ -1256,7 +1261,7 @@ export default function App() {
     appendAssistant(sessionId, {
       role: 'assistant',
       content: owner.content + '\n\n_（已停止）_',
-      thinking: owner.thinking || undefined,
+      reasoningSummary: owner.reasoningSummary,
       activity: owner.steps.join('\n') || undefined,
       questions: owner.questions.length ? [...owner.questions] : undefined,
       events: owner.events.length ? [...owner.events] : undefined,

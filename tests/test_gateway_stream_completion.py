@@ -92,8 +92,7 @@ def test_gateway_stream_preserves_every_token(tmp_path, monkeypatch, parts, buff
         received = await asyncio.wait_for(collect(), timeout=3)
         tokens = [json.loads(event["data"]) for event in received if event["event"] == "token"]
         assert tokens == parts
-        assert [json.loads(event["data"]) for event in received
-                if event["event"] == "thinking"] == ["thinking"]
+        assert not any(event["event"] in ("thinking", "reasoning_summary") for event in received)
         assert received[-1]["event"] == "done"
         assert json.loads(received[-1]["data"]) == {
             "sessionKey": "buffered", "outcome": outcome or "unconfirmed",
@@ -102,6 +101,7 @@ def test_gateway_stream_preserves_every_token(tmp_path, monkeypatch, parts, buff
         assert snapshot["text"] == "".join(parts)
         assert snapshot.get("outcome") == outcome
         replay = web._read_job_events("buffered-turn")
+        assert not any(event["event"] in ("thinking", "reasoning_summary") for event in replay)
         assert [event["data"] for event in replay if event["event"] == "token"] == parts
         assert replay[-1]["event"] == "done"
         assert replay[-1]["data"] == json.loads(received[-1]["data"])

@@ -146,3 +146,31 @@ test('queue admission accepts only a receipt for the requested session and turn'
   });
   assert.deepEqual(received, [events[2]]);
 });
+
+test('chat renders only validated public summary snapshots from SSE and last-turn recovery', async () => {
+  const expected = { text: '引擎公开摘要', truncated: true };
+  const encoder = new TextEncoder();
+  const events = [
+    ['thinking', 'private trace'],
+    ['reasoning_summary', { text: 'malformed', truncated: 'yes' }],
+    ['reasoning_summary', { ...expected, raw: 'private payload' }],
+    ['done', { sessionKey: 'native-session', outcome: 'completed' }],
+  ].map(([kind, data]) => `event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+  const { api } = loadApi((_url, init) => {
+    if (init?.method !== 'POST') {
+      return { ok: true, json: async () => ({ status: 'done', text: '答复', reasoning_summary: { ...expected, raw: 'private payload' } }) };
+    }
+    let read = false;
+    return { ok: true, body: { getReader: () => ({
+      read: async () => read ? { done: true } : (read = true, { done: false, value: encoder.encode(events) }),
+      cancel: async () => {},
+    }) } };
+  });
+  const summaries = [];
+  await new Promise((resolve, reject) => {
+    api.streamChat('hi', undefined, 'summary-session', () => {}, resolve, reject, row => summaries.push(row));
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(summaries)), [expected]);
+  const recovered = await api.fetchLastTurn('summary-session', 'turn');
+  assert.deepEqual(JSON.parse(JSON.stringify(recovered.reasoning_summary)), expected);
+});

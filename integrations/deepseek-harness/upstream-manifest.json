@@ -7620,12 +7620,34 @@
     "reuse_kind": "easel_integration_adapter",
     "changes": "把实时及回放事件转换为按顺序保存的精简记录。",
     "verification_status": "B10_sequence_verified_with_isolated_fixture"
+  },
+  {
+    "feature_id": "B14",
+    "upstream_path": "packages/client/ui-trajectory/src/client/TrajectoryTable.tsx",
+    "upstream_sha256": "7a35f595a2ea61b6d7186f9d2b5039162940e9a9037d59cb56f763b52a96aa7f",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ReasoningSummaryDisclosure.tsx",
+    "destination_sha256": "8eb3953aeb7feac0ffe79024824539d22cc24c6348bae681b2ad5a5b105a6ce9",
+    "reuse_kind": "adapted",
+    "changes": "适配上游推理引文区的独立展开状态和按需渲染，只接受明确标记的公开摘要。",
+    "verification_status": "B14_public_summary_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B14",
+    "upstream_path": "packages/client/ui-trajectory/src/client/TrajectoryTable.module.css",
+    "upstream_sha256": "689c510b79c79467baaec10ccb03b48648dfa7e1361e52862239eab919d9080a",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/components/ReasoningSummaryDisclosure.module.css",
+    "destination_sha256": "460a16567840452cdc475b4b698377c3713bdbc2183a2d9591b25ab45023b8fa",
+    "reuse_kind": "adapted",
+    "changes": "适配上游推理引文区的独立背景和折叠按钮样式，加入截断提示。",
+    "verification_status": "B14_public_summary_verified_protocol_and_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 66,
+    "source_migration_files": 68,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 51,
+    "adapted_upstream_files": 53,
     "integration_adapters": 35,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

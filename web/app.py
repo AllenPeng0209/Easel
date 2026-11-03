@@ -385,10 +385,7 @@ CHAT_TRANSPORT = os.environ.get("EASEL_CHAT_TRANSPORT", "http").strip().lower()
 from easel.openclaw_workspace import config_path as _oc_config_path, state_dir as _oc_state_dir
 OPENCLAW_SESSIONS_DIR = _oc_state_dir() / "agents" / "main" / "sessions"
 
-# 思考档位（每轮 --thinking）。前后端已完整支持展示思考：后端把 thinking_delta 转成 SSE
-# `thinking` 事件，前端 MessageBubble 渲染「💭 思考过程」并在流式结束后持久保留。面板里有没有
-# 内容取决于网关——支持 extended-thinking 的网关会按档位回传思考流；不支持的（如内网 codewiz，
-# 实测 transcript 里 assistant 只有 text 块、thinking 恒为 0）面板留空，调高档位也不会有内容。
+# 思考档位（每轮 --thinking）仅用于引擎配置。公开对话只传输 Codex 提供的摘要。
 # 默认 medium：让支持思考的部署直接显示较完整思考；EASEL_THINKING_LEVEL 可覆盖（low 提速 / high 更详尽）。
 THINKING_LEVEL = (os.environ.get("EASEL_THINKING_LEVEL", "").strip() or "medium")
 
@@ -3682,6 +3679,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     run_id = run_id or uuid.uuid4().hex
     full_text: list[str] = []
     agent_events = [{**event, "runId": run_id} for event in initial_events]
+    reasoning_summary = None
     clean_end = False
     reason = "error"
     error_message = ""
@@ -3697,7 +3695,17 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     permission_revoked = False
 
     def receive(kind, text):
-        nonlocal error_message
+        nonlocal error_message, reasoning_summary
+        if kind == "thinking":
+            return
+        if kind == "reasoning_summary":
+            if runtime != "codex" or not isinstance(text, dict) or not isinstance(text.get("text"), str):
+                return
+            summary_text = _scrub_secrets(text["text"])
+            reasoning_summary = {"text": summary_text[:4000],
+                                 "truncated": text.get("truncated") is True or len(summary_text) > 4000}
+            emit(kind, reasoning_summary)
+            return
         # Preserve a structured event as an object through live SSE, replay and
         # final snapshot. Scrub known secrets without converting it to a string.
         safe = json.loads(_scrub_secrets(json.dumps(text, ensure_ascii=False))) if isinstance(text, dict) else _scrub_secrets(text)
@@ -3946,6 +3954,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             _save_turn(pk, "done", snapshot, {
                 "turn_id": turn_id, "stop_turn_id": stop_turn_id, "runtime": runtime,
                 "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
+                **({"reasoning_summary": reasoning_summary} if reasoning_summary is not None else {}),
                 **_chat_snapshot_outcome(stopped=reason == "stopped",
                                          failed=bool(error_message) or permission_revoked,
                                          completed=clean_end)})
@@ -4544,8 +4553,18 @@ async def api_chat_sessions(limit: int | None = None, cursor: str | None = None)
         raise HTTPException(422, "无效的会话分页游标")
     store = ChatHistoryStore(_sessions_dir())
     if limit is not None:
-        return await asyncio.to_thread(store.sessions_page, limit, cursor)
-    return {"sessions": await asyncio.to_thread(store.sessions), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
+        result = await asyncio.to_thread(store.sessions_page, limit, cursor)
+    else:
+        result = {"sessions": await asyncio.to_thread(store.sessions), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
+    _strip_catalog_thinking(result['sessions'])
+    return result
+
+
+def _strip_catalog_thinking(sessions):
+    for session in sessions:
+        for message in session['messages']:
+            message.pop('thinking', None)
+            message.pop('reasoning_content', None)
 
 
 @app.put("/api/chat/sessions")
@@ -4553,6 +4572,7 @@ async def api_chat_sessions_merge(req: ChatSessionsRequest):
     _require_operation()
     try:
         sessions = [validated_session(session) for session in req.sessions]
+        _strip_catalog_thinking(sessions)
         # Imported browser attachment references must retain exactly the same
         # server-verified ownership check as a fresh chat submission.
         for session in sessions:
@@ -4574,7 +4594,9 @@ async def api_chat_sessions_merge(req: ChatSessionsRequest):
                     if history_request.command is not None:
                         validate_chat_command(history_request.message, history_request.command)
         store = ChatHistoryStore(_sessions_dir())
-        return {"sessions": await asyncio.to_thread(store.merge, sessions), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
+        merged = await asyncio.to_thread(store.merge, sessions)
+        _strip_catalog_thinking(merged)
+        return {"sessions": merged, "deletedIds": await asyncio.to_thread(store.deleted_ids)}
     except (ValueError, TypeError):
         raise HTTPException(400, "会话数据或附件引用无效") from None
 
@@ -4599,6 +4621,8 @@ async def api_chat_last(session_id: str, turn_id: str | None = None):
         payload = json.loads(f.read_text(encoding="utf-8"))
         if turn_id and payload.get("turn_id") != turn_id:
             return {"status": "stale", "text": "", "turn_id": payload.get("turn_id")}
+        payload.pop("thinking", None)
+        payload.pop("reasoning_content", None)
         return payload
     except Exception:
         return {"status": "none", "text": ""}
@@ -4658,6 +4682,8 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
                         cursor = max(cursor, event["id"])
                         continue
                     cursor = int(event["id"])
+                    if event["event"] == "thinking":
+                        continue
                     raw = event.get("data")
                     # job 日志里 question 的 data 已是序列化 JSON 字符串（实时流
                     # forward() 对 question 原样透传），这里若再 json.dumps 会双层
@@ -4713,7 +4739,7 @@ async def api_chat_stream(req: ChatRequest):
     常驻 gateway，它按自己的 OPENCLAW_RAW_STREAM/OPENCLAW_RAW_STREAM_PATH 把「模型原始流」逐
     token 写到**单个共享 jsonl**（SHARED_RAW_STREAM，见 scripts/gateway.sh）。后端在本轮开始时
     记下该文件尾偏移、实时 tail 之后追加的行，用 runId 闩锁隔离本轮，把 assistant_text_stream 的
-    token delta 转成 SSE `token`、thinking delta 转成 `thinking`。stdout 仅留作错误/兜底。
+    token delta 转成 SSE `token`。stdout 仅留作错误/兜底。
     """
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
     if req.turnId and not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", req.turnId):
@@ -4801,8 +4827,8 @@ async def api_chat_stream(req: ChatRequest):
 
         def to_client(kind, text=None):
             nonlocal event_seq, stream_error
-            if kind == "admitted":
-                return  # Admission comes only from the committed claim above.
+            if kind in ("admitted", "thinking"):
+                return  # Admission is Host-owned. Raw thinking is private.
             event_seq += 1
             if kind == "error":
                 stream_error = True
@@ -4915,7 +4941,6 @@ async def api_chat_stream(req: ChatRequest):
                             if rc:
                                 run_info["sse_thinking"] = True
                                 run_info["thinking_chars"] += len(rc)
-                                q.put_nowait({"t": "thinking", "text": rc})
                             c = delta.get("content")
                             if c:
                                 got_text = True
@@ -5138,7 +5163,6 @@ async def api_chat_stream(req: ChatRequest):
                 if run_info.get("sse_thinking"):
                     return      # SSE 已经在供思考流了，别叠第二份
                 run_info["thinking_chars"] += len(delta)
-                _emit("thinking", delta)
                 return
 
         def _tail():
@@ -5218,8 +5242,6 @@ async def api_chat_stream(req: ChatRequest):
                     emitted = True
                     full_text.append(item["text"])
                     to_client("token", item["text"])
-                elif item["t"] == "thinking":
-                    to_client("thinking", item["text"])
                 elif item["t"] == "activity":
                     to_client("activity", item["text"])
                 elif item["t"] in ("question", "question_closed", "agent_event"):
@@ -5396,13 +5418,11 @@ async def api_chat_stream(req: ChatRequest):
             t = item["t"]
             if t == "token":
                 yield {"id": str(item["id"]), "event": "token", "data": json.dumps(item["text"], ensure_ascii=False)}
-            elif t == "thinking":
-                yield {"id": str(item["id"]), "event": "thinking", "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t == "activity":
                 yield {"id": str(item["id"]), "event": "activity", "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t in ("question", "question_closed"):
                 yield {"id": str(item["id"]), "event": t, "data": item["text"]}
-            elif t in ("admitted", "agent_event"):
+            elif t in ("admitted", "agent_event", "reasoning_summary"):
                 yield {"id": str(item["id"]), "event": t, "data": json.dumps(item["text"], ensure_ascii=False)}
             elif t == "error":
                 yield {"id": str(item["id"]), "event": "error", "data": json.dumps(item["text"], ensure_ascii=False)}

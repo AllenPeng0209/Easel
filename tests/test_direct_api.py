@@ -88,7 +88,8 @@ def test_stream_history_and_recovery_without_openclaw(sandbox, monkeypatch, lega
         response = sandbox.post("/api/chat/stream", json={"message": turn, "sessionId": "same", "turnId": turn})
         assert response.status_code == 200
         assert "event: token" in response.text and "测试成功" in response.text
-        assert "event: thinking" in response.text and "event: done" in response.text
+        assert "event: thinking" not in response.text and "event: reasoning_summary" not in response.text
+        assert "event: done" in response.text
         assert "event: error" not in response.text and "没写完" not in response.text
     assert [m["role"] for m in requests[1]["messages"]] == ["system", "user", "assistant", "user"]
     assert requests[1]["messages"][1]["content"] == "first"

@@ -101,7 +101,14 @@ while True:
             continue
         if runtime == "codex":
             common = {"threadId": thread_id, "turnId": turn_id, "itemId": "text"}
-            send({"method": "item/reasoning/summaryTextDelta", "params": {**common, "delta": "思考"}})
+            send({"method": "item/reasoning/textDelta", "params": {**common, "delta": "private-native-reasoning"}})
+            send({"method": "item/reasoning/summaryTextDelta", "params": {**common, "summaryIndex": 0, "delta": "思考"}})
+            if mode == "public-summary":
+                send({"method": "item/completed", "params": {**common, "item": {
+                    "type": "reasoning", "id": "text", "summary": ["s" * 4010, "second"],
+                    "content": ["private-final-reasoning"]}}})
+                send({"method": "item/reasoning/summaryTextDelta", "params": {
+                    **common, "summaryIndex": 0, "delta": "late summary"}})
             send({"method": "item/agentMessage/delta", "params": {**common, "delta": "你好"}})
             send({"method": "item/completed",
                   "params": {**common, "item": {"type": "agentMessage", "id": "text", "text": "你好"}}})

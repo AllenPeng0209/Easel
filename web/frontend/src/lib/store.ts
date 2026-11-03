@@ -18,6 +18,11 @@ export interface QueuedMessage {
   delivery?: 'sending' | 'rejected' | 'unconfirmed';
 }
 
+export interface ReasoningSummary {
+  text: string;
+  truncated: boolean;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -28,7 +33,7 @@ export interface ChatMessage {
   command?: ChatCommand;
   topicRef?: { id: string; snapshotHash: string };
   workshopRef?: WorkshopReference;
-  thinking?: string;   // 模型思考过程（隐思考），流式结束后持久保留
+  reasoningSummary?: ReasoningSummary;
   activity?: string;   // 工具/执行活动步骤（换行分隔），持久保留
   questions?: ChatQuestion[];
   events?: AgentEvent[];
@@ -57,7 +62,7 @@ export interface ChatSession {
 export interface StreamState {
   steerTurnId?: string;
   content: string;
-  thinking: string;
+  reasoningSummary?: ReasoningSummary;
   activity: string;
   stopFeedback?: { kind: 'failed' | 'unconfirmed'; message: string };
   stillWorking?: string;   // 防呆心跳提示（未卡住）；独立于 activity，不覆盖真实状态

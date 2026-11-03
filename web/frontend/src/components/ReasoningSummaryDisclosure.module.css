@@ -1,0 +1,35 @@
+/*
+ * Adapted from DeepSeek Harness TrajectoryTable.module.css @ ce7073d (MIT).
+ * Easel maps the reasoning quote to existing theme tokens.
+ */
+.quote {
+  margin: 6px 0 8px;
+  padding: 6px 9px;
+  border-inline-start: 2px solid var(--border-strong);
+  border-radius: 0 6px 6px 0;
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.heading { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.heading strong { font-size: 12px; }
+.toggle {
+  border: 0;
+  padding: 3px 0;
+  background: transparent;
+  color: var(--accent-end);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.toggle:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }
+.notice { margin: 2px 0 0; color: var(--text-secondary); font-size: 11px; }
+.body {
+  margin-top: 4px;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.65;
+}

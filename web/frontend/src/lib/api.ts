@@ -1,6 +1,6 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
-import type { ChatSession } from './store';
+import type { ChatSession, ReasoningSummary } from './store';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
 import type { ChatCommand, ChatCommandOption } from './chatCommands';
 import { mergeSessionCatalog } from './sessionSync';
@@ -653,6 +653,13 @@ export function steerChat(sessionId: string, turnId: string, requestId: string, 
   });
 }
 
+function publicReasoningSummary(value: unknown): ReasoningSummary | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { text, truncated } = value as Partial<ReasoningSummary>;
+  if (typeof text !== 'string' || !text.trim() || typeof truncated !== 'boolean') return undefined;
+  return { text, truncated };
+}
+
 export function streamChat(
   message: string,
   persona: string | undefined,
@@ -660,7 +667,7 @@ export function streamChat(
   onToken: (chunk: string) => void,
   onDone: (sessionKey?: string, outcome?: ChatTurnOutcome) => void,
   onError: (err: Error) => void,
-  onThinking?: (chunk: string) => void,
+  onReasoningSummary?: (summary: ReasoningSummary) => void,
   onActivity?: (status: string) => void,
   onInterrupted?: () => void,
   turnId?: string,
@@ -735,8 +742,11 @@ export function streamChat(
         if (currentId > 0) lastEventId = currentId;
         if (currentEvent === 'token') {
           try { onToken(JSON.parse(data) as string); } catch { onToken(data); }
-        } else if (currentEvent === 'thinking' && onThinking) {
-          try { onThinking(JSON.parse(data) as string); } catch { onThinking(data); }
+        } else if (currentEvent === 'reasoning_summary' && onReasoningSummary) {
+          try {
+            const summary = publicReasoningSummary(JSON.parse(data));
+            if (summary) onReasoningSummary(summary);
+          } catch { /* Ignore malformed summary snapshots. */ }
         } else if (currentEvent === 'activity' && onActivity) {
           try { onActivity(JSON.parse(data) as string); } catch { onActivity(data); }
         } else if (currentEvent === 'agent_event' && onAgentEvent) {
@@ -861,12 +871,16 @@ export function streamChat(
 }
 
 /** 取某会话最近一轮的完整结果（SSE 断线后据此取回）。 */
-export function fetchLastTurn(sessionId: string, turnId?: string, signal?: AbortSignal): Promise<{
+interface LastChatTurn {
   status: string; text: string; turn_id?: string; events?: AgentEvent[]; questions?: ChatQuestion[];
   outcome?: Exclude<ChatTurnOutcome, 'unconfirmed'>; clean_end?: boolean; stop_reason?: string;
-}> {
+  reasoning_summary?: ReasoningSummary;
+}
+
+export async function fetchLastTurn(sessionId: string, turnId?: string, signal?: AbortSignal): Promise<LastChatTurn> {
   const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
-  return request(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`, { signal });
+  const result = await request<LastChatTurn>(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`, { signal });
+  return { ...result, reasoning_summary: publicReasoningSummary(result.reasoning_summary) };
 }
 
 interface ChatSessionPage {

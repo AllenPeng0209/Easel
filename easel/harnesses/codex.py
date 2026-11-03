@@ -370,8 +370,32 @@ class CodexAdapter:
         streamed: set[str] = set()
         events = EventProjector(emit, request.env)
         business_calls: dict[str, tuple[str, asyncio.Future]] = {}
+        summaries: dict[str, dict[int, str]] = {}
+        settled_summaries: set[str] = set()
+        summary_limit = 4000
+        summary_overflow = False
+        published_summary = None
+
+        def publish_summary():
+            nonlocal published_summary
+            text = '\n\n'.join(parts[index] for parts in summaries.values() for index in sorted(parts) if parts[index])
+            snapshot = {'text': text[:summary_limit], 'truncated': summary_overflow or len(text) > summary_limit}
+            if text.strip() and snapshot != published_summary:
+                published_summary = snapshot
+                emit('reasoning_summary', snapshot)
+
+        def summary_parts(item_id):
+            nonlocal summary_overflow
+            if not isinstance(item_id, str) or not item_id or len(item_id) > 256 or item_id in settled_summaries:
+                return None
+            if item_id not in summaries and len(summaries) >= 16:
+                summary_overflow = True
+                publish_summary()
+                return None
+            return summaries.setdefault(item_id, {})
 
         def notify(method, params):
+            nonlocal summary_overflow
             def _thread_scoped() -> bool:
                 # 无 threadId/turnId 的是全局事件（连接级/认证失败常在 turn/start 前发出）；
                 # 带 id 的必须匹配本会话。放行判定独立于 turn_id 是否已闩锁。
@@ -408,8 +432,16 @@ class CodexAdapter:
             if method == "item/agentMessage/delta":
                 streamed.add(params.get("itemId", ""))
                 emit("token", params.get("delta", ""))
-            elif method in ("item/reasoning/summaryTextDelta", "item/reasoning/textDelta"):
-                emit("thinking", params.get("delta", ""))
+            elif method == "item/reasoning/summaryTextDelta" and envelope_turn == turn_id and not completion.done():
+                index, delta = params.get('summaryIndex'), params.get('delta')
+                if type(index) is int and index >= 0 and isinstance(delta, str) and delta:
+                    parts = summary_parts(params.get('itemId'))
+                    if parts is not None:
+                        if index < 32:
+                            parts[index] = (parts.get(index, '') + delta[:summary_limit + 1])[:summary_limit + 1]
+                        else:
+                            summary_overflow = True
+                        publish_summary()
             elif method == "item/started":
                 item = params.get("item") or {}
                 if item.get("type") not in ("agentMessage", "reasoning", "userMessage", "subAgentActivity"):
@@ -418,6 +450,17 @@ class CodexAdapter:
                 item = params.get("item") or {}
                 if item.get("type") == "agentMessage" and item.get("id") not in streamed:
                     emit("token", item.get("text", ""))
+                if item.get('type') == 'reasoning' and envelope_turn == turn_id and not completion.done():
+                    item_id, summary = item.get('id'), item.get('summary')
+                    if (isinstance(summary, list) and all(isinstance(part, str) for part in summary[:32])
+                            and any(part.strip() for part in summary[:32])):
+                        parts = summary_parts(item_id)
+                        if parts is not None:
+                            parts.clear()
+                            parts.update({index: part[:summary_limit + 1] for index, part in enumerate(summary[:32])})
+                            summary_overflow = summary_overflow or len(summary) > 32
+                            settled_summaries.add(item_id)
+                            publish_summary()
             elif method == "turn/completed":
                 turn = params.get("turn") or {}
                 if turn.get("id") != turn_id or completion.done():

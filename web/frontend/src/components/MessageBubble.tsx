@@ -1,5 +1,5 @@
 import { Fragment, useMemo } from 'react';
-import type { ChatMessage } from '../lib/store';
+import type { ChatMessage, ReasoningSummary } from '../lib/store';
 import type { AgentTimelineObservation } from '../lib/agentTimeline';
 import type { AgentEvent, AgentSubagent } from '../lib/agentEvents';
 import { renderMarkdown } from '../lib/sanitize';
@@ -16,6 +16,7 @@ import { validateChatReferences, validateChatSessionReferenceSpans } from '../li
 import { attachmentHref } from '../vendor/deepseek-harness/message/attachment-reference';
 import AgentEventPanel from './AgentEventPanel';
 import AgentTimeline from './AgentTimeline';
+import ReasoningSummaryDisclosure from './ReasoningSummaryDisclosure';
 import { UserMessageBubble } from '../vendor/deepseek-harness/message/UserMessageBubble';
 import { useClipboardCopy } from '../vendor/deepseek-harness/message/use-clipboard-copy';
 import '../styles/agent-chat.css';
@@ -32,7 +33,7 @@ interface MessageBubbleProps {
   message: ChatMessage;
   sessionId?: string;
   isStreaming?: boolean;
-  thinking?: string;
+  reasoningSummary?: ReasoningSummary;
   activity?: string;
   stillWorking?: string;   // 防呆心跳提示（未卡住）；仅流式时的独立提示，不替代思考/活动
   events?: AgentEvent[];
@@ -90,7 +91,7 @@ function UserText({ message }: { message: ChatMessage }) {
     title="已选命令">{leadingCommand.token}</span>}{parts}{content.slice(offset)}</>;
 }
 
-export default function MessageBubble({ message, sessionId, isStreaming, thinking, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
+export default function MessageBubble({ message, sessionId, isStreaming, reasoningSummary, activity, stillWorking, events, timeline, pendingTimelineQuestions, actions, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const effEvents = isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
   const recordedTimeline = isStreaming ? timeline : message.timeline;
   const effTimeline = Array.isArray(recordedTimeline) ? recordedTimeline : undefined;
@@ -127,13 +128,14 @@ export default function MessageBubble({ message, sessionId, isStreaming, thinkin
   }
 
   // ---- 助手消息 ----
-  // 思考 / 活动：流式时用实时值；结束后用消息里持久化的值 —— 一直保留，不隐藏
-  const effThinking = isStreaming ? (thinking || '') : (message.thinking || '');
+  const suppliedSummary = isStreaming ? reasoningSummary : message.reasoningSummary;
+  const publicSummary = typeof suppliedSummary?.text === 'string' && typeof suppliedSummary.truncated === 'boolean'
+    && (suppliedSummary.text.trim() || suppliedSummary.truncated) ? suppliedSummary : undefined;
   const liveActivity = isStreaming ? (activity || '') : '';
   const liveHint = isStreaming ? (stillWorking || '') : '';   // 防呆「未卡住」提示，附着显示、不顶掉真实状态
   const doneSteps = !isStreaming && !effTimeline?.length ? (message.activity || '') : '';
 
-  const livePanel = (effThinking || liveActivity || liveHint || doneSteps) ? (
+  const livePanel = (liveActivity || liveHint || doneSteps) ? (
     <div className="live-panel">
       {liveActivity ? (
         <div className="live-activity">
@@ -149,17 +151,12 @@ export default function MessageBubble({ message, sessionId, isStreaming, thinkin
           <div className="thinking-text">{doneSteps}</div>
         </details>
       )}
-      {effThinking && (
-        <details className="thinking-block" open={isStreaming && !message.content}>
-          <summary>💭 思考过程</summary>
-          <div className="thinking-text">{effThinking}</div>
-        </details>
-      )}
+
     </div>
   ) : null;
 
   // 等待回复中（还没有正文、思考、活动）
-  if (isStreaming && !message.content && !effThinking && !liveActivity && !liveHint && !effEvents.length && !effTimeline?.length) {
+  if (isStreaming && !message.content && !publicSummary && !liveActivity && !liveHint && !effEvents.length && !effTimeline?.length) {
     return (
       <div className="message-row assistant">
         <div className="message-bubble assistant">
@@ -178,9 +175,10 @@ export default function MessageBubble({ message, sessionId, isStreaming, thinkin
       <div className="msg-col assistant">
         <div className="message-bubble assistant">
           {livePanel}
+          {publicSummary && <ReasoningSummaryDisclosure summary={publicSummary} />}
           {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} /> : null}
           <AgentEventPanel sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact')} settled={!isStreaming} />
-          {message.content && <div dangerouslySetInnerHTML={{ __html: rendered.html }} />}
+          {message.content && <div data-assistant-answer dangerouslySetInnerHTML={{ __html: rendered.html }} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}
           <DeliverableCards artifacts={declared} onOpenDeliverable={onOpenDeliverable} />
           {!isStreaming && (legacyArtifacts.length > 0 || legacyArchives.length > 0) && (
