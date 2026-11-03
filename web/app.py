@@ -3576,11 +3576,12 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
 
 async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: str,
                             config: dict, emit, timeout: int = TIMEOUT_CHAT, *, interactive=True,
-                            initial_events: tuple[dict, ...] = ()) -> str:
+                            initial_events: tuple[dict, ...] = (), run_id: str | None = None) -> str:
     pk = f"web:{sk}"
     turn_id = req.turnId or uuid.uuid4().hex
+    run_id = run_id or uuid.uuid4().hex
     full_text: list[str] = []
-    agent_events = list(initial_events)
+    agent_events = [{**event, "runId": run_id} for event in initial_events]
     clean_end = False
     reason = "error"
     error_message = ""
@@ -3603,6 +3604,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         if kind == "token":
             full_text.append(safe)
         elif kind == "agent_event" and isinstance(safe, dict):
+            safe["runId"] = run_id  # The Host owns run identity across all native engines.
             if safe.get("kind") != "steer_capability":
                 agent_events.append(safe)
         elif kind == "error":
@@ -3857,10 +3859,11 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
 
 
 async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit, *,
-                           initial_events: tuple[dict, ...] = ()) -> str:
+                           initial_events: tuple[dict, ...] = (), run_id: str | None = None) -> str:
     """Run one API turn with the same stop/recovery/session locking as Gateway chat."""
     pk = f"web:{sk}"
     turn_id = req.turnId or uuid.uuid4().hex
+    run_id = run_id or uuid.uuid4().hex
     full_text = []
     clean_end = False
     reason = "error"
@@ -3932,7 +3935,7 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
             if claimed:
                 _save_turn(pk, "done", snapshot, {
                     "turn_id": turn_id, "clean_end": clean_end, "stop_reason": reason,
-                    **({"events": list(initial_events)} if initial_events else {}),
+                    **({"events": [{**event, "runId": run_id} for event in initial_events]} if initial_events else {}),
                     **_chat_snapshot_outcome(stopped=reason == "user_stopped",
                                              failed=bool(error_message), completed=clean_end),
                 })
@@ -4627,6 +4630,7 @@ async def api_chat_stream(req: ChatRequest):
         sk = req.sessionId or f"web-{int(time.time() * 1000)}"
         pk = f"web:{sk}"                 # 落盘 key（与 /api/chat/last 一致）
         turn_id = req.turnId or uuid.uuid4().hex
+        run_id = uuid.uuid4().hex  # A repeated admitted request replays its existing journal.
         event_seq = admission["id"]
         full_text: list[str] = []        # 累积完整回答，供断线取回
         structured_events: list[dict] = []
@@ -4640,9 +4644,10 @@ async def api_chat_stream(req: ChatRequest):
             event_seq += 1
             if kind == "error":
                 stream_error = True
-            event = {"id": event_seq, "event": kind, "data": text}
             if kind == "agent_event" and isinstance(text, dict):
+                text = {**text, "runId": run_id}
                 structured_events.append(text)
+            event = {"id": event_seq, "event": kind, "data": text}
             try:
                 with event_path.open("a", encoding="utf-8") as ef:
                     ef.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -4676,7 +4681,7 @@ async def api_chat_stream(req: ChatRequest):
             try:
                 await _run_direct_chat(
                     req.model_copy(update={"turnId": turn_id}), sk, content, system, to_client,
-                    **initial_event_args)
+                    run_id=run_id, **initial_event_args)
             finally:
                 await finish_saved_stream()
             return
@@ -4684,7 +4689,7 @@ async def api_chat_stream(req: ChatRequest):
         if alternate:
             try:
                 await _run_harness_chat(req.model_copy(update={"turnId": turn_id}),
-                                        sk, message, runtime, config, to_client, **initial_event_args)
+                                        sk, message, runtime, config, to_client, run_id=run_id, **initial_event_args)
             finally:
                 await finish_saved_stream()
             return

@@ -36,6 +36,7 @@ export interface AgentSubagent {
 export interface AgentEvent {
   id: string;
   kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication' | 'business' | 'steer' | 'steer_capability' | 'subagent';
+  runId?: string;
   turnId?: string;
   text?: string;
   business?: import('./businessObjects').BusinessObject;
@@ -95,13 +96,24 @@ export function normalizeAgentEvent(value: unknown): AgentEvent | null {
   const candidate = value as Record<string, unknown>;
   if (typeof candidate.id !== 'string' || !candidate.id || candidate.id.length > 512
       || typeof candidate.kind !== 'string' || !kinds.has(candidate.kind)) return null;
+  if (candidate.runId !== undefined && (typeof candidate.runId !== 'string'
+    || !/^[A-Za-z0-9_-]{1,512}$/.test(candidate.runId))) return null;
   if (candidate.kind === 'tool' && (typeof candidate.callId !== 'string' || !candidate.callId)) return null;
   if (candidate.kind === 'subagent') {
     const subagent = normalizeAgentSubagent(candidate.subagent);
     if (!subagent || !isSubagentRouteSegment(candidate.turnId)) return null;
-    return { id: candidate.id, kind: 'subagent', turnId: candidate.turnId, subagent };
+    return { id: candidate.id, kind: 'subagent', turnId: candidate.turnId, subagent,
+      ...(typeof candidate.runId === 'string' ? { runId: candidate.runId } : {}) };
   }
   return candidate as AgentEvent;
+}
+
+export function agentEventKey(event: AgentEvent): string {
+  return JSON.stringify([event.runId ?? null, event.id]);
+}
+
+export function agentToolKey(event: AgentEvent): string {
+  return JSON.stringify([event.runId ?? null, event.callId || event.id]);
 }
 
 export function publicationEventKey(event: AgentEvent): string | null {
@@ -113,7 +125,7 @@ export function publicationEventKey(event: AgentEvent): string | null {
 export function businessEventKey(event: AgentEvent): string | null {
   const value = event.kind === 'business' && event.name === 'easel_business_objects' ? event.business : undefined;
   return value && event.callId && [value.actorId, value.projectId, value.kind, value.id].every(part => typeof part === 'string')
-    ? JSON.stringify([event.callId, value.actorId, value.projectId, value.kind, value.id]) : null;
+    ? JSON.stringify([event.runId ?? null, event.callId, value.actorId, value.projectId, value.kind, value.id]) : null;
 }
 
 /** Tool events are cumulative snapshots; older replay must not revive a finished call. */
@@ -136,9 +148,10 @@ export function reduceAgentEvents(previous: AgentEvent[], input: unknown): Agent
       const next = [...previous]; next[index] = event; return next;
     }
   }
-  if (previous.some(item => item.id === event.id)) return previous;
+  const identity = agentEventKey(event);
+  if (previous.some(item => agentEventKey(item) === identity)) return previous;
   if (event.kind === 'subagent' && event.subagent) {
-    const index = previous.findIndex(item => item.kind === 'subagent' && item.turnId === event.turnId
+    const index = previous.findIndex(item => item.kind === 'subagent' && item.runId === event.runId && item.turnId === event.turnId
       && item.subagent?.id === event.subagent?.id);
     if (index < 0) return [...previous, event];
     const old = previous[index].subagent;
@@ -149,7 +162,7 @@ export function reduceAgentEvents(previous: AgentEvent[], input: unknown): Agent
     return next;
   }
   const index = event.kind === 'tool'
-    ? previous.findIndex(item => item.kind === 'tool' && item.callId === event.callId) : -1;
+    ? previous.findIndex(item => item.kind === 'tool' && item.runId === event.runId && item.callId === event.callId) : -1;
   if (index < 0) return [...previous, event];
   const old = previous[index];
   if (terminal.has(old.status || '') && !terminal.has(event.status || '')) return previous;

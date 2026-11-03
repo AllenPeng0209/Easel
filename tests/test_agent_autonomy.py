@@ -254,13 +254,16 @@ def test_native_structured_events_survive_live_sse_replay_and_snapshot(tmp_path,
     async def scenario():
         response = await web.api_chat_stream(web.ChatRequest(message='run', sessionId='structured-session', turnId='structured-turn'))
         received = [item async for item in response.body_iterator]
-        assert [json.loads(item['data']) for item in received if item['event'] == 'agent_event'] == [plan, event]
+        live_events = [json.loads(item['data']) for item in received if item['event'] == 'agent_event']
+        run_id = live_events[0]['runId']
+        assert len(run_id) == 32 and int(run_id, 16) >= 0
+        assert live_events == [{**item, 'runId': run_id} for item in (plan, event)]
         replay = await web.api_chat_job_stream('structured-turn')
         replayed = [item async for item in replay.body_iterator]
-        assert [json.loads(item['data']) for item in replayed if item['event'] == 'agent_event'] == [plan, event]
+        assert [json.loads(item['data']) for item in replayed if item['event'] == 'agent_event'] == live_events
         snapshot = await web.api_chat_last('structured-session', 'structured-turn')
         assert snapshot['text'] == 'done'
-        assert snapshot['events'] == [plan, event]
+        assert snapshot['events'] == live_events
     asyncio.run(scenario())
 
 

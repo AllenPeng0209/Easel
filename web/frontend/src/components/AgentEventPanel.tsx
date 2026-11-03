@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
-import { publicationEventKey, businessEventKey, normalizeAgentEvent } from '../lib/agentEvents';
+import { publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
 import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
 import BusinessObjectCard from './BusinessObjectCard';
@@ -41,11 +41,17 @@ function detailText(value: unknown): string {
 function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
   const result: AgentEvent[] = [];
   const indexes = new Map<string, number>();
+  const seenEvents = new Set<string>();
   const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped', 'denied']);
   for (const event of events) {
+    const key = agentEventKey(event);
     const business = businessEventKey(event);
     const receipt = publicationEventKey(event);
-    const identity = business ? `business:${business}` : receipt ? `publication:${receipt}` : event.kind === 'tool' ? event.callId || event.id : event.id;
+    if (!business && !receipt) {
+      if (seenEvents.has(key)) continue;
+      seenEvents.add(key);
+    }
+    const identity = business ? `business:${business}` : receipt ? `publication:${receipt}` : event.kind === 'tool' ? `tool:${agentToolKey(event)}` : key;
     const index = event.kind === 'tool' || receipt || business ? indexes.get(identity) : undefined;
     if (index === undefined) {
       if (event.kind === 'tool' || receipt || business) indexes.set(identity, result.length);
@@ -71,7 +77,7 @@ function ToolEvent({ event, expanded, settled }: { event: AgentEvent; expanded: 
   const duration = typeof event.startedAt === 'number' && typeof event.completedAt === 'number'
     ? Math.max(0, event.completedAt - event.startedAt) : undefined;
   return <div className="agent-tool" data-tool-call={event.callId || event.id}
-    data-parent-call={event.parentCallId} data-state={unconfirmed ? 'unconfirmed' : state} data-tool-status={state}>
+    data-run-id={event.runId} data-parent-call={event.parentCallId} data-state={unconfirmed ? 'unconfirmed' : state} data-tool-status={state}>
     <DisclosureRow icon={<span className="agent-status-dot" data-state={unconfirmed ? 'unconfirmed' : state} />}
       title={title} open={open} expandable expandOnRowClick running={running}
       onToggle={() => setOpen(value => !value)}
@@ -130,39 +136,40 @@ function OtherEvent({ event }: { event: AgentEvent }) {
 }
 
 /** The Easel transport boundary feeds the vendored Harness disclosure surface. */
-export default function AgentEventPanel({ events, expandedCallId, sessionId = '', settled = false, onOpenSubagent }: {
-  events: AgentEvent[]; expandedCallId?: string; sessionId?: string; settled?: boolean; onOpenSubagent?: OpenSubagent;
+export default function AgentEventPanel({ events, expandedCallId, expandedRunId, sessionId = '', settled = false, onOpenSubagent }: {
+  events: AgentEvent[]; expandedCallId?: string; expandedRunId?: string; sessionId?: string; settled?: boolean; onOpenSubagent?: OpenSubagent;
 }) {
   const snapshots = toolSnapshots(events);
   if (!snapshots.length) return null;
-  const plans = new Map<string | undefined, AgentEvent[]>();
-  const subagents = new Map<string | undefined, { first: AgentEvent; events: AgentEvent[] }>();
+  const plans = new Map<string, AgentEvent[]>();
+  const subagents = new Map<string, { first: AgentEvent; events: AgentEvent[] }>();
+  const turnKey = (event: AgentEvent) => JSON.stringify([event.runId ?? null, event.turnId ?? null]);
   for (const event of snapshots) {
     if (event.kind === 'subagent') {
       const normalized = normalizeAgentEvent(event);
       if (normalized) {
-        const lineage = subagents.get(event.turnId) || { first: event, events: [] };
+        const lineage = subagents.get(turnKey(event)) || { first: event, events: [] };
         lineage.events.push(normalized);
-        subagents.set(event.turnId, lineage);
+        subagents.set(turnKey(event), lineage);
       }
     }
     if ((event.kind !== 'plan' || typeof event.text === 'string')) continue;
-    const revisions = plans.get(event.turnId) || [];
+    const revisions = plans.get(turnKey(event)) || [];
     revisions.push(event);
-    plans.set(event.turnId, revisions);
+    plans.set(turnKey(event), revisions);
   }
   return <div className="agent-events" role="region" aria-label="任务执行记录">
     {snapshots.map(event => {
       if (event.kind === 'subagent') {
-        const lineage = subagents.get(event.turnId);
-        return lineage?.first === event ? <AgentSubagentLineage key={JSON.stringify([sessionId, event.turnId])}
+        const lineage = subagents.get(turnKey(event));
+        return lineage?.first === event ? <AgentSubagentLineage key={JSON.stringify([sessionId, turnKey(event)])}
           events={lineage.events} sessionId={sessionId} settled={settled} onOpenSubagent={onOpenSubagent} /> : null;
       }
-      if (event.kind === 'tool') return <ToolEvent key={`tool:${event.callId || event.id}`}
-        event={event} expanded={event.callId === expandedCallId} settled={settled} />;
-      if ((event.kind !== 'plan' || typeof event.text === 'string')) return <OtherEvent key={event.id} event={event} />;
-      const revisions = plans.get(event.turnId)!;
-      return revisions[0] === event ? <AgentTodoChecklist key={event.id} events={revisions} /> : null;
+      if (event.kind === 'tool') return <ToolEvent key={`tool:${agentToolKey(event)}`}
+        event={event} expanded={event.callId === expandedCallId && (expandedRunId === undefined || event.runId === expandedRunId)} settled={settled} />;
+      if ((event.kind !== 'plan' || typeof event.text === 'string')) return <OtherEvent key={agentEventKey(event)} event={event} />;
+      const revisions = plans.get(turnKey(event))!;
+      return revisions[0] === event ? <AgentTodoChecklist key={agentEventKey(event)} events={revisions} /> : null;
     })}
   </div>;
 }
