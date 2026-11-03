@@ -43,6 +43,7 @@ export interface ChatSession {
 
 /** 进行中的流式状态（存于 App，不随页面切换/ChatPage 卸载而丢失）。 */
 export interface StreamState {
+  steerTurnId?: string;
   content: string;
   thinking: string;
   activity: string;

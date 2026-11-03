@@ -22,7 +22,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     } catch {
       /* 响应体不是 JSON，忽略 */
     }
-    throw new Error(detail || `请求失败（${res.status} ${res.statusText}）`);
+    throw Object.assign(new Error(detail || `请求失败（${res.status} ${res.statusText}）`), { status: res.status });
   }
   return res.json() as Promise<T>;
 }
@@ -641,6 +641,14 @@ export function stopChat(sessionId: string): Promise<{ stopped: boolean; status?
 }
 
 export type ChatTurnOutcome = 'completed' | 'failed' | 'stopped' | 'unconfirmed';
+
+export function steerChat(sessionId: string, turnId: string, requestId: string, message: string): Promise<{ status: 'accepted' | 'unconfirmed' }> {
+  return request('/api/chat/steer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, turnId, requestId, message }),
+  });
+}
 
 export function streamChat(
   message: string,

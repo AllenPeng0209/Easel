@@ -12,6 +12,10 @@ from .base import HarnessError, RunRequest
 from .workspace import harness_instructions
 
 
+class RpcRejected(HarnessError):
+    """A JSON-RPC response explicitly rejected the request."""
+
+
 _POOLS: dict[asyncio.AbstractEventLoop, dict[tuple, dict]] = {}
 IDLE_SECONDS = 300
 MAX_IDLE_PROCESSES = 8
@@ -228,7 +232,7 @@ class RPC:
                                     if any(marker in key.upper() for marker in ("KEY", "TOKEN", "SECRET", "PASSWORD")):
                                         if len(value) >= 4:
                                             detail = detail.replace(value, "***")
-                            future.set_exception(HarnessError(f"Agent 协议错误：{detail}"))
+                            future.set_exception(RpcRejected(f"Agent 协议错误：{detail}"))
                         else:
                             future.set_result(message.get("result") or {})
         except asyncio.CancelledError:

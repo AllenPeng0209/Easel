@@ -17,7 +17,7 @@ import BreakdownPage from './components/BreakdownPage';
 import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
 import SettingsPanel from './components/SettingsPanel';
-import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, fetchChatSessions, syncChatSessions, deleteChatSession } from './lib/api';
+import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed, ChatTurnOutcome } from './lib/api';
 import { reduceAgentEvents } from './lib/agentEvents';
 import { fetchBusinessObject, parseBusinessHash } from './lib/businessObjectApi';
@@ -46,6 +46,9 @@ const InteractionCenterPage = lazy(() => import('./components/InteractionCenterP
 
 interface LiveTurnAccumulator {
   content: string; thinking: string; steps: string[]; questions: ChatQuestion[]; events: AgentEvent[];
+  turnId?: string;
+  steering?: boolean;
+  steerAttempt?: { turnId: string; requestId: string; message: string; accepted?: boolean };
   stopRequested?: boolean;
   stopConfirmed?: boolean;
 }
@@ -445,6 +448,7 @@ export default function App() {
           ? { ...session, queuePaused: true, updated: nextSessionRevision(session) } : session));
         clearStream(sessionId);
         try { sessionStorage.removeItem(projectStorageKey(`easel_pending_turn:${sessionId}`)); } catch {}
+        try { sessionStorage.removeItem(projectStorageKey(`easel_steer_attempt:${sessionId}`)); } catch {}
       },
     };
     finalizers.current.set(sessionId, pending);
@@ -501,6 +505,14 @@ export default function App() {
 
   const receiveAgentEvent = useCallback((sessionId: string, owner: typeof streamAcc.current[string], event: AgentEvent) => {
     if (streamAcc.current[sessionId] !== owner) return;
+    if (event.kind === 'steer_capability') {
+      if (owner.turnId && event.turnId === owner.turnId && (event.status === 'ready' || event.status === 'closed')) {
+        setStreams(previous => previous[sessionId] ? { ...previous,
+          [sessionId]: { ...previous[sessionId], steerTurnId: event.status === 'ready' ? owner.turnId : undefined },
+        } : previous);
+      }
+      return;
+    }
     owner.events = reduceAgentEvents(owner.events, event);
     setStreams(previous => previous[sessionId] ? { ...previous,
       [sessionId]: { ...previous[sessionId], events: [...owner.events], stillWorking: undefined } } : previous);
@@ -526,7 +538,7 @@ export default function App() {
       const next = prev.map((s) => (s.id === sessionId ? { ...s, pendingTurnId: turnId, updated: nextSessionRevision(s) } : s));
       saveSessions(next); return next;
     });
-    const owner = { content: '', thinking: '', steps: [] as string[], questions: [] as ChatQuestion[], events: [] as AgentEvent[] };
+    const owner: LiveTurnAccumulator = { turnId, content: '', thinking: '', steps: [], questions: [], events: [] };
     streamAcc.current[sessionId] = owner;
     setStreams((prev) => ({ ...prev, [sessionId]: { content: '', thinking: '', activity: '', questions: [], events: [], lifecycle: 'recovering' } }));
     // 打字机队列：流式事件按批到达（OpenClaw 攒批），前端按字符节奏显示，体验逐字浮现。
@@ -594,7 +606,7 @@ export default function App() {
     if (!last || last.role !== 'user') return;   // 没有悬空的用户消息 = 无需恢复
     let turnId = s.pendingTurnId;
     try { turnId = sessionStorage.getItem(projectStorageKey(`easel_pending_turn:${sessionId}`)) || turnId; } catch { /* use persisted id */ }
-    const owner = { content: '', thinking: '', steps: [] as string[], questions: [] as ChatQuestion[], events: [] as AgentEvent[] };
+    const owner: LiveTurnAccumulator = { turnId, content: '', thinking: '', steps: [], questions: [], events: [] };
     streamAcc.current[sessionId] = owner;
     setStreams((p) => ({ ...p, [sessionId]: { content: '', thinking: '', activity: '⏳ 正在接回上一轮结果…', questions: [], lifecycle: 'recovering' } }));
     typingBuf.current[sessionId] = '';
@@ -744,6 +756,64 @@ export default function App() {
     }
     return sendUserAndStream(sessionId, displayText, attachments);
   }, [sendUserAndStream]);
+
+  const handleSteer = useCallback(async (sessionId: string, text: string): Promise<boolean> => {
+    const owner = streamAcc.current[sessionId];
+    const turnId = owner?.turnId;
+    const stream = streams[sessionId];
+    if (!canOperate || !turnId || stream?.steerTurnId !== turnId || stream.lifecycle !== 'running'
+        || owner.stopRequested || owner.questions.some(question => !question.status || question.status === 'pending')) {
+      throw new Error('当前任务暂时无法接收指导，草稿已保留。');
+    }
+    const message = text.trim();
+    if (!message || owner.steering) return false;
+    if (Array.from(message).length > 8000) throw new Error('本轮指导最多 8000 个字符，草稿已保留。');
+    const key = projectStorageKey(`easel_steer_attempt:${sessionId}`);
+    if (!owner.steerAttempt) {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem(key) || 'null');
+        if (saved?.turnId === turnId && typeof saved.requestId === 'string' && typeof saved.message === 'string') {
+          owner.steerAttempt = saved;
+        }
+      } catch { /* Session storage is optional. */ }
+    }
+    if (owner.steerAttempt && owner.steerAttempt.message !== message) {
+      if (!owner.steerAttempt.accepted) {
+        throw new Error('上一条指导仍待核实。请恢复原文查询回执，或等本轮结束。');
+      }
+      owner.steerAttempt = undefined;
+    }
+    const attempt = owner.steerAttempt ?? { turnId, requestId: crypto.randomUUID(), message };
+    owner.steerAttempt = attempt;
+    owner.steering = true;
+    try { sessionStorage.setItem(key, JSON.stringify(attempt)); } catch { /* Keep the in-memory receipt key. */ }
+    const forgetAttempt = () => {
+      owner.steerAttempt = undefined;
+      if (streamAcc.current[sessionId] === owner) {
+        try { sessionStorage.removeItem(key); } catch { /* No persisted receipt key. */ }
+      }
+    };
+    try {
+      const receipt = await steerChat(sessionId, turnId, attempt.requestId, message);
+      if (receipt.status !== 'accepted') throw new Error('指导回执待核实，草稿已保留。再次点击只会查询同一条指导。');
+      // A remounted composer may still contain this text. Keep the key so it
+      // can acknowledge the same send rather than deliver a duplicate.
+      attempt.accepted = true;
+      if (streamAcc.current[sessionId] === owner) {
+        try { sessionStorage.setItem(key, JSON.stringify(attempt)); } catch { /* Keep the in-memory receipt key. */ }
+      }
+      return true;
+    } catch (error) {
+      const status = (error as { status?: number } | null)?.status;
+      if (status && status >= 400 && status < 500) {
+        if (status === 409 || status === 422) forgetAttempt();
+        throw error;
+      }
+      throw new Error('指导回执待核实，草稿已保留。再次点击只会查询同一条指导。');
+    } finally {
+      owner.steering = false;
+    }
+  }, [canOperate, streams]);
 
   // Queue entries survive navigation/reload. A stopped or failed queue needs an explicit resume.
   useEffect(() => {
@@ -1080,6 +1150,8 @@ export default function App() {
             onResumeQueue={() => resumeQueue(activeSession.id)}
             historyNotice={historyNotice}
             onSend={(displayText, attachments) => handleSendMessage(activeSession.id, displayText, attachments)}
+            onSteer={streams[activeSession.id]?.steerTurnId && streams[activeSession.id]?.lifecycle === 'running'
+              ? text => handleSteer(activeSession.id, text) : undefined}
             onStop={() => handleStopStream(activeSession.id)}
             onResend={(userIndex, displayText, attachments, legacyAgentText) => handleResend(
               activeSession.id, userIndex, displayText, attachments, legacyAgentText,

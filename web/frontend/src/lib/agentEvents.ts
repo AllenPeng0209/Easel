@@ -24,7 +24,9 @@ export interface AgentArtifact {
 
 export interface AgentEvent {
   id: string;
-  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication' | 'business';
+  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication' | 'business' | 'steer' | 'steer_capability';
+  turnId?: string;
+  text?: string;
   business?: import('./businessObjects').BusinessObject;
   publication?: import('./publicationApproval').PublicationApprovalRecord;
   callId?: string;
@@ -45,7 +47,7 @@ export interface AgentEvent {
   [key: string]: unknown;
 }
 
-const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business']);
+const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business', 'steer']);
 const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped']);
 
 export function normalizeAgentEvent(value: unknown): AgentEvent | null {

@@ -9,12 +9,12 @@ import re
 from easel import __version__
 from easel.agent_policy import requests_secret
 
-from .base import Descriptor, HarnessError, RunRequest
+from .base import Descriptor, HarnessError, RunRequest, SteerRejected
 from .commands import base_command, codex_override
 from .diagnostics import codex_failure_message
 from .events import EventProjector
 from .permissions import can_auto_approve
-from .rpc import connection
+from .rpc import RpcRejected, connection
 from .workspace import harness_instructions
 
 
@@ -355,6 +355,13 @@ class CodexAdapter:
     descriptor = Descriptor("codex", "Codex", "app-server", "npm install -g @openai/codex；codex login")
 
     async def run(self, request: RunRequest, emit, ask, bind):
+        try:
+            await self._run(request, emit, ask, bind)
+        finally:
+            if request.bind_steer is not None:
+                request.bind_steer(None)
+
+    async def _run(self, request: RunRequest, emit, ask, bind):
         if request.sandbox not in ("read-only", "workspace-write"):
             raise HarnessError("Codex 只允许只读或工作区写入权限")
         completion = asyncio.get_running_loop().create_future()
@@ -602,20 +609,49 @@ class CodexAdapter:
             original_notify = rpc.notify
             rpc.notify = lambda method, data: early.append((method, data))
             result = await rpc.call("turn/start", params)
-            turn_id = (result.get("turn") or {}).get("id", "")
+            started_turn = result.get("turn") or {}
+            turn_id = started_turn.get("id", "")
             if not turn_id:
                 raise HarnessError("Codex 未返回本轮 ID")
             rpc.notify = original_notify
             for method, data in early:
                 notify(method, data)
+            steer_active = False
+
+            async def steer(text: str) -> None:
+                if not isinstance(text, str) or not text.strip():
+                    raise SteerRejected("补充指令不能为空")
+                if not steer_active or completion.done() or rpc.reader.done() or rpc.process.returncode is not None:
+                    raise SteerRejected("当前回合已无法接收补充指令")
+                if rpc.write_lock.locked() or any(not task.done() for task in rpc.tasks):
+                    raise SteerRejected("当前回合正在处理工具请求或等待确认，请稍后补充")
+                try:
+                    acknowledgment = await rpc.call("turn/steer", {
+                        "threadId": thread_id,
+                        "expectedTurnId": turn_id,
+                        "input": [{"type": "text", "text": text}],
+                    }, timeout=10)
+                except RpcRejected:
+                    raise SteerRejected("Codex 未接受当前回合的补充指令") from None
+                except Exception:
+                    raise HarnessError("未能确认 Codex 是否收到补充指令") from None
+                if not isinstance(acknowledgment, dict) or acknowledgment.get("turnId") != turn_id:
+                    raise HarnessError("Codex 未确认当前回合的补充指令")
+
             try:
+                if (request.bind_steer is not None and not completion.done() and not rpc.reader.done()
+                        and started_turn.get("status") in (None, "inProgress")):
+                    steer_active = True
+                    request.bind_steer(steer)
                 await rpc.wait_notification(completion)
             except asyncio.CancelledError:
+                steer_active = False
                 try:
                     await rpc.call("turn/interrupt", {"threadId": thread_id, "turnId": turn_id}, timeout=2)
                 except HarnessError:
                     pass
                 raise
             finally:
+                steer_active = False
                 if completion.done() and not completion.cancelled():
                     completion.exception()

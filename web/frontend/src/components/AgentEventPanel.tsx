@@ -89,6 +89,11 @@ function ToolEvent({ event, expanded, settled }: { event: AgentEvent; expanded: 
 }
 
 function OtherEvent({ event }: { event: AgentEvent }) {
+  if (event.kind === 'steer' && event.status === 'accepted' && typeof event.text === 'string') {
+    return <div className="agent-decision" aria-label="本轮指导已接收">
+      <strong>本轮指导已接收</strong><pre>{event.text}</pre>
+    </div>;
+  }
   if (event.kind === 'business') {
     if (!businessEventKey(event) || !event.business) {
       return <p className="agent-event__note" role="status">业务记录格式无效，未显示详情。</p>;

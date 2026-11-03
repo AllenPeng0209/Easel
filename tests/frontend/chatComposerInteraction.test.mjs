@@ -9,8 +9,8 @@ const text = node => typeof node === 'string' || typeof node === 'number' ? Stri
   : !node || typeof node !== 'object' ? '' : [node.props?.children].flat(Infinity).map(text).join('');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
-function view({ onSend = () => true, stream, initial = '' } = {}) {
-  const local = new Map(initial ? [['scope:easel_chat_draft:s1', JSON.stringify({ text: initial, attachments: [], interruptedFiles: [] })]] : []);
+function view({ onSend = () => true, onSteer, stream, initial = '', interruptedFiles = [] } = {}) {
+  const local = new Map(initial ? [['scope:easel_chat_draft:s1', JSON.stringify({ text: initial, attachments: [], interruptedFiles })]] : []);
   const localStorage = { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key) };
   const slots = []; let cursor = 0; let effects = []; let nodes = [];
   const hooks = {
@@ -27,7 +27,7 @@ function view({ onSend = () => true, stream, initial = '' } = {}) {
   hooks.useLayoutEffect = hooks.useEffect;
   const cache = new Map();
   const jsx = (type, props, key) => ({ type, props, key });
-  const globals = { File, URL, AbortController, Date, crypto, localStorage, sessionStorage: localStorage, console,
+  const globals = { File, URL, AbortController, Date, Error, crypto, localStorage, sessionStorage: localStorage, console,
     queueMicrotask, setTimeout, clearTimeout, requestAnimationFrame: callback => setTimeout(callback, 0), cancelAnimationFrame: clearTimeout,
     window: { matchMedia: () => ({ matches: false }) }, navigator: { clipboard: { writeText: async () => {} } } };
   function load(path) {
@@ -56,7 +56,7 @@ function view({ onSend = () => true, stream, initial = '' } = {}) {
   }
   const component = load(new URL('../../web/frontend/src/components/ChatPage.tsx', import.meta.url).pathname).default;
   const props = { apiDirect: false, session: { id: 's1', title: 'Draft', created: 1, messages: [] }, stream,
-    onSend, onStop() {}, onResend() {} };
+    onSend, onSteer, onStop() {}, onResend() {} };
   const render = () => { cursor = 0; effects = []; nodes = [];
     const walk = node => { if (!node || typeof node !== 'object') return;
       // Child components are outside this test's scope; host nodes expose ChatPage behavior.
@@ -121,4 +121,66 @@ test('pending admission freezes the attachment selection instead of silently cle
   assert.ok(nodes.some(node => node.props?.role === 'alert' && text(node).includes('接收中')));
   assert.ok(!nodes.some(node => node.props?.className?.startsWith('composer-file ')));
   accept(false); await pending;
+});
+
+const running = { content: 'working', thinking: '', activity: '', questions: [], lifecycle: 'running' };
+const control = (nodes, title) => nodes.find(node => node.type === 'button' && node.props.title === title);
+const editor = nodes => nodes.find(node => node.type === 'textarea');
+
+test('explicit guidance sends only to the active turn and shares the queue admission lock', async () => {
+  const calls = [];
+  let accept;
+  const ui = view({ stream: running, initial: '  revise it  ', onSend: () => { calls.push('queue'); return true; },
+    onSteer: value => { calls.push(value); return new Promise(resolve => { accept = resolve; }); } });
+  const nodes = await ui.ready();
+  assert.ok(control(nodes, '立即指导'));
+  const pending = control(nodes, '立即指导').props.onClick();
+  await control(nodes, '加入队列').props.onClick();
+  await control(nodes, '立即指导').props.onClick();
+  assert.deepEqual(calls, ['revise it']);
+  assert.equal(editor(ui.render()).props.value, '  revise it  ');
+  accept(true);
+  await pending;
+  assert.equal(editor(ui.render()).props.value, '');
+});
+
+test('Enter queues even when guidance is available, and unavailable guidance stays hidden', async () => {
+  const calls = [];
+  const ui = view({ stream: running, initial: 'next', onSend: value => { calls.push(value); return true; },
+    onSteer: () => { calls.push('steer'); return Promise.resolve(true); } });
+  editor(await ui.ready()).props.onKeyDown({ key: 'Enter', nativeEvent: {}, preventDefault() {} });
+  await settle();
+  assert.deepEqual(calls, ['next']);
+  assert.ok(!control(await view({ stream: running }).ready(), '立即指导'));
+  assert.ok(!control(await view({ onSteer: async () => true }).ready(), '立即指导'));
+});
+
+test('unconfirmed guidance and host errors preserve the draft and show feedback', async () => {
+  for (const [onSteer, feedback] of [[async () => false, '草稿已保留'], [async () => { throw new Error('引擎尚未确认接收'); }, '引擎尚未确认接收']]) {
+    const ui = view({ stream: running, initial: 'keep guidance', onSteer });
+    const nodes = await ui.ready();
+    assert.ok(control(nodes, '立即指导'));
+    await control(nodes, '立即指导').props.onClick();
+    assert.equal(editor(ui.render()).props.value, 'keep guidance');
+    assert.ok(ui.nodes.some(node => node.props?.role === 'alert' && text(node).includes(feedback)));
+    assert.equal(JSON.parse(ui.local.get('scope:easel_chat_draft:s1')).text, 'keep guidance');
+  }
+});
+
+test('guidance cannot discard pending attachments', async () => {
+  let steerCount = 0;
+  const ui = view({ stream: running, initial: 'keep both', onSteer: async () => { steerCount++; return true; } });
+  const nodes = await ui.ready();
+  const button = control(nodes, '立即指导');
+  assert.ok(button);
+  nodes.find(node => node.props?.onDrop).props.onDrop({
+    preventDefault() {}, dataTransfer: { files: [new File(['x'], 'pending.txt')] },
+  });
+  const withAttachment = control(ui.render(), '立即指导');
+  assert.ok(!withAttachment || withAttachment.props.disabled);
+  await button.props.onClick();
+  assert.equal(steerCount, 0);
+  const interrupted = view({ stream: running, initial: 'restore later', onSteer: async () => true,
+    interruptedFiles: [{ name: 'previous.txt', size: 12, mime: 'text/plain' }] });
+  assert.ok(!control(await interrupted.ready(), '立即指导'));
 });

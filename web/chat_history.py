@@ -98,6 +98,37 @@ class ChatHistoryStore:
             connection.execute("INSERT INTO turn_claims VALUES(?,?,?,?)", (turn_id, session_id, payload_hash, os.getpid()))
         return True, {"sessionId": session_id, "payloadHash": payload_hash, "ownerPid": os.getpid()}
 
+    def steer_receipt(self, request_id: str) -> dict | None:
+        with self._connect() as connection:
+            if not connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='steer_receipts'").fetchone():
+                return None
+            row = connection.execute(
+                "SELECT payload_hash,status FROM steer_receipts WHERE request_id=?", (request_id,)).fetchone()
+        return {"payloadHash": row[0], "status": row[1]} if row else None
+
+    def claim_steer(self, request_id: str, payload_hash: str) -> bool:
+        """Reserve a scoped request before its first and only native send."""
+        with self._connect() as connection:
+            # A legacy catalog can be open under an existing read transaction.
+            # Only a real steer write should require this schema upgrade.
+            connection.execute("CREATE TABLE IF NOT EXISTS steer_receipts "
+                "(request_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, status TEXT NOT NULL)")
+            result = connection.execute(
+                "INSERT OR IGNORE INTO steer_receipts VALUES(?,?,'unconfirmed')",
+                (request_id, payload_hash))
+            return result.rowcount == 1
+
+    def finish_steer(self, request_id: str, payload_hash: str, status: str) -> None:
+        if status not in ("accepted", "rejected"):
+            raise ValueError("invalid steer receipt status")
+        with self._connect() as connection:
+            result = connection.execute(
+                "UPDATE steer_receipts SET status=? WHERE request_id=? AND payload_hash=? AND status='unconfirmed'",
+                (status, request_id, payload_hash))
+            if result.rowcount != 1:
+                raise sqlite3.IntegrityError("steer reservation is no longer available")
+
     def merge(self, values: list[dict]) -> list[dict]:
         if not isinstance(values, list):
             raise ValueError("会话列表无效")

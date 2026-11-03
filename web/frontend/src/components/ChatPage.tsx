@@ -19,6 +19,7 @@ interface ChatPageProps {
   session: ChatSession;
   stream?: StreamState;          // 进行中的流式态（来自 App，切页也不丢）
   onSend: (displayText: string, attachments?: UploadedFile[]) => boolean | Promise<boolean>;
+  onSteer?: (text: string) => Promise<boolean>;
   onStop: () => void;
   onResend: (
     userIndex: number,
@@ -49,7 +50,7 @@ function greeting(): string {
   return `${g}，想创作点什么？`;
 }
 
-export default function ChatPage({ apiDirect, session, stream, onSend, onStop, onResend, onQuestionAnswered, onQuestionClosed,
+export default function ChatPage({ apiDirect, session, stream, onSend, onSteer, onStop, onResend, onQuestionAnswered, onQuestionClosed,
   queue = [], onRemoveQueued, queuePaused, onResumeQueue, historyNotice }: ChatPageProps) {
   const [initialDraft] = useState(() => loadChatDraft(session.id));
   const [input, setInput] = useState(initialDraft.text);
@@ -85,6 +86,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
   const failedUploads = uploadItems.some(item => item.status === 'failed');
   const attachments = uploads.ready;
   const canSend = (!!input.trim() || attachments.length > 0) && !uploading && !failedUploads && !sending;
+  const showSteer = isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0;
   const waitingApproval = stream?.questions?.some(question => (!question.status || question.status === 'pending')
     && (question.requiresHuman || question.kind === 'approval' || question.publication));
   const lifecycleLabel = stream?.lifecycle === 'waiting_input' ? (waitingApproval ? '等待你批准' : '等待补充信息')
@@ -128,24 +130,32 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
     }
   }, [input]);
 
-  const handleSend = async () => {
+  const submitDraft = async (intent: 'send' | 'steer') => {
     const trimmed = input.trim();
-    if ((!trimmed && attachments.length === 0) || uploading || failedUploads || sendingRef.current) return;
+    if (sendingRef.current) return;
+    if (intent === 'steer' && (!showSteer || !trimmed || uploads.snapshot.length > 0)) return;
+    if ((!trimmed && attachments.length === 0) || uploading || failedUploads) return;
     sendingRef.current = true; setSending(true); setSubmitError('');
     try {
-      const accepted = await onSend(trimmed, attachments);
-      if (accepted !== true) { setSubmitError('任务尚未接收，草稿已保留，请重试。'); return; }
-      clearChatDraft(session.id);
+      const accepted = await (intent === 'steer' ? onSteer?.(trimmed) : onSend(trimmed, attachments));
+      if (accepted !== true) {
+        if (mountedRef.current) setSubmitError(intent === 'steer'
+          ? '当前任务尚未确认接收指导，草稿已保留。' : '任务尚未接收，草稿已保留，请重试。');
+        return;
+      }
+      if (intent === 'send' || mountedRef.current) clearChatDraft(session.id);
       if (mountedRef.current) {
         setInput(''); uploads.clear(); setInterruptedFiles([]); reading.backToBottom();
       }
     } catch (error) {
-      if (mountedRef.current) setSubmitError(error instanceof Error ? error.message : '发送失败，草稿已保留。');
+      if (mountedRef.current) setSubmitError(error instanceof Error ? error.message
+        : intent === 'steer' ? '指导未确认，草稿已保留。' : '发送失败，草稿已保留。');
     } finally {
       sendingRef.current = false;
       if (mountedRef.current) setSending(false);
     }
   };
+  const handleSend = () => submitDraft('send');
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // 输入法确认候选词/英文的回车交给输入法处理，不能触发发送。
@@ -190,7 +200,11 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
       </div>}
       <div className="composer-top">
         {apiDirect ? <span className="composer-hint">API 直连 · 文字与附件分析</span>
-          : <BrushEntry onPick={(t) => { setInput(t); requestAnimationFrame(() => textareaRef.current?.focus()); }} />}
+          : <BrushEntry onPick={(t) => {
+            if (sendingRef.current) return;
+            setInput(t);
+            requestAnimationFrame(() => textareaRef.current?.focus());
+          }} />}
         <textarea
           ref={textareaRef}
           className="chat-input"
@@ -219,6 +233,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
         <div className="composer-send-controls">
           {isStreaming && <button className="composer-stop-btn" onClick={onStop} title="停止当前任务" disabled={stream?.lifecycle === 'stopping'}>
             <IconStop size={14} /><span>{stream?.lifecycle === 'stopping' ? '停止中' : stream?.lifecycle === 'stop_failed' ? '重试停止' : '停止'}</span></button>}
+          {showSteer && <button type="button" className="composer-attach-btn" title="立即指导"
+            onClick={() => submitDraft('steer')} disabled={!canSend}>立即指导</button>}
           <button className={`send-btn ${isStreaming ? 'send-btn-queue' : ''}`} onClick={handleSend} disabled={!canSend}
             title={isStreaming ? '加入队列' : '发送'} aria-label={isStreaming ? '加入队列' : '发送'}>
             {isStreaming ? <span>加入队列</span> : <IconArrowUp size={17} />}

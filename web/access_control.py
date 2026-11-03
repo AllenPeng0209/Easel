@@ -158,7 +158,7 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
     if method == "OPTIONS":
         # Authenticated same-origin preflights have no business mutation.
         return "view"
-    if (resource in {"chat", "chat/stream", "chat/stop", "chat/question/answer", "chat/question/status",
+    if (resource in {"chat", "chat/stream", "chat/stop", "chat/steer", "chat/question/answer", "chat/question/status",
                      "upload", "upload/local", "profile/build", "schedule", "ideas", "workshop/projects"}
             or re.fullmatch(r"persona/[^/]+(?:/file)?|session/[^/]+", resource)
             or re.fullmatch(r"schedule/[^/]+|ideas/[^/]+|publish/[^/]+(?:/sms)?|manual-publish/[^/]+/export", resource)

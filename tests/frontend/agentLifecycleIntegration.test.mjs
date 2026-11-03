@@ -352,3 +352,35 @@ test('opening an unread chat in a hidden tab defers the read acknowledgement', (
   assert.equal(ui.saved.at(-1)[0].unreadCompletion, false);
   cleanup();
 });
+
+test('Steer reuses the same request after an uncertain reply and binds to the running turn', async () => {
+  const sent = [];
+  const stored = new Map();
+  const ui = appBoundary([{ id: 'chat', title: 'Chat', created: 1, messages: [] }], {
+    crypto: { randomUUID: () => 'steer-request' },
+    sessionStorage: { getItem: key => stored.get(key), setItem: (key, value) => stored.set(key, value), removeItem: key => stored.delete(key) },
+    steerChat: async (...args) => {
+      sent.push(args);
+      return { status: sent.length === 1 ? 'unconfirmed' : 'accepted' };
+    },
+  });
+  const owner = { turnId: 'active-turn', questions: [], events: [] };
+  ui.context.streamAcc.current.chat = owner;
+  ui.context.streams.chat = { lifecycle: 'running', steerTurnId: 'previous-turn' };
+  const steer = ui.callback('handleSteer');
+  await assert.rejects(steer('chat', '调整方向'), /无法接收指导/);
+  assert.equal(sent.length, 0);
+  ui.context.streams.chat.steerTurnId = 'active-turn';
+  await assert.rejects(steer('chat', '调整方向'), /回执待核实/);
+  owner.steerAttempt = undefined;
+  await assert.rejects(steer('chat', '不同的指导'), /上一条指导/);
+  assert.equal(await steer('chat', '调整方向'), true);
+  assert.deepEqual(sent, [
+    ['chat', 'active-turn', 'steer-request', '调整方向'],
+    ['chat', 'active-turn', 'steer-request', '调整方向'],
+  ]);
+  owner.steerAttempt = undefined;
+  assert.equal(await steer('chat', '调整方向'), true);
+  assert.deepEqual(sent.at(-1), ['chat', 'active-turn', 'steer-request', '调整方向']);
+  assert.equal(ui.requests.length, 0);
+});

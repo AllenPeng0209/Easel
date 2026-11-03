@@ -10,9 +10,14 @@ class HarnessError(Exception):
     pass
 
 
+class SteerRejected(HarnessError):
+    """The active turn did not accept this input or nothing was sent."""
+
+
 Emit = Callable[[str, str | dict], None]
 Ask = Callable[[list[dict]], Awaitable[dict[str, list[str]]]]
 Bind = Callable[[str], None]
+Steer = Callable[[str], Awaitable[None]]
 # The host owns authorization, filesystem validation and durable receipts.
 Present = Callable[[list[dict], str], Awaitable[list[dict] | None]]
 # Publication authority, exact-payload approval and receipts remain host-owned.
@@ -48,6 +53,7 @@ class RunRequest:
     publish: Publish | None = None
     publication_status: PublicationStatus | None = None
     business_objects: BusinessObjects | None = None
+    bind_steer: Callable[[Steer | None], None] | None = None
 
 
 class Adapter(Protocol):

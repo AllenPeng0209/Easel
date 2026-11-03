@@ -61,7 +61,7 @@ from easel.direct_api import (DirectAPIError, SYSTEM_PROMPT, api_config, api_mod
 from easel.request_identity import current_user, actor_key, ActorMap, ActorSet
 from easel import harnesses
 from easel.harnesses import store as harness_store
-from easel.harnesses.base import HarnessError, RunRequest
+from easel.harnesses.base import HarnessError, RunRequest, Steer, SteerRejected
 from easel.chat_artifacts import ArtifactError, ChatArtifactStore
 from easel.artifact_archives import ArchiveSnapshotReader
 from web.publication_workflow import PublicationWorkflow
@@ -3457,6 +3457,10 @@ class _HarnessProc(_GatewayHttpProc):
     def __init__(self) -> None:
         super().__init__()
         self._cancel_requested = False
+        self.turn_id = ""
+        self.steer: Steer | None = None
+        self.steer_task: asyncio.Task | None = None
+        self.steer_emit = None
 
     def terminate(self) -> None:
         if self._task is not None:
@@ -3558,10 +3562,23 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         if kind == "token":
             full_text.append(safe)
         elif kind == "agent_event" and isinstance(safe, dict):
-            agent_events.append(safe)
+            if safe.get("kind") != "steer_capability":
+                agent_events.append(safe)
         elif kind == "error":
             error_message = safe if isinstance(safe, str) and safe else "Agent 执行失败"
         emit(kind, safe)
+
+    capability_sequence = 0
+
+    def bind_steer(steer: Steer | None):
+        nonlocal capability_sequence
+        if proc.steer is steer:
+            return
+        proc.steer = steer
+        capability_sequence += 1
+        receive("agent_event", {"id": f"steer-capability:{turn_id}:{capability_sequence}",
+            "kind": "steer_capability", "turnId": turn_id,
+            "status": "ready" if steer is not None else "closed"})
 
     async def ask(questions):
         if not interactive:
@@ -3716,6 +3733,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         harness_store.bind(_sessions_dir(), sk, runtime, native_id)
         _STOPPED_CHAT.discard(sk)
         proc._task = task
+        proc.turn_id = turn_id
+        proc.steer_emit = receive
         _RUNNING_CHAT[sk] = proc
         _save_turn(pk, "running", "", {"turn_id": turn_id, "runtime": runtime})
         claimed = True
@@ -3727,7 +3746,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                              config["models"].get(runtime, ""), config["sandbox"], timeout,
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
                              autonomy_mode=req.autonomyMode, present=present, publish=publish,
-                             publication_status=publication_status, business_objects=business_objects)
+                             publication_status=publication_status, business_objects=business_objects,
+                             bind_steer=bind_steer if runtime == "codex" and interactive else None)
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
             lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
@@ -3747,6 +3767,11 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         error_message = "Agent 执行失败，请检查本机 CLI、登录和模型配置"
         emit("error", error_message)
     finally:
+        bind_steer(None)
+        if proc.steer_task is not None:
+            # Acknowledgements must enter the live journal and final snapshot
+            # before the turn's terminal event. The native wait is bounded.
+            await asyncio.gather(proc.steer_task, return_exceptions=True)
         if privilege_watch is not None:
             privilege_watch.cancel()
             await asyncio.gather(privilege_watch, return_exceptions=True)
@@ -5186,6 +5211,91 @@ async def api_question_status(req: QuestionStatusRequest):
 
 class StopRequest(BaseModel):
     sessionId: str | None = None
+
+
+class ChatSteerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    sessionId: str = Field(min_length=1, max_length=256)
+    turnId: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,160}$")
+    requestId: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,160}$")
+    message: str = Field(min_length=1, max_length=8000)
+
+    @model_validator(mode="after")
+    def validate_input(self):
+        if any(ord(char) < 32 or ord(char) == 127 for char in self.sessionId) or not self.message.strip():
+            raise ValueError("会话标识或追加指令无效")
+        return self
+
+
+_CHAT_STEER_TIMEOUT_SECONDS = 10
+
+
+def _steer_receipt_response(receipt: dict, payload_hash: str) -> dict:
+    if receipt["payloadHash"] != payload_hash:
+        raise HTTPException(409, "同一追加请求编号已绑定不同的任务或消息")
+    if receipt["status"] == "rejected":
+        raise HTTPException(409, "当前运行轮次未接受这条追加指令")
+    return {"status": receipt["status"]}
+
+
+async def _send_chat_steer(req: ChatSteerRequest, proc: _HarnessProc, steer: Steer,
+                           catalog: ChatHistoryStore, payload_hash: str) -> dict:
+    try:
+        _require_host_tools()
+        if (_RUNNING_CHAT.get(req.sessionId) is not proc or proc.steer is not steer
+                or proc.poll() is not None or req.sessionId in _STOPPED_CHAT):
+            raise SteerRejected("当前运行轮次不再接受追加指令")
+        await asyncio.wait_for(steer(req.message), _CHAT_STEER_TIMEOUT_SECONDS)
+        status = "accepted"
+    except HTTPException:
+        try:
+            catalog.finish_steer(req.requestId, payload_hash, "rejected")
+        except (OSError, sqlite3.Error):
+            pass  # Retain the pre-send reservation if the denial cannot be recorded.
+        raise
+    except SteerRejected:
+        status = "rejected"
+    except Exception:
+        # Transport failure and timeouts cannot tell whether the input arrived.
+        # The durable reservation prevents sending it a second time.
+        return {"status": "unconfirmed"}
+    try:
+        catalog.finish_steer(req.requestId, payload_hash, status)
+    except (OSError, sqlite3.Error):
+        return {"status": "unconfirmed"}
+    if status == "rejected":
+        raise HTTPException(409, "当前运行轮次未接受这条追加指令")
+    proc.steer_emit("agent_event", {"id": f"steer:{req.requestId}", "kind": "steer",
+        "requestId": req.requestId, "turnId": req.turnId, "text": _scrub_secrets(req.message),
+        "status": "accepted", "completedAt": int(time.time() * 1000)})
+    return {"status": "accepted"}
+
+
+@app.post("/api/chat/steer")
+async def api_chat_steer(req: ChatSteerRequest):
+    _require_host_tools()
+    payload_hash = hashlib.sha256(json.dumps(req.model_dump(), sort_keys=True,
+        ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+    try:
+        catalog = ChatHistoryStore(_sessions_dir())
+        receipt = catalog.steer_receipt(req.requestId)
+        if receipt is not None:
+            return _steer_receipt_response(receipt, payload_hash)
+        proc = _RUNNING_CHAT.get(req.sessionId)
+        if (not isinstance(proc, _HarnessProc) or proc.turn_id != req.turnId
+                or proc.steer is None or proc.poll() is not None or req.sessionId in _STOPPED_CHAT):
+            raise HTTPException(409, "当前任务尚未就绪、已结束或不支持追加指令")
+        if proc.steer_task is not None and not proc.steer_task.done():
+            raise HTTPException(409, "另一条追加指令正在等待确认")
+        if not catalog.claim_steer(req.requestId, payload_hash):
+            return _steer_receipt_response(catalog.steer_receipt(req.requestId), payload_hash)
+    except (OSError, sqlite3.Error):
+        raise HTTPException(503, "追加请求记录不可用，未发送指令") from None
+    proc.steer_task = asyncio.create_task(_send_chat_steer(req, proc, proc.steer, catalog, payload_hash))
+    # A disconnected requester may no longer observe a definite rejection.
+    proc.steer_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+    return await asyncio.shield(proc.steer_task)
 
 
 _CHAT_STOP_CONFIRM_SECONDS = 5
