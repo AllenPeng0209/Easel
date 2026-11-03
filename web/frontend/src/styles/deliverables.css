@@ -46,3 +46,14 @@
 .deliverable-history small { display: block; color: var(--text-tertiary); font-size: 10px; }
 .deliverable-history a { flex: none; white-space: nowrap; color: var(--accent-start); }
 .deliverable-history button { border: 0; border-radius: 4px; padding: 3px 5px; margin-top: 6px; font: inherit; color: var(--text-secondary); background: var(--surface-hover); cursor: pointer; }
+
+.deliverable-overview { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 10px; }
+.deliverable-overview__row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 7px 10px; }
+.deliverable-overview__row + .deliverable-overview__row { border-top: 1px solid var(--border); }
+.deliverable-overview__file { display: grid; justify-items: start; gap: 2px; min-width: 0; }
+.deliverable-overview__file strong, .deliverable-overview__preview { max-width: 100%; overflow-wrap: anywhere; font-size: 12px; }
+.deliverable-overview__preview { padding: 0; border: 0; background: transparent; color: var(--accent-start); font-weight: 600; text-align: left; cursor: pointer; }
+.deliverable-overview__preview:hover { text-decoration: underline; }
+.deliverable-overview__purpose { color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.deliverable-overview__row > :is(a, .deliverable-unavailable) { flex: none; }
+.deliverable-detail-cards[hidden] { display: none; }

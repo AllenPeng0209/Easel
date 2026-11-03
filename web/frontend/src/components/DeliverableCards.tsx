@@ -3,7 +3,7 @@
  * surface. Card markup, two-column summary and four-card expansion are migrated
  * from ui-deliverables/PresentedFileCard.tsx and Deliverables.tsx @ ce7073d.
  */
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useId, useMemo, useState, useSyncExternalStore } from 'react';
 import type { MouseEvent } from 'react';
 import { deliverablePreviewCapability, deliverableTypeLabel, deliverableVersionsUrl, normalizeDeliverable, normalizeDeliverableVersions,
   safeDeliverableHref, type ChatDeliverable } from '../lib/deliverables';
@@ -102,11 +102,16 @@ export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
 }) {
   const [expanded, setExpanded] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
+  const detailsId = useId();
   const files = useMemo(() => artifacts.map(normalizeDeliverable).filter((file): file is ChatDeliverable => !!file), [artifacts]);
   const selected = files.find(file => file.artifactId === selectedId);
   if (!files.length) return null;
-  const collapsible = files.length > 4;
-  const presented = collapsible && !expanded ? files.slice(0, 4) : files;
+  const hasOverview = files.length > 1;
+  const presented = files.map(file => {
+    const href = safeDeliverableHref(file);
+    return { file, href, available: file.status === 'available' && !!href,
+      previewAvailable: !!deliverablePreviewCapability(file) };
+  });
   const openFile = (file: ChatDeliverable, trigger?: HTMLElement) => {
     if (!deliverablePreviewCapability(file)) return;
     if (onOpenDeliverable && trigger) onOpenDeliverable(file, trigger);
@@ -118,31 +123,50 @@ export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
       content: [{ type: 'text', text: `本轮声明了 ${files.length} 个交付文件。` }],
     }} />
     <div className={css.root}>
-      <div className={css.presented} data-presented-files-row data-single={files.length === 1 ? true : undefined}>
-        {presented.map((file, index) => {
-          const href = safeDeliverableHref(file);
-          const available = file.status === 'available' && !!href;
-          const previewAvailable = !!deliverablePreviewCapability(file);
-          return <div key={`${file.turnId}:${file.path}`} data-artifact-id={file.artifactId}>
-            <PresentedFileCard file={{ path: file.path, description: file.description, seq: file.createdAt, index }}
-              cwd={undefined} phase={available ? undefined : 'error'} host={null} t={t} disabled={!available}
-              previewAvailable={previewAvailable} onPreview={(event?: MouseEvent<HTMLButtonElement>) => openFile(file, event?.currentTarget)}
-              contextMenuProps={{}} metadata={<span className="deliverable-meta">
-                <span data-deliverable-type>{deliverableTypeLabel(file)}</span>
-                <span className="deliverable-size" title={`${file.size.toLocaleString('zh-CN')} 字节`}>{fileSizeText(file.size)}</span>
-                {available && !previewAvailable && <span data-deliverable-download-only>不支持预览</span>}
-              </span>}
-              actions={<div className="deliverable-actions">
-                {available ? <a className="deliverable-download" href={`${href}?download=1`}
-                  download={file.name} aria-label={`下载：${file.name}`}>下载</a>
-                  : <span className="deliverable-unavailable" role="status">暂不可用</span>}
-              </div>} />
-            <DeliverableVersionDetails key={file.artifactId} file={file} />
-          </div>;
-        })}
+      {hasOverview && <ul className="deliverable-overview" data-deliverable-overview aria-label="本轮交付物总览">
+        {presented.map(({ file, href, available, previewAvailable }) =>
+          <li key={file.artifactId} className="deliverable-overview__row" data-deliverable-overview-id={file.artifactId}>
+            <div className="deliverable-overview__file">
+              {previewAvailable ? <button type="button" className="deliverable-overview__preview"
+                data-deliverable-overview-preview aria-label={`预览交付：${file.name}`}
+                title={file.name} onClick={event => openFile(file, event.currentTarget)}>{file.name}</button>
+                : <strong title={file.name}>{file.name}</strong>}
+              <span className="deliverable-overview__purpose">{file.description || '未提供用途说明'}</span>
+              <span className="deliverable-meta">
+                <span>{deliverableTypeLabel(file)}</span>
+                <span title={`${file.size.toLocaleString('zh-CN')} 字节`}>{fileSizeText(file.size)}</span>
+                {available && !previewAvailable && <span>不支持预览</span>}
+              </span>
+            </div>
+            {available ? <a className="deliverable-download" href={`${href}?download=1`}
+              download={file.name} aria-label={`下载：${file.name}`}>下载</a>
+              : <span className="deliverable-unavailable">暂不可用</span>}
+          </li>)}
+      </ul>}
+      {hasOverview && <button type="button" className={css.toggle} data-deliverable-details-toggle
+        aria-expanded={expanded} aria-controls={detailsId}
+        onClick={() => setExpanded(value => !value)}>{expanded ? '收起交付详情' : '展开交付详情与版本'}</button>}
+      <div id={detailsId} className="deliverable-detail-cards" hidden={hasOverview && !expanded} data-deliverable-detail-cards>
+        <div className={css.presented} data-presented-files-row data-single={!hasOverview || undefined}>
+          {presented.map(({ file, href, available, previewAvailable }, index) =>
+            <div key={file.artifactId} data-artifact-id={file.artifactId}>
+              <PresentedFileCard file={{ path: file.path, description: file.description, seq: file.createdAt, index }}
+                cwd={undefined} phase={available ? undefined : 'error'} host={null} t={t} disabled={!available}
+                previewAvailable={previewAvailable} onPreview={(event?: MouseEvent<HTMLButtonElement>) => openFile(file, event?.currentTarget)}
+                contextMenuProps={{}} metadata={<span className="deliverable-meta">
+                  <span data-deliverable-type>{deliverableTypeLabel(file)}</span>
+                  <span className="deliverable-size" title={`${file.size.toLocaleString('zh-CN')} 字节`}>{fileSizeText(file.size)}</span>
+                  {available && !previewAvailable && <span data-deliverable-download-only>不支持预览</span>}
+                </span>}
+                actions={<div className="deliverable-actions">
+                  {available ? <a className="deliverable-download" href={`${href}?download=1`}
+                    download={file.name} aria-label={`下载：${file.name}`}>下载</a>
+                    : <span className="deliverable-unavailable" role="status">暂不可用</span>}
+                </div>} />
+              <DeliverableVersionDetails file={file} />
+            </div>)}
+        </div>
       </div>
-      {collapsible && <button type="button" className={css.toggle} aria-expanded={expanded}
-        onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : `查看全部 ${files.length} 个文件`}</button>}
     </div>
     {selected && <div className="deliverable-preview">
       <div className="deliverable-preview__heading"><span>{selected?.name}{selected?.storageMode === 'snapshot' ? ` · 交付 V${selected.revision}` : ''}</span>

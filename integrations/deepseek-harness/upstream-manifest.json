@@ -7119,26 +7119,26 @@
     {
       "feature_id": "D01",
       "destination_path": "web/frontend/src/components/DeliverableCards.tsx",
-      "destination_sha256": "1716a68b469daea984be90c46da6628e7eaa650466a4f42f933cb27fc48003ca",
+      "destination_sha256": "6d7a4982f0a6f81dab7d0448258be9ccbee6a9a0f2bc7b0e0e7ae0e801ffd297",
       "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.tsx",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "组合已迁移PresentedFileCard/PresentRow与Easel受控资源访问/预览；组件Host适配，不登记成原样复制。",
-      "verification_status": "verified_D02_download_and_preview_are_independent",
-      "prior_feature_sha256": "749a5a06c6ac60a50620e152e457bb9e9dec5ec5664d2ebbabf6d3fc562e2404",
-      "current_feature": "D02"
+      "changes": "保留上游按声明顺序和两列卡片详情，适配多文件用途、类型、固定版本预览及下载总览。",
+      "verification_status": "verified_D03_ordered_overview_exact_preview_and_carousel",
+      "prior_feature_sha256": "1716a68b469daea984be90c46da6628e7eaa650466a4f42f933cb27fc48003ca",
+      "current_feature": "D03"
     },
     {
       "feature_id": "D01",
       "destination_path": "web/frontend/src/styles/deliverables.css",
-      "destination_sha256": "234f179df557f274c554235a0c3701325145359267f373724f92d0c9689ef1e8",
+      "destination_sha256": "681b7873f34d302b168a62eaee0296221e704ea0ad2c209f8d32594c37a4e40d",
       "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.module.css",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel主题token和容器样式适配。",
-      "verification_status": "verified_D02_download_and_preview_are_independent",
-      "prior_feature_sha256": "f4729b3e0da21e774865bf62b5444d4bbb2b0a80c1ee927278173865a0457d33",
-      "current_feature": "D02"
+      "changes": "Easel 主题和交付总览列表样式。",
+      "verification_status": "verified_D03_ordered_overview_exact_preview_and_carousel",
+      "prior_feature_sha256": "234f179df557f274c554235a0c3701325145359267f373724f92d0c9689ef1e8",
+      "current_feature": "D03"
     },
     {
       "feature_id": "D01",
