@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { fetchIdeas, createIdea, updateIdea, deleteIdea, createSchedule } from '../lib/api';
 import type { Idea, IdeaInput } from '../lib/api';
 import { IconIdea, IconEdit, IconTrash, IconChat, IconCalendar, IconChevron } from './icons';
@@ -6,6 +6,7 @@ import { useIpPermissions } from './ProjectSpace';
 
 interface IdeasPageProps {
   onUseTopic: (title: string) => void;
+  initialIdeaId?: string;
 }
 
 const COLUMNS: { key: string; label: string; color: string }[] = [
@@ -16,15 +17,41 @@ const COLUMNS: { key: string; label: string; color: string }[] = [
 const NEXT: Record<string, string> = { pending: 'doing', doing: 'done', done: 'pending' };
 const EMPTY: IdeaInput = { title: '', note: '', source: '', status: 'pending' };
 
-export default function IdeasPage({ onUseTopic }: IdeasPageProps) {
+export default function IdeasPage({ onUseTopic, initialIdeaId }: IdeasPageProps) {
   const { canOperate } = useIpPermissions();
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [form, setForm] = useState<IdeaInput | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
+  const [readState, setReadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const loadSequence = useRef(0);
+  const mounted = useRef(true);
+  const targetCard = useRef<HTMLDivElement>(null);
+  const requestedId = initialIdeaId || '';
+  const targetId = /^[A-Za-z0-9_-]{1,160}$/.test(requestedId) ? requestedId : '';
+  const unavailable = !!requestedId && (!targetId || readState === 'error'
+    || (readState === 'ready' && !ideas.some(item => item.id === targetId)));
 
-  const load = useCallback(() => { fetchIdeas().then(setIdeas).catch(() => {}); }, []);
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback(() => {
+    const sequence = ++loadSequence.current;
+    setReadState('loading');
+    fetchIdeas().then(items => {
+      if (!mounted.current || sequence !== loadSequence.current) return;
+      setIdeas(items); setReadState('ready');
+    }).catch(() => {
+      if (mounted.current && sequence === loadSequence.current) setReadState('error');
+    });
+  }, []);
+  useEffect(() => {
+    mounted.current = true; load();
+    return () => { mounted.current = false; loadSequence.current += 1; };
+  }, [load]);
+  useEffect(() => { setForm(null); setEditId(null); }, [requestedId]);
+  useEffect(() => {
+    if (!targetId || unavailable || readState !== 'ready') return;
+    targetCard.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    targetCard.current?.focus({ preventScroll: true });
+  }, [targetId, unavailable, readState, ideas]);
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 2200); };
   const byStatus = useMemo(() => {
@@ -62,6 +89,9 @@ export default function IdeasPage({ onUseTopic }: IdeasPageProps) {
       </div>
 
       {!canOperate && <p className="page-subtitle" role="status">当前为查看者权限，可以浏览选题；编辑、创作与排期由 IP 的负责人和运营者处理。</p>}
+      {unavailable && <p className="page-subtitle" role="alert">指定选题不可用，可能已删除或当前 IP 无权查看。请返回选题列表核对。</p>}
+      {!!targetId && readState === 'loading' && <p className="page-subtitle" role="status">正在定位指定选题…</p>}
+      {!requestedId && readState === 'error' && <p className="page-subtitle" role="alert">选题暂时不可用，请重新读取。</p>}
 
       <div className="kanban">
         {COLUMNS.map((col) => (
@@ -73,7 +103,11 @@ export default function IdeasPage({ onUseTopic }: IdeasPageProps) {
             <div className="kanban-list">
               {byStatus[col.key].length === 0 && <div className="kanban-empty">{canOperate ? '拖点选题进来吧' : '暂时没有选题'}</div>}
               {byStatus[col.key].map((it) => (
-                <div key={it.id} className="card idea-card">
+                <div key={it.id} className="card idea-card" data-idea-id={it.id}
+                  data-idea-selected={it.id === targetId && !unavailable && readState === 'ready' ? true : undefined}
+                  ref={it.id === targetId ? targetCard : undefined} tabIndex={it.id === targetId ? -1 : undefined}
+                  aria-current={it.id === targetId && !unavailable && readState === 'ready' ? 'true' : undefined}
+                  style={it.id === targetId && !unavailable && readState === 'ready' ? { outline: '2px solid var(--accent-end)', outlineOffset: 3 } : undefined}>
                   {canOperate && <div className="idea-card-actions">
                     <button className="session-act" title="编辑" onClick={() => openEdit(it)}><IconEdit size={13} /></button>
                     <button className="session-act danger" title="删除" onClick={() => remove(it)}><IconTrash size={13} /></button>

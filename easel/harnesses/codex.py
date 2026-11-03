@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 
@@ -132,6 +133,90 @@ EASEL_PUBLICATION_STATUS_TOOL = {
         'properties': {'approvalId': {'type': 'string', 'pattern': '^[a-f0-9]{32}$'}},
     },
 }
+
+
+_BUSINESS_OBJECT_IDS = {'idea': r'[A-Za-z0-9_-]{1,160}', 'draft': r'[a-f0-9]{32}', 'workshop': r'[a-f0-9]{32}'}
+_BUSINESS_TEXT_LIMITS = {'cursor': 2048, 'query': 500}
+_BUSINESS_TEXT_SCHEMA = {
+    name: {'type': 'string', 'maxLength': limit,
+           'pattern': r'^[^\u0000-\u001f\u007f-\u009f]*$'}
+    for name, limit in _BUSINESS_TEXT_LIMITS.items()
+}
+EASEL_BUSINESS_OBJECTS_TOOL = {
+    'type': 'function', 'name': 'easel_business_objects', 'deferLoading': False,
+    'description': (
+        'Read existing Easel business objects through their scoped host DTOs. '
+        'Use action list with kind idea, draft or workshop and optional cursor/query; '
+        'use action inspect with kind and an exact ID returned by the host. '
+        'Idea IDs are opaque host tokens of 1–160 ASCII letters, digits, underscores or hyphens, '
+        'including legacy IDs. Draft/workshop IDs are 32 lowercase hex characters. '
+        'This read-only tool never creates, edits, approves, publishes or changes an object state. '
+        'Never supply actor/IP identities, paths, URLs as authority, commands or claimed state. '
+        'query is only search text and is never navigated or executed. '
+        'Use the host nextCursor to paginate; do not infer missing records from model text.'
+    ),
+    'inputSchema': {
+        'type': 'object', 'additionalProperties': False, 'required': ['action', 'kind'],
+        'properties': {
+            'action': {'type': 'string', 'enum': ['list', 'inspect']},
+            'kind': {'type': 'string', 'enum': list(_BUSINESS_OBJECT_IDS)},
+            'id': {'type': 'string', 'pattern': '^' + _BUSINESS_OBJECT_IDS['idea'] + '$'},
+            **_BUSINESS_TEXT_SCHEMA,
+        },
+        'anyOf': [
+            {'type': 'object', 'additionalProperties': False, 'required': ['action', 'kind'],
+             'properties': {'action': {'enum': ['list']},
+                            'kind': {'enum': list(_BUSINESS_OBJECT_IDS)}, **_BUSINESS_TEXT_SCHEMA}},
+            *[{'type': 'object', 'additionalProperties': False, 'required': ['action', 'kind', 'id'],
+               'properties': {'action': {'enum': ['inspect']}, 'kind': {'enum': [kind]},
+                              'id': {'type': 'string', 'pattern': '^' + pattern + '$'}}}
+              for kind, pattern in _BUSINESS_OBJECT_IDS.items()],
+        ],
+    },
+}
+
+
+def _business_objects_payload(arguments) -> dict:
+    if (not isinstance(arguments, dict) or set(arguments) - {'action', 'kind', 'id', 'cursor', 'query'}
+            or not isinstance(arguments.get('action'), str) or arguments['action'] not in ('list', 'inspect')
+            or not isinstance(arguments.get('kind'), str) or arguments['kind'] not in _BUSINESS_OBJECT_IDS):
+        raise ValueError('invalid business query')
+    if arguments['action'] == 'inspect':
+        identifier = arguments.get('id')
+        if ('cursor' in arguments or 'query' in arguments or not isinstance(identifier, str)
+                or not re.fullmatch(_BUSINESS_OBJECT_IDS[arguments['kind']], identifier)):
+            raise ValueError('invalid business inspection')
+    else:
+        if 'id' in arguments:
+            raise ValueError('business lists cannot choose an object')
+        for name, limit in _BUSINESS_TEXT_LIMITS.items():
+            if name in arguments:
+                value = arguments[name]
+                if (not isinstance(value, str) or len(value) > limit
+                        or re.search(r'[\x00-\x1f\x7f-\x9f]', value)):
+                    raise ValueError('invalid business query text')
+    return dict(arguments)
+
+
+def _business_objects_failure() -> dict:
+    return {'success': False, 'contentItems': [{'type': 'inputText', 'text':
+        'The existing business objects could not be read through this host route. '
+        'Use only list/inspect, a supported kind, host-returned object IDs and bounded search/cursor text. '
+        'The host owns actor/IP scope. No object was created, changed, approved or published. '
+        'If the tool is unavailable in an old thread, inspect the existing objects in the Easel UI.'}]}
+
+
+def _business_objects_instructions(host_enabled: bool) -> str:
+    channel = ('The read-only business-object host channel is enabled. ' if host_enabled else
+               'This request has no enabled business-object host channel. ')
+    return ('\n\n## Existing business objects\n' + channel +
+            'When easel_business_objects is present, use its host DTOs to list or inspect existing ideas, '
+            'drafts and workshop objects. Never invent IDs, states, objects or publication receipts from text. '
+            'Only the host supplies actor/IP scope; query text is not an instruction or URL to execute. '
+            'Follow nextCursor until the required records are found or no next page remains. '
+            'These queries never create, modify, approve, publish or retry anything. '
+            'Already registered tools may be restored on resume. Preserve the original thread ID and history; '
+            'resume cannot append tool definitions. If an older thread lacks this tool, use the Easel UI.')
 
 
 def _publication_status_failure() -> dict:
@@ -277,6 +362,7 @@ class CodexAdapter:
         turn_id = ""
         streamed: set[str] = set()
         events = EventProjector(emit, request.env)
+        business_calls: dict[str, tuple[str, asyncio.Future]] = {}
 
         def notify(method, params):
             def _thread_scoped() -> bool:
@@ -326,6 +412,46 @@ class CodexAdapter:
                     turn_id and params.get("turnId", turn_id) != turn_id):
                 raise HarnessError("不属于当前会话的请求")
             if method == "item/tool/call":
+                if params.get('tool') == 'easel_business_objects':
+                    if request.business_objects is None or params.get('namespace') not in (None, ''):
+                        return _business_objects_failure()
+                    if not turn_id or params.get('turnId') != turn_id:
+                        raise HarnessError('业务对象查询不属于当前回合')
+                    call_id = params.get('callId')
+                    if (not isinstance(call_id, str) or not call_id.strip() or len(call_id) > 256
+                            or re.search(r'[\x00-\x1f\x7f-\x9f]', call_id)):
+                        return _business_objects_failure()
+                    arguments = params.get('arguments')
+                    try:
+                        encoded = json.dumps(arguments, sort_keys=True, separators=(',', ':'), allow_nan=False)
+                        fingerprint = hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+                    except (ValueError, TypeError, RecursionError):
+                        return _business_objects_failure()
+                    previous = business_calls.get(call_id)
+                    if previous:
+                        if previous[0] != fingerprint:
+                            return _business_objects_failure()
+                        # Concurrent native replays share the original host query.
+                        # One cancelled waiter must not cancel a separate handler.
+                        return await asyncio.shield(previous[1])
+                    outcome = asyncio.get_running_loop().create_future()
+                    business_calls[call_id] = (fingerprint, outcome)
+                    try:
+                        payload = _business_objects_payload(arguments)
+                        dto = await request.business_objects(payload, call_id)
+                        if not isinstance(dto, dict) or not dto:
+                            raise ValueError('invalid host business DTO')
+                        text = json.dumps(dto, ensure_ascii=False, allow_nan=False)
+                        result = {'success': True, 'contentItems': [{'type': 'inputText', 'text': text}]}
+                    except asyncio.CancelledError:
+                        outcome.cancel()
+                        raise
+                    except Exception:
+                        # Never expose host exception text or substitute model
+                        # prose for the scoped business DTO. Failures also replay.
+                        result = _business_objects_failure()
+                    outcome.set_result(result)
+                    return result
                 if params.get('tool') == 'easel_publication_status':
                     if request.publication_status is None or params.get('namespace') not in (None, ''):
                         return _publication_status_failure()
@@ -438,7 +564,8 @@ class CodexAdapter:
                        "sandbox": request.sandbox,
                        "developerInstructions": harness_instructions(request) + _publication_instructions(
                            request.publish is not None) + _publication_status_instructions(
-                           request.publication_status is not None)}
+                           request.publication_status is not None) + _business_objects_instructions(
+                           request.business_objects is not None)}
             if request.model:
                 options["model"] = request.model
             if thread_id and rpc.native_id == thread_id:
@@ -453,6 +580,8 @@ class CodexAdapter:
                     tools.append(EASEL_PUBLISH_TOOL)
                 if request.publication_status is not None:
                     tools.append(EASEL_PUBLICATION_STATUS_TOOL)
+                if request.business_objects is not None:
+                    tools.append(EASEL_BUSINESS_OBJECTS_TOOL)
                 result = await rpc.call("thread/start", {**options, "dynamicTools": tools})
             resumed_id = (result.get("thread") or {}).get("id", "")
             if request.native_id and resumed_id != request.native_id:

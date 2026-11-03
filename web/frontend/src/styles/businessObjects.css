@@ -1,0 +1,39 @@
+/* Copyright (c) 2026 DeepSeek. MIT License.
+ * Header/summary/detail-field layout adapted from packages/client/ui-tool/src/client/tool/components/ToolRow.module.css,
+ * ToolDetails.module.css and the existing ui-primitives DisclosureRow @ ce7073d51254c26cd63b22a60835b8f948deb447.
+ * Easel changes: scoped business DTO fields and read-only local navigation.
+ * Notice: integrations/deepseek-harness/LICENSE.
+ */
+.business-object { width: 100%; min-width: 0; color: var(--dsw-alias-label-secondary, var(--text-secondary)); }
+.business-object__header { min-width: 0; min-height: 28px; padding: 0 6px; border-radius: var(--dsw-radius-md, 8px); }
+.business-object__heading { flex: 1; min-width: 0; }
+.business-object__heading-content { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.business-object__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.business-object__tail { display: inline-flex; flex: none; align-items: center; gap: 8px; font-size: 12px; }
+.business-object__refresh { border: 0; border-radius: 4px; padding: 2px 4px; background: transparent; color: inherit; cursor: pointer; font: inherit; white-space: nowrap; }
+.business-object__refresh:disabled { opacity: .5; cursor: default; }
+.business-object__refresh:focus-visible, .business-object__header:focus-visible, .business-object code:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--accent-end)); outline-offset: 2px; }
+.business-object__facts { display: flex; flex-wrap: wrap; gap: 3px 12px; padding: 3px 6px 6px 28px; font-size: 11px; line-height: 1.6; color: var(--dsw-alias-label-tertiary, var(--text-tertiary)); }
+.business-object code { font: 11px var(--ds-font-family-code, monospace); overflow-wrap: anywhere; }
+.business-object__details { min-width: 0; padding: 8px 8px 8px 28px; font-size: 12px; line-height: 1.7; }
+.business-object__summary, .business-object__note { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.business-object__draft-preview { margin: 0 0 8px; }
+.business-object__draft-preview pre { max-height: 26rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px; user-select: text; }
+.business-object__fields { display: grid; grid-template-columns: 125px minmax(0, 1fr); gap: 3px 10px; margin: 0 0 10px; }
+.business-object__fields dt { color: var(--dsw-alias-label-tertiary, var(--text-tertiary)); }
+.business-object__fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.business-object__workshop h4 { margin: 12px 0 5px; color: var(--dsw-alias-label-secondary, var(--text-secondary)); font-size: 12px; font-weight: 500; }
+.business-object__workshop p { margin: 3px 0; white-space: pre-wrap; }
+.business-object__workshop ul { display: flex; flex-direction: column; gap: 6px; padding: 0; margin: 0; list-style: none; }
+.business-object__workshop li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 10px; padding: 5px 8px; border-radius: var(--dsw-radius-sm, 5px); background: var(--dsw-alias-bg-module-platform, var(--surface-2)); }
+.business-object__workshop li > p, .business-object__workshop li > code { flex-basis: 100%; overflow-wrap: anywhere; }
+.business-object__historical { color: var(--dsw-alias-label-tertiary, var(--text-tertiary)); }
+.business-object__actions { display: flex; gap: 10px; padding: 2px 8px 8px 28px; font-size: 12px; }
+.business-object__actions a { color: var(--dsw-alias-state-business-primary, var(--accent-end)); }
+.business-object__error, .business-object__unavailable { margin: 5px 0; padding-left: 6px; color: var(--dsw-alias-state-warn-primary, var(--amber)); font-size: 12px; line-height: 1.6; }
+@media (max-width: 660px) {
+  .business-object__tail { max-width: 45%; font-size: 11px; }
+  .business-object__tail > span { white-space: normal; text-align: right; }
+  .business-object__fields { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .business-object__fields dd { margin-bottom: 6px; }
+}

@@ -126,6 +126,8 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return "view" if read else "manage_ip"
     if resource == "chat/sessions" or re.fullmatch(r"chat/sessions/[^/]+", resource):
         return "operate"
+    if resource == 'chat/business-objects':
+        return 'operate' if read else None
     if re.fullmatch(r'publication-approvals/[a-f0-9]{32}(?:/decision)?', resource):
         return 'operate' if read or method == 'POST' else None
     if re.fullmatch(r'publish/[^/]+/prepare', resource):

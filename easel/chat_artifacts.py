@@ -432,6 +432,29 @@ class ChatArtifactStore:
             row = connection.execute('SELECT payload FROM artifacts WHERE id=?', (artifact_id,)).fetchone()
             return self._metadata(json.loads(row[0])) if row else None
 
+    def list_metadata(self, *, after_id: str = '', limit: int = 20) -> list[dict]:
+        """Read a private catalog page; older deliveries are never pruned.
+
+        IDs provide a deterministic keyset independent of mutable descriptions.
+        The caller owns authorization and the actor/IP-specific catalog root.
+        Availability remains a separate verified-blob observation.
+        """
+        if (not isinstance(after_id, str) or after_id and not re.fullmatch(r'[a-f0-9]{32}', after_id)
+                or type(limit) is not int or limit < 1):
+            raise ArtifactError('交付目录分页参数无效')
+        with self._connect() as connection:
+            values = []
+            for identifier, raw in connection.execute(
+                    'SELECT id,payload FROM artifacts WHERE id>? ORDER BY id LIMIT ?', (after_id, limit)):
+                try:
+                    value = self._metadata(json.loads(raw))
+                except (ValueError, TypeError):
+                    raise ArtifactError('交付目录记录损坏，未回退当前文件', 409) from None
+                if value.get('artifactId') != identifier:
+                    raise ArtifactError('交付目录编号与版本记录不一致', 409)
+                values.append(value)
+            return values
+
     def for_turn(self, session_id: str, turn_id: str) -> list[dict]:
         with self._connect() as connection:
             return [self._metadata(json.loads(row[0])) for row in connection.execute('SELECT payload FROM artifacts '

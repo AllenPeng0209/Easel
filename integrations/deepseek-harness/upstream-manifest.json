@@ -19,7 +19,7 @@
     ],
     "managed_clone_is_gitignored": true
   },
-  "status_notice": "Package 05/07 publication cancellation now waits for owned process-range termination before unlocking; frozen macOS process and isolated UI acceptance verified. Real platform acceptance, crash recovery, OS containment and the other original requirements remain open.",
+  "status_notice": "Package 08 D25 verified with real existing scoped business records, native Codex new/resume and isolated browser read/navigation; D26/D28, real social platform acceptance and all remaining original requirements stay open.",
   "selected_packages": [
     {
       "upstream_path": "packages/client/ui-conversation",
@@ -7396,7 +7396,7 @@
     "sha_notice": "All recorded target hashes refreshed after the final dynamic-tool and countdown changes were frozen on 2026-11-03."
   },
   "baseline_commit": "1a4c8b7c63fbdbf4ed5cb3b4dedb092009203e7b",
-  "current_feature": "B18-publication-process",
+  "current_feature": "D25",
   "feature_work": {
     "D01": {
       "status": "verified_committed",
@@ -8196,6 +8196,160 @@
         "strong containment for deliberate process-group escape",
         "Linux/Windows live acceptance",
         "real social platform acceptance"
+      ],
+      "commit": "8464b4e0712beda5cb1aadc9f7521b4c7a332762"
+    },
+    "D25": {
+      "status": "verified_real_scoped_business_cards",
+      "baseline_commit": "8464b4e0712beda5cb1aadc9f7521b4c7a332762",
+      "acceptance_record": "docs/agent-feature-acceptance/D25.md",
+      "source_kind": "Adapted fixed ui-tool wire-key specialization and tool row layout; reused vendored DisclosureRow, HostReadStore and D08 fixed artifacts. Python business DTOs and permissions are existing Easel service adaptation, not a new business store.",
+      "upstream_sources": [
+        {
+          "path": "packages/client/ui-tool/src/client/tool/ToolCallTree.tsx",
+          "sha256": "fbb6a0e2b82db325a90ed1f491deb0972c50fe368ac9b0ca00c7181ede7e054f"
+        },
+        {
+          "path": "packages/client/ui-tool/src/client/apply.ts",
+          "sha256": "b75b5d77f30cd14ee826c5a8e82bb2932f2edac4060ca390cf23a76ab9a128aa"
+        },
+        {
+          "path": "packages/client/ui-tool/src/client/tool/components/ToolRow.module.css",
+          "sha256": "81e369d2df56ce4e1417532802727a2b085317afc33bdcf119a377418abe3716"
+        },
+        {
+          "path": "packages/client/ui-tool/src/client/tool/components/ToolDetails.module.css",
+          "sha256": "d0498f9fbabeb1560b76c832525d1634802401c7e3d9bbc829b549f0a3a44d52"
+        },
+        {
+          "path": "packages/client/ui-primitives/src/DisclosureRow.tsx",
+          "sha256": "000d8193ebed80b6ac1d9ff8f8b7ce76e596532065b08003d0033c0ab040501d"
+        },
+        {
+          "path": "packages/client/ui-deliverables/src/client/host-read-store.ts",
+          "sha256": "57078fd7b910dca1f2f03f96381f0f1d158c4e513d793f6445ed4e4cb877d09c"
+        }
+      ],
+      "files": [
+        {
+          "path": "easel/chat_artifacts.py",
+          "sha256": "3166fc8568c5819c349a20e54a9f0706a9eac596ccc57f5a736785ec4b4b63a4"
+        },
+        {
+          "path": "easel/harnesses/base.py",
+          "sha256": "f4bfbfc094197c8e04264676d84a8d3e0ade10a650832ef21798924a9c38827d"
+        },
+        {
+          "path": "easel/harnesses/codex.py",
+          "sha256": "f401dc267eee189c69ae2537c81c859b01197c591a87eac97797681b93042711"
+        },
+        {
+          "path": "web/business_objects.py",
+          "sha256": "1143416c0cff872ad19ea3075388269188f5d7cac04c9fce1971ea21a9e19846"
+        },
+        {
+          "path": "web/access_control.py",
+          "sha256": "52f50b4e03cdea7f584973a1ce11633f6ccae2a96d829a959a0898bf0a4900a3"
+        },
+        {
+          "path": "web/frontend/src/components/AgentEventPanel.tsx",
+          "sha256": "66403db09a5ed3d7e3e39835c3279c2529e8704ffce81386b701e7df4cb9b655"
+        },
+        {
+          "path": "web/frontend/src/components/BusinessObjectCard.tsx",
+          "sha256": "4dda125641982e3f4cd07afe1f7a0e075a83fd4c87b9119b83861a077c013548"
+        },
+        {
+          "path": "web/frontend/src/components/DraftSnapshotPreview.tsx",
+          "sha256": "c8b6333ec85da01821653e20bcd5284cb6bbcfbd031916f9c63000238f3eb93e"
+        },
+        {
+          "path": "web/frontend/src/components/IdeasPage.tsx",
+          "sha256": "6a117835ff156bb3282591d77a9687d643b456b673d6dfef461e36ca79eef1d9"
+        },
+        {
+          "path": "web/frontend/src/components/VideoWorkshopPage.tsx",
+          "sha256": "4acb9d2873ec5f2b750a718925da1f85e721597faf0b3db9a40fa6adb228b893"
+        },
+        {
+          "path": "web/frontend/src/lib/agentEvents.ts",
+          "sha256": "bd82bf35c6d240947fc7a88d74168047d718476de04e513c4f27663859abe4da"
+        },
+        {
+          "path": "web/frontend/src/lib/businessObjectApi.ts",
+          "sha256": "59fca69f18aed51248afada05f5ab4878ee9716dcae145a6c6b5570bb031e3d1"
+        },
+        {
+          "path": "web/frontend/src/lib/businessObjects.ts",
+          "sha256": "008273ebaa517a86548c5c9b0753a4df7c4c15af5c0c31170eb38cbeafdbb231"
+        },
+        {
+          "path": "web/frontend/src/styles/businessObjects.css",
+          "sha256": "919b5aca352d69059d56914f969d5c322513a74bd374a0949aff4d3f719e055e"
+        },
+        {
+          "path": "tests/test_business_objects.py",
+          "sha256": "68e5ef98d26af7c2e2328a4cad38f83adf4ae5dd706f653529a439a1c8d6f1b7"
+        },
+        {
+          "path": "tests/test_business_objects_http.py",
+          "sha256": "1ff27d73adfcc83ff5689bc4d48596f372d6520d60c5019f49a70210233ddee7"
+        },
+        {
+          "path": "tests/test_native_business_objects.py",
+          "sha256": "09090a563575a792737a364c8bbdc9875f4027fc792526af524318829bc167b3"
+        },
+        {
+          "path": "tests/frontend/businessObjects.test.mjs",
+          "sha256": "3d551019d9b0fe742758353e4a973e47cd8ca186e08950e763252a3e742fa5f5"
+        },
+        {
+          "path": "tests/frontend/businessEvent.test.mjs",
+          "sha256": "932acfa37f22ebb966db607f827a61f372a2fc5c3cdc1a3f451bea0b8686056a"
+        },
+        {
+          "path": "tests/frontend/businessHostNavigation.test.mjs",
+          "sha256": "ba2981e828cb47db7f6dd39026eba4f8788ba34a79855b7a1c70f3d378530c5f"
+        },
+        {
+          "path": "tests/frontend/businessNavigation.test.mjs",
+          "sha256": "6f56211607560701e34218e605fcdda24f8f39cb5d4723759d5c3efc22160920"
+        },
+        {
+          "path": "web/app.py",
+          "sha256": "25268a1ad37ffb1440df06f9441438fefeef0d3e6467321204b6e59471404fc0"
+        },
+        {
+          "path": "web/frontend/src/App.tsx",
+          "sha256": "8ee2722dcc47af8d5a9b68e001c30a1c1f55cbc25404e6b943865824bb42b6ff"
+        }
+      ],
+      "verification": {
+        "candidate_code_tree": "05ac766aca7fbf8dbebab7080378a6c0e9e45072",
+        "python_verified_candidate": "5d94feb6a7f00eb9fb06340d23a8b6f3c405969e",
+        "python_byte_identical_to_final": true,
+        "backend_passed": 2905,
+        "backend_skipped": 17,
+        "backend_warnings": 2,
+        "backend_exit": 0,
+        "frontend_passed": 516,
+        "frontend_exit": 0,
+        "build_exit": 0,
+        "lint_exit": 0,
+        "compile_exit": 0,
+        "diff_check_exit": 0,
+        "runtime_real_native_create_list_resume_inspect": true,
+        "runtime_native_same_object_and_snapshot": true,
+        "runtime_browser_exact_idea_and_workshop": true,
+        "runtime_browser_fixed_markdown_after_source_edit": true,
+        "runtime_real_business_mutation": false,
+        "runtime_real_platform_publication": false,
+        "parallel_social_changes_excluded": true
+      },
+      "remaining": [
+        "D26 structured topic creation handoff",
+        "D28 editor context and revision/artifact return",
+        "other original package and AUT requirements"
       ]
     }
   }

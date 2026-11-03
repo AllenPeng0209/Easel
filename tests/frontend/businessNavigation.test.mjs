@@ -1,0 +1,185 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { runInNewContext } from 'node:vm';
+import { test } from 'node:test';
+
+const require = createRequire(new URL('../../web/frontend/package.json', import.meta.url));
+const ts = require('typescript');
+const React = require('react');
+const { act } = React;
+const { createRoot } = require('react-dom/client');
+const { parseHTML } = require('linkedom');
+const A = 'a'.repeat(32), B = 'b'.repeat(32);
+const idea = (id, title = id) => ({ id, title, note: '备注', source: '已有选题', status: 'pending' });
+const project = (id, title = id, extra = {}) => ({ id, title, brief: '已有创作要求', reference_url: '',
+  aspect_ratio: '9:16', revision: 1, stage: 'draft', beeftv_canvas_id: 'canvas-' + id,
+  engine_current_revision: 1, engine_dirty: false, deliverables: [], reviews: [], comments: [], renders: [], ...extra });
+const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+
+function compile(path, dependencies, globals) {
+  const source = readFileSync(new URL(`../../web/frontend/src/${path}`, import.meta.url), 'utf8');
+  const exports = {};
+  const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
+  runInNewContext(code, { exports, URL, Date, AbortController, AbortSignal, setTimeout, clearTimeout,
+    ...globals, require: name => Object.hasOwn(dependencies, name) ? dependencies[name]
+      : name.endsWith('.css') ? {} : require(name) });
+  return exports;
+}
+
+async function mount(file, initialProps = {}, { ideas = [], projects = [], detail, role = 'operator' } = {}) {
+  const { window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
+  const document = window.document;
+  Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+  const focused = [], scrolled = [], reads = [], writes = [];
+  window.HTMLElement.prototype.focus = function () { focused.push(this.getAttribute('data-idea-id') || this.getAttribute('data-workshop-project-id')); };
+  window.HTMLElement.prototype.scrollIntoView = function () { scrolled.push(this.getAttribute('data-idea-id') || this.getAttribute('data-workshop-project-id')); };
+  const old = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.defineProperties(globalThis, { window: { value: window, configurable: true }, document: { value: document, configurable: true },
+    IS_REACT_ACT_ENVIRONMENT: { value: true, configurable: true } });
+  const denied = async (...args) => { writes.push(args); throw new Error('Business navigation cannot write'); };
+  const workshop = compile('lib/workshop.ts', { './projectScope': { projectUrl: value => value,
+    projectFetch: async (url, options = {}) => {
+      if (options.method && options.method !== 'GET') writes.push({ url, options }); else reads.push(url);
+      const receipt = projects[0]?.renders?.[0] || {};
+      return { ok: true, json: async () => url.includes('/collect') ? project(projects[0].id, projects[0].title,
+        { revision: 2, renders: [{ ...receipt, artifact_id: 'collected' }] }) : receipt };
+    } } }, { window, document });
+  const componentApi = {
+    fetchIdeas: async () => { reads.push('ideas'); return ideas; }, createIdea: denied, updateIdea: denied, deleteIdea: denied, createSchedule: denied,
+  };
+  const workshopApi = { ...workshop,
+    fetchWorkshopStatus: async () => ({ state: 'unavailable', message: 'fixture' }),
+    fetchWorkshopProjects: async () => { reads.push('list'); return { projects }; },
+    fetchWorkshopProjectsWithActive: async id => { reads.push(['active', id]); return { projects }; },
+    fetchWorkshopProject: async (id, signal) => { reads.push(['detail', id, signal]); return detail ? detail(id) : projects.find(item => item.id === id) || Promise.reject(new Error('404')); },
+    createWorkshopProject: denied, updateWorkshopProject: denied, archiveWorkshopProject: denied, connectWorkshopCanvas: denied,
+    addWorkshopComment: denied, addWorkshopReview: denied, recordWorkshopPublication: denied,
+  };
+  const Component = compile(`components/${file}.tsx`, { react: React, 'react/jsx-runtime': require('react/jsx-runtime'),
+    '../lib/api': componentApi, '../lib/workshop': workshopApi,
+    './icons': new Proxy({}, { get: () => () => null }), './ProjectSpace': { useIpPermissions: () => ({
+      canOperate: role !== 'viewer', isPlatformAdmin: false, role }) } }, { window, document }).default;
+  const root = createRoot(document.getElementById('root'));
+  const render = async props => { await act(async () => { root.render(React.createElement(Component, props)); await new Promise(resolve => setImmediate(resolve)); }); };
+  const flush = async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); }); };
+  await render(initialProps); await flush();
+  return { document, reads, writes, focused, scrolled, render, flush,
+    async dispose() { await act(async () => root.unmount()); for (const [key, descriptor] of Object.entries(old)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; } } };
+}
+
+test('idea navigation anchors and focuses only the exact existing idea without creating content', async () => {
+  const ui = await mount('IdeasPage', { initialIdeaId: 'b'.repeat(12), onUseTopic() { throw new Error('no auto creation'); } },
+    { ideas: [idea('a'.repeat(12), 'First'), idea('b'.repeat(12), 'Target')] });
+  try {
+    assert.equal(ui.document.querySelector('[data-idea-selected="true"]')?.getAttribute('data-idea-id'), 'b'.repeat(12));
+    assert.ok(ui.focused.includes('b'.repeat(12)) && ui.scrolled.includes('b'.repeat(12)));
+    assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('missing or malformed idea ID is explicit instead of highlighting the first idea', async () => {
+  for (const initialIdeaId of ['c'.repeat(12), '../not-an-id', 'https://external.test/idea', 'idea-one\n']) {
+    const ui = await mount('IdeasPage', { initialIdeaId, onUseTopic() {} }, { ideas: [idea('a'.repeat(12), 'First')] });
+    try { assert.match(ui.document.body.textContent, /选题.*不可用|选题.*不存在/);
+      assert.equal(ui.document.querySelector('[data-idea-selected="true"]'), null); assert.deepEqual(ui.writes, []);
+    } finally { await ui.dispose(); }
+  }
+});
+
+test('the stored legacy idea-one ID from the Host fixture still focuses its real idea', async () => {
+  const ui = await mount('IdeasPage', { initialIdeaId: 'idea-one', onUseTopic() {} },
+    { ideas: [idea('a'.repeat(12), 'New ID'), idea('idea-one', 'Legacy stored idea')] });
+  try {
+    assert.equal(ui.document.querySelector('[data-idea-selected="true"]')?.getAttribute('data-idea-id'), 'idea-one');
+    assert.equal(ui.focused.at(-1), 'idea-one');
+    assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('default idea page retains its ordinary list without automatic focus or writes', async () => {
+  const ui = await mount('IdeasPage', { onUseTopic() {} }, { ideas: [idea('a'.repeat(12), 'Ordinary')] });
+  try { assert.match(ui.document.body.textContent, /Ordinary/); assert.equal(ui.document.querySelector('[data-idea-selected="true"]'), null);
+    assert.equal(ui.focused.length, 0); assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('changing the idea reference moves selection to that exact existing idea', async () => {
+  const first = 'a'.repeat(12), second = 'b'.repeat(12);
+  const ui = await mount('IdeasPage', { initialIdeaId: first, onUseTopic() {} }, { ideas: [idea(first), idea(second)] });
+  try {
+    await ui.render({ initialIdeaId: second, onUseTopic() {} });
+    assert.equal(ui.document.querySelectorAll('[data-idea-selected="true"]').length, 1);
+    assert.equal(ui.document.querySelector('[data-idea-selected="true"]').getAttribute('data-idea-id'), second);
+    assert.equal(ui.focused.at(-1), second); assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('workshop deep link opens the requested real project and ordinary entry stays a list', async () => {
+  const items = [project(A, 'First'), project(B, 'Exact target')];
+  const ui = await mount('VideoWorkshopPage', { initialProjectId: B }, { projects: items, role: 'viewer' });
+  try { assert.equal(ui.document.querySelector('[data-workshop-project-id]')?.getAttribute('data-workshop-project-id'), B);
+    assert.ok(ui.reads.some(row => Array.isArray(row) && row[0] === 'detail' && row[1] === B)); assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+  const ordinary = await mount('VideoWorkshopPage', {}, { projects: items });
+  try { assert.equal(ordinary.document.querySelector('[data-workshop-project-id]'), null);
+    assert.match(ordinary.document.body.textContent, /Exact target/); assert.deepEqual(ordinary.writes, []);
+  } finally { await ordinary.dispose(); }
+});
+
+test('workshop inaccessible detail never opens the first project or a cached target', async () => {
+  const ui = await mount('VideoWorkshopPage', { initialProjectId: B }, { projects: [project(A), project(B)],
+    detail: async () => { throw new Error('403 inaccessible'); } });
+  try { assert.match(ui.document.body.textContent, /项目.*不可用|项目.*无权/);
+    assert.equal(ui.document.querySelector('[data-workshop-project-id]'), null); assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('switching project navigation aborts old ownership and discards its late response', async () => {
+  const old = deferred(), next = deferred();
+  const ui = await mount('VideoWorkshopPage', { initialProjectId: A }, { projects: [project(A), project(B)], detail: id => id === A ? old.promise : next.promise });
+  try {
+    await ui.render({ initialProjectId: B });
+    assert.equal(ui.reads.find(row => Array.isArray(row) && row[0] === 'detail' && row[1] === A)[2].aborted, true);
+    assert.equal(ui.document.querySelector('[data-workshop-project-id]'), null);
+    await act(async () => next.resolve(project(B, 'New target'))); await ui.flush();
+    assert.equal(ui.document.querySelector('[data-workshop-project-id]')?.getAttribute('data-workshop-project-id'), B);
+    await act(async () => old.resolve(project(A, 'Stale target'))); await ui.flush();
+    assert.equal(ui.document.querySelector('[data-workshop-project-id]')?.getAttribute('data-workshop-project-id'), B);
+    assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('unmount aborts a pending exact lookup before its eventual response', async () => {
+  const pending = deferred();
+  const ui = await mount('VideoWorkshopPage', { initialProjectId: A }, { projects: [project(A)], detail: () => pending.promise });
+  const signal = ui.reads.find(row => Array.isArray(row) && row[0] === 'detail')[2];
+  await ui.dispose();
+  assert.equal(signal.aborted, true);
+  await act(async () => pending.resolve(project(A)));
+  assert.equal(ui.document.getElementById('root').textContent, ''); assert.deepEqual(ui.writes, []);
+});
+
+test('malformed workshop ID is unavailable without an exact endpoint request', async () => {
+  const ui = await mount('VideoWorkshopPage', { initialProjectId: '../another-project' }, { projects: [project(A)] });
+  try { assert.match(ui.document.body.textContent, /项目.*不可用/);
+    assert.equal(ui.document.querySelector('[data-workshop-project-id]'), null);
+    assert.equal(ui.reads.some(row => Array.isArray(row) && row[0] === 'detail'), false);
+    assert.deepEqual(ui.writes, []);
+  } finally { await ui.dispose(); }
+});
+
+test('deep link observes a completed export without collecting until explicit user action', async () => {
+  const receipt = { id: 'render-one', operation_id: 'op', task_id: 'task', content_revision: 1, engine_revision: 1,
+    status: 'succeeded', progress: 1, artifact_id: '', created_at: '', updated_at: '' };
+  const ui = await mount('VideoWorkshopPage', { initialProjectId: A }, { projects: [project(A, 'Exported', { renders: [receipt] })] });
+  try {
+    await ui.flush(); assert.deepEqual(ui.writes, []);
+    const collect = [...ui.document.querySelectorAll('button')].find(button => button.textContent.includes('收取已导出的成片'));
+    assert.ok(collect, 'completed export collection requires an explicit, correctly labelled control');
+    await act(async () => collect.click()); await ui.flush();
+    assert.equal(ui.writes.filter(row => row.options?.method === 'POST' && row.url.endsWith('/collect')).length, 1);
+  } finally { await ui.dispose(); }
+});

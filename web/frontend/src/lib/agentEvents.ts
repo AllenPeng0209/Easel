@@ -24,7 +24,8 @@ export interface AgentArtifact {
 
 export interface AgentEvent {
   id: string;
-  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication';
+  kind: 'tool' | 'plan' | 'usage' | 'context' | 'decision' | 'artifact' | 'task' | 'publication' | 'business';
+  business?: import('./businessObjects').BusinessObject;
   publication?: import('./publicationApproval').PublicationApprovalRecord;
   callId?: string;
   parentCallId?: string;
@@ -44,7 +45,7 @@ export interface AgentEvent {
   [key: string]: unknown;
 }
 
-const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication']);
+const kinds = new Set(['tool', 'plan', 'usage', 'context', 'decision', 'artifact', 'task', 'publication', 'business']);
 const terminal = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'stopped']);
 
 export function normalizeAgentEvent(value: unknown): AgentEvent | null {
@@ -62,10 +63,24 @@ export function publicationEventKey(event: AgentEvent): string | null {
     ? JSON.stringify([value.id, value.actorId, value.projectId, value.payloadHash, value.operationId || null]) : null;
 }
 
+export function businessEventKey(event: AgentEvent): string | null {
+  const value = event.kind === 'business' && event.name === 'easel_business_objects' ? event.business : undefined;
+  return value && event.callId && [value.actorId, value.projectId, value.kind, value.id].every(part => typeof part === 'string')
+    ? JSON.stringify([event.callId, value.actorId, value.projectId, value.kind, value.id]) : null;
+}
+
 /** Tool events are cumulative snapshots; older replay must not revive a finished call. */
 export function reduceAgentEvents(previous: AgentEvent[], input: unknown): AgentEvent[] {
   const event = normalizeAgentEvent(input);
   if (!event) return previous;
+  const business = businessEventKey(event);
+  if (business) {
+    const index = previous.findIndex(item => businessEventKey(item) === business);
+    if (index >= 0) {
+      if ((event.business?.observedAt || 0) <= (previous[index].business?.observedAt || 0)) return previous;
+      const next = [...previous]; next[index] = event; return next;
+    }
+  }
   const receipt = publicationEventKey(event);
   if (receipt) {
     const index = previous.findIndex(item => publicationEventKey(item) === receipt);

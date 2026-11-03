@@ -1072,6 +1072,13 @@ def _mask(val: str) -> str:
 _SECRETISH_RE = re.compile(r'KEY|TOKEN|SECRET|PASSWORD|COOKIE', re.I)
 
 
+def _secret_masks():
+    for key, val in _read_env().items():
+        value = val.strip().strip('"').strip("'")
+        if len(value) >= 8 and _SECRETISH_RE.search(key):
+            yield value, _mask(value)
+
+
 def _scrub_secrets(text: str) -> str:
     """把 .env 里的机密值从要回显给前端的文本里抹掉。
 
@@ -1079,11 +1086,8 @@ def _scrub_secrets(text: str) -> str:
     按「已知机密的字面量」替换最稳妥，不依赖猜正则能否匹配各家 key 的格式。
     """
     out = text
-    for key, val in _read_env().items():
-        v = val.strip().strip('"').strip("'")
-        # 太短的值（占位符、枚举值如 none/http）替换会误伤正常文本
-        if len(v) >= 8 and _SECRETISH_RE.search(key):
-            out = out.replace(v, _mask(v))
+    for value, mask in _secret_masks():
+        out = out.replace(value, mask)
     return out
 
 
@@ -3540,6 +3544,24 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         except HTTPException as error:
             raise HarnessError(_scrub_secrets(str(error.detail))) from None
 
+    async def business_objects(payload: dict, call_id: str) -> dict:
+        _require_host_tools()
+        if (not isinstance(call_id, str) or not call_id or len(call_id) > 512
+                or any(ord(character) < 32 for character in call_id)):
+            raise HarnessError('业务查询缺少有效的工具调用编号')
+        try:
+            result = await asyncio.to_thread(_business_query, payload)
+            _require_host_tools()
+            for record in result['items']:
+                digest = hashlib.sha256(json.dumps({'callId': call_id, 'record': record}, sort_keys=True,
+                    ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+                receive('agent_event', {'id': 'business_' + digest, 'kind': 'business',
+                    'name': 'easel_business_objects', 'callId': call_id, 'business': record,
+                    'completedAt': record['observedAt']})
+            return result
+        except HTTPException as error:
+            raise HarnessError(_scrub_secrets(str(error.detail))) from None
+
     async def publish(payload: dict, call_id: str) -> dict:
         _require_host_tools()
         if not interactive:
@@ -3620,7 +3642,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                              config["models"].get(runtime, ""), config["sandbox"], timeout,
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
                              autonomy_mode=req.autonomyMode, present=present, publish=publish,
-                             publication_status=publication_status)
+                             publication_status=publication_status, business_objects=business_objects)
         await asyncio.wait_for(harnesses.adapter(runtime).run(
             request, receive, ask,
             lambda identifier: harness_store.bind(_sessions_dir(), sk, runtime, identifier)), timeout)
@@ -4036,6 +4058,46 @@ async def api_chat_artifact_archive_related(artifact_id: str, index: int, path: 
 
 class ChatSessionsRequest(BaseModel):
     sessions: list[dict] = Field(default_factory=list)
+
+
+def _business_query(payload):
+    from web.business_objects import BusinessObjectService
+    result = BusinessObjectService(sys.modules[__name__]).query(payload)
+    # HTTP refresh, the native tool result and persisted events must share the
+    # same public snapshot. Redact display text before hashing or transport.
+    masks = tuple(_secret_masks())
+    limits = {'title': 1024, 'summary': 8000, 'brief': 8000, 'note': 8000, 'notes': 8000,
+        'description': 8000, 'source': 4000, 'name': 1024, 'platform': 300}
+    display_fields = {*limits, 'path', 'workspacePath'}
+
+    def clean(value, field=''):
+        if isinstance(value, dict):
+            return {key: clean(item, key) for key, item in value.items()}
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        if isinstance(value, str) and field in display_fields:
+            for original, masked in masks:
+                value = value.replace(original, masked)
+            limit = limits.get(field)
+            if limit and len(value) > limit:
+                value = value[:limit - 1] + '…'
+        return value
+
+    for record in result['items']:
+        for field in ('title', 'summary', 'details'):
+            record[field] = clean(record[field], field)
+        snapshot = {key: value for key, value in record.items() if key not in {'snapshotHash', 'observedAt'}}
+        record['snapshotHash'] = hashlib.sha256(json.dumps(snapshot, ensure_ascii=False, sort_keys=True,
+            allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+    return result
+
+
+@app.get('/api/chat/business-objects')
+def api_chat_business_objects(request: Request):
+    # A read-only Host query, not model-authored card state or execution input.
+    if len(request.query_params) != len(request.query_params.multi_items()):
+        raise HTTPException(400, '业务查询参数不能重复')
+    return _business_query(dict(request.query_params))
 
 
 @app.get("/api/chat/sessions")

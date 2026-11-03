@@ -20,6 +20,8 @@ import SettingsPanel from './components/SettingsPanel';
 import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, fetchChatSessions, syncChatSessions, deleteChatSession } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed } from './lib/api';
 import { reduceAgentEvents } from './lib/agentEvents';
+import { fetchBusinessObject, parseBusinessHash } from './lib/businessObjectApi';
+import type { BusinessTarget } from './lib/businessObjectApi';
 import type { AgentEvent } from './lib/agentEvents';
 import { mergeSessionCatalog, nextSessionRevision } from './lib/sessionSync';
 import { confirmChatStop, enqueueMessage, nextQueuedMessage } from './lib/chatControl';
@@ -65,6 +67,9 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>(() => canOperate ? 'chat' : 'dashboard');
   const [workshopEntry, setWorkshopEntry] = useState(0);
   const [interactionEntry, setInteractionEntry] = useState(0);
+  const [businessEntry, setBusinessEntry] = useState<BusinessTarget | null>(null);
+  const [businessNotice, setBusinessNotice] = useState('');
+  const businessNavigation = useRef(0);
   const [personas, setPersonas] = useState<PersonaItem[]>([]);
   const [selectedPersona, setSelectedPersona] = useState('');
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
@@ -102,6 +107,46 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
   const clearOutputsJump = useCallback(() => setOutputsJump(''), []);
+
+  useEffect(() => {
+    let mounted = true;
+    let controller: AbortController | undefined;
+    const onHash = async () => {
+      const hash = window.location.hash;
+      if (!hash.startsWith('#/business/')) return;
+      const generation = ++businessNavigation.current;
+      controller?.abort();
+      controller = new AbortController();
+      const target = parseBusinessHash(hash);
+      if (!target || !canOperate) {
+        setBusinessNotice('业务链接不属于当前 IP，或当前账号无权访问。');
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        return;
+      }
+      setBusinessNotice('正在核对业务对象…');
+      try {
+        const record = await fetchBusinessObject(target.kind, target.id, controller.signal);
+        if (!mounted || generation !== businessNavigation.current || window.location.hash !== hash) return;
+        const expected = target.kind === 'idea' ? 'ideas' : 'workshop';
+        if (!record.actions.some(action => action.kind === 'open' && action.target === expected && action.entityId === target.id)) {
+          throw new Error('No current navigation action');
+        }
+        setBusinessEntry(target);
+        if (target.kind === 'workshop') setWorkshopEntry(value => value + 1);
+        setCurrentPage(expected);
+        setBusinessNotice('');
+      } catch {
+        if (!mounted || generation !== businessNavigation.current) return;
+        setBusinessNotice('业务对象不可用或当前账号无权访问，请在当前 IP 核对。');
+      }
+      if (mounted && generation === businessNavigation.current && window.location.hash === hash) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+    };
+    window.addEventListener('hashchange', onHash);
+    void onHash();
+    return () => { mounted = false; controller?.abort(); window.removeEventListener('hashchange', onHash); };
+  }, [canOperate]);
 
   // 挂载时决定进哪个会话。规则：
   //  - 同一标签刷新（sessionStorage 记着本标签的会话）→ 直接续上（同标签不算冲突）。
@@ -929,7 +974,7 @@ export default function App() {
       case 'trends':
         return <TrendsPage onUseTopic={handleUseTopic} />;
       case 'ideas':
-        return <IdeasPage onUseTopic={handleUseTopic} />;
+        return <IdeasPage onUseTopic={handleUseTopic} initialIdeaId={businessEntry?.kind === 'idea' ? businessEntry.id : undefined} />;
       case 'calendar':
         return <CalendarPage />;
       case 'publish':
@@ -939,7 +984,8 @@ export default function App() {
       case 'skills':
         return <SkillPage persona={selectedPersona} />;
       case 'workshop':
-        return <Suspense fallback={<div className="dash-empty">正在打开视频工坊…</div>}><VideoWorkshopPage key={workshopEntry} /></Suspense>;
+        return <Suspense fallback={<div className="dash-empty">正在打开视频工坊…</div>}><VideoWorkshopPage key={workshopEntry}
+          initialProjectId={businessEntry?.kind === 'workshop' ? businessEntry.id : undefined} /></Suspense>;
       case 'interactions':
         return <Suspense fallback={<div className="dash-empty">正在打开互动中心…</div>}><InteractionCenterPage key={interactionEntry} /></Suspense>;
       case 'outputs':
@@ -980,6 +1026,7 @@ export default function App() {
       <Sidebar
         currentPage={currentPage}
         onPageChange={page => {
+          businessNavigation.current += 1; setBusinessEntry(null); setBusinessNotice('');
           if (page === 'workshop') setWorkshopEntry(entry => entry + 1);
           if (page === 'interactions') setInteractionEntry(entry => entry + 1);
           setCurrentPage(page);
@@ -990,7 +1037,7 @@ export default function App() {
         onNewProfile={() => setShowWizard(true)}
         sessions={sessions}
         activeSessionId={activeSessionId}
-        onSessionSelect={handleSessionSelect}
+        onSessionSelect={id => { businessNavigation.current += 1; setBusinessNotice(''); handleSessionSelect(id); }}
         onSessionDelete={handleSessionDelete}
         onSessionRename={handleSessionRename}
         onSessionArchive={handleSessionArchive}
@@ -1001,7 +1048,7 @@ export default function App() {
             : unreadSessions[session.id] ? 'completed-unread' : session.messages.at(-1)?.status === 'failed' ? 'failed' : '';
           return [session.id, state];
         }))}
-        onNewChat={handleNewChat}
+        onNewChat={() => { businessNavigation.current += 1; setBusinessNotice(''); handleNewChat(); }}
         gatewayStatus={gatewayStatus}
         apiDirect={apiDirect}
         agentRuntime={agentRuntime}
@@ -1009,8 +1056,10 @@ export default function App() {
       />
       <main className="main-content">
         <ProjectBreadcrumb />
+        {businessNotice && <p className="agent-event__note" role="status">{businessNotice}</p>}
         {(['trends', 'ideas', 'breakdown'] as Page[]).includes(currentPage) && (
-          <SubNav current={currentPage} onNavigate={setCurrentPage} />
+          <SubNav current={currentPage} onNavigate={page => { businessNavigation.current += 1;
+            setBusinessEntry(null); setBusinessNotice(''); setCurrentPage(page); }} />
         )}
         <div className="page-host">
           {renderPage()}

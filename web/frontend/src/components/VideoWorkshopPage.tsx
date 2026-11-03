@@ -4,7 +4,7 @@ import type { FormEvent } from 'react';
 import { IconVideo, IconRefresh, IconChevron, IconCheck } from './icons';
 import {
   addWorkshopComment, addWorkshopReview, connectWorkshopCanvas, createWorkshopProject,
-  archiveWorkshopProject, deliveryReviewState, fetchWorkshopProjects, fetchWorkshopProjectsWithActive, fetchWorkshopStatus,
+  archiveWorkshopProject, deliveryReviewState, fetchWorkshopProject, fetchWorkshopProjects, fetchWorkshopProjectsWithActive, fetchWorkshopStatus,
   filterWorkshopProjects, projectLifecycle, recordWorkshopPublication, reviewSummary, safeRuntimeUrl, WORKSHOP_LIFECYCLE_STATES,
   updateWorkshopProject, workshopCanvasUrl, workshopMediaUrl, WorkshopRenderFlow,
 } from '../lib/workshop';
@@ -92,11 +92,12 @@ function ProjectForm({ project, onSave, onCancel }: {
   </form>;
 }
 
-function ExportControls({ project, connected, onUpdate, onOpenReview }: {
+function ExportControls({ project, connected, onUpdate, onOpenReview, observeOnly = false }: {
   project: WorkshopProject;
   connected: boolean;
   onUpdate: (project: WorkshopProject) => void;
   onOpenReview: () => void;
+  observeOnly?: boolean;
 }) {
   const { canOperate } = useIpPermissions();
   const [flow] = useState(() => new WorkshopRenderFlow(project.id, project.renders || []));
@@ -128,6 +129,7 @@ function ExportControls({ project, connected, onUpdate, onOpenReview }: {
         if (stopped) return;
         setReceipt(next);
         if (next.status === 'succeeded') {
+          if (observeOnly) { setPaused(true); return; }
           const delivered = await flow.collect(latestProject.current);
           if (stopped) return;
           setReceipt(flow.receipt);
@@ -141,12 +143,16 @@ function ExportControls({ project, connected, onUpdate, onOpenReview }: {
     };
     timer = window.setTimeout(() => void advance(), receiptStatus === 'succeeded' ? 0 : 3000);
     return () => { stopped = true; window.clearTimeout(timer); };
-  }, [flow, receiptId, receiptStatus, artifactId, paused, onUpdate, canOperate]);
+  }, [flow, receiptId, receiptStatus, artifactId, paused, onUpdate, canOperate, observeOnly]);
 
+  const collectReady = observeOnly && receipt?.status === 'succeeded' && !receipt.artifact_id;
   const start = async () => {
-    if (!canOperate || starting || !connected || !project.beeftv_canvas_id) return;
+    if (!canOperate || starting || (!collectReady && (!connected || !project.beeftv_canvas_id))) return;
     setStarting(true); setError(''); setPaused(false);
-    try { setReceipt(await flow.start(project)); }
+    try {
+      if (collectReady) { const next = await flow.collect(project); setReceipt(flow.receipt); onUpdate(next); }
+      else setReceipt(await flow.start(project));
+    }
     catch (cause) { setError(errorMessage(cause)); setPaused(true); }
     finally { setStarting(false); }
   };
@@ -172,10 +178,10 @@ function ExportControls({ project, connected, onUpdate, onOpenReview }: {
       {(error || (failed && receipt.message)) && <p className="workshop-export-error" role="alert">{error || receipt?.message}</p>}
     </div>
     <div className="workshop-export-actions">
-      {paused && active && <button className="btn btn-sm" type="button" onClick={() => { setError(''); setPaused(false); }}>继续检查导出</button>}
+      {paused && active && !collectReady && <button className="btn btn-sm" type="button" onClick={() => { setError(''); setPaused(false); }}>继续检查导出</button>}
       {receipt?.artifact_id && <button className="btn btn-sm" type="button" onClick={onOpenReview}>查看交付</button>}
-      <button className="btn btn-sm btn-primary" type="button" disabled={busy || !connected || !project.beeftv_canvas_id} onClick={() => void start()}>
-        {busy ? '正在导出…' : unconfirmed ? '重试核对导出' : '导出当前成片'}</button>
+      <button className="btn btn-sm btn-primary" type="button" disabled={busy || (!collectReady && (!connected || !project.beeftv_canvas_id))} onClick={() => void start()}>
+        {busy ? '正在导出…' : collectReady ? '收取已导出的成片' : unconfirmed ? '重试核对导出' : '导出当前成片'}</button>
     </div>
   </section>;
 }
@@ -299,12 +305,18 @@ function ReviewPanel({ project, onUpdate }: { project: WorkshopProject; onUpdate
   </div>;
 }
 
-export default function VideoWorkshopPage() {
+interface VideoWorkshopPageProps { initialProjectId?: string }
+
+export default function VideoWorkshopPage({ initialProjectId }: VideoWorkshopPageProps = {}) {
   const { canOperate, isPlatformAdmin } = useIpPermissions();
   const canEditCanvas = canOperate && isPlatformAdmin;
   const [status, setStatus] = useState<WorkshopStatus>({ state: 'starting', message: '正在检查创作服务…' });
   const [projects, setProjects] = useState<WorkshopProject[]>([]);
   const [selectedId, setSelectedId] = useState('');
+  const [verifiedSelectedId, setVerifiedSelectedId] = useState('');
+  const requestedNavigationId = initialProjectId || '';
+  const initialTarget = /^[a-f0-9]{32}$/.test(requestedNavigationId) ? requestedNavigationId : '';
+  const [appliedNavigationId, setAppliedNavigationId] = useState(requestedNavigationId);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [form, setForm] = useState<'create' | 'edit' | 'publish' | null>(null);
@@ -322,8 +334,11 @@ export default function VideoWorkshopPage() {
   const [canvasSession, setCanvasSession] = useState<{ key: string; url: string } | null>(null);
   const loadSequence = useRef(0);
   const selectedProjectId = useRef('');
+  const mounted = useRef(true);
+  const navigationTarget = useRef<HTMLDivElement>(null);
   const formSession = useRef(0);
-  const project = projects.find(item => item.id === selectedId);
+  const project = appliedNavigationId === requestedNavigationId && verifiedSelectedId === selectedId
+    ? projects.find(item => item.id === selectedId) : undefined;
   const visibleProjects = filterWorkshopProjects(projects, query, statusFilter);
   const activeCount = projects.filter(item => !item.archived_at).length;
   const lifecycleCounts = Object.fromEntries(WORKSHOP_LIFECYCLE_STATES.map(item => [item.key,
@@ -351,16 +366,19 @@ export default function VideoWorkshopPage() {
 
   const openProject = (id: string) => {
     formSession.current += 1;
-    selectedProjectId.current = id; setSelectedId(id); setViewChoice(null);
+    selectedProjectId.current = id; setSelectedId(id); setVerifiedSelectedId(''); setViewChoice(null);
     setCanvasSession(null); setExpanded(false); setForm(null); setCanvasError(''); setMetadataError('');
     void load();
   };
 
   const returnToList = () => {
     formSession.current += 1;
-    selectedProjectId.current = ''; setSelectedId(''); setViewChoice(null);
+    loadSequence.current += 1;
+    selectedProjectId.current = ''; setSelectedId(''); setVerifiedSelectedId(''); setViewChoice(null); setError('');
     setCanvasSession(null); setExpanded(false); setForm(null); setCanvasError(''); setMetadataError('');
   };
+
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; loadSequence.current += 1; }; }, []);
 
   useEffect(() => {
     setCanvasSession(previous => {
@@ -374,19 +392,39 @@ export default function VideoWorkshopPage() {
 
   const load = useCallback(async (signal?: AbortSignal) => {
     const sequence = ++loadSequence.current;
+    const requested = selectedProjectId.current;
     const runtimeTask = canEditCanvas ? fetchWorkshopStatus(signal)
       : Promise.resolve<WorkshopStatus>({ state: 'unavailable', message: '通过受控工作空间查看与处理视频。' });
-    const listTask = canOperate && selectedProjectId.current
-      ? fetchWorkshopProjectsWithActive(selectedProjectId.current, signal) : fetchWorkshopProjects(signal);
-    const [runtime, list] = await Promise.allSettled([runtimeTask, listTask]);
-    if (signal?.aborted || sequence !== loadSequence.current) return;
+    const listTask = canOperate && requested
+      ? fetchWorkshopProjectsWithActive(requested, signal) : fetchWorkshopProjects(signal);
+    // The legacy list helper may fall back to its first row or a cached detail.
+    // Only this exact authorized GET can establish the selected entity.
+    const detailTask = requested ? fetchWorkshopProject(requested, signal) : Promise.resolve(null);
+    const [runtime, list, detail] = await Promise.allSettled([runtimeTask, listTask, detailTask]);
+    if (!mounted.current || signal?.aborted || sequence !== loadSequence.current || requested !== selectedProjectId.current) return;
     if (runtime.status === 'fulfilled') setStatus(runtime.value);
     else setStatus({ state: 'unavailable', message: errorMessage(runtime.reason) });
-    if (list.status === 'fulfilled') { setProjects(list.value.projects || []); setError(''); }
+    if (requested) {
+      if (detail.status === 'fulfilled' && detail.value?.id === requested) {
+        const selected = list.status === 'fulfilled' ? detail.value : { ...detail.value,
+          engine_dirty: true, engine_current_revision: null,
+          engine_message: '无法确认画布当前版本，请重新读取后再审阅。' };
+        setProjects(previous => {
+          const items = list.status === 'fulfilled' ? list.value.projects || [] : previous;
+          return items.some(item => item.id === requested) ? items.map(item => item.id === requested ? selected : item) : [...items, selected];
+        });
+        setVerifiedSelectedId(requested);
+        setError(list.status === 'rejected' ? '项目已读取，视频列表暂时无法刷新。' : '');
+      } else {
+        setVerifiedSelectedId('');
+        setError('指定视频项目不可用，可能已删除或当前 IP 无权访问。');
+        setProjects(previous => (list.status === 'fulfilled' ? list.value.projects || [] : previous).filter(item => item.id !== requested));
+      }
+    } else if (list.status === 'fulfilled') { setProjects(list.value.projects || []); setError(''); }
     else {
       setError(errorMessage(list.reason));
       setProjects(previous => {
-        const activeId = selectedProjectId.current || previous[0]?.id;
+        const activeId = selectedProjectId.current;
         return previous.map(item => item.id === activeId && item.beeftv_canvas_id
           ? { ...item, engine_dirty: true, engine_current_revision: null,
             engine_message: '无法确认画布当前版本，请重新读取后再审阅。' } : item);
@@ -396,13 +434,28 @@ export default function VideoWorkshopPage() {
   }, [canEditCanvas, canOperate]);
 
   useEffect(() => {
+    loadSequence.current += 1;
+    formSession.current += 1;
+    selectedProjectId.current = initialTarget;
+    setSelectedId(initialTarget); setVerifiedSelectedId(''); setAppliedNavigationId(requestedNavigationId);
+    setViewChoice(initialTarget ? { projectId: initialTarget, tab: 'review' } : null);
+    setCanvasSession(null); setExpanded(false); setForm(null); setCanvasError(''); setMetadataError(''); setLoading(true);
+  }, [initialTarget, requestedNavigationId]);
+
+  useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
     const refresh = () => { if (document.visibilityState === 'visible') void load(controller.signal); };
     const timer = window.setInterval(refresh, 5000);
     window.addEventListener('focus', refresh);
     return () => { controller.abort(); window.clearInterval(timer); window.removeEventListener('focus', refresh); };
-  }, [load]);
+  }, [load, requestedNavigationId]);
+
+  useEffect(() => {
+    if (!initialTarget || project?.id !== initialTarget) return;
+    navigationTarget.current?.scrollIntoView({ block: 'start' });
+    navigationTarget.current?.focus({ preventScroll: true });
+  }, [initialTarget, project?.id]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -464,7 +517,8 @@ export default function VideoWorkshopPage() {
     finally { setConnectingCanvas(false); }
   };
 
-  return <div className={`video-workshop ${expanded ? 'video-workshop-expanded' : ''}`}>
+  return <div className={`video-workshop ${expanded ? 'video-workshop-expanded' : ''}`}
+    ref={navigationTarget} data-workshop-project-id={project?.id} tabIndex={project ? -1 : undefined}>
     <header className="workshop-head">
       <div><div className="workshop-eyebrow">EASEL VIDEO STUDIO</div>
         <h1><IconVideo size={25} />视频工坊</h1><p>{project ? 'AI 先出初稿，你来精修与定稿。' : '管理每个视频主题，跟进生产、审核与发布。'}</p></div>
@@ -476,6 +530,7 @@ export default function VideoWorkshopPage() {
       </div>
     </header>
     {error && <div className="workshop-global-error" role="alert">{error}<button type="button" onClick={() => void load()}>重新读取</button></div>}
+    {!!requestedNavigationId && !initialTarget && <div className="workshop-global-error" role="alert">指定视频项目不可用，项目编号无效。</div>}
     {canOperate && form && <div className="workshop-modal-backdrop"><div className="workshop-modal" role="dialog" aria-modal="true"
       aria-label={form === 'publish' ? '记录已发布视频' : form === 'edit' ? '编辑项目' : '新建视频项目'} tabIndex={-1}
       onKeyDown={event => {
@@ -549,7 +604,7 @@ export default function VideoWorkshopPage() {
         <div className="workshop-project-selector"><label htmlFor="workshop-project">当前项目</label>
           <select id="workshop-project" value={project.id} onChange={event => {
             selectedProjectId.current = event.target.value;
-            setSelectedId(event.target.value); setViewChoice(null); setForm(null); setCanvasError(''); void load();
+            setSelectedId(event.target.value); setVerifiedSelectedId(''); setViewChoice(null); setForm(null); setCanvasError(''); void load();
           }}>
             {projects.map(item => <option value={item.id} key={item.id}>{item.title}</option>)}
           </select></div>
@@ -579,7 +634,8 @@ export default function VideoWorkshopPage() {
         {canEditCanvas && <button role="tab" tabIndex={tab === 'canvas' ? 0 : -1} aria-selected={tab === 'canvas'} aria-controls="workshop-canvas-panel" id="workshop-canvas-tab" onClick={() => setTab('canvas')}>画布创作</button>}
         <button role="tab" tabIndex={tab === 'review' ? 0 : -1} aria-selected={tab === 'review'} aria-controls="workshop-review-panel" id="workshop-review-tab" onClick={() => setTab('review')}>交付与审阅{project.deliverables?.length ? <span>{project.deliverables.length}</span> : null}</button>
       </div><p>{project.brief || '在项目信息中写下推广对象、卖点与创作要求。'}</p></div>
-      {canOperate && <ExportControls key={project.id} project={project} connected={canEditCanvas ? running : true} onUpdate={update} onOpenReview={() => setTab('review')} />}
+      {canOperate && <ExportControls key={project.id} project={project} connected={canEditCanvas ? running : true} onUpdate={update}
+        observeOnly={!!initialTarget && project.id === initialTarget} onOpenReview={() => setTab('review')} />}
       {canEditCanvas && <section id="workshop-canvas-panel" role="tabpanel" aria-labelledby="workshop-canvas-tab" hidden={tab !== 'canvas'} className="workshop-canvas">
         <div className="workshop-canvas-toolbar"><span>BeefTV{status.version ? ` · ${status.version}` : ''}</span>
           <div><button className="btn btn-sm btn-ghost" disabled={!running} onClick={() => setFrameVersion(value => value + 1)}>重新载入画布</button>
