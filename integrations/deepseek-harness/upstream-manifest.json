@@ -7541,12 +7541,45 @@
     "reuse_kind": "adapted",
     "changes": "适配原生文件修改状态、路径与差异卡入口。",
     "verification_status": "B05_verified_wire_and_isolated_browser"
+  },
+  {
+    "feature_id": "B06",
+    "upstream_path": "packages/client/ui-tool/src/client/tool/models/web-card-model.ts",
+    "upstream_sha256": "3889408ed91ad3b68af38344c7034d9efcc3f27b065ffa4493a4a984a2484e8a",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/web-card-model.ts",
+    "destination_sha256": "6b0125f444497e4bf1abafc453d12e59be43ca9082426dad5073ab969dd6f069",
+    "reuse_kind": "adapted",
+    "changes": "适配搜索、打开和页内查找的观察数据，限制查询与可点击地址。",
+    "verification_status": "B06_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B06",
+    "upstream_path": "packages/client/ui-primitives/src/WebBlock.tsx",
+    "upstream_sha256": "f1a2d2338b246dfdc7e4d70272622a42592212ad41b1132f12878e789fe6a3f8",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/WebBlock.tsx",
+    "destination_sha256": "04b931474f8ddf44db661356922c73a26e0584c830fa37ec76185291e0d2926f",
+    "reuse_kind": "adapted",
+    "changes": "适配查询、目标地址、结果和缺失说明。",
+    "verification_status": "B06_verified_protocol_and_isolated_browser"
+  },
+  {
+    "feature_id": "B06",
+    "upstream_path": "packages/client/ui-primitives/src/WebBlock.module.css",
+    "upstream_sha256": "a5a00ff4e0460d7d77f02ba0e4f2cc9d1f4c3a92446e62d6f353891cd5d6c3ca",
+    "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
+    "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/WebBlock.module.css",
+    "destination_sha256": "61f8c78d82abbc8631cebbb86bd6ccbc196be8d76d8c76e84b48a261010106e1",
+    "reuse_kind": "adapted",
+    "changes": "适配证据区布局和主题。",
+    "verification_status": "B06_verified_protocol_and_isolated_browser"
   }
   ],
   "migration_summary": {
-    "source_migration_files": 61,
+    "source_migration_files": 64,
     "verbatim_original_bodies": 15,
-    "adapted_upstream_files": 46,
+    "adapted_upstream_files": 49,
     "integration_adapters": 33,
     "baseline_source_migration_files": 22,
     "functional_verification": "D01_C19_D08_B30_foundation_verified_remaining_original_scope_open",

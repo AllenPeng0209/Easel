@@ -50,6 +50,7 @@ export interface AgentEvent {
   output?: unknown;
   outputStream?: 'merged';
   fileChangeApplied?: boolean;
+  nativeWebSearch?: true;
   exitCode?: number | null;
   durationMs?: number;
   signal?: string;

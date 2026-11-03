@@ -36,6 +36,12 @@ _TRUNCATED = "\n[truncated: remaining content omitted]"
 
 _SETTLED_TOOL_STATUSES = ("completed", "failed", "declined", "interrupted", "unconfirmed")
 _CODEX_STATUSLESS_TOOLS = ("webSearch", "imageView", "sleep", "functionCallOutput")
+_WEB_ACTION_TEXT_FIELDS = {
+    "search": ("query",),
+    "openPage": ("url",),
+    "findInPage": ("url", "pattern"),
+    "other": (),
+}
 _ACP_TOOL_STATUSES = {
     "pending": "preparing", "in_progress": "running", "completed": "completed", "failed": "failed",
 }
@@ -118,6 +124,30 @@ def _codex_tool_status(kind, native_status, completed: bool) -> str:
     if native_status == "completed" or (native_status is None and kind in _CODEX_STATUSLESS_TOOLS):
         return "completed"
     return "unconfirmed"
+
+
+def _web_search_input(item: dict) -> dict:
+    query = item.get("query")
+    result = {"query": query} if "query" in item and (query is None or isinstance(query, str)) else {}
+    action = item.get("action")
+    if action is None and "action" in item:
+        result["action"] = None
+    if not isinstance(action, dict):
+        return result
+    kind = action.get("type")
+    if not isinstance(kind, str) or kind not in _WEB_ACTION_TEXT_FIELDS:
+        return result
+    normalized = {"type": kind}
+    for key in _WEB_ACTION_TEXT_FIELDS[kind]:
+        value = action.get(key)
+        if key in action and (value is None or isinstance(value, str)):
+            normalized[key] = value
+    queries = action.get("queries")
+    if kind == "search" and "queries" in action:
+        if queries is None or (isinstance(queries, list) and all(isinstance(query, str) for query in queries[:101])):
+            normalized["queries"] = queries
+    result["action"] = normalized
+    return result
 
 
 def _valid_tool_parent(value, child_id) -> bool:
@@ -231,9 +261,10 @@ class EventProjector:
                 or before in _SETTLED_TOOL_STATUSES and before != "unconfirmed" and after == "unconfirmed"
                 or before == "running" and after == "preparing"):
             return
-        # An explicit null exit code is a settled engine observation, not a missing update.
+        # Preserve explicit null observations where the provider distinguishes them from omission.
+        nullable_fields = ("exitCode", "output") if fields.get("nativeWebSearch") else ("exitCode",)
         merged = {**previous, "callId": call_id,
-                  **{key: value for key, value in fields.items() if value is not None or key == "exitCode"}}
+                  **{key: value for key, value in fields.items() if value is not None or key in nullable_fields}}
         if merged.get("status") == "running" and "startedAt" not in merged:
             merged["startedAt"] = _now()
         if merged.get("status") in ("completed", "failed", "interrupted") and "completedAt" not in merged:
@@ -357,8 +388,11 @@ class EventProjector:
                      or item.get("success") is False)):
                 fields["status"] = "failed"
         elif kind == "webSearch":
-            fields.update(name="web_search", input={"query": item.get("query"), "action": item.get("action")},
-                          output=item.get("results"))
+            fields.update(name="web_search", nativeWebSearch=True, input=_web_search_input(item))
+            fields.pop("durationMs", None)
+            results = item.get("results")
+            if "results" in item and (results is None or isinstance(results, list)):
+                fields["output"] = results
         elif kind == "imageView":
             fields.update(name="read_image", input={"path": item.get("path")})
         else:

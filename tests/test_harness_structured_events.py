@@ -129,6 +129,47 @@ def test_known_statusless_codex_tools_complete_on_native_terminal_frame(tmp_path
     assert started["status"] == "running" and finished["status"] == "completed"
 
 
+@pytest.mark.parametrize("action,expected", [
+    ({"type": "search", "query": None, "queries": []}, {"type": "search", "query": None, "queries": []}),
+    ({"type": "search", "queries": None}, {"type": "search", "queries": None}),
+    ({"type": "search", "queries": ["one", "two"], "hits": 8}, {"type": "search", "queries": ["one", "two"]}),
+    ({"type": "search", "queries": ["one", 2]}, {"type": "search"}),
+    ({"type": "openPage", "url": "https://example.org"}, {"type": "openPage", "url": "https://example.org"}),
+    ({"type": "findInPage", "pattern": "match", "url": None}, {"type": "findInPage", "pattern": "match", "url": None}),
+    ({"type": "other", "private": "internal"}, {"type": "other"}),
+    (None, None),
+])
+def test_native_web_search_projects_only_verified_action_fields(tmp_path, action, expected):
+    [event] = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={"id": "search", "type": "webSearch", "query": "outer query",
+                                     "action": action, "results": {"opaque": "provider data"},
+                                     "hitCount": 7, "durationMs": 3}),
+    ])
+    assert event["nativeWebSearch"] is True
+    assert event["name"] == "web_search" and event["status"] == "completed"
+    assert event["input"] == {"query": "outer query", "action": expected}
+    assert not {"output", "hitCount", "durationMs"}.intersection(event)
+
+
+def test_native_web_search_rejects_unknown_action_without_erasing_known_query(tmp_path):
+    [event] = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={"id": "search", "type": "webSearch", "query": "verified",
+                                     "action": {"type": "future", "query": "unverified"}}),
+    ])
+    assert event["nativeWebSearch"] is True
+    assert event["input"] == {"query": "verified"}
+
+
+@pytest.mark.parametrize("results,expected", [
+    (None, None), ([], []), ([{"title": "hit", "api_key": "hidden"}], [{"title": "hit", "api_key": "[REDACTED]"}]),
+])
+def test_native_web_search_retains_opaque_result_arrays_and_explicit_null(tmp_path, results, expected):
+    [event] = run_wire(tmp_path, "codex", [
+        codex("item/completed", item={"id": "search", "type": "webSearch", "query": "test", "results": results}),
+    ])
+    assert event["output"] == expected
+
+
 def test_codex_decline_interruption_and_failure_do_not_get_overwritten_by_late_progress(tmp_path):
     events = run_wire(tmp_path, "codex", [
         codex("item/completed", item={"id": "cmd", "type": "commandExecution", "status": "declined",
