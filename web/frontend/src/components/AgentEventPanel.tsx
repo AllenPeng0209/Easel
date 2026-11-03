@@ -245,8 +245,10 @@ export default function AgentEventPanel({ events, expandedCallId, expandedRunId,
   const toggleTool = (key: string, open: boolean) => setOpenCalls(previous => new Map(previous).set(key, open));
   const plans = new Map<string, AgentEvent[]>();
   const subagents = new Map<string, { first: AgentEvent; events: AgentEvent[] }>();
+  const usage = new Map<string, AgentEvent>();
   const turnKey = (event: AgentEvent) => JSON.stringify([event.runId ?? null, event.turnId ?? null]);
   for (const event of snapshots) {
+    if (event.kind === 'usage') usage.set(turnKey(event), event);
     if (event.kind === 'subagent') {
       const normalized = normalizeAgentEvent(event);
       if (normalized) {
@@ -263,6 +265,7 @@ export default function AgentEventPanel({ events, expandedCallId, expandedRunId,
   return <div ref={panel} className="agent-events" role="region" aria-label="任务执行记录">
     {snapshots.map(event => {
       if (typed.joined.has(event)) return null;
+      if (event.kind === 'usage' && usage.get(turnKey(event)) !== event) return null;
       if (event.kind === 'subagent') {
         const lineage = subagents.get(turnKey(event));
         return lineage?.first === event ? <AgentSubagentLineage key={JSON.stringify([sessionId, turnKey(event)])}

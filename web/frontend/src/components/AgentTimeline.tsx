@@ -5,6 +5,7 @@
  */
 import { useMemo, useState } from 'react';
 import type { AgentTimelineObservation } from '../lib/agentTimeline';
+import { agentToolKey, mergeToolSnapshots, type AgentEvent } from '../lib/agentEvents';
 import { inspectTerminalText } from '../lib/toolValueInspection';
 import { projectAgentTimeline } from '../vendor/deepseek-harness/trajectory/timeline';
 import { useWorkDisclosure } from './useWorkDisclosure';
@@ -44,6 +45,30 @@ function ObservationTime({ observedAt }: { observedAt?: number }) {
   })}</time>;
 }
 
+function collapseToolPhases(observations: readonly AgentTimelineObservation[]): AgentTimelineObservation[] {
+  const rows: AgentTimelineObservation[] = [];
+  const tools = new Map<string, { index: number; snapshot: AgentEvent }>();
+  for (const event of observations) {
+    if (event.kind !== 'tool' || !event.callId) {
+      rows.push(event);
+      continue;
+    }
+    const key = agentToolKey(event);
+    const snapshot: AgentEvent = { ...event, timestamp: event.observedAt };
+    const previous = tools.get(key);
+    if (!previous) {
+      tools.set(key, { index: rows.length, snapshot });
+      rows.push(event);
+      continue;
+    }
+    const latest = mergeToolSnapshots(previous.snapshot, snapshot);
+    previous.snapshot = latest;
+    // Keep the call in its first recorded position, with its current phase.
+    rows[previous.index] = { ...rows[previous.index], name: latest.name, status: latest.status };
+  }
+  return rows;
+}
+
 export default function AgentTimeline({ observations, pendingQuestions, onLocateTool, defaultOpen }: {
   observations: readonly AgentTimelineObservation[];
   pendingQuestions?: number;
@@ -54,7 +79,7 @@ export default function AgentTimeline({ observations, pendingQuestions, onLocate
   const [manual, setManual] = useState<boolean>();
   const disclosure = useWorkDisclosure(manual ?? defaultOpen ?? false, manual === undefined && defaultOpen !== undefined);
   const { observations: rows, summary } = useMemo(() => projectAgentTimeline(
-    observations.filter(event => event && typeof event.id === 'string' && Object.hasOwn(kindLabels, event.kind)),
+    collapseToolPhases(observations.filter(event => event && typeof event.id === 'string' && Object.hasOwn(kindLabels, event.kind))),
   ), [observations]);
   if (!rows.length) return null;
   const waiting = Math.max(pendingQuestions ?? 0, summary.waiting);

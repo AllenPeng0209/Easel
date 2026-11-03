@@ -6,7 +6,7 @@ import { IconCopy, IconCheck, IconRetry } from './icons';
 import ArtifactGallery from './ArtifactGallery';
 import DeliverableCards from './DeliverableCards';
 import TurnFileChanges from './TurnFileChanges';
-import { latestAgentFileChanges } from '../lib/agentEvents';
+import { agentToolKey, latestAgentFileChanges } from '../lib/agentEvents';
 import { deliverablesFromEvents, legacyArchivesForDeliverables, omitDeclaredArtifacts,
   rejectedSnapshotPaths } from '../lib/deliverables';
 import UserAttachments from './UserAttachments';
@@ -27,6 +27,15 @@ import { useClipboardCopy } from '../vendor/deepseek-harness/message/use-clipboa
 import '../styles/agent-chat.css';
 
 const EMPTY_EVENTS: AgentEvent[] = [];
+
+function onlyOneSuccessfulTool(timeline: AgentTimelineObservation[], events: AgentEvent[]): boolean {
+  const first = timeline[0];
+  if (first?.kind !== 'tool' || !first.callId || first.earlierObservationsOmitted) return false;
+  const key = agentToolKey(first);
+  return timeline.every(event => event?.kind === 'tool' && agentToolKey(event) === key
+    && ['preparing', 'pending', 'running', 'in_progress', 'completed'].includes(event.status ?? ''))
+    && events.some(event => event.kind === 'tool' && event.status === 'completed' && agentToolKey(event) === key);
+}
 
 export interface BubbleActions {
   onCopy: () => void | Promise<void>;
@@ -184,7 +193,9 @@ export default function MessageBubble({ message, sessionId, isStreaming, inherit
   const answerItem = (isStreaming ? answerCompletion : message.answerCompletion)?.itemId;
   const answerCompleted = typeof answerItem === 'string' && !!answerItem.trim()
     && answerItem.length <= 512 && !/\p{Cc}/u.test(answerItem);
-  const phase = <AnswerTurnPhase answerCompleted={answerCompleted} active={isStreaming === true}
+  const turnCompleted = !isStreaming && message.status === 'completed';
+  const showTimeline = effTimeline?.length && !(turnCompleted && !waitingQuestions && onlyOneSuccessfulTool(effTimeline, effEvents));
+  const phase = <AnswerTurnPhase answerCompleted={answerCompleted && !turnCompleted} active={isStreaming === true}
     lifecycle={turnLifecycle} outcome={message.status} />;
   const canFork = !isStreaming && message.status === 'completed' && typeof message.clientTurnId === 'string'
     && /^[A-Za-z0-9_.-]{1,160}$/.test(message.clientTurnId);
@@ -244,7 +255,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, inherit
             onRetry={actions?.canModify && !uncertainTurn && !hasPublicationReceipt ? actions.onRetry : undefined} />}
           {livePanel}
           {publicSummary && <ReasoningSummaryDisclosure summary={publicSummary} defaultOpen={workDetailsOpen} />}
-          {effTimeline?.length ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} defaultOpen={workDetailsOpen}
+          {showTimeline && effTimeline ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} defaultOpen={workDetailsOpen}
             onLocateTool={(runId, callId) => toolLocator.current?.locate(runId, callId) ?? false} /> : null}
           <AgentEventPanel toolLocatorRef={toolLocator} defaultOpen={workDetailsOpen} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact' && event.kind !== 'changes')} settled={!isStreaming} />
           {assistantContent && <AnswerQuoteSelection blocks={rendered.blocks} highlightCode={!isStreaming} settled={!isStreaming}

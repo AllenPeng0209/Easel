@@ -26,12 +26,35 @@ test('saved compact observations render by recorded order with distinct tool cou
   assert.equal(details.hasAttribute('open'), false);
   assert.match(details.querySelector('summary').textContent, /1 次工具调用.*1 个失败/s);
   const rows = [...details.querySelectorAll('[data-timeline-observation]')];
-  assert.deepEqual(rows.map(row => row.dataset.observationKind), ['tool', 'decision', 'tool']);
+  assert.deepEqual(rows.map(row => row.dataset.observationKind), ['tool', 'decision']);
+  assert.equal(rows[0].dataset.observationStatus, 'failed');
+  assert.ok(rows[0].querySelector('[data-locate-failed-tool]'));
   assert.match(rows[1].textContent, /用户答复/);
   assert.equal(rows[1].querySelector('time'), null);
   const time = rows[0].querySelector('time');
   assert.equal(time.getAttribute('datetime') ?? time.getAttribute('dateTime'), '2023-11-14T22:13:20.000Z');
   assert.doesNotMatch(details.textContent, /多行|旧活动/);
+});
+
+test('a settled one-call turn shows its tool detail and latest usage without a duplicate timeline or answer badge', () => {
+  const preparing = tool('start', 'preparing', 1700000000000);
+  const completed = tool('end', 'completed', 1700000001000);
+  const document = render({
+    role: 'assistant', content: '', status: 'completed',
+    answerCompletion: { itemId: 'answer' },
+    timeline: [preparing, completed],
+    events: [preparing, completed,
+      { id: 'usage-1', runId: 'run', turnId: 'turn', kind: 'usage', output: { tokens: 1234 } },
+      { id: 'usage-2', runId: 'run', turnId: 'turn', kind: 'usage', output: { tokens: 5678 } }],
+  });
+  assert.equal(document.querySelector('[data-agent-timeline]'), null);
+  assert.equal(document.querySelectorAll('[data-tool-call="single-call"]').length, 1);
+  assert.equal(document.querySelector('[data-answer-phase]'), null);
+  assert.ok(document.querySelector('[data-turn-phase=completed]'));
+  const details = document.querySelector('[aria-label="任务执行记录"]');
+  assert.equal([...details.querySelectorAll('summary')].filter(row => row.textContent === '本轮用量').length, 1);
+  assert.match(details.textContent, /5678/);
+  assert.doesNotMatch(details.textContent, /1234/);
 });
 
 test('live waiting is shown even when there are no fabricated pending-order records', () => {
