@@ -6,6 +6,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+!web/frontend/build/
+!web/frontend/build/assetArchive.mjs
+!web/frontend/build/assetArchive.d.mts
 .eggs/
 
 # Environment

@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { test } from 'node:test';
-import { archiveAssetDirectory, archiveBundleAssets } from '../../web/frontend/build/assetArchive.mjs';
+import { archiveAssetDirectory, archiveBundleAssets, FRONTEND_ASSET_ARCHIVE } from '../../web/frontend/build/assetArchive.mjs';
 
 async function fixture(action) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'easel-assets-')));
@@ -85,7 +88,8 @@ test('HTML entrypoints and outputs outside assets never enter the public compati
 
 test('asset traversal is rejected before reading outside the generated output', async () => fixture(async root => {
   const build = await output(root, 'build', { 'assets/good-hash.js': 'export {}' });
-  for (const fileName of ['assets/../private.js', '../assets/private.js', '/assets/private.js', 'assets//private.js', 'assets/./private.js', 'assets\\private.js']) {
+  for (const fileName of ['assets/../private.js', '../assets/private.js', '/assets/private.js', 'assets//private.js', 'assets/./private.js',
+    'assets' + String.fromCharCode(92) + 'private.js', 'assets/private' + String.fromCharCode(0) + '.js']) {
     await assert.rejects(archiveBundleAssets(build.directory, { [fileName]: { fileName } }, join(root, 'archive')), /path|asset|travers|relative/i);
   }
   assert.equal(await exists(join(root, 'archive/private.js')), false);
@@ -119,4 +123,38 @@ test('concurrent identical builds keep one complete immutable asset', async () =
   await Promise.all(Array.from({ length: 6 }, () => archiveBundleAssets(build.directory, build.bundle, archive)));
   assert.deepEqual(await readFile(join(archive, 'large-hash.js')), contents);
   assert.deepEqual(await readdir(archive), ['large-hash.js']);
+}));
+
+test('a real Vite fresh-output build archives in the repository rather than its bundled-config directory', async () => fixture(async root => {
+  const frontend = fileURLToPath(new URL('../../web/frontend/', import.meta.url));
+  const helper = fileURLToPath(new URL('../../web/frontend/build/assetArchive.mjs', import.meta.url));
+  const outputDirectory = join(root, 'fresh-output');
+  const marker = root.split('/').at(-1);
+  await writeFile(join(root, 'index.html'), '<html><body><script type="module" src="/entry.js"></script></body></html>');
+  await writeFile(join(root, 'entry.js'), `document.body.dataset.archiveProof=${JSON.stringify(marker)};document.body.onclick=()=>import('./Panel.js');`);
+  await writeFile(join(root, 'Panel.js'), `export default ${JSON.stringify(marker)};`);
+  const config = join(root, 'vite.config.mts');
+  await writeFile(config, `import {assetArchivePlugin} from ${JSON.stringify(helper)};export default {plugins:[assetArchivePlugin()],base:'./'};`);
+  const before = new Set(await readdir(FRONTEND_ASSET_ARCHIVE).catch(error => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }));
+  let generated = [];
+  try {
+    await promisify(execFile)(process.execPath, [join(frontend, 'node_modules/vite/bin/vite.js'), 'build', root,
+      '--config', config, '--outDir', outputDirectory, '--emptyOutDir'], { cwd: frontend, timeout: 30000, maxBuffer: 1024 * 1024 });
+    generated = await readdir(join(outputDirectory, 'assets'));
+    assert.ok(generated.some(name => name.startsWith('Panel-')), 'The real build must emit a lazy-import chunk');
+    for (const name of generated) {
+      assert.ok(!before.has(name), 'The unique CLI fixture must create a previously unarchived module');
+      assert.deepEqual(await readFile(join(FRONTEND_ASSET_ARCHIVE, name)), await readFile(join(outputDirectory, 'assets', name)));
+    }
+    assert.equal(await exists(join(FRONTEND_ASSET_ARCHIVE, 'index.html')), false);
+  } finally {
+    // Only these unreferenced synthetic test modules are disposable; production
+    // release graphs archived by the same hook remain available to open tabs.
+    for (const name of generated) {
+      if (!before.has(name)) await rm(join(FRONTEND_ASSET_ARCHIVE, name), { force: true });
+    }
+  }
 }));
