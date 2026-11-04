@@ -21,6 +21,16 @@ def context():
             'mode': 'publish_now', 'approvedAccountId': 'user_id:self-123'}
 
 
+@pytest.mark.parametrize('platform', ['twitter-x', 'juejin', 'toutiao'])
+def test_mainline_platform_context_is_preserved_without_inventing_observations(tmp_path, platform):
+    root = tmp_path / platform
+    root.mkdir(mode=0o700)
+    expected = {**context(), 'platform': platform}
+    files = api().PublicationReceiptFiles(root, expected)
+    assert json.loads(files.context_path.read_text()) == expected
+    assert files.read() is None
+
+
 @pytest.fixture
 def files(tmp_path):
     root = tmp_path / 'private-operation'

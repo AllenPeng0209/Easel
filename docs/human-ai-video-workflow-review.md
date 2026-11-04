@@ -42,7 +42,7 @@ OpenCut 比 Hypit 更适合作为人工剪辑界面的候选，但目前应评�
 | 对话与 Agent | `easel/harnesses/`、`web/app.py:2928` 起的事件日志、后台任务和 SSE；`App.tsx` 管理跨页面流式状态 | 没有视频项目 ID、所选镜头、工程版本等结构化编辑上下文；对话生命周期与制作项目生命周期需要解耦 |
 | 产物展示 | `MessageBubble.tsx`、`ArtifactGallery.tsx:73`、`OutputsPage.tsx:176` | 视频仍是播放器与文件预览，没有时间线、参数面板、修改集或版本比较 |
 | 素材生成 | `ai_image.py`、`ai_video.py`、`tts.py`、`ai_music.py`、`model_registry.py` | 可保留供应商适配能力；应由项目级任务服务保存请求及结果，不靠长驻对话进程作为唯一任务所有者 |
-| 自动短视频 | `auto-short-video/SKILL.md`、`scripts/assemble.py` | 有 storyboard、图片/视频、字幕、配音和 BGM，但不是自由多轨工程格式 |
+| 自动短视频 | `auto-short-video/SKILL.md`、`../skills/builtin/auto-short-video/scripts/assemble.py` | 有 storyboard、图片/视频、字幕、配音和 BGM，但不是自由多轨工程格式 |
 | 短剧 | `short-drama/scripts/drama_ops.py`、`dubbing.py` | 有角色参考、镜头、台词、原生对白审计、音画对齐；缺少用户可操作的工程 UI 和候选版本管理 |
 | 合成恢复 | `artifact_checkpoints.py`、`assemble.py:418` 起 | 有内容指纹、产物校验、独占锁和原子交付；其边界明确为可重做的本地计算，不保证付费 API 恰好执行一次 |
 | 视频产线 | `video-production/scripts/video_pipeline.py` 及 vendor SDK | 已有设计表和预览两道确认、质量门、人审包；主要面向已有原片包装，不能覆盖全部从对话生成并自由编辑的流程 |

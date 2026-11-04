@@ -24,7 +24,7 @@ _REASONS = frozenset(('dry_run', 'help', 'preflight_failed', 'ui_signal_only',
     'validation_failed', 'runner_unavailable'))
 _CONTEXT_KEYS = ('operationId', 'payloadHash', 'platform', 'mode', 'approvedAccountId')
 _PLATFORMS = frozenset(('douyin', 'xiaohongshu', 'wechat-oa', 'weixin-channels',
-                       'bilibili', 'kuaishou', 'zhihu'))
+                       'bilibili', 'kuaishou', 'zhihu', 'twitter-x', 'juejin', 'toutiao'))
 _MODES = frozenset(('publish_now', 'create_draft', 'scheduled', 'manual_export'))
 _ACK_STATES = frozenset(('accepted', 'submitted', 'processing', 'reviewing', 'published',
                         'public', 'private', 'unlisted', 'scheduled', 'draft', 'unknown', 'rejected'))

@@ -28,6 +28,8 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function setup() {
   const status = deferred(), requests = [], lists = [], cleanups = [], recommended = [];
   const control = runInNewContext(outputText, {
+    canOperate: true, isPlatformAdmin: true, projectUrl: url => url,
+    projectFetch: async () => ({ ok: true, json: async () => ({ modelConfigured: true }) }),
     useRef: initial => ({ current: initial }), useCallback: fn => fn,
     useEffect: fn => { const cleanup = fn(); if (cleanup) cleanups.push(cleanup); },
     fetchStatus: () => status.promise,

@@ -119,10 +119,10 @@ test('viewer interaction view retains records but has no sending, automation, or
   view.button('打开会话：访客 · 了解汽车').props.onClick();await view.flush();
   assert.ok(!view.button('生成回复建议'));assert.ok(!view.button('模拟发送'));assert.ok(!view.button('人工接管'));
   assert.ok(view.all().some(node=>node.type==='textarea'&&node.props['aria-label']==='回复内容'&&(node.props.disabled||node.props.readOnly)));
-  view.button('知识库与规则').props.onClick();await view.flush();
+  view.button('回复规则').props.onClick();await view.flush();
   assert.ok(!view.button('运行一轮规则'));assert.ok(!view.button('保存规则'));assert.ok(!view.button('＋ 新增知识'));
   assert.ok(view.all().filter(node=>['接待模式','转人工关键词'].includes(node.props?.['aria-label'])||node.props?.type==='checkbox').every(node=>node.props.disabled||node.props.readOnly));
-  view.button('渠道接入').props.onClick();await view.flush();assert.ok(!view.button('＋ 新增渠道'));assert.ok(!view.button('同步评论'));
+  view.button('账号连接').props.onClick();await view.flush();assert.ok(!view.button('＋ 新增渠道'));assert.ok(!view.button('同步评论'));
   assert.ok(view.calls.every(call=>call.method==='GET'));view.dispose();
 });
 
@@ -131,7 +131,7 @@ test('operators can work on interaction replies while account channel configurat
   await view.flush();assert.ok(view.button('载入模拟消息'));
   view.button('打开会话：访客 · 了解汽车').props.onClick();await view.flush();assert.ok(view.button('生成回复建议'));
   view.button('生成回复建议').props.onClick();await view.flush();assert.ok(view.calls.some(call=>call.method==='POST'&&call.url.endsWith('/draft')));
-  view.button('渠道接入').props.onClick();await view.flush();assert.ok(!view.button('＋ 新增渠道'));view.dispose();
+  view.button('账号连接').props.onClick();await view.flush();assert.ok(!view.button('＋ 新增渠道'));view.dispose();
 });
 
 

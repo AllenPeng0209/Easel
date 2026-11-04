@@ -12,8 +12,8 @@ const parsed = ts.createSourceFile('api.ts', source, ts.ScriptTarget.Latest, tru
 const declaration = parsed.statements.find(node =>
   ts.isFunctionDeclaration(node) && node.name?.text === 'streamChat');
 assert.ok(declaration);
-// Like the replay tests, exercise the stream without evaluating unrelated API imports.
-const { outputText } = ts.transpileModule(declaration.getText(parsed), {
+// Exercise the real API helpers and the stream's complete parser dependencies.
+const { outputText } = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,
     target: ts.ScriptTarget.ES2022,
@@ -32,7 +32,7 @@ function loadApi(fetchImpl) {
   const sandbox = {
     exports: module.exports,
     BASE: '',
-    require: (name) => name === './projectScope' ? projectScope : require(name),
+    require: (name) => name === './projectScope' ? projectScope : name === './trendValidation' ? {} : require(name),
     console,
     window: { location: { pathname: '/' } },
     AbortController,
@@ -41,7 +41,10 @@ function loadApi(fetchImpl) {
     clearTimeout,
     fetch: (...args) => {
       calls.fetch += 1;
-      return fetchImpl(...args);
+      return Promise.resolve(fetchImpl(...args)).then(response => {
+        if (!response.headers) response.headers = new Headers();
+        return response;
+      });
     },
   };
   runWithProjectScope(outputText, sandbox);
@@ -49,16 +52,12 @@ function loadApi(fetchImpl) {
 }
 
 function jsonResponse(status, detail) {
-  return {
-    ok: status < 400,
-    status,
-    json: async () => ({ detail }),
-  };
+  return new Response(JSON.stringify({ detail }), { status });
 }
 
 function sseStream(status = 200) {
   // 最小可读流：立即结束（consume 只在 !ok 时读 json）
-  return { ok: status < 400, status, json: async () => ({ detail: 'noop' }), body: null };
+  return new Response(null, { status });
 }
 
 test('streamChat: POST 5xx 后 jobs 404 终结并报错（不再无限重试）', async () => {

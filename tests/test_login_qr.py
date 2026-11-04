@@ -226,7 +226,7 @@ def test_creator_account_accepts_only_verified_server_identity(status, payload, 
     assert (result is not None) is verified
     request.get.assert_called_once_with(
         xhs_publish.CREATOR_ACCOUNT_URL,
-        headers={"Referer": xhs_publish.CREATOR_HOME_URL},
+        headers={"Referer": xhs_publish.CREATOR_HOME_URL, "Cache-Control": "no-cache"},
         timeout=5000,
     )
 

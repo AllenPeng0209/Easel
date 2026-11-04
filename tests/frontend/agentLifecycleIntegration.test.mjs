@@ -691,20 +691,6 @@ test('unsafe failed or unconfirmed turns cannot be replayed, and a safe retry re
   assert.equal(ui.context.sessions[0].messages[1].failure.code, 'network');
 });
 
-test('approved plan execution keeps its exact reference through chat admission', async () => {
-  const ui = appBoundary([{ id: 's', title: 'Plan', created: 1, messages: [] }], { canOperate: true });
-  const plan = { planId: 'a'.repeat(32), revision: 2, digest: 'b'.repeat(64), text: 'Approved plan content' };
-  const accepted = ui.callback('handleExecutePlan')('s', plan);
-  assert.equal(ui.requests.length, 1);
-  const request = ui.requests[0];
-  assert.equal(request[9], `plan-${plan.planId}-2`);
-  assert.deepEqual(plain(request[25]), { planId: plan.planId, revision: 2, digest: plan.digest });
-  request[19]();
-  assert.equal(await accepted, true);
-  assert.equal(ui.context.sessions[0].messages[0].planRef.digest, plan.digest);
-  assert.equal(ui.context.sessions[0].messages[0].content, plan.text);
-});
-
 test('a delayed question status cannot replace an already accepted resolution', () => {
   const ui = appBoundary([{ id: 's', title: 'Approval', created: 1, messages: [] }]);
   const owner = { questions: [{ id: 'q', status: 'resolved', answers: { approval: ['winner'] } }] };

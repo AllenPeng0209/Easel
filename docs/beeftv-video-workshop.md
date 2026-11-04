@@ -93,7 +93,7 @@ bash scripts/beeftv_runtime.sh mcp --read-only
 
 包装器从项目内的 `0600` 文件加载普通客户端凭据，并移除继承的 owner／desktop token；标准输入保留给 MCP JSON-RPC，标准输出只传协议或官方 CLI 结果。
 
-`connect` 同时生成当前 workspace 的 `.easel/beeftv/run/mcp-config.json`。它记录该 IP 的包装器与环境，不含明文凭据；可将其对应服务器配置合并到已授权的外部 Agent 配置中。不要直接运行配置文件里的模型生成工具做连接测试，先握手和 `tools/list`。
+`connect` 同时生成当前 workspace 的 `.easel/beeftv/run/mcp-config.json`。它记录该 IP 的包装器与环境，不含明文凭据；可将其对应服务器配置合并到已授权的外部 Agent 配置中。不要直接运行配置文件里的模型生成工具做连接测试，先握手和 MCP 的 tools/list 方法。
 
 ## 从旧共享实例迁移
 
@@ -181,7 +181,7 @@ canvas.project.export -> GET /api/resources/<工程resourceId>/file
 
 证据在 `.scratch/beeftv/run/` 的 `mcp-tools.json`、`mcp-export.json`、`smoke-editable-project.zip`、`native-render-task.json` 和 `runtime-rendered.mp4`。这些结果不证明模型生成或营销样片已合格；真实生成、人工式改稿和最终交付各自记录证据。
 
-后续家庭教育营销样片已真实完成：`outputs/家庭教育-先换一种回应/delivery-manifest.json` 对应工程 V5／来源画布 53，28.5 秒、720×1280、24fps，附可编辑工程。生成、定向返修、真实界面字幕修改、保留人工修改的 MCP 续编、原生渲染和最终模拟审阅均有独立回执。最终检查在同目录 `assets/final-qa/r4/`；本次记录为模拟预审，仍需真人试听与定稿。内置 BeefTV 助手和 Easel 聊天模型配置不包含在这一外部对话 Agent 的执行证明中。
+后续家庭教育营销样片已真实完成：`outputs/家庭教育-先换一种回应/delivery-manifest.json` 对应工程 V5／来源画布 53，28.5 秒、720×1280、24fps，附可编辑工程。生成、定向返修、真实界面字幕修改、保留人工修改的 MCP 续编、原生渲染和最终模拟审阅均有独立回执。最终检查在同目录 各制作项目 assets 下的 final-qa/r4 目录；本次记录为模拟预审，仍需真人试听与定稿。内置 BeefTV 助手和 Easel 聊天模型配置不包含在这一外部对话 Agent 的执行证明中。
 
 当前固定上游版本的插件安装接口有一项已复现的问题：`POST /api/plugins` 在安装持久化后写审计时，可能因本地数据库缺少 `admin_audit_events` 表返回 HTTP 500。应先只读查询插件目录、版本与 enabled 状态，确认实际安装结果，不盲目重装；不能把 500 当成成功，也不绕过审计。该上游问题与声明式协议本身的请求单测分别记录。
 

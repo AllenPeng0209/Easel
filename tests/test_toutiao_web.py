@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,11 @@ def client(tmp_path, monkeypatch):
     # 不显式改掉的话，发布用例会往用户真实的内容日历里写测试条目。
     monkeypatch.setattr(web, "SCHEDULE_FILE", tmp_path / "_schedule.json")
     monkeypatch.setattr(web, "LOGIN_PROCESSES", {})
+    monkeypatch.setattr(web, '_publication_dir', lambda: tmp_path / 'host-publications')
+    monkeypatch.setattr(web, '_require_automated_publishing', lambda: None)
+    async def identity(_platform):
+        return {'id': 'id:fixture-toutiao-owner', 'name': 'Fixture account'}
+    monkeypatch.setattr(web, '_publication_account', identity)
     with web._WHOAMI_LOCK:
         web._WHOAMI_CACHE.clear()
     # TrustedHostMiddleware 只放行 localhost/127.0.0.1（TestClient 默认的 testserver 会被判
@@ -108,7 +114,9 @@ def test_whoami_dispatch_passes_through_json(monkeypatch, client):
     r = client.get("/api/accounts/toutiao/whoami")
 
     assert r.status_code == 200, r.text
-    assert r.json() == {"loggedIn": True, "name": "我的头条号", "avatar": ""}
+    assert {key: r.json()[key] for key in ('loggedIn', 'name', 'avatar')} == {
+        "loggedIn": True, "name": "我的头条号", "avatar": ""}
+    assert r.json()['accountIdentityStatus'] == 'unknown'
     cmd = captured["cmd"]
     assert Path(cmd[1]).as_posix().endswith(SCRIPT_SUFFIX), cmd
     assert cmd[2] == "whoami", cmd
@@ -140,8 +148,7 @@ def test_publish_dispatch_uses_toutiao_script(monkeypatch, client):
     """发布分派：正文走 --content 直传，不落临时文件；标题/话题一并带上。"""
     cmds = _capture_all_cmds(monkeypatch)
 
-    r = client.post("/api/publish/toutiao",
-                    json={"title": "标题", "body": "正文内容", "tags": "AI"})
+    r = _publish_reviewed(client, {"title": "标题", "body": "正文内容", "tags": "AI"})
 
     assert r.status_code == 200, r.text
     cmd = _publish_cmd(cmds)
@@ -161,6 +168,8 @@ def _capture_all_cmds(monkeypatch) -> list[list[str]]:
         returncode = 0
         stdout = "ok"
         stderr = ""
+        timed_out = False
+        output_truncated = False
 
     def fake_run(cmd, **kw):
         cmds.append(list(cmd))
@@ -169,7 +178,34 @@ def _capture_all_cmds(monkeypatch) -> list[list[str]]:
         return result
 
     monkeypatch.setattr(web.subprocess, "run", fake_run)
+    async def managed_run(cmd, *, preflight=None, **kw):
+        if preflight:
+            preflight()
+        assert Path(cmd[1]).as_posix().endswith(SCRIPT_SUFFIX)
+        assert '--receipt-context' not in cmd and '--receipt-file' not in cmd
+        return fake_run(cmd, **kw)
+    monkeypatch.setattr(web, 'run_publication_process', managed_run)
     return cmds
+
+
+def _publish_reviewed(client, payload):
+    prepared = client.post('/api/publish/toutiao/prepare', json=payload)
+    assert prepared.status_code == 200, prepared.text
+    record = prepared.json()
+    approved = client.post('/api/publication-approvals/' + record['id'] + '/decision',
+        json={'approved': True, 'payloadHash': record['payloadHash']})
+    assert approved.status_code == 200, approved.text
+    started = client.post('/api/publish/toutiao', json={**payload,
+        'approvalId': record['id'], 'payloadHash': record['payloadHash']})
+    assert started.status_code == 200, started.text
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        current = client.get('/api/publication-approvals/' + record['id'])
+        result = current.json().get('result') or {}
+        if result.get('status') != 'executing':
+            return current
+        time.sleep(0.01)
+    pytest.fail('Synthetic publication did not terminate')
 
 
 def _publish_cmd(cmds: list[list[str]]) -> list[str]:
@@ -183,7 +219,7 @@ def _publish_cmd(cmds: list[list[str]]) -> list[str]:
 def _capture_publish_cmd(monkeypatch, client, payload: dict) -> list[str]:
     """跑一次发布并返回真正拼出来的发布命令行（subprocess 被替身顶掉）。"""
     cmds = _capture_all_cmds(monkeypatch)
-    r = client.post("/api/publish/toutiao", json=payload)
+    r = _publish_reviewed(client, payload)
     assert r.status_code == 200, r.text
     return _publish_cmd(cmds)
 
@@ -207,22 +243,19 @@ def test_publish_without_draft_flag_still_execs(monkeypatch, client):
 
 def test_draft_flag_is_rejected_for_unsupported_platforms(monkeypatch, client):
     cmds = _capture_all_cmds(monkeypatch)
-    response = client.post('/api/publish/zhihu', json={'title':'title','body':'body','draft':True})
+    response = client.post('/api/publish/zhihu/prepare', json={'title':'title','body':'body','draft':True})
     assert response.status_code == 400 and not cmds
 
 
-def test_draft_publish_is_logged_as_draft_in_calendar(monkeypatch, client, tmp_path):
-    """存草稿的内容不该在内容日历里记成「已发布」。"""
+def test_unverified_draft_does_not_create_a_published_calendar_record(monkeypatch, client, tmp_path):
+    """进程退出成功尚无绑定回执时，不推断平台草稿或公开发布状态。"""
     sched = tmp_path / "_schedule.json"
     monkeypatch.setattr(web, "SCHEDULE_FILE", sched)
 
     _capture_publish_cmd(monkeypatch, client,
                          {"title": "草稿标题", "body": "正文", "draft": True})
 
-    items = json.loads(sched.read_text(encoding="utf-8"))
-    assert len(items) == 1, items
-    assert items[0]["status"] == "draft", items
-    assert items[0]["title"] == "草稿标题", items
+    assert not sched.exists()
 
 
 def test_publish_passes_media_as_images(monkeypatch, client):
@@ -236,15 +269,11 @@ def test_publish_passes_media_as_images(monkeypatch, client):
 
     assert "--images" in cmd, cmd
     idx = cmd.index("--images")
-    assert str(img) in cmd[idx + 1], cmd
+    assert cmd[idx + 1].endswith('.png') and str(img) != cmd[idx + 1], cmd
 
 
 def test_unverified_result_does_not_record_calendar(monkeypatch,client,tmp_path):
-    class Result:
-        returncode=0
-        stdout='{"published":false}'
-        stderr=''
-    monkeypatch.setattr(web.subprocess,'run',lambda *a,**k:Result())
-    response=client.post('/api/publish/toutiao',json={'title':'title','body':'body'})
-    assert response.status_code==200 and response.json()['ok'] is False
+    _capture_all_cmds(monkeypatch)
+    response = _publish_reviewed(client, {'title':'title','body':'body'})
+    assert response.status_code == 200 and response.json()['result']['status'] != 'confirmed'
     assert not (tmp_path/'_schedule.json').exists()

@@ -83,11 +83,12 @@ def test_social_logout_only_clears_current_ip_browser(account_state, tmp_path):
 
 
 def test_social_browser_login_does_not_claim_automatic_publishing_support(account_state, monkeypatch):
+    from fastapi.testclient import TestClient
     monkeypatch.setattr(web, "_require_automated_publishing", lambda: None)
-    with pytest.raises(web.HTTPException) as failure:
-        asyncio.run(web.api_publish("facebook", web.PublishRequest(title="Draft", body="Text")))
-    assert failure.value.status_code == 400
-    assert "仅支持账号登录" in failure.value.detail
+    with TestClient(web.app, base_url='http://localhost:7860') as client:
+        response = client.post('/api/publish/facebook', json={'title': 'Draft', 'body': 'Text'})
+    assert response.status_code == 400
+    assert "仅支持账号登录" in response.json()['detail']
 
 
 def test_social_proxy_in_project_settings_reaches_browser_runner(account_state, monkeypatch):

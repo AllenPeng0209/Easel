@@ -49,7 +49,8 @@ async function mount(file, initialProps = {}, { ideas = [], projects = [], detai
     } } }, { window, document });
   const componentApi = {
     fetchIdeas: async () => { reads.push('ideas'); return ideas; },
-    fetchTrends: async () => ({ trends, updated: 1234 }),
+    fetchTrendSources: async () => ({ sources: trends.map(group => ({ id: group.platform, label: group.label, default: true })), warnings: [] }),
+    fetchTrends: async () => ({ trends, updated: 1234, warnings: [] }),
     createIdea: saveIdea ? async input => { writes.push(input); return saveIdea(input); } : denied,
     updateIdea: denied, deleteIdea: denied, createSchedule: denied,
   };
@@ -65,6 +66,7 @@ async function mount(file, initialProps = {}, { ideas = [], projects = [], detai
     { './projectScope': { ACTIVE_PROJECT_ID: 'active' }, './businessObjects': {} }, { window, document });
   const Component = compile(`components/${file}.tsx`, { react: React, 'react/jsx-runtime': require('react/jsx-runtime'),
     '../lib/api': componentApi, '../lib/workshop': workshopApi, '../lib/businessObjectApi': businessApi,
+    './TrendSourcesDialog': { default: () => null },
     './icons': new Proxy({}, { get: () => () => null }), './ProjectSpace': { useIpPermissions: () => ({
       canOperate: role !== 'viewer', isPlatformAdmin, role }) } }, { window, document }).default;
   const root = createRoot(document.getElementById('root'));
