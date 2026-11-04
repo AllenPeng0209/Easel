@@ -128,8 +128,19 @@ def test_openai_slot_still_unchanged(sandbox):
 
 
 def _capture_probes(monkeypatch):
-    """拦住真实网络请求，记录每次探测的 (url, headers)。"""
+    """固定测试 DNS 并拦住真实网络，记录每次探测的 (url, headers)。"""
     seen: list[tuple[str, dict]] = []
+
+    def resolve(host, *_args, **_kwargs):
+        if host in {'api.openai.com', 'api.anthropic.com'}:
+            address = '8.8.8.8'
+        else:
+            # Preserve literal private addresses so the real SSRF guard still
+            # rejects cloud metadata endpoints; unexpected names never resolve.
+            address = str(web.ipaddress.ip_address(host))
+        return [(web.socket.AF_INET, web.socket.SOCK_STREAM, 0, '', (address, 0))]
+
+    monkeypatch.setattr(web.socket, 'getaddrinfo', resolve)
 
     class _Resp:
         status = 200
@@ -176,7 +187,7 @@ def test_selftest_keeps_openai_shape(sandbox, monkeypatch):
     assert resp.status_code == 200, resp.text
 
     openai_calls = [(u, h) for u, h in seen if "api.openai.com" in u]
-    assert openai_calls, f"没有探测 openai 通道：{seen}"
+    assert openai_calls, f"没有探测 openai 通道：{seen}; result={resp.json()}"
     url, headers = openai_calls[0]
     assert url == "https://api.openai.com/v1/models"
     assert headers.get("authorization", "").startswith("Bearer ")
