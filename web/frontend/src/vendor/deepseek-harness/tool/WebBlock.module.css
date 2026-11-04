@@ -1,0 +1,21 @@
+/*
+ * Adapted from DeepSeek Harness ui-primitives/src/WebBlock.module.css @ ce7073d (MIT).
+ * Uses Easel's light and dark surface tokens.
+ */
+.block {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--text);
+}
+.block p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.queries { margin: 0; padding-inline-start: 18px; max-height: 11rem; overflow: auto; }
+.queries li { margin: 2px 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.source a { color: var(--accent-start); overflow-wrap: anywhere; font-size: 12px; }
+.source a:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }
+.block .evidence { color: var(--text-secondary); }
+.block[data-web-evidence='failed'] > .evidence { color: var(--red); }

@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from easel.harnesses.diagnostics import classify_provider_failure
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SYSTEM_PROMPT = (
     "你是 Easel 社媒内容助手，用用户的语言协助写作、策划和分析。"
@@ -21,6 +23,11 @@ SYSTEM_PROMPT = (
 
 class DirectAPIError(Exception):
     """Safe user-facing diagnostics; never include credentials or upstream bodies."""
+
+    def __init__(self, message: str, code: str = "unknown", phase: str = "execution"):
+        super().__init__(message)
+        self.code = code
+        self.phase = phase
 
 
 def read_settings(env_file: Path | None = None) -> dict[str, str]:
@@ -90,7 +97,7 @@ async def stream_chat(settings: dict[str, str], content: str | list, *,
             if not isinstance(history, list):
                 raise ValueError
         except (OSError, ValueError):
-            raise DirectAPIError("直连会话历史损坏，请新建会话") from None
+            raise DirectAPIError("直连会话历史损坏，请新建会话", "session_conflict", "startup") from None
     user = {"role": "user", "content": content}
     body = {"model": model, "stream": True,
             "messages": [{"role": "system", "content": system}, *history, user]}
@@ -105,14 +112,18 @@ async def stream_chat(settings: dict[str, str], content: str | list, *,
             async with client.stream("POST", base + "/chat/completions",
                                      json=body, headers=headers) as response:
                 if response.status_code != 200:
-                    raise DirectAPIError(f"API 返回 HTTP {response.status_code}，请检查地址、Key 和模型")
+                    code, _ = classify_provider_failure({"status": response.status_code})
+                    raise DirectAPIError(f"API 返回 HTTP {response.status_code}，请检查地址、Key 和模型", code)
                 async for payload in _sse_payloads(response):
                     if payload == "[DONE]":
                         break
                     try:
                         event = json.loads(payload)
-                        if not isinstance(event, dict) or event.get("error"):
+                        if not isinstance(event, dict):
                             raise ValueError
+                        if event.get("error"):
+                            code, _ = classify_provider_failure(event["error"])
+                            raise DirectAPIError("API 返回错误，请检查网关和模型配置", code)
                         choices = event.get("choices") or []
                         if not choices:
                             continue  # usage-only event
@@ -130,16 +141,20 @@ async def stream_chat(settings: dict[str, str], content: str | list, *,
                         finish_reason = choice.get("finish_reason") or finish_reason
                     except (ValueError, TypeError, KeyError, AttributeError):
                         raise DirectAPIError("API 返回了错误或无法解析的流数据") from None
+    except httpx.ConnectTimeout:
+        raise DirectAPIError("API 连接超时，请检查网关地址", "timeout", "startup") from None
+    except httpx.ConnectError:
+        raise DirectAPIError("API 连接失败，请确认网关正在运行且地址可达", "network", "startup") from None
     except httpx.TimeoutException:
-        raise DirectAPIError("API 请求超时，请检查网关或重试") from None
+        raise DirectAPIError("API 请求超时，请检查网关或重试", "timeout") from None
     except httpx.HTTPError:
-        raise DirectAPIError("API 连接失败，请确认网关正在运行且地址可达") from None
+        raise DirectAPIError("API 连接失败，请确认网关正在运行且地址可达", "network") from None
     if finish_reason == "length":
-        raise DirectAPIError("回复达到模型长度上限，已保留收到的内容，请重试或缩小请求")
+        raise DirectAPIError("回复达到模型长度上限，已保留收到的内容，请重试或缩小请求", phase="finalization")
     if finish_reason not in (None, "stop"):
-        raise DirectAPIError("模型未正常完成回复，请检查网关的 finish_reason")
+        raise DirectAPIError("模型未正常完成回复，请检查网关的 finish_reason", phase="finalization")
     if not text or finish_reason != "stop":
-        raise DirectAPIError("API 流中断或返回空回复，请重试")
+        raise DirectAPIError("API 流中断或返回空回复，请重试", phase="finalization")
     if history_file is not None:
         history_file.parent.mkdir(parents=True, exist_ok=True)
         temporary = history_file.with_suffix(".tmp")

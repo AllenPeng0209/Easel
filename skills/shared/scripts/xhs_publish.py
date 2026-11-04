@@ -11,7 +11,7 @@ xpzouying/xiaohongshu-mcp（Go/go-rod，成熟稳定）。确定性 IO 固化在
   - 逐图上传并等预览出现（≤60s）；视频等发布按钮可点击（≤10min = 处理完成）
   - 话题：输 # + 联想下拉点选，真绑话题
   - 发布按钮：新版 <xhs-publish-btn> + 旧版 .bg-red 双兼容
-  - 发布成功校验：URL 离开 /publish/publish 才算成功（消除假成功）
+  - 界面信号校验：跳转/toast/复位不替代平台机器回执，不自动登记已公开
   - 反检测：--disable-blink-features=AutomationControlled + 逐字符输入 + zh-CN
 
 子命令:
@@ -138,7 +138,7 @@ def _abspaths(csv: str | None) -> list[str]:
 
 
 def _profile_dir(base: str | None) -> Path:
-    root = Path(base).expanduser() if base else Path.home() / ".easel-browser-profiles"
+    root = Path(base or os.environ.get("EASEL_BROWSER_PROFILES", "")).expanduser() if (base or os.environ.get("EASEL_BROWSER_PROFILES")) else Path.home() / ".easel-browser-profiles"
     return root / PROFILE_NAME
 
 
@@ -475,7 +475,8 @@ def _check_account_login(page) -> bool:
 def _creator_account(context) -> dict | None:
     try:
         response = context.request.get(
-            CREATOR_ACCOUNT_URL, headers={"Referer": CREATOR_HOME_URL}, timeout=5000)
+            CREATOR_ACCOUNT_URL,
+            headers={"Referer": CREATOR_HOME_URL, "Cache-Control": "no-cache"}, timeout=5000)
         if response.status != 200:
             return None
         payload = response.json()
@@ -901,10 +902,50 @@ def _diag_after_publish(page) -> str:
     return ("屏幕可见元素：" + " | ".join(bits[:6]) if bits else "屏幕无可识别弹框/报错") + shot
 
 
-def _confirm_publish_dialog(page) -> None:
+def _bound_publish_confirmation(page):
+    try:
+        dialogs = page.query_selector_all(".d-modal, [role=dialog], [aria-modal=true]")
+    except Exception:
+        return None
+    generic_confirmation = None
+    for dialog in dialogs:
+        try:
+            if not dialog.is_visible():
+                continue
+            text = (dialog.inner_text() or "").strip()
+            publish_question = bool(re.search(r"(?:确认|确定|是否|继续|立即)发布[^？?]*[？?]", text))
+            for button in dialog.query_selector_all("button, .d-button, [role=button]"):
+                if not button.is_visible():
+                    continue
+                label = (button.inner_text() or "").strip()
+                if label in ("确认发布", "确定发布", "继续发布", "立即发布"):
+                    return button
+                if generic_confirmation is None and publish_question and label in ("确认", "确定"):
+                    generic_confirmation = button
+        except Exception:
+            pass  # No click was attempted; retry observation while the page settles.
+    return generic_confirmation
+
+
+def _confirm_publish_dialog(page, before_confirm=None) -> None:
     """点发布后若弹二次确认框，点其确认按钮（保守：仅当可见且文案匹配）。"""
     deadline = time.time() + 5
     while time.time() < deadline:
+        if before_confirm is not None:
+            location = urlparse(page.url)
+            expected = urlparse(PUBLISH_URL)
+            if (location.scheme, location.netloc, location.path) != (expected.scheme, expected.netloc, expected.path):
+                return
+            button = _bound_publish_confirmation(page)
+            if button is not None:
+                before_confirm()
+                # The click may already have reached the browser on exception.
+                # Never scan and click another button after this attempt.
+                button.click()
+                page.wait_for_timeout(1000)
+                return
+            page.wait_for_timeout(500)
+            continue
         for b in page.query_selector_all("button, .d-button, [role=button]"):
             try:
                 if not b.is_visible():
@@ -920,18 +961,17 @@ def _confirm_publish_dialog(page) -> None:
 
 
 def _wait_publish_success(page, timeout_s: int = 40) -> None:
-    """发布成功校验：小红书发布成功后**原地清空表单回到上传页**（不换 URL）。
-    成功信号任一：跳离 /publish/publish、出现「成功」toast、或编辑表单已重置（标题框+图片预览消失）。"""
+    """仅观察提交后的界面信号；这些信号不能独立证明公开发布。"""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if "/publish/publish" not in page.url:
-            print(f"✅ 发布成功，已跳转：{page.url}")
+            print("界面已跳转；公开发布状态未核实")
             return
         for sel in (".d-message", ".d-toast", "[class*=toast]", "[class*=message]"):
             try:
                 el = page.query_selector(sel)
                 if el and el.is_visible() and "成功" in (el.inner_text() or ""):
-                    print("✅ 发布成功（检测到成功提示）")
+                    print("界面出现成功提示；公开发布状态未核实")
                     return
             except Exception:
                 pass
@@ -939,7 +979,7 @@ def _wait_publish_success(page, timeout_s: int = 40) -> None:
         try:
             if (not page.query_selector(SELECTORS["title_input"])
                     and not page.query_selector(SELECTORS["img_preview"])):
-                print("✅ 发布成功（编辑表单已清空复位）")
+                print("界面表单已复位；公开发布状态未核实")
                 return
         except Exception:
             pass
@@ -957,7 +997,7 @@ def _normalize_content(text: str) -> str:
     return text.strip("\n")
 
 
-def _fill_and_submit(page, title, content, tags):
+def _fill_and_submit(page, title, content, tags, before_submit=None, before_confirm=None):
     """标题→正文→话题→长度校验→发布→成功校验。"""
     content = _normalize_content(content)         # 修连续空行导致的发布失败
     title_el = page.query_selector(SELECTORS["title_input"])
@@ -980,17 +1020,26 @@ def _fill_and_submit(page, title, content, tags):
     btn.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
     box = btn.bounding_box()
+    if before_submit is not None:
+        before_submit()
     if kind == "new" and box:
         # xhs-publish-btn 是宽横条(闭合 Shadow DOM)，内含[暂存离开][发布]两个按钮；
         # 点 host 中心会落在两按钮间隙→无效。发布按钮在右侧约 62% 处（实测像素为品牌红），按坐标点它。
         page.mouse.click(box["x"] + box["width"] * 0.62, box["y"] + box["height"] / 2)
+    elif before_confirm is not None:
+        # Bound submission has one primary click, even if its acknowledgement
+        # is lost. Retrying with another click can submit a second post.
+        btn.click(force=True)
     else:
         try:
             btn.click(force=True)
         except Exception:
             btn.click()
     page.wait_for_timeout(1000)
-    _confirm_publish_dialog(page)   # 若弹二次确认框，点确认
+    if before_confirm is not None:
+        _confirm_publish_dialog(page, before_confirm=before_confirm)
+    else:
+        _confirm_publish_dialog(page)
     _wait_publish_success(page, 40)
 
 
@@ -1020,6 +1069,15 @@ def _launch(p, headed: bool, base: str | None, proxy: str | None, *, login_asset
     for attempt in range(2):
         try:
             context = p.chromium.launch_persistent_context(str(profile), **kwargs)
+            try:
+                from easel.account_sessions import apply_session
+                apply_session(context, "xhs")
+            except BaseException:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                raise
             if login_assets:
                 login_transport.install(context, "xiaohongshu")
             return context
@@ -1259,7 +1317,7 @@ def _plan_lines(kind: str, title: str, content: str, media: list[str], tags: lis
         "  4. 输标题/正文（逐字符）+ 话题联想点选",
         "  5. 平台 DOM 长度校验",
         "  6. 等发布按钮可点击（新版<xhs-publish-btn>/旧版.bg-red）→ 点击",
-        "  7. 成功校验：URL 离开 /publish/publish",
+        "  7. 校验界面信号；公开发布状态仍需平台回执核实",
     ]
     return lines
 
@@ -1275,6 +1333,21 @@ def cmd_plan(a) -> int:
 
 
 def _publish(a, kind: str) -> int:
+    from publication_receipt import PublicationReceiptReporter
+    reporter = PublicationReceiptReporter.from_args(a, "xiaohongshu")
+    state = {"phase": "not_started", "account": None, "settled": False}
+    reporter.record("not_started")
+    try:
+        return _publish_impl(a, kind, reporter, state)
+    except BaseException as error:
+        if not state["settled"]:
+            reporter.record(state["phase"], account=state["account"],
+                reason="cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else
+                    "submit_error" if state["phase"] != "not_started" else "preflight_failed")
+        raise
+
+
+def _publish_impl(a, kind: str, reporter, state) -> int:
     if not a.title:
         _die("--title 必填")
     if calc_title_length(a.title) > TITLE_MAX:
@@ -1297,6 +1370,7 @@ def _publish(a, kind: str) -> int:
                                label="小红书发布内容")
 
     if not a.exec:
+        reporter.record("not_started", reason="dry_run")
         print("dry-run（加 --exec 真正发布）：\n")
         for ln in _plan_lines(kind, a.title, a.content or "", media, tags):
             print(ln)
@@ -1329,15 +1403,45 @@ def _publish(a, kind: str) -> int:
                     page.wait_for_timeout(500)
                 if not logged and "login" in page.url.lower():
                     _die("未登录，请先 `login` 扫码")
+                def require_account():
+                    if not reporter.enabled:
+                        return
+                    # The creator endpoint owns this publishing session. A
+                    # consumer-web profile can be authenticated as another user.
+                    binding = _account_binding(_creator_account(ctx))
+                    account = None
+                    if binding["accountIdentityStatus"] == "verified":
+                        account = {"id": f"{binding['accountIdKind']}:{binding['accountId']}",
+                                   "authenticated": True}
+                    reporter.require_approved_account(account)
+                    state["account"] = account
+
+                if reporter.enabled:
+                    require_account()
+                    reporter.record('not_started', account=state['account'])
+
+                def mark_attempt():
+                    reporter.record('submit_attempted', account=state['account'])
+                    state['phase'] = 'submit_attempted'
+
+                def before_submit():
+                    require_account()
+                    mark_attempt()
+
+                _click_publish_tab(page, "上传图文" if kind == "image" else "上传视频")
+                page.wait_for_timeout(1000)
+                if reporter.enabled:
+                    require_account()
+                    # Staging writes media to the provider even when no final
+                    # publish click happens. Fence it with the durable receipt.
+                    mark_attempt()
                 if kind == "image":
-                    _click_publish_tab(page, "上传图文")
-                    page.wait_for_timeout(1000)
                     _upload_images(page, media)
                 else:
-                    _click_publish_tab(page, "上传视频")
-                    page.wait_for_timeout(1000)
                     _upload_video(page, media[0])
-                _fill_and_submit(page, a.title, a.content or "", tags)
+                require_account()  # Upload can outlive the creator login.
+                _fill_and_submit(page, a.title, a.content or "", tags, before_submit=before_submit,
+                                 before_confirm=require_account if reporter.enabled else None)
             except PWTimeout as e:
                 _die(f"步骤超时（选择器可能已失效，检查 SELECTORS）：{e}")
             finally:
@@ -1345,14 +1449,9 @@ def _publish(a, kind: str) -> int:
                     ctx.close()
     finally:
         lock.release()
-    # 发布成功 → 落统一内容日历（对话页自动记录；发布页由 web 设 AUTORECORD=0 跳过防重复）
-    try:
-        import calendar_ops
-        calendar_ops.record_publish("xiaohongshu", a.title,
-                                    ptype="视频" if kind == "video" else "图文",
-                                    tags=(a.tags or ""), note=(a.content or ""), source="chat")
-    except Exception:
-        pass
+    # A navigation/toast is only a UI signal, never a native post receipt.
+    reporter.record('submit_attempted', account=state['account'], reason='ui_signal_only')
+    state['settled'] = True
     return 0
 
 
@@ -1364,6 +1463,15 @@ def cmd_publish_video(a) -> int:
     return _publish(a, "video")
 
 
+def _account_binding(account: dict | None) -> dict:
+    """Project the authenticated self-account's native ID, never its nickname."""
+    unknown = {'accountId': '', 'accountIdKind': '', 'accountIdentityStatus': 'unknown'}
+    identifier = account.get('userId') if isinstance(account, dict) else None
+    if not isinstance(identifier, str) or identifier == '0' or not re.fullmatch(r'[A-Za-z0-9_-]{1,256}', identifier):
+        return unknown
+    return {'accountId': identifier, 'accountIdKind': 'userId', 'accountIdentityStatus': 'verified'}
+
+
 def cmd_whoami(a) -> int:
     """真校验登录态 + 读账号昵称/头像，输出单行 JSON（供 Web 后端解析）。
     xhs 须直连（--no-proxy），走代理会被判风险。抽不到昵称时 name 空但 loggedIn 仍准。"""
@@ -1372,7 +1480,7 @@ def cmd_whoami(a) -> int:
     except Exception as e:
         print(json.dumps({"loggedIn": False, "name": "", "avatar": "", "error": f"playwright:{e}"}))
         return 0
-    result = {"loggedIn": False, "name": "", "avatar": ""}
+    result = {"loggedIn": False, "name": "", "avatar": "", **_account_binding(None)}
     lock = _ProfileLock(_profile_dir(a.profile_base))
     try:
         lock.acquire(4)
@@ -1388,6 +1496,7 @@ def cmd_whoami(a) -> int:
                 account = _authenticated_account(ctx)
                 if account is not None:
                     result["loggedIn"] = True
+                    result.update(_account_binding(account))
                     if not all(_account_identity(account).values()):
                         account = _self_profile_account(ctx, account)
                     result.update(_account_identity(account))
@@ -1462,7 +1571,8 @@ def cmd_selftest(_a) -> int:
     assert _proxy("http://x:1", False) == "http://x:1", "显式代理优先"
     # plan 渲染
     lines = _plan_lines("image", "标题", "正文", ["/a.jpg"], ["#tag"])
-    assert any("上传图文" in ln for ln in lines) and any("成功校验" in ln for ln in lines)
+    assert any("上传图文" in ln for ln in lines)
+    assert any("公开发布状态仍需平台回执核实" in ln for ln in lines)
     lines_v = _plan_lines("video", "t", "c", ["/a.mp4"], [])
     assert any("上传视频" in ln for ln in lines_v)
     print("✅ selftest 通过（标题算法 + 选择器字典 + 路径/代理/路由 + plan 渲染）")
@@ -1492,6 +1602,8 @@ def main() -> int:
                        help="放行内容安全闸门（检出内部设置泄露也照发，谨慎）")
         p.add_argument("--headed", action="store_true", help="有头模式（首次校验选择器用）")
         p.add_argument("--keep-open", action="store_true", help="发布后不关浏览器")
+        p.add_argument("--receipt-context", help="Host 提供的机器回执上下文文件")
+        p.add_argument("--receipt-file", help="机器回执输出文件")
 
     sub.add_parser("check", help="检查 playwright/内核").set_defaults(func=cmd_check)
 

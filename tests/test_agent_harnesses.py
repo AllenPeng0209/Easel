@@ -32,6 +32,18 @@ def test_codex_model_catalog_paginates_without_creating_a_session(tmp_path, monk
     assert methods == ["initialize", "initialized", "model/list", "model/list"]
 
 
+def test_codex_session_model_profile_reads_effective_model_without_config_layers(tmp_path, monkeypatch):
+    request = request_for(tmp_path, "codex")
+    monkeypatch.setattr(native_models, "base_command", lambda runtime: [sys.executable, str(FIXTURE), "codex"])
+    models, configured = asyncio.run(native_models.codex_model_profile(request))
+    assert configured == "second-model" and models[0]["id"] == "first-model" and models[0]["default"]
+    messages = audit(tmp_path)
+    assert [message.get("method") for message in messages] == [
+        "initialize", "initialized", "config/read", "model/list", "model/list",
+    ]
+    assert messages[2]["params"] == {"cwd": str(tmp_path), "includeLayers": False}
+
+
 def test_codex_model_catalog_redacts_protocol_errors(tmp_path, monkeypatch):
     request = request_for(tmp_path, "codex", mode="models-error")
     monkeypatch.setattr(native_models, "base_command", lambda runtime: [
@@ -155,7 +167,8 @@ def test_web_reuses_native_process_and_resumes_after_cleanup(tmp_path, runtime, 
             assert all(message["params"]["clientInfo"]["version"] == __version__
                        for message in audit(tmp_path) if message.get("method") == "initialize")
             assert methods.count("thread/resume" if runtime == "codex" else "session/load") == 1
-            assert events == [("thinking", "思考"), ("token", "你好")] * 3
+            thought = ("reasoning_summary", {"text": "思考", "truncated": False}) if runtime == "codex" else ("thinking", "思考")
+            assert events == [thought, ("token", "你好")] * 3
         finally:
             await close_sessions()
 
@@ -291,12 +304,22 @@ def test_pooled_connections_expire_and_bound_idle_count(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_web_native_working_directory_is_easel_root():
-    import inspect
+def test_web_native_working_directory_is_easel_root(sandbox, monkeypatch):
+    captured = []
 
-    source = inspect.getsource(web._run_harness_chat)
-    assert "RunRequest(message, PROJECT_ROOT" in source
-    assert "session_key=sk" in source
+    class Adapter:
+        async def run(self, request, emit, ask, bind):
+            captured.append(request)
+            emit("token", "hello")
+
+    monkeypatch.setattr(web.harnesses, "adapter", lambda runtime: Adapter())
+    result = asyncio.run(web._run_harness_chat(
+        web.ChatRequest(message="hello"), "same", "hello", "codex",
+        web._harness_settings(), lambda *args: None, interactive=False))
+    assert result == "hello"
+    assert captured[0].cwd == web.PROJECT_ROOT
+    assert captured[0].session_key == "same"
+    assert captured[0].env["EASEL_ROOT"] == str(web.PROJECT_ROOT)
 
 
 def test_settings_blocking_probes_are_offloaded():
@@ -304,6 +327,34 @@ def test_settings_blocking_probes_are_offloaded():
 
     for endpoint in (web.api_harness_settings, web.api_settings_models, web.api_local_agents):
         assert "asyncio.to_thread" in inspect.getsource(endpoint)
+
+
+def test_codex_completed_summary_replaces_delta_and_explicitly_reports_clipping(tmp_path):
+    events = []
+
+    async def reject(questions):
+        pytest.fail("No permissions expected")
+
+    asyncio.run(CodexAdapter().run(request_for(tmp_path, "codex", mode="public-summary"),
+                                  lambda kind, value: events.append((kind, value)), reject, lambda _: None))
+    assert events == [("reasoning_summary", {"text": "思考", "truncated": False}),
+                      ("reasoning_summary", {"text": "s" * 4000, "truncated": True}), ("token", "你好")]
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("answer-phase", [("token", "你好"), ("answer_completed", {"itemId": "text"})]),
+    ("answer-fallback", [("token", "你好"), ("answer_completed", {"itemId": "text"}),
+                         ("token", "再见"), ("answer_completed", {"itemId": "new-final"})]),
+])
+def test_codex_answer_completion_requires_exact_terminal_final_answer_item(tmp_path, mode, expected):
+    events = []
+
+    async def reject(questions):
+        pytest.fail("No permissions expected")
+
+    asyncio.run(CodexAdapter().run(request_for(tmp_path, "codex", mode=mode),
+                                  lambda kind, value: events.append((kind, value)), reject, lambda _: None))
+    assert [event for event in events if event[0] != "reasoning_summary"] == expected
 
 
 @pytest.mark.parametrize("runtime,adapter", [("codex", CodexAdapter), ("acp", ACPAdapter)])
@@ -317,7 +368,8 @@ def test_native_events_resume_model_and_binding(tmp_path, runtime, adapter, nati
 
     asyncio.run(adapter().run(request_for(tmp_path, runtime, mode="stable-resume", native_id=native_id),
                               lambda kind, text: events.append((kind, text)), reject, identifiers.append))
-    assert events == [("thinking", "思考"), ("token", "你好")]
+    thought = ("reasoning_summary", {"text": "思考", "truncated": False}) if runtime == "codex" else ("thinking", "思考")
+    assert events == [thought, ("token", "你好")]
     assert identifiers == [native_id or ("native-thread" if runtime == "codex" else "native-session")]
     messages = audit(tmp_path)
     if runtime == "codex":
@@ -350,6 +402,35 @@ def test_permissions_are_explicit_and_once_only(tmp_path, runtime, adapter, allo
         assert response["result"]["decision"] == ("accept" if allow else "decline")
     else:
         assert response["result"]["outcome"]["optionId"] == ("once" if allow else "deny")
+
+
+@pytest.mark.parametrize("runtime,adapter,kind,mode,decision", [
+    ("codex", CodexAdapter, "commandExecution", "native-auto-permission", "accept"),
+    ("codex", CodexAdapter, "fileChange", "native-auto-permission", "accept"),
+    ("codex", CodexAdapter, "commandExecution", "uncorrelated-permission", "decline"),
+    ("acp", ACPAdapter, "", "native-auto-permission", "once"),
+])
+def test_native_tool_approval_can_allow_once_without_user_input(tmp_path, runtime, adapter, kind, mode, decision):
+    from dataclasses import replace
+
+    request = request_for(tmp_path, runtime, mode)
+    request = replace(request, auto_allow_tools=True,
+                      env={**request.env, "FAKE_HARNESS_COMMAND": "curl http://127.0.0.1:3000",
+                           "FAKE_HARNESS_PERMISSION_KIND": kind})
+
+    async def unexpected(questions):
+        raise AssertionError("native permission should be automatic")
+
+    asyncio.run(adapter().run(request, lambda *args: None, unexpected, lambda identifier: None))
+    messages = audit(tmp_path)
+    response = next(message for message in messages if message.get("id") == "permission-request")
+    if runtime == "codex":
+        assert response["result"] == {"decision": decision}
+        turn = next(message["params"] for message in messages if message.get("method") == "turn/start")
+        assert turn["approvalPolicy"] == "on-request"
+        assert turn["sandboxPolicy"] == {"type": "readOnly"}
+    else:
+        assert response["result"] == {"outcome": {"outcome": "selected", "optionId": decision}}
 
 
 @pytest.mark.parametrize(("command", "expected"), [("ls -la", "accept"), ("sudo reboot", "decline")])
@@ -792,19 +873,29 @@ def test_web_stream_replay_resume_and_delete(sandbox, monkeypatch):
             requests.append(request)
             bind("durable-native")
             emit("thinking", "思考")
+            emit("reasoning_summary", {"text": "公开摘要", "truncated": False})
             emit("token", "成功")
+            emit("answer_completed", {"itemId": "final-item"})
 
     monkeypatch.setattr(web.harnesses, "adapter", lambda runtime: Fake())
     for turn_id in ("first", "second"):
         response = sandbox.post("/api/chat/stream", json={"message": "hello", "sessionId": "same", "turnId": turn_id})
         assert response.status_code == 200
         assert "event: token" in response.text and "成功" in response.text
-        assert "event: thinking" in response.text and "event: done" in response.text
+        assert "event: thinking" not in response.text and "思考" not in response.text
+        assert "event: reasoning_summary" in response.text and "event: done" in response.text
+        assert response.text.index("event: token") < response.text.index("event: answer_completed") < response.text.index("event: done")
     assert requests[0].native_id == "" and requests[1].native_id == "durable-native"
     assert all(request.model == "test-model" for request in requests)
     last = sandbox.get("/api/chat/last/same").json()
     assert last["text"] == "成功" and last["clean_end"] is True
-    assert "成功" in sandbox.get("/api/chat/jobs/second/stream").text
+    assert last["outcome"] == "completed"
+    assert last['reasoning_summary'] == {'text': '公开摘要', 'truncated': False}
+    assert last['answer_completed'] == {'itemId': 'final-item'}
+    replay = sandbox.get("/api/chat/jobs/second/stream").text
+    assert "成功" in replay and '"outcome": "completed"' in replay
+    assert "event: reasoning_summary" in replay and "公开摘要" in replay and "思考" not in replay
+    assert 'event: answer_completed' in replay and '"itemId": "final-item"' in replay
     assert sandbox.post("/api/settings/harness", json={"runtime": "opencode"}).status_code == 200
     assert sandbox.post("/api/chat", json={"sessionId": "same", "message": "hello"}).status_code == 409
     assert sandbox.delete("/api/session/same").json()["deleted"]
@@ -821,6 +912,7 @@ def test_native_stream_disconnect_keeps_background_turn_and_result(sandbox, monk
                 bind("disconnect-native")
                 started.set()
                 await finish.wait()
+                emit("reasoning_summary", {"text": "断线后公开摘要", "truncated": False})
                 emit("token", "断线后完成")
 
         monkeypatch.setattr(web.harnesses, "adapter", lambda runtime: Fake())
@@ -837,12 +929,65 @@ def test_native_stream_disconnect_keeps_background_turn_and_result(sandbox, monk
         await asyncio.sleep(0)
         result = await web.api_chat_last("disconnect")
         assert result["text"] == "断线后完成" and result["clean_end"] is True
+        assert result['reasoning_summary'] == {'text': '断线后公开摘要', 'truncated': False}
         assert not web._RUNNING_CHAT and not web._HARNESS_TASKS and not web._BG_TASKS
         events = web._read_job_events("disconnect-turn", 0)
         assert any(event["event"] == "token" and event["data"] == "断线后完成" for event in events)
         assert events[-1]["event"] == "done"
 
     asyncio.run(exercise())
+
+
+def test_legacy_reasoning_is_filtered_from_replay_snapshot_and_catalog(sandbox):
+    journal = web._job_event_file('legacy-summary-turn')
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    events = [{'id': 1, 'event': 'thinking', 'data': 'private old trace'},
+              {'id': 2, 'event': 'done', 'data': {'sessionKey': 'legacy-summary'}}]
+    journal.write_text(''.join(json.dumps(event) + '\n' for event in events))
+    web._save_turn('web:legacy-summary', 'done', 'visible answer', {'thinking': 'private old trace'})
+    session = {'id': 'legacy-summary', 'messages': [{'role': 'assistant', 'content': 'visible answer',
+                                                     'thinking': 'private old trace'}]}
+    web.ChatHistoryStore(web._sessions_dir()).merge([session])
+    for response in (sandbox.get('/api/chat/jobs/legacy-summary-turn/stream'),
+                     sandbox.get('/api/chat/last/legacy-summary'), sandbox.get('/api/chat/sessions'),
+                     sandbox.get('/api/chat/sessions?limit=1'),
+                     sandbox.put('/api/chat/sessions', json={'sessions': [session]})):
+        assert response.status_code == 200, response.text
+        assert 'private old trace' not in response.text
+
+
+def test_legacy_error_replay_and_snapshot_hide_raw_diagnostics(sandbox):
+    journal = web._job_event_file('legacy-error-turn')
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    raw = 'authorization failure carrying private upstream detail'
+    journal.write_text(json.dumps({'id': 1, 'event': 'error', 'data': raw}) + '\n')
+    web._save_turn('web:legacy-error', 'done', 'partial output\n\n❌ ' + raw, {'stop_reason': 'error'})
+    replay = sandbox.get('/api/chat/jobs/legacy-error-turn/stream')
+    assert replay.status_code == 200 and raw not in replay.text and '"code": "unknown"' in replay.text
+    snapshot = sandbox.get('/api/chat/last/legacy-error').json()
+    assert snapshot['text'] == 'partial output'
+    assert snapshot['error']['code'] == 'unknown' and raw not in json.dumps(snapshot)
+
+
+@pytest.mark.parametrize('route,body', [('/api/chat', {'message': 'request', 'sessionId': 'nonstream'}),
+                                        ('/api/skill', {'skill': 'fixture', 'input': 'request'})])
+@pytest.mark.parametrize('returncode,expected_status', [(1, 502), (0, 200)])
+def test_openclaw_nonstream_checks_exit_before_stdout(sandbox, monkeypatch, route, body, returncode, expected_status):
+    import subprocess
+
+    raw = 'private-provider-diagnostic'
+    monkeypatch.setattr(web, '_chat_backend', lambda _: 'openclaw')
+    monkeypatch.setattr(web, '_heal_openclaw_session', lambda _: None)
+    monkeypatch.setattr(web, '_agent_thinking_level', lambda: 'off')
+    monkeypatch.setattr(web, 'find_skill', lambda _: 'fixture')
+    monkeypatch.setattr(web.subprocess, 'run', lambda cmd, **_: subprocess.CompletedProcess(
+        cmd, returncode, stdout=raw if returncode else 'valid response', stderr='Unauthorized ' + raw))
+    response = sandbox.post(route, json=body)
+    assert response.status_code == expected_status and raw not in response.text
+    if returncode:
+        assert '登录' in response.json()['detail']
+    else:
+        assert response.json()['response'] == 'valid response'
 
 
 def test_acp_command_config_cannot_be_overwritten_or_deleted_by_content_routes(sandbox):
@@ -881,10 +1026,12 @@ def test_web_stop_timeout_and_lock_cleanup(sandbox, monkeypatch):
         assert not web._session_lock("stoppable").locked()
         last = json.loads(web._turn_file("web:stoppable").read_text(encoding="utf-8"))
         assert last["stop_reason"] == "stopped" and not last["clean_end"]
+        assert last["outcome"] == "stopped"
         await web._run_harness_chat(req, "stoppable", "hello", "codex", web._harness_settings(), emit, timeout=0.1)
         last = json.loads(web._turn_file("web:stoppable").read_text(encoding="utf-8"))
         assert last["stop_reason"] == "timeout" and not web._session_lock("stoppable").locked()
-        assert "执行超时" in last["text"]
+        assert last["outcome"] == "failed"
+        assert last["error"]["code"] == "timeout" and last["error"]["retryable"] is False
 
     asyncio.run(exercise())
 

@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import os
 import re
@@ -177,7 +178,7 @@ PLATFORMS: dict[str, dict] = {
              "selector": "[class*=_description], [placeholder*=描述], [contenteditable=true]",
              "value": "{title}\n{desc}\n{tags}"},
             {"action": "wait", "value": "1500"},
-            {"action": "click",
+            {"action": "click", "commit": True,
              "selector": "[class*=button-primary]:has-text('发布'), "
                          "div[class*=_button]:has-text('发布'):not(:has-text('作品'))"},
             {"action": "wait", "value": "2500"},
@@ -258,7 +259,7 @@ PLATFORMS: dict[str, dict] = {
             {"action": "fill", "selector": ".WriteIndex-titleInput textarea,textarea[placeholder*='标题']", "value": "{title}"},
             {"action": "type", "selector": ".public-DraftEditor-content,[contenteditable=true]", "value": "{desc}"},
             {"action": "wait", "value": "2000"},
-            {"action": "click", "selector": "button:text-is('发布')"},
+            {"action": "click", "commit": True, "selector": "button:text-is('发布')"},
         ],
         # 发布成功校验：知乎发成功后跳到文章页 zhuanlan.zhihu.com/p/<id>（草稿是 /p/<id>/edit，需排除）
         "publish_success": {"url_contains": "/p/", "url_not_contains": "/edit"},
@@ -576,7 +577,7 @@ def _steps_key_for(cfg: dict, media: str | None) -> str:
 
 
 def _profile_dir(platform: str, base: str | None) -> Path:
-    root = Path(base).expanduser() if base else Path.home() / ".easel-browser-profiles"
+    root = Path(base or os.environ.get("EASEL_BROWSER_PROFILES", "")).expanduser() if (base or os.environ.get("EASEL_BROWSER_PROFILES")) else Path.home() / ".easel-browser-profiles"
     return root / PLATFORMS[platform]["profile"]
 
 
@@ -662,7 +663,7 @@ def _fill_first_visible(page, sel: str, val: str) -> None:
         el.fill(val)
 
 
-def _publish_weixin_channels(page, ctx: dict) -> None:
+def _publish_weixin_channels(page, ctx: dict, before_submit=None, before_write=None) -> None:
     """视频号发布专用流程（与通用 steps 不同，真机 2026-08 校准）：
     - 直接 goto /platform/post/create 会被重定向回首页 → 必须 SPA 导航（首页→内容管理→发表视频）。
     - 创作器在同源 iframe /micro/content/post/create：描述框 div.input-editor、发表按钮
@@ -697,6 +698,8 @@ def _publish_weixin_channels(page, ctx: dict) -> None:
     print("  视频号：上传视频…", file=sys.stderr)
     page.wait_for_timeout(5000)
     page.wait_for_selector("input[type=file]", state="attached", timeout=30000)
+    if before_write is not None:
+        before_write()
     page.set_input_files("input[type=file]", media, timeout=30000)
     # 3-5) 等创作器就绪并发表。真机踩坑：转码完成时 composer iframe（/micro/content/post/create，
     #      嵌套在另一 iframe 内 → frame_locator 的 iframe[src] 解析不到）会重载，持有的 frame 句柄立即失效
@@ -706,6 +709,7 @@ def _publish_weixin_channels(page, ctx: dict) -> None:
     desc = "\n".join(x for x in (ctx.get("title"), ctx.get("desc"), ctx.get("tags")) if x)
     deadline = time.time() + 300
     published = False
+    attempted = False
     last_err = None
     while time.time() < deadline and not published:
         fr = next((f for f in page.frames if "micro/content/post/create" in (f.url or "")), None)
@@ -721,6 +725,8 @@ def _publish_weixin_channels(page, ctx: dict) -> None:
         if not ready:
             page.wait_for_timeout(3000)
             continue
+        if desc and before_write is not None:
+            before_write()
         try:
             if desc:
                 fr.evaluate("""(t) => {
@@ -737,14 +743,15 @@ def _publish_weixin_channels(page, ctx: dict) -> None:
             # page.keyboard 按 Enter（CDP 系统级注入的可信键盘事件，路由到聚焦元素触发真实提交）。
             # 成功标志：约 6s 后 URL 从 /post/create 跳到 /post/list。切勿在 Enter 后再点其它「确认」按钮（会打断提交）。
             print("  视频号：聚焦发表并按 Enter…", file=sys.stderr)
-            status = fr.evaluate("""() => {
+            focus_publish_button = """() => {
                 const b = [...document.querySelectorAll('button')].find(x => (x.innerText||'').trim() === '发表');
                 if (!b) return 'no-btn';
                 if (b.disabled || b.getAttribute('disabled') !== null) return 'disabled';
                 b.scrollIntoView({block: 'center'});
                 b.focus();
                 return document.activeElement === b ? 'focused' : 'not-focused';
-            }""")
+            }"""
+            status = fr.evaluate(focus_publish_button)
             print(f"  视频号：发表按钮状态={status}", file=sys.stderr)
             if status == 'disabled':
                 last_err = "发表按钮 disabled（视频可能还在处理）"
@@ -754,6 +761,11 @@ def _publish_weixin_channels(page, ctx: dict) -> None:
                 last_err = "未找到发表按钮"
                 page.wait_for_timeout(3000)
                 continue
+            if before_submit is not None:
+                attempted = True
+                before_submit()
+                if fr.evaluate(focus_publish_button) != 'focused':
+                    raise RuntimeError('核验账号后无法聚焦发表按钮，未按下提交键')
             page.keyboard.press("Enter")   # 可信提交
             # 等 URL 离开创作页 = 提交成功（真机 ~6s 跳 /post/list）
             for _ in range(12):
@@ -762,8 +774,12 @@ def _publish_weixin_channels(page, ctx: dict) -> None:
                     published = True
                     break
             if not published:
+                if before_submit is not None:
+                    raise RuntimeError('视频号提交动作已执行但结果未确认，请核对，不能自动重发')
                 last_err = "发表后未跳转（可能未提交），换新 frame 重试"
         except Exception as e:
+            if before_submit is not None and attempted:
+                raise
             last_err = e
             page.wait_for_timeout(3000)   # 多半是 frame 刚重载，换新 frame 重试
     if not published:
@@ -855,6 +871,9 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
         page.on("console", lambda m: console_errors.append(m.text[:200])
                 if m.type == "error" else None)
         page.on("pageerror", lambda e: console_errors.append(str(e)[:200]))
+        reporter = _publication_reporter(a)
+        if do_publish and reporter.enabled:
+            _observe_channels_account(browser, cfg)
         if not do_publish:
             page.goto(cfg["login_url"])
             print(f"已打开 {cfg['name']} 登录页，请在浏览器完成登录（扫码等），登录态保存在 {profile}。",
@@ -908,7 +927,9 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
         try:
             if a.platform == "weixin-channels":
                 # 视频号走专用流程（SPA 导航 + iframe 创作器），通用 steps 不适用 → 跳过
-                _publish_weixin_channels(page, ctx)
+                _publish_weixin_channels(page, ctx, before_submit=(
+                    lambda: _receipt_submit(a, browser, cfg)) if reporter.enabled else None,
+                    before_write=(lambda: _receipt_external_write(a, browser, cfg)) if reporter.enabled else None)
                 steps = []
             for i, s in enumerate(steps, 1):
                 act = s["action"]
@@ -920,6 +941,8 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                     print(f"  步骤 {i}/{len(steps)}: {act}（无媒体，跳过）", file=sys.stderr)
                     continue
                 print(f"  步骤 {i}/{len(steps)}: {act} {sel}", file=sys.stderr)
+                if act in ('upload', 'filechooser_upload', 'fill', 'type', 'click', 'js_click', 'press', 'js_eval'):
+                    _receipt_external_write(a, browser, cfg)
                 if s.get("commit") and submitted_at_ms is None:
                     submitted_at_ms = int(time.time() * 1000)
                     print("  ⏱ 提交步（读回时间窗基准已记录）", file=sys.stderr)
@@ -983,11 +1006,13 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                         except Exception:
                             pass
                         # 先尝试 Playwright 原生 force click（React/Vue 合成事件能感知）
+                        if s.get('commit'):
+                            _receipt_submit(a, browser, cfg)
                         try:
                             el.click(force=True, timeout=5000)
                         except Exception:
-                            if receipt is not None and s.get("commit"):
-                                _die("提交结果未知，请到平台后台核对，先别重发。", 5)
+                            if (receipt is not None or reporter.enabled) and s.get("commit"):
+                                raise
                             # 回退：完整指针事件链（pointerdown→mousedown→mouseup→click）
                             page.evaluate("""
                                 el => {
@@ -1015,6 +1040,8 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                             el.scroll_into_view_if_needed()
                         except Exception:
                             pass
+                        if s.get('commit'):
+                            _receipt_submit(a, browser, cfg)
                         try:
                             el.click()
                         except Exception:
@@ -1024,6 +1051,8 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                     elif act == "wait":
                         page.wait_for_timeout(int(val or 1000))
                     elif act == "press":
+                        if s.get('commit'):
+                            _receipt_submit(a, browser, cfg)
                         page.keyboard.press(val)
                     elif act == "waitfor":
                         # att=True → 只等元素挂到 DOM（state="attached"），不等可见。
@@ -1032,7 +1061,7 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                         state = "attached" if s.get("att") else "visible"
                         page.wait_for_selector(sel, timeout=int(val or 30000), state=state)  # 逗号=CSS group
                 except Exception as e:
-                    if opt:
+                    if opt and not getattr(a, '_receipt_write_failed', False):
                         print(f"    (可选步骤跳过：{e})", file=sys.stderr)
                         continue
                     raise
@@ -1073,6 +1102,8 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                 verdict = _readback_verify(a.platform, page, title=ctx.get("title") or "",
                                            since_ms=submitted_at_ms or flow_started_ms,
                                            snapshot_ids=snapshot_ids)
+                _receipt_record(a, 'readback', readback=verdict.as_dict(), reason=(
+                    verdict.outcome if verdict.outcome in ('unverified', 'login_required', 'readback_error') else None))
                 if verdict.outcome != "verified":
                     try:  # 失败留现场，供排错
                         fp = Path(__file__).resolve().parents[3] / "outputs" / "_login" / f"{a.platform}-publish-fail.png"
@@ -1088,7 +1119,8 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                 m = verdict.matched
                 _acct = (verdict.evidence or {}).get("account") or {}
                 _who = f"；账号：{_acct.get('display_name')}" if _acct.get("display_name") else ""
-                print(f"✅ {cfg['name']}发布成功（读回核验：作品 {m.platform_content_id}，{m.status or 'published'}{_who}）")
+                print(f"{cfg['name']}读回找到候选作品 {m.platform_content_id}（{m.status or '状态未知'}{_who}）；"
+                      '该旧版匹配不证明公开发布，确认状态以结构化回执或人工核对为准。')
             elif chk:
                 if not ui_ok:
                     try:  # 仅失败时截图，供排错（正常成功不截）
@@ -1136,9 +1168,13 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                     _die(f"发布未确认成功：步骤跑完但未跳到成功状态（当前 URL={page.url}）。"
                          f"可能『发布』按钮未生效或有二次确认弹窗——需核对选择器。"
                          + (f" 页面报错：{console_errors[-1]}" if console_errors else ""), 5)
-                print(f"✅ 发布成功（已确认跳转：{page.url}）")
+                if getattr(a, '_receipt_phase', '') == 'submit_attempted':
+                    _receipt_record(a, 'submit_attempted', reason='ui_signal_only')
+                print('提交后界面已变化；仅有 UI 信号，平台接收与公开状态仍待核对。')
             else:
-                print("✅ 发布步骤执行完毕，请在浏览器/平台后台确认发布结果。")
+                if getattr(a, '_receipt_phase', '') == 'submit_attempted':
+                    _receipt_record(a, 'submit_attempted', reason='ui_signal_only')
+                print("发布步骤执行完毕，平台结果尚未核实，请在后台确认。")
         except PWTimeout as e:
             # 超时（常见：选择器失效 / 上传转码慢）——截图 + dump 当前可见输入控件，便于精修选择器
             try:
@@ -1226,15 +1262,19 @@ def _channels_account(payload) -> dict | None:
     return {"id": identifier, "name": name, "avatar_url": account.get("headImgUrl", "")}
 
 
+def _is_channels_auth_response(response) -> bool:
+    parsed = urlparse(response.url)
+    return (parsed.scheme == "https" and parsed.netloc == "channels.weixin.qq.com"
+            and parsed.path == "/cgi-bin/mmfinderassistant-bin/auth/auth_data")
+
+
 def _observe_channels_account(browser, cfg: dict) -> None:
     if cfg.get("profile") != "ChannelsProfile":
         return
     browser._easel_channel_account = None
 
     def observe(response):
-        parsed = urlparse(response.url)
-        if (parsed.scheme != "https" or parsed.hostname != "channels.weixin.qq.com"
-                or parsed.path != "/cgi-bin/mmfinderassistant-bin/auth/auth_data"):
+        if not _is_channels_auth_response(response):
             return
         try:
             if 200 <= response.status < 300:
@@ -1245,7 +1285,7 @@ def _observe_channels_account(browser, cfg: dict) -> None:
     browser.on("response", observe)
 
 
-def _authenticated_account(browser, cfg: dict) -> dict | None:
+def _authenticated_account(browser, cfg: dict, *, fresh: bool = False) -> dict | None:
     if cfg.get("profile") == "ChannelsProfile":
         return getattr(browser, "_easel_channel_account", None)
     if cfg.get("profile") == "JuejinProfile":
@@ -1273,7 +1313,8 @@ def _authenticated_account(browser, cfg: dict) -> dict | None:
     if cfg.get("profile") != "ZhihuProfile":
         return None
     try:
-        response = browser.request.get("https://www.zhihu.com/api/v4/me", timeout=3000)
+        options = {"headers": {"Cache-Control": "no-cache", "Pragma": "no-cache"}} if fresh else {}
+        response = browser.request.get("https://www.zhihu.com/api/v4/me", timeout=3000, **options)
         if response.status != 200:
             return None
         account = response.json()
@@ -1852,9 +1893,97 @@ def cmd_login_qr(a) -> int:
                 signal.signal(signal.SIGTERM, previous_handler)
 
 
+def _publication_reporter(a):
+    reporter = getattr(a, '_publication_receipt_reporter', None)
+    if reporter is None:
+        from publication_receipt import PublicationReceiptReporter
+        reporter = PublicationReceiptReporter.from_args(a, a.platform)
+        a._publication_receipt_reporter = reporter
+    return reporter
+
+
+def _receipt_record(a, phase: str, **fields) -> None:
+    try:
+        _publication_reporter(a).record(phase, **fields)
+    except Exception:
+        a._receipt_write_failed = True
+        raise
+    a._receipt_phase = phase
+
+
+def _fresh_channels_publish_account(browser, cfg):
+    # Use a fresh response in an auxiliary page so the composer is untouched.
+    probe = None
+    try:
+        probe = browser.new_page()
+        # Page routing disables the browser HTTP cache for this verification tab.
+        probe.route("https://channels.weixin.qq.com/cgi-bin/mmfinderassistant-bin/auth/auth_data*",
+                    lambda route: route.continue_())
+        with probe.expect_response(_is_channels_auth_response, timeout=8000) as event:
+            probe.goto(cfg["whoami_url"], wait_until="commit", timeout=5000)
+        response = event.value
+        if response.from_service_worker or not 200 <= response.status < 300:
+            return None
+        return _channels_account(response.json())
+    except Exception:
+        return None
+    finally:
+        if probe is not None:
+            probe.close()
+
+
+def _receipt_approved_account(a, browser, cfg):
+    reporter = _publication_reporter(a)
+    if not reporter.enabled:
+        return None
+    try:
+        observed = (_fresh_channels_publish_account(browser, cfg) if cfg.get("profile") == "ChannelsProfile"
+                    else _authenticated_account(browser, cfg, fresh=True))
+        binding = _account_binding(observed, a.platform)
+        account = ({'id': f"{binding['accountIdKind']}:{binding['accountId']}", 'authenticated': True}
+                   if binding['accountIdentityStatus'] == 'verified' else None)
+        reporter.require_approved_account(account)
+        return account
+    except Exception:
+        # Optional browser actions must never swallow a receipt or account guard failure.
+        a._receipt_write_failed = True
+        raise
+
+
+def _receipt_external_write(a, browser, cfg) -> None:
+    """Auto-saving fill/upload is already an external write, before final publish."""
+    if not _publication_reporter(a).enabled:
+        return
+    account = _receipt_approved_account(a, browser, cfg)
+    if getattr(a, '_receipt_phase', 'not_started') == 'not_started':
+        _receipt_record(a, 'submit_attempted', account=account)
+
+
+def _receipt_submit(a, browser, cfg) -> None:
+    reporter = _publication_reporter(a)
+    if reporter.enabled and getattr(a, '_receipt_commit_attempted', False):
+        raise RuntimeError('本次发布提交动作已尝试，结果未知时禁止自动重发')
+    account = _receipt_approved_account(a, browser, cfg)
+    _receipt_record(a, 'submit_attempted', account=account)
+    a._receipt_commit_attempted = True
+
+
 def cmd_publish(a) -> int:
+    _receipt_record(a, 'not_started')
+    try:
+        return _cmd_publish_impl(a)
+    except BaseException as error:
+        if not getattr(a, '_receipt_write_failed', False) and getattr(a, '_receipt_phase', '') != 'readback':
+            phase = getattr(a, '_receipt_phase', 'not_started')
+            reason = ('cancelled' if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else
+                      'login_required' if isinstance(error, SystemExit) and error.code == 6 else
+                      'preflight_failed' if phase == 'not_started' else 'submit_error')
+            _receipt_record(a, phase, reason=reason)
+        raise
+
+
+def _cmd_publish_impl(a) -> int:
     cfg = PLATFORMS.get(a.platform, {})
-    # 媒体是否必填由平台配置决定（知乎文章/纯文字推文可不带媒体）
     if not a.media and not cfg.get("media_optional"):
         _die("--media 媒体文件必填")
     if a.media and not Path(a.media).expanduser().is_file():
@@ -1867,6 +1996,7 @@ def cmd_publish(a) -> int:
                  f"当前选的是 {ext or '无扩展名'} 文件（{Path(a.media).name}）。"
                  f"请改选视频文件；图文（发图片）发布暂未支持。", 7)
     if not a.exec:
+        _receipt_record(a, 'not_started', reason='dry_run')
         print("dry-run（加 --exec 真正发布）：")
         content_guard.guard_or_die([a.title, a.desc, a.tags], exec_mode=False,
                                    allow_unsafe=getattr(a, "allow_unsafe", False),
@@ -1876,20 +2006,19 @@ def cmd_publish(a) -> int:
     content_guard.guard_or_die([a.title, a.desc, a.tags], exec_mode=True,
                                allow_unsafe=getattr(a, "allow_unsafe", False),
                                label=f"{cfg.get('name', a.platform)}发布内容")
-    rc = _run_browser(a, headed=a.headed, do_publish=True)
-    if rc == 0:
-        # 发布成功 → 落统一内容日历（对话页自动；发布页 web 设 AUTORECORD=0 跳过防重复）
-        try:
-            import calendar_ops
-            ptype = ("文章" if a.platform == "zhihu"
-                     else ("视频" if a.media and Path(a.media).suffix.lower() in VIDEO_EXTS
-                           else "图文"))
-            calendar_ops.record_publish(a.platform, a.title or (a.desc or "")[:20],
-                                        ptype=ptype, tags=(a.tags or ""),
-                                        note=(a.desc or ""), source="chat")
-        except Exception:
-            pass
-    return rc
+    # Weak UI/title readback does not authorize an automatic published calendar row.
+    return _run_browser(a, headed=a.headed, do_publish=True)
+
+
+def _account_binding(account: dict | None, platform: str) -> dict:
+    """IDs are admitted only from the platform-specific authenticated-self reader."""
+    unknown = {'accountId': '', 'accountIdKind': '', 'accountIdentityStatus': 'unknown'}
+    kind = {'zhihu': 'id', 'weixin-channels': 'finderUsername'}.get(platform)
+    identifier = account.get('id') if isinstance(account, dict) else None
+    if (kind is None or not isinstance(identifier, str) or not identifier.strip() or len(identifier.strip()) > 256
+            or any(ord(char) < 33 or ord(char) == 127 for char in identifier.strip())):
+        return unknown
+    return {'accountId': identifier.strip(), 'accountIdKind': kind, 'accountIdentityStatus': 'verified'}
 
 
 def cmd_whoami(a) -> int:
@@ -1905,7 +2034,7 @@ def cmd_whoami(a) -> int:
     if not cfg:
         print(json.dumps({"loggedIn": False, "name": "", "avatar": "", "error": "unknown platform"}))
         return 0
-    result = {"loggedIn": False, "name": "", "avatar": ""}
+    result = {"loggedIn": False, "name": "", "avatar": "", **_account_binding(None, a.platform)}
     try:
         with sync_playwright() as p:
             profile = _profile_dir(a.platform, a.profile_base)
@@ -1919,6 +2048,7 @@ def cmd_whoami(a) -> int:
                 account = _authenticated_account(browser, cfg)
                 if account is not None:
                     result.update(loggedIn=True, **_account_identity(account))
+                    result.update(_account_binding(account, a.platform))
                     print(json.dumps(result, ensure_ascii=False))
                     return 0
                 _navigate_login(page, cfg.get("whoami_url") or cfg.get("login_probe_url") or cfg["publish_url"])
@@ -1938,6 +2068,7 @@ def cmd_whoami(a) -> int:
                 result["loggedIn"] = logged
                 if logged:
                     result.update(_account_identity(account) if account else _visible_account_identity(page, cfg))
+                    result.update(_account_binding(account, a.platform))
                 elif cfg.get("profile") == "ChannelsProfile":
                     login_url = any(marker in (page.url or "").lower() for marker in _LOGIN_MARKERS)
                     login_visible = any(element.is_visible() for selector in cfg["logged_out_selector"].split(",")
@@ -2164,6 +2295,8 @@ def main() -> int:
                    help="放行内容安全闸门（检出内部设置泄露也照发，谨慎）")
     p.add_argument("--headed", action="store_true", help="有头模式执行（便于观察/首次校验）")
     p.add_argument("--keep-open", action="store_true", help="发布后不关闭浏览器")
+    p.add_argument('--receipt-context', help='Host 提供的私有发布回执上下文')
+    p.add_argument('--receipt-file', help='私有结构化发布回执输出路径')
     p.set_defaults(func=cmd_publish)
 
     p = sub.add_parser("whoami", help="真校验登录态 + 读昵称/头像（输出 JSON）")

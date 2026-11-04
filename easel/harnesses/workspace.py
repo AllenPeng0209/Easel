@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from .base import HarnessError, RunRequest
+from easel.agent_policy import autonomy_instructions
 
 
 def workspace_documents(root: Path) -> list[Path]:
@@ -39,4 +40,5 @@ def harness_instructions(request: RunRequest) -> str:
         "遵循用户选择的画像和每轮技能提醒。配置检查只使用项目 .env 的脱敏结果，不回显凭证。"
         "公开发布、修改账号状态和其它不可逆操作必须先取得明确同意。"
         "不要泄露凭证、私有配置或内部地址。额外工具权限必须由用户确认，不得绕过权限限制。"
+        + autonomy_instructions(request.autonomy_mode)
     )

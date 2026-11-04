@@ -17,7 +17,7 @@ export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
   },
   "counts": {
    "done": 7,
-   "ready": 97,
+   "ready": 98,
    "need": 10,
    "incoming": 1
   }
@@ -335,6 +335,18 @@ export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
        "skill": "green-screen",
        "label": "绿幕合成",
        "desc": "绿幕抠像 / 换背景 / 合成：把绿幕（或蓝幕/指定色）拍摄的前景人物抠出来，合成到新背景——图片、视频、纯色或前景自身模糊。当用户说 绿幕、抠像、抠图换背景、去绿幕、chromakey、绿幕合成、换背景、蓝幕、把绿幕背",
+       "status": "ready"
+      },
+      {
+       "skill": "family-education-film",
+       "label": "家庭教育 · 成片",
+       "desc": "厌学、手机边界和亲子沟通，串联选题策略、竖屏短剧与视频工坊交付",
+       "status": "ready"
+      },
+      {
+       "skill": "family-education-strategy",
+       "label": "家庭教育 · 选题策略",
+       "desc": "从家庭冲突、老师讲解到可验证的直播或商品转化简报",
        "status": "ready"
       },
       {

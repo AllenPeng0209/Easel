@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 import web.app as web
+from easel.projects import project_context
 
 
 PLATFORMS = ("facebook", "instagram", "tiktok", "youtube")
@@ -19,7 +20,6 @@ def account_state(tmp_path, monkeypatch):
     monkeypatch.setattr(web, "_WHOAMI_CACHE", {})
     monkeypatch.setattr(web, "_WHOAMI_TASKS", {})
     monkeypatch.setattr(web, "_LOGIN_START_LOCKS", {})
-    monkeypatch.setattr(web, "PROJECT_ROOT", tmp_path)
     return tmp_path
 
 
@@ -45,7 +45,7 @@ def test_social_login_launches_browser_runner_with_scoped_profile(account_state,
     assert command[1].endswith("social_login.py")
     assert command[2:5] == ["login", "--platform", platform]
     assert "--no-proxy" not in command
-    assert command[command.index("--profile-base") + 1] == str(account_state / "browser")
+    assert launch.call_args.kwargs["env"]["EASEL_BROWSER_PROFILES"] == str(account_state / "browser")
     assert asyncio.run(web.api_login_start(platform))["mode"] == "browser"
     assert asyncio.run(web.api_login_status(platform))["mode"] == "browser"
     assert launch.call_count == 1
@@ -61,22 +61,25 @@ def test_social_whoami_uses_same_browser_runner(account_state, monkeypatch, plat
     assert result["name"] == "Own account"
     assert run.call_args.args[0][1].endswith("social_login.py")
     assert run.call_args.args[0][2:5] == ["whoami", "--platform", platform]
-    assert run.call_args.args[0][-2:] == ["--profile-base", str(account_state / "browser")]
     assert (account_state / "login" / f"{platform}.json").is_file()
 
 
-def test_social_logout_only_clears_selected_platform_browser(account_state):
-    selected = account_state / "browser" / "FacebookProfile"
-    other = account_state / "browser" / "InstagramProfile"
-    selected.mkdir(parents=True)
+def test_social_logout_only_clears_current_ip_browser(account_state, tmp_path):
+    from social_login import PLATFORMS as SOCIAL_PLATFORMS
+
+    profile = SOCIAL_PLATFORMS["facebook"]["profile"]
+    default = account_state / "browser" / profile
+    default.mkdir(parents=True)
+    other = tmp_path / "projects" / "creator-a" / "browser" / profile
     other.mkdir(parents=True)
     (other / "keep").write_text("session", encoding="utf-8")
-    web._write_login_marker("facebook", "success")
-    result = asyncio.run(web.api_logout("facebook"))
-    assert "FacebookProfile" in result["deleted"]
-    assert not web._account_logged_in("facebook", web.LOGIN_RUNNERS["facebook"])
-    assert not selected.exists()
-    assert (other / "keep").read_text(encoding="utf-8") == "session"
+    with project_context("creator-a", tmp_path):
+        web._write_login_marker("facebook", "success")
+        result = asyncio.run(web.api_logout("facebook"))
+        assert profile in result["deleted"]
+        assert not web._account_logged_in("facebook", web.LOGIN_RUNNERS["facebook"])
+    assert default.is_dir()
+    assert not other.exists()
 
 
 def test_social_browser_login_does_not_claim_automatic_publishing_support(account_state, monkeypatch):
@@ -90,11 +93,6 @@ def test_social_browser_login_does_not_claim_automatic_publishing_support(accoun
 def test_social_proxy_in_project_settings_reaches_browser_runner(account_state, monkeypatch):
     monkeypatch.setattr(web, "read_settings", lambda _path: {"EASEL_SOCIAL_PROXY": "http://127.0.0.1:7890"})
     assert web._proxy_env()["EASEL_SOCIAL_PROXY"] == "http://127.0.0.1:7890"
-
-
-def test_existing_browser_profile_environment_is_preserved(account_state, monkeypatch):
-    monkeypatch.setenv("EASEL_BROWSER_PROFILES", str(account_state / "existing-browser"))
-    assert web._proxy_env()["EASEL_BROWSER_PROFILES"] == str(account_state / "existing-browser")
 
 
 def test_main_keeps_existing_x_and_domestic_publishers(account_state):

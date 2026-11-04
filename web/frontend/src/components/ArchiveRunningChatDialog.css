@@ -1,0 +1,41 @@
+/* Archive confirmation layout adapted from the pinned Harness workspace modal. */
+.archive-running-overlay {
+  position: fixed;
+  z-index: 520;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 44%);
+}
+.archive-running-dialog {
+  box-sizing: border-box;
+  width: min(480px, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.archive-running-dialog h2 { margin: 0; font-size: 17px; }
+.archive-running-dialog p, .archive-running-dialog dd { color: var(--text-secondary); font-size: 13px; }
+.archive-running-dialog dl { display: grid; gap: 4px; }
+.archive-running-dialog dt { font-weight: 600; font-size: 13px; }
+.archive-running-dialog dd { margin: 0 0 6px; }
+.archive-running-dialog [data-archive-running-error] { color: var(--red); }
+.archive-running-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.archive-running-dialog button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.archive-running-dialog [data-archive-running-action="stop"] { color: var(--red); }
+.archive-running-dialog button:disabled { opacity: .65; cursor: default; }
+.archive-running-dialog button:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }

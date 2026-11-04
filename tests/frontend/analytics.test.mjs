@@ -1,3 +1,4 @@
+import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -22,8 +23,8 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function setup() {
   let data = {}, errors = {};
   const pending = [], storage = new Map(), exports = {};
-  runInNewContext(outputText, {
-    exports, Error,
+  runWithProjectScope(outputText, {
+    exports, Error, projectStorageKey: projectScope.projectStorageKey,
     anaPending: { current: new Set() },
     setAnaSel: () => {},
     setAnaErrors: update => { errors = update(errors); },
@@ -78,7 +79,7 @@ test('analytics requests have platform-specific bounded deadlines', async () => 
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
   const exports = {}, calls = [];
-  runInNewContext(compiled, {
+  runWithProjectScope(compiled, {
     exports, encodeURIComponent,
     AbortSignal: { timeout: duration => ({ duration }) },
     request: async (path, options) => { calls.push({ path, options }); return {}; },

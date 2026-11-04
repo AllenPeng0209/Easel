@@ -1,0 +1,53 @@
+/*
+ * Adapted from DeepSeek Harness ui-deliverables/src/client/FileDiff.module.css @ ce7073d (MIT).
+ * Easel maps the unified line treatments to local tokens.
+ */
+.diff {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--code-bg, var(--bg-elev));
+}
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; }
+.count { font: 12px/1.4 ui-monospace, monospace; }
+.count [data-file-diff-added] { color: var(--green); }
+.count [data-file-diff-removed] { color: var(--red); }
+.note { color: var(--text-secondary); font-size: 12px; }
+.copy {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.copy:focus-visible, .hunkHeader:focus-visible { outline: 2px solid var(--accent-start); outline-offset: -2px; }
+.hunk { border-top: 1px solid var(--border); }
+.hunkHeader {
+  padding: 5px 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: 12px/1.4 ui-monospace, monospace;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.rows, .raw { max-height: 26rem; overflow: auto; }
+.row {
+  display: grid;
+  grid-template-columns: 5ch 5ch 2ch minmax(0, 1fr);
+  gap: 3px;
+  min-height: 18px;
+  padding: 1px 5px;
+  font: 12px/1.4 ui-monospace, monospace;
+}
+.row.add { background: color-mix(in srgb, var(--green) 13%, transparent); }
+.row.del { background: color-mix(in srgb, var(--red) 13%, transparent); }
+.number { text-align: end; color: var(--text-tertiary); }
+.marker { text-align: center; }
+.row.add .marker { color: var(--green); }
+.row.del .marker { color: var(--red); }
+.text, .raw { white-space: pre-wrap; overflow-wrap: anywhere; }

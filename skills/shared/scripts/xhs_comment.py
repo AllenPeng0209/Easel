@@ -128,7 +128,7 @@ def _die(msg: str, code: int = 1) -> None:
 
 
 def _profile_dir(base: str | None) -> Path:
-    root = Path(base).expanduser() if base else Path.home() / ".easel-browser-profiles"
+    root = Path(base or os.environ.get("EASEL_BROWSER_PROFILES", "")).expanduser() if (base or os.environ.get("EASEL_BROWSER_PROFILES")) else Path.home() / ".easel-browser-profiles"
     return root / PROFILE_NAME
 
 
@@ -283,7 +283,17 @@ def _launch(p, headed: bool, base: str | None, proxy: str | None):
     else:
         # 显式直连：Chromium 级屏蔽系统/环境代理（开 VPN 也能用）——同抖音链兜底
         args.append("--no-proxy-server")
-    return p.chromium.launch_persistent_context(str(profile), **kwargs)
+    context = p.chromium.launch_persistent_context(str(profile), **kwargs)
+    try:
+        from easel.account_sessions import apply_session
+        apply_session(context, "xhs")
+    except BaseException:
+        try:
+            context.close()
+        except Exception:
+            pass
+        raise
+    return context
 
 
 def _open_note(page, note_id: str, token: str):

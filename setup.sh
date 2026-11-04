@@ -282,7 +282,7 @@ PY
     while IFS='=' read -r key value; do
         [ -n "$key" ] || continue
         if ! oc_try "$key" "$value" --json; then
-            warn_collect '技能目录预算' "当前 OpenClaw 不接受 $key；保留该项现状（可能版本不支持）" 'easel doctor'
+            warn_collect '技能目录预算' "当前 OpenClaw 不接受 ${key}；保留该项现状（可能版本不支持）" 'easel doctor'
         fi
     done <<< "$plan"
 }
@@ -1191,6 +1191,12 @@ elif python3 -c 'import playwright' >/dev/null 2>&1; then
 else
     # 这个仍然致命：playwright 模块缺失意味着 pip 安装没装全，不是网络抖动。
     fatal "未找到 Playwright 模块；Python 依赖安装不完整（重试：bash setup.sh）"
+fi
+
+if [ "$SETUP_MODE" = check ]; then
+    emit_action run_step '运营浏览器' 'python3 -m patchright install chromium'
+else
+    run_step '运营浏览器' python3 -m patchright install chromium || warn_collect '运营浏览器' '下载失败，可重试安装' 'python3 -m patchright install chromium'
 fi
 
 write_install_report

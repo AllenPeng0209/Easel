@@ -1,0 +1,58 @@
+# 前端开发
+
+FastAPI 直接提供 `app/web/` 下的静态资源。日常启动无需构建；修改前端源码后，在项目根目录执行：
+
+```bash
+npm ci
+npm run build:ui
+```
+
+## 源码与产物
+
+- `workbench.jsx`：React 组件与现有业务表单的连接。
+- `ui/primitives.jsx`、`ui/motion.js`：基于 Radix 的组件与动效。
+- `brand.svg`：原始 Logo，独立于通用图标。
+- `icons.mjs`：生成本地 Lucide 图标集合，保留已有图标 ID。
+- `app/web/appearance.css`、`workbench.css`：共享样式。
+- `app/web/workbench.js`：随项目提供的构建产物，修改源码后需重新生成。
+
+业务表单移动而不复制，保留字段 ID、事件与提交逻辑。失败保留输入，恢复连接不自动重放写操作。修改弹窗时需保持键盘焦点、内部滚动及减少动态效果的兼容。
+
+标签页通过卡片的 `data-section` 与 `groupSpecs` 中的值绑定，不依赖卡片排列顺序。新增标签页时同步维护这两处，并声明适用的平台。
+临时隐藏功能时，在对应卡片上添加 `hidden`，标签入口和内容会一起隐藏；聚合私信目前按此方式保留但不展示。
+
+## 测试
+
+```bash
+python -m pytest -q
+```
+
+浏览器测试默认跳过。设置 `CREATORHUB_RUN_LOCAL_CDP=1` 后执行：
+
+```bash
+python -m pytest tests/test_web_appearance_browser.py tests/test_workbench_sections_browser.py -q
+```
+
+浏览器写操作使用隔离的示例接口，不操作真实账号。
+
+## 界面预览维护
+
+调整 UI 后，同步更新 README 的截图（需已安装项目 Python 依赖和 Chrome）：
+
+```bash
+npm run build:ui
+python -m preview.capture_screenshots
+```
+
+截图直接使用 `app/web/` 的当前构建产物，在临时静态站点和独立的无头浏览器中完成，不启动后端、不读取真实账号，并阻断外部及未被演示接口接管的 API 请求。图片统一宽 1600 像素，长页面完整截图，抽屉保留视口尺寸；全部场景成功后才更新 `assets/screenshots/`。
+
+演示时间固定在 `preview/capture_screenshots.py` 的 `CAPTURE_TIME`，发布预览使用 `preview/fixtures/publish-cover.svg`。新增截图时同步维护 `SCENES` 和 README 的图片入口。
+
+在线演示由 `preview/build_preview.py` 复用相同界面资源；提交到 `main` 后由 `.github/workflows/pages-preview.yml` 更新 GitHub Pages。
+
+## 依赖许可证
+
+组件使用 shadcn/ui 的组合方式及 Radix primitives，通用图标使用 Lucide。运行时不依赖 CDN 或远程字体。
+
+`app/web/workbench.js.LEGAL.txt` 和 `app/web/workbench-licenses.txt` 为构建依赖的许可证文件，需与构建产物一起保留。
+`licenses/react-remove-scroll-bar.txt` 补充上游 npm 包中缺失的许可证。

@@ -1,12 +1,13 @@
 import { Component, useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { fetchTrendSources, fetchTrends, createIdea } from '../lib/api';
-import type { TrendGroup, TrendSource } from '../lib/api';
+import { fetchTrendSources, fetchTrends, fetchIdeas, createIdea } from '../lib/api';
+import type { TrendGroup, TrendSource, TrendItem } from '../lib/api';
 import { IconFire, IconRefresh, IconBookmark, IconCheck } from './icons';
 import TrendSourcesDialog from './TrendSourcesDialog';
+import { useIpPermissions } from './ProjectSpace';
 
 interface TrendsPageProps {
-  onUseTopic: (title: string) => void;   // 一键做成内容 → 跳 chat
+  onUseSavedIdea: (id: string) => void | Promise<void>;
 }
 
 class TrendBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -17,11 +18,14 @@ class TrendBoundary extends Component<{ children: ReactNode }, { failed: boolean
   }
 }
 
+const trendKey = (platform: string, url: string, title: string) => JSON.stringify([platform, url, title.trim()]);
+
 export default function TrendsPage(props: TrendsPageProps) {
   return <TrendBoundary><TrendsPanel {...props} /></TrendBoundary>;
 }
 
-function TrendsPanel({ onUseTopic }: TrendsPageProps) {
+function TrendsPanel({ onUseSavedIdea }: TrendsPageProps) {
+  const { canOperate } = useIpPermissions();
   const [sources, setSources] = useState<TrendSource[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [ready, setReady] = useState(false);
@@ -29,20 +33,65 @@ function TrendsPanel({ onUseTopic }: TrendsPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [updated, setUpdated] = useState(0);
-  const [saved, setSaved] = useState<Set<string>>(new Set());
   const [managerOpen, setManagerOpen] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [saveError, setSaveError] = useState('');
   const requestId = useRef(0);
   const discoveryId = useRef(0);
   const initialized = useRef(false);
 
-  const save = async (key: string, title: string, source: string) => {
-    if (saved.has(key)) return;
+  const saved = useRef(new Map<string, string>());
+  const pending = useRef(new Set<string>());
+  const mounted = useRef(true);
+  const [busyKeys, setBusyKeys] = useState(new Set<string>());
+  const [catalog, setCatalog] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [lookupAttempt, setLookupAttempt] = useState(0);
+  const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!canOperate) return;
+    let active = true;
+    setCatalog('loading');
+    fetchIdeas().then(ideas => {
+      if (!active) return;
+      const known = new Map<string, string>();
+      for (const { id, title, provenance } of ideas) {
+        if (!id || !provenance) continue;
+        const key = trendKey(provenance.platform, provenance.url, title);
+        if (!known.has(key)) known.set(key, id);
+      }
+      saved.current = known;
+      setCatalog('ready');
+    }).catch(() => { if (active) setCatalog('failed'); });
+    return () => { active = false; };
+  }, [canOperate, lookupAttempt]);
+
+  const save = async (group: TrendGroup, item: TrendItem, start: boolean) => {
+    const key = trendKey(group.platform, item.url, item.title);
+    if (!canOperate || catalog !== 'ready' || pending.current.has(key)) return;
+    pending.current.add(key);
+    setBusyKeys(new Set(pending.current));
+    setSaveError('');
+    let id = saved.current.get(key);
     try {
-      await createIdea({ title, source, status: 'pending' });
-      setSaved((prev) => new Set(prev).add(key));
-    } catch { setSaveError('收藏失败，请稍后重试。'); }
+      if (!id) {
+        const idea = await createIdea({ title: item.title, source: `${group.label}热搜`, status: 'pending',
+          provenance: { platform: group.platform, url: item.url, collectedAt: updated } });
+        if (!idea.id) throw new Error('Missing saved idea ID');
+        id = idea.id;
+        saved.current.set(key, id);
+      }
+      if (start && mounted.current) await onUseSavedIdea(id);
+    } catch {
+      if (mounted.current) setSaveError(id ? '打开创作失败，请重试。' : '保存选题失败，请重试。');
+    } finally {
+      pending.current.delete(key);
+      if (mounted.current) setBusyKeys(new Set(pending.current));
+    }
   };
 
   const load = useCallback((pfs: string[]) => {
@@ -126,6 +175,9 @@ function TrendsPanel({ onUseTopic }: TrendsPageProps) {
       {ready && sources.length === 0 && <div className="trend-platforms">尚未启用数据源，请在本地热点数据源配置中添加或启用。</div>}
       {ready && sources.length > 0 && selected.length === 0 && <div className="trend-platforms">请选择上方的数据源查看热点。</div>}
       {loading && <div className="trend-platforms" role="status">正在获取热点…</div>}
+      {canOperate && catalog === 'failed' && <div className="notice-error" role="alert">
+        读取已保存选题失败。 <button className="btn btn-sm" onClick={() => setLookupAttempt(value => value + 1)}>重试</button>
+      </div>}
 
       <div className="trend-grid">
         {groups.map((g) => (
@@ -142,23 +194,26 @@ function TrendsPanel({ onUseTopic }: TrendsPageProps) {
                   {!g.ok ? '该数据源暂时不可用' : '采集成功，暂无热点'}
                 </div>
               )}
-              {g.items.map((it, i) => (
-                <div key={it.id} className="trend-item">
+              {g.items.map((it, i) => {
+                const key = trendKey(g.platform, it.url, it.title);
+                const isSaved = saved.current.has(key);
+                const busy = catalog !== 'ready' || busyKeys.has(key);
+                return <div key={it.id} className="trend-item">
                   <span className={`trend-rank ${i < 3 ? 'top' : ''}`}>{i + 1}</span>
                   <div className="trend-main">
                     <a className="trend-title" href={it.url || undefined} target="_blank" rel="noreferrer"
                       title={it.title}>{it.title}</a>
                     {it.hot && <span className="trend-hot">{it.hot}</span>}
                   </div>
-                  <button className="trend-save" title={saved.has(`${g.platform}:${it.id}`) ? '已收藏到选题库' : '收藏到选题库'}
-                    aria-label={`收藏选题：${it.title}`}
-                    onClick={() => save(`${g.platform}:${it.id}`, it.title, g.label)}>
-                    {saved.has(`${g.platform}:${it.id}`) ? <IconCheck size={14} /> : <IconBookmark size={14} />}
+                  {canOperate && <><button className="trend-save" title={isSaved ? '已收藏到选题库' : '收藏到选题库'}
+                    aria-label={`收藏选题：${it.title}`} disabled={busy || isSaved} onClick={() => void save(g, it, false)}>
+                    {isSaved ? <IconCheck size={14} /> : <IconBookmark size={14} />}
                   </button>
-                  <button className="trend-use" title="做成内容"
-                    onClick={() => onUseTopic(it.title)}>做内容</button>
-                </div>
-              ))}
+                  <button className="trend-use" disabled={busy} onClick={() => void save(g, it, true)}>
+                    {isSaved ? '做内容' : '保存并做内容'}
+                  </button></>}
+                </div>;
+              })}
             </div>
           </div>
         ))}

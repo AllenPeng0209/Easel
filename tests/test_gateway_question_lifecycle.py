@@ -398,8 +398,17 @@ def test_live_and_replayed_close_events_precede_done(
         assert received[-1]["event"] == "done"
         assert [json.loads(event["data"]) for event in received
                 if event["event"] == "token"] == ["complete"]
-        assert [json.loads(event["data"]) for event in received
-                if event["event"] == "question"] == [question]
+        projected = [json.loads(event["data"]) for event in received
+                     if event["event"] == "question"]
+        assert len(projected) == 1
+        assert projected[0]["id"] == "toolu_hook"
+        assert projected[0]["questions"] == [{"questionId": "choice", "question": "pick", "options": []}]
+        assert projected[0]["createdAtMs"] == 1_700_000_000_000
+        assert projected[0]["expiresAtMs"] == 1_700_007_200_000
+        assert projected[0]["requiresHuman"] is False
+        assert projected[0]["kind"] == "preference"
+        assert projected[0]["autoResolveAtMs"] > 0
+        assert projected[0]["defaultAnswers"]["choice"]
         expected_closed = [] if closed_status == "pending" else [{"id": "toolu_hook", "status": closed_status}]
         assert [json.loads(event["data"]) for event in received
                 if event["event"] == "question_closed"] == expected_closed

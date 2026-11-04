@@ -1,3 +1,4 @@
+import { projectStorageKey } from '../lib/projectScope';
 import { useState, useEffect, useRef } from 'react';
 import {
   fetchTrends, fetchSchedule, fetchOutputs, fetchAccounts, fetchIdeas,
@@ -9,6 +10,7 @@ import type {
 } from '../lib/api';
 import type { Page } from './Sidebar';
 import { getWhoamiCache, verifyStale } from '../lib/whoami';
+import { useIpPermissions } from './ProjectSpace';
 import {
   IconFire, IconCalendar, IconOutputs, IconChat, IconSkills, IconAccounts,
   IconIdea, IconPublish,
@@ -36,11 +38,17 @@ interface DashboardProps {
   agentRuntime: string;
   onNavigate: (page: Page) => void;
   onUseTopic: (title: string) => void;
+  onUseSavedIdea: (id: string) => void;
 }
 
 const STATUS_LABEL: Record<string, string> = { idea: '选题', draft: '草稿', scheduled: '待发', published: '已发' };
 
-export default function DashboardPage({ persona, gatewayStatus, apiDirect, agentRuntime, onNavigate, onUseTopic }: DashboardProps) {
+export default function DashboardPage({ persona, gatewayStatus, apiDirect, agentRuntime, onNavigate, onUseTopic, onUseSavedIdea }: DashboardProps) {
+  const { canOperate, canManageAccounts } = useIpPermissions();
+  const accountPermission = useRef(canManageAccounts);
+  accountPermission.current = canManageAccounts;
+  const operationPermission = useRef(canOperate);
+  operationPermission.current = canOperate;
   const [trends, setTrends] = useState<TrendGroup[]>([]);
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [outputs, setOutputs] = useState<OutputNode[]>([]);
@@ -51,7 +59,7 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
   const [anaSel, setAnaSel] = useState('');
   const [anaData, setAnaData] = useState<Record<string, AccountAnalytics | 'loading' | 'error'>>(() => {
     try {
-      const cache = JSON.parse(localStorage.getItem('easel_analytics') || '{}') as Record<string, AccountAnalytics | 'loading' | 'error'>;
+      const cache = JSON.parse(localStorage.getItem(projectStorageKey('easel_analytics')) || '{}') as Record<string, AccountAnalytics | 'loading' | 'error'>;
       return Object.fromEntries(Object.entries(cache).filter(([platform, value]) =>
         value && typeof value === 'object' && value.platform === platform
         && typeof value.loggedIn === 'boolean'));
@@ -84,15 +92,15 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
       // 开页后台自愈：对非 API 式的归因平台真校验（whoami），刷新登录态；
       // B 站走 cookie、公众号走凭证/官方 API 判定，都不起浏览器。
       const API_BASED = new Set(['bilibili', 'wechat-oa']);
-      verifyStale(ps.filter((p) => !API_BASED.has(p.platform)).map((p) => p.platform), {
-        alive: () => aliveRef.current,
+      if (accountPermission.current) verifyStale(ps.filter((p) => !API_BASED.has(p.platform)).map((p) => p.platform), {
+        alive: () => aliveRef.current && accountPermission.current,
         onUpdate: (platform, r) => {
           setWhoamiMap((m) => ({ ...m, [platform]: r }));
           if (r.loggedIn) setAnaSel((s) => s || platform);
         },
       });
     }).catch(() => {});
-  }, []);
+  }, [canManageAccounts]);
 
   const runAna = (platform: string) => {
     setAnaSel(platform);
@@ -105,7 +113,7 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
         const next = { ...d, [platform]: r };
         const cache = Object.fromEntries(Object.entries(next).filter(([, value]) =>
           value && typeof value === 'object'));
-        try { localStorage.setItem('easel_analytics', JSON.stringify(cache)); } catch { /* quota */ }
+        try { localStorage.setItem(projectStorageKey('easel_analytics'), JSON.stringify(cache)); } catch { /* quota */ }
         return next;
       }))
       .catch((error: unknown) => {
@@ -149,7 +157,7 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
       <div className="dash-hero">
         <h1 className="page-title" style={{ fontSize: 26 }}>{greet} 👋</h1>
         <p className="page-subtitle">
-          {apiDirect ? (gatewayStatus === 'connected' ? '仅聊天模式已配置，可开始对话。' : '请先配置仅聊天模式的模型 API。')
+          {!canOperate ? '当前为只读访问，可查看内容、排期与已保存的数据。' : apiDirect ? (gatewayStatus === 'connected' ? '仅聊天模式已配置，可开始对话。' : '请先配置仅聊天模式的模型 API。')
             : agentRuntime !== 'openclaw' ? (gatewayStatus === 'connected'
             ? `${agentRuntime} CLI 已安装；原生登录及模型可用性请发送消息验证。`
             : `请先在服务器安装并配置 ${agentRuntime} CLI。`)
@@ -158,9 +166,11 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
           从热点到发布，一站式搞定今天的内容。
         </p>
         <div className="dash-quick">
-          {quick.map((q) => (
-            <button key={q.page} className="dash-quick-btn" onClick={() => onNavigate(q.page)}>
-              <q.Icon size={16} /><span>{q.label}</span>
+          {quick.filter((q) => canOperate || !['chat', 'breakdown', 'publish'].includes(q.page)).map((q) => (
+            <button key={q.page} className="dash-quick-btn" onClick={() => {
+              if (operationPermission.current || !['chat', 'breakdown', 'publish'].includes(q.page)) onNavigate(q.page);
+            }}>
+              <q.Icon size={16} /><span>{!canOperate && q.page === 'ideas' ? '看选题' : !canOperate && q.page === 'calendar' ? '看日历' : q.label}</span>
             </button>
           ))}
         </div>
@@ -191,8 +201,8 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
               {g.error && <div className="dash-empty">{g.error.message}</div>}
               {g.ok && g.items.length === 0 && <div className="dash-empty">采集成功，暂无热点</div>}
               {g.items.slice(0, 3).map((it, i) => (
-                <div key={i} className="dash-trend-item" title={`${it.title}（点击做成内容）`}>
-                  <span className="dash-trend-title" onClick={() => onUseTopic(it.title)}>{it.title}</span>
+                <div key={i} className="dash-trend-item" title={canOperate ? `${it.title}（点击做成内容）` : it.title}>
+                  <span className="dash-trend-title" onClick={canOperate ? () => { if (operationPermission.current) onUseTopic(it.title); } : undefined}>{it.title}</span>
                 </div>
               ))}
             </div>
@@ -207,7 +217,7 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
           </div>
           {pendingIdeas.length === 0 && <div className="dash-empty">还没攒选题，去热点雷达收藏几个吧</div>}
           {pendingIdeas.slice(0, 5).map((it) => (
-            <div key={it.id} className="dash-idea" onClick={() => onUseTopic(it.title)} title="点击做成内容">
+            <div key={it.id} className="dash-idea" onClick={canOperate ? () => { if (operationPermission.current) onUseSavedIdea(it.id); } : undefined} title={canOperate ? '点击做成内容' : '已保存选题'}>
               <span className="dash-idea-title">{it.title}</span>
               {it.source && <span className="badge">{it.source}</span>}
             </div>
@@ -249,8 +259,8 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
         <div className="card dash-card dash-card-wide">
           <div className="dash-card-head">
             <span><IconAccounts size={16} /> 创作数据</span>
-            {anaSel && anaData[anaSel] && anaData[anaSel] !== 'loading' && (
-              <button className="dash-more" onClick={() => runAna(anaSel)}>刷新 →</button>
+            {canOperate && anaSel && anaData[anaSel] && anaData[anaSel] !== 'loading' && (
+              <button className="dash-more" onClick={() => { if (operationPermission.current) runAna(anaSel); }}>刷新 →</button>
             )}
           </div>
           {(() => {
@@ -272,10 +282,11 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
                 <div className="ana-plats">
                   {logged.map((p) => (
                     <button key={p.platform} className={`chip ${anaSel === p.platform ? 'active' : ''}`}
-                      onClick={() => runAna(p.platform)}>{p.name}</button>
+                      onClick={() => { if (operationPermission.current) runAna(p.platform); else setAnaSel(p.platform); }}>{p.name}</button>
                   ))}
                 </div>
-                {!d && <div className="dash-empty">点上方平台查看该账号数据</div>}
+                {!canOperate && <div className="dash-empty">只读模式展示已保存的数据，新的平台取数由运营成员完成。</div>}
+                {!d && <div className="dash-empty">{canOperate ? '点上方平台查看该账号数据' : '该平台暂未保存数据快照'}</div>}
                 {d === 'loading' && (
                   <div className="loading" style={{ padding: '28px 0' }}><div className="spinner" />抓取中…正在校验登录态并读取平台数据</div>
                 )}

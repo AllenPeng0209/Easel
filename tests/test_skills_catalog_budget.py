@@ -119,7 +119,7 @@ def test_doctor_reports_zero_and_agent_overrides(isolated):
 
 def test_doctor_large_budget_does_not_claim_runtime_success(isolated):
     output = "\n".join(doctor._skills_catalog_policy({"skills": {"limits": {
-        "maxSkillsInPrompt": 200, "maxSkillsPromptChars": 80000}}}))
+        "maxSkillsInPrompt": 2000, "maxSkillsPromptChars": 2000000}}}))
     assert "覆盖此离线估算" in output and "不保证运行时" in output
 
 

@@ -1,0 +1,297 @@
+{
+  "apiVersion": "beeftv.plugin/v2",
+  "id": "easel-ppu-h3-ref11-json",
+  "name": "Easel PPU MiniMax H3 Ref11 JSON",
+  "version": "1.0.0",
+  "author": "Easel Local Integration",
+  "description": "Local full-reference Ref11 H3 generation; image/video/audio references remain inline and host submission identity is stable.",
+  "documentation": "# Local PPU H3 Ref11\nPOST /v1/videos JSON accepts model, prompt, seconds, size, request_id, and images/videos/audios arrays of {data_url}. At least one image or video is required. Native audio is enabled by the service. Poll GET /v1/videos/:id; authenticated download GET /v1/videos/:id/content. This plugin does not call the upstream during installation.",
+  "permissions": [
+    "generation.run",
+    "media.read"
+  ],
+  "configuration": {
+    "fields": [
+      {
+        "name": "apiKey",
+        "type": "secret",
+        "label": "API Key",
+        "required": true
+      }
+    ]
+  },
+  "contributes": {
+    "providers": [
+      {
+        "id": "easel-ppu-h3-ref11-json",
+        "label": "PPU MiniMax H3 Ref11 (full references)",
+        "capabilities": [
+          "video"
+        ],
+        "scopes": [
+          "admin.system-channel",
+          "user.custom-channel",
+          "canvas",
+          "creation",
+          "agent"
+        ],
+        "baseUrl": "http://127.0.0.1:8881",
+        "requiresPublicMediaUrls": false,
+        "auth": {
+          "type": "bearer",
+          "field": "apiKey"
+        },
+        "parameters": [
+          {
+            "name": "model",
+            "type": "string",
+            "required": true,
+            "mapping": "model"
+          },
+          {
+            "name": "prompt",
+            "type": "string",
+            "required": true,
+            "mapping": "prompt"
+          },
+          {
+            "name": "duration",
+            "type": "integer",
+            "required": true,
+            "mapping": "seconds"
+          },
+          {
+            "name": "aspectRatio",
+            "type": "string",
+            "required": true,
+            "mapping": "size"
+          },
+          {
+            "name": "seed",
+            "type": "integer",
+            "mapping": "seed"
+          },
+          {
+            "name": "images",
+            "type": "media[]",
+            "mapping": "images"
+          },
+          {
+            "name": "videos",
+            "type": "media[]",
+            "mapping": "videos"
+          },
+          {
+            "name": "audios",
+            "type": "media[]",
+            "mapping": "audios"
+          }
+        ],
+        "create": {
+          "method": "POST",
+          "path": "/v1/videos",
+          "contentType": "application/json",
+          "body": {
+            "model": {
+              "$ref": "request.model"
+            },
+            "prompt": {
+              "$ref": "request.prompt"
+            },
+            "seconds": {
+              "$ref": "request.duration"
+            },
+            "size": {
+              "$ref": "request.aspectRatio"
+            },
+            "request_id": {
+              "$ref": "request.extra.idempotencyKey"
+            },
+            "seed": {
+              "$omitEmpty": {
+                "$ref": "request.providerOptions.easel-ppu-h3-ref11-json.seed"
+              }
+            },
+            "images": {
+              "$omitEmpty": {
+                "$map": {
+                  "from": {
+                    "$ref": "request.images"
+                  },
+                  "as": "media",
+                  "in": {
+                    "data_url": {
+                      "$ref": "media.value"
+                    }
+                  }
+                }
+              }
+            },
+            "videos": {
+              "$omitEmpty": {
+                "$map": {
+                  "from": {
+                    "$ref": "request.videos"
+                  },
+                  "as": "media",
+                  "in": {
+                    "data_url": {
+                      "$ref": "media.value"
+                    }
+                  }
+                }
+              }
+            },
+            "audios": {
+              "$omitEmpty": {
+                "$map": {
+                  "from": {
+                    "$ref": "request.audios"
+                  },
+                  "as": "media",
+                  "in": {
+                    "data_url": {
+                      "$ref": "media.value"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "poll": {
+          "method": "GET",
+          "path": "/v1/videos/{{taskId}}"
+        },
+        "result": {
+          "method": "GET",
+          "path": "/v1/videos/{{taskId}}/content",
+          "headers": {
+            "Accept": "video/mp4"
+          }
+        },
+        "response": {
+          "taskIdPaths": [
+            "id"
+          ],
+          "statusPaths": [
+            "status"
+          ],
+          "messagePaths": [
+            "error.message",
+            "message"
+          ],
+          "errorPaths": [
+            "error.code"
+          ],
+          "resultKind": "video",
+          "resultEphemeral": true
+        },
+        "validations": [
+          {
+            "assert": {
+              "$gt": [
+                {
+                  "$len": {
+                    "$concatArrays": [
+                      {
+                        "$ref": "request.images"
+                      },
+                      {
+                        "$ref": "request.videos"
+                      }
+                    ]
+                  }
+                },
+                0
+              ]
+            },
+            "message": "Ref11 requires at least one image or video reference."
+          },
+          {
+            "assert": {
+              "$lte": [
+                {
+                  "$len": {
+                    "$ref": "request.images"
+                  }
+                },
+                9
+              ]
+            },
+            "message": "At most 9 image references."
+          },
+          {
+            "assert": {
+              "$lte": [
+                {
+                  "$len": {
+                    "$ref": "request.videos"
+                  }
+                },
+                3
+              ]
+            },
+            "message": "At most 3 video references."
+          },
+          {
+            "assert": {
+              "$lte": [
+                {
+                  "$len": {
+                    "$ref": "request.audios"
+                  }
+                },
+                3
+              ]
+            },
+            "message": "At most 3 audio references."
+          },
+          {
+            "assert": {
+              "$lte": [
+                {
+                  "$len": {
+                    "$concatArrays": [
+                      {
+                        "$ref": "request.images"
+                      },
+                      {
+                        "$ref": "request.videos"
+                      },
+                      {
+                        "$ref": "request.audios"
+                      }
+                    ]
+                  }
+                },
+                12
+              ]
+            },
+            "message": "At most 12 references in total."
+          },
+          {
+            "assert": {
+              "$lte": [
+                {
+                  "$len": {
+                    "$concatArrays": [
+                      {
+                        "$ref": "request.videos"
+                      },
+                      {
+                        "$ref": "request.audios"
+                      }
+                    ]
+                  }
+                },
+                3
+              ]
+            },
+            "message": "At most 3 audio-bearing references."
+          }
+        ]
+      }
+    ]
+  }
+}

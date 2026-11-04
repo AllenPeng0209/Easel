@@ -8,48 +8,69 @@ import signal
 from easel import __version__
 
 from .base import HarnessError, RunRequest
-from .commands import base_command
+from .commands import base_command, codex_override
 from .rpc import RPC
 
 
-def _valid_id(value):
-    return isinstance(value, str) and 0 < len(value) <= 240 and not any(
-        ord(character) < 32 for character in value)
+def valid_model_id(value):
+    return isinstance(value, str) and 0 < len(value) <= 240 and value == value.strip() and not any(
+        ord(character) < 32 or 127 <= ord(character) <= 159 or 0xD800 <= ord(character) <= 0xDFFF
+        for character in value)
+
+
+async def _codex_models(request: RunRequest, *, include_config: bool = False) -> tuple[list[dict], str | None]:
+    async def reject(method, params):
+        raise HarnessError("读取模型列表时不允许执行工具")
+
+    models = []
+    configured = None
+    cursor = None
+    async with RPC(request, (codex_override(request.env) or base_command("codex")) + ["app-server"],
+                   lambda method, params: None, reject) as rpc:
+        await rpc.call("initialize", {
+            "clientInfo": {"name": "easel", "version": __version__},
+            "capabilities": {"experimentalApi": True}}, timeout=15)
+        await rpc.send({"method": "initialized"})
+        if include_config:
+            response = await rpc.call("config/read", {"cwd": str(request.cwd), "includeLayers": False}, timeout=10)
+            config = response.get("config") if isinstance(response, dict) else None
+            if not isinstance(config, dict):
+                raise HarnessError("Codex 返回了无效的有效模型配置")
+            configured = config.get("model")
+            if configured is not None and not valid_model_id(configured):
+                raise HarnessError("Codex 有效模型配置无效")
+        for page in range(20):
+            params = {"limit": 100, "includeHidden": False}
+            if cursor:
+                params["cursor"] = cursor
+            response = await rpc.call("model/list", params, timeout=15)
+            if not isinstance(response, dict) or not isinstance(response.get("data"), list):
+                raise HarnessError("Codex 返回了无效的模型列表")
+            for item in response.get("data") or []:
+                if not isinstance(item, dict):
+                    continue
+                identifier = item.get("model") or item.get("id")
+                if not item.get("hidden") and valid_model_id(identifier):
+                    label = item.get("displayName")
+                    models.append({"id": identifier,
+                                   "label": label if valid_model_id(label) else identifier,
+                                   "default": bool(item.get("isDefault"))})
+            following = response.get("nextCursor")
+            if not following or following == cursor:
+                break
+            cursor = following
+    return models, configured
+
+
+async def codex_model_profile(request: RunRequest) -> tuple[list[dict], str | None]:
+    """Read only the effective model ID and visible catalog from Codex."""
+    models, configured = await _codex_models(request, include_config=True)
+    return _unique_models(models), configured
 
 
 async def available_models(runtime: str, request: RunRequest) -> list[dict]:
     if runtime == "codex":
-        async def reject(method, params):
-            raise HarnessError("读取模型列表时不允许执行工具")
-
-        models = []
-        cursor = None
-        async with RPC(request, base_command("codex") + ["app-server"],
-                       lambda method, params: None, reject) as rpc:
-            await rpc.call("initialize", {
-                "clientInfo": {"name": "easel", "version": __version__},
-                "capabilities": {"experimentalApi": True}}, timeout=15)
-            await rpc.send({"method": "initialized"})
-            for page in range(20):
-                params = {"limit": 100, "includeHidden": False}
-                if cursor:
-                    params["cursor"] = cursor
-                response = await rpc.call("model/list", params, timeout=15)
-                if not isinstance(response, dict) or not isinstance(response.get("data"), list):
-                    raise HarnessError("Codex 返回了无效的模型列表")
-                for item in response.get("data") or []:
-                    if not isinstance(item, dict):
-                        continue
-                    identifier = item.get("model") or item.get("id")
-                    if not item.get("hidden") and _valid_id(identifier):
-                        label = item.get("displayName")
-                        models.append({"id": identifier,
-                                       "label": label if _valid_id(label) else identifier,
-                                       "default": bool(item.get("isDefault"))})
-                following = response.get("nextCursor")
-                if not following or following == cursor:
-                    break
-                cursor = following
+        models, _ = await _codex_models(request)
     elif runtime == "opencode":
         env = {**request.env, "EASEL_ROOT": str(request.cwd.resolve()),
                "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
@@ -83,10 +104,14 @@ async def available_models(runtime: str, request: RunRequest) -> list[dict]:
             await process.wait()
         models = [{"id": identifier, "label": identifier, "default": False}
                   for identifier in output.decode("utf-8").splitlines()
-                  if _valid_id(identifier) and "/" in identifier and not any(
+                  if valid_model_id(identifier) and "/" in identifier and not any(
                       character.isspace() for character in identifier)]
     else:
         raise HarnessError("此底座不支持原生模型列表")
+    return _unique_models(models)
+
+
+def _unique_models(models):
     unique = {}
     for item in models:
         unique.setdefault(item["id"], item)

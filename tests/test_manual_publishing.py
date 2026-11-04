@@ -117,7 +117,7 @@ def test_missing_empty_or_automatic_configuration_preserves_existing_mode(settin
 
 
 @pytest.mark.parametrize("configuration", ["", "EASEL_PUBLISH_MODE=automated\n"])
-def test_default_and_configured_automatic_workflow_use_existing_publisher(client, monkeypatch, configuration):
+def test_automatic_mode_still_requires_exact_server_approval(client, monkeypatch, configuration):
     web.ENV_FILE.write_text(configuration, encoding="utf-8")
     calls = []
     def fake_publish(command, **kwargs):
@@ -126,9 +126,8 @@ def test_default_and_configured_automatic_workflow_use_existing_publisher(client
     monkeypatch.setattr(web.subprocess, "run", fake_publish)
     assert client.get("/api/publishing-policy").json() == {"mode": "automated", "automaticSubmission": True}
     response = client.post("/api/publish/zhihu", json={"title": "Test", "body": "Draft"})
-    assert response.status_code == 200, response.text
-    assert response.json()["ok"] is False
-    assert len(calls) == 1 and "--exec" in calls[0]
+    assert response.status_code == 428, response.text
+    assert calls == []
 
 
 def test_manual_policy_is_included_in_agent_messages(client):

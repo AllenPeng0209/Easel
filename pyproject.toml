@@ -19,7 +19,7 @@ dependencies = [
     "Pillow>=10,<13", "opencv-python>=4.8,<5", "numpy>=1.26,<3",
     "PyMuPDF>=1.26.7,<2",       # 论文原图截图与论文视频资产提取
     "pandas>=2,<4", "matplotlib>=3.8,<4", "librosa>=0.10,<1",
-    "faster-whisper>=1,<2", "edge-tts>=6,<8", "playwright>=1.45,<2",
+    "faster-whisper>=1,<2", "edge-tts>=6,<8", "playwright>=1.63,<2",
     "rembg>=2.0,<3", "biliup>=1,<2", "jieba>=0.42,<1", "snownlp>=0.12,<1",
     "markdown>=3.5,<4",
     "requests>=2.32,<3", "beautifulsoup4>=4.12,<5",
@@ -27,6 +27,9 @@ dependencies = [
     # 只用到 load_pem_private_key + Ed25519.sign（长期稳定 API），上界放宽避免与新版冲突
     "websocket-client>=1.7,<2",
     "cryptography>=42",
+    "sqlmodel==0.0.22", "patchright==1.61.2", "xhshow>=0.2,<0.3",
+    "curl_cffi>=0.15,<1", "PyExecJS>=1.5,<2", "openpyxl>=3.1,<4",
+    "tzdata>=2025.2", "websockets>=12,<18", "yt-dlp>=2025.1.15", "imageio-ffmpeg>=0.5,<1",
 ]
 
 [project.scripts]
@@ -34,3 +37,6 @@ easel = "easel.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["easel*"]
+
+[tool.setuptools.package-data]
+easel = ["vendor/creatorhub/UPSTREAM.json", "vendor/creatorhub/web/*", "vendor/creatorhub/platforms/xhs/static/*", "vendor/creatorhub/js_deps/crypto-js/*"]

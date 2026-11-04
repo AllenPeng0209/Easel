@@ -1,33 +1,118 @@
+import { ACTIVE_PROJECT_ID, ACTIVE_USER_ID, projectStorageKey } from './projectScope';
+import { loadPromptAttempt } from './promptAdmission';
 import type { UploadedFile, ChatQuestion } from './api';
+import type { ChatReference, ChatSessionReference } from './chatReferences';
+import type { ChatCommand } from './chatCommands';
+import type { AgentEvent } from './agentEvents';
+import type { AgentTimelineObservation } from './agentTimeline';
+import type { WorkshopReference } from './workshop';
+
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  attachments?: UploadedFile[];
+  references?: ChatReference[];
+  sessionReferences?: ChatSessionReference[];
+  command?: ChatCommand;
+  created: number;
+  modelOverride?: string;
+  delivery?: 'sending' | 'rejected' | 'unconfirmed';
+}
+
+export interface ChatFailure {
+  code: 'authentication' | 'model_unavailable' | 'rate_limit' | 'quota_exhausted' | 'network'
+    | 'timeout' | 'permission_denied' | 'session_conflict' | 'storage' | 'unknown';
+  retryable: boolean;
+  phase: 'startup' | 'execution' | 'finalization';
+}
+
+export interface AnswerCompletion {
+  itemId: string;
+}
+
+export interface ReasoningSummary {
+  text: string;
+  truncated: boolean;
+}
+
+export interface ChatPlanRef {
+  planId: string;
+  revision: number;
+  digest: string;
+}
 
 export interface ChatMessage {
+  clientTurnId?: string;
   role: 'user' | 'assistant';
   content: string;
   agentContent?: string; // 仅发给 Agent 的增强消息（如附件路径），不在对话页面展示
-  attachments?: UploadedFile[]; // 结构化附件引用；仅用于请求/重试，不在消息气泡展示
-  thinking?: string;   // 模型思考过程（隐思考），流式结束后持久保留
+  attachments?: UploadedFile[];
+  references?: ChatReference[];
+  sessionReferences?: ChatSessionReference[];
+  command?: ChatCommand;
+  planRef?: ChatPlanRef;
+  topicRef?: { id: string; snapshotHash: string };
+  workshopRef?: WorkshopReference;
+  reasoningSummary?: ReasoningSummary;
+  answerCompletion?: AnswerCompletion;
   activity?: string;   // 工具/执行活动步骤（换行分隔），持久保留
   questions?: ChatQuestion[];
+  events?: AgentEvent[];
+  timeline?: AgentTimelineObservation[];
+  created?: number;
+  status?: 'completed' | 'failed' | 'stopped' | 'unconfirmed';
+  failure?: ChatFailure;
+}
+
+export interface ChatFork {
+  sourceSessionId: string;
+  sourceTitle: string;
+  cutoffIndex: number;
+  cutoffTurnId: string;
+  prefixHash: string;
+  createdAt: number;
+  contextTruncated?: boolean;
+}
+
+export interface ChatHistoryWindow {
+  start: number;
+  before: string | null;
+  base: string;
 }
 
 export interface ChatSession {
   id: string;
   title: string;
   messages: ChatMessage[];
+  historyWindow?: ChatHistoryWindow;
+  nextModel?: string;
   persona?: string;
   created: number;
   sessionKey?: string;  // OpenClaw 的 session key，用于后端删除
   pendingTurnId?: string; // 进行中的可重连 job；浏览器重开后继续按 eventId 续流
+  unreadCompletion?: boolean;
   archived?: boolean;   // 归档：从 History 主列表移到「已归档」区
+  pinned?: boolean;
+  updated?: number;
+  queued?: QueuedMessage[];
+  queuePaused?: boolean;
+  fork?: ChatFork;
 }
 
 /** 进行中的流式状态（存于 App，不随页面切换/ChatPage 卸载而丢失）。 */
 export interface StreamState {
+  requestedModel?: string;
+  steerTurnId?: string;
   content: string;
-  thinking: string;
+  reasoningSummary?: ReasoningSummary;
+  answerCompletion?: AnswerCompletion;
   activity: string;
+  stopFeedback?: { kind: 'failed' | 'unconfirmed'; message: string };
   stillWorking?: string;   // 防呆心跳提示（未卡住）；独立于 activity，不覆盖真实状态
   questions: ChatQuestion[];   // ask_user 问答题卡片（进行中）
+  events?: AgentEvent[];
+  timeline?: AgentTimelineObservation[];
+  lifecycle?: 'recovering' | 'running' | 'waiting_input' | 'stopping' | 'stop_failed';
 }
 
 /** 发布中心草稿：持久化到 localStorage，切页/刷新都不丢。 */
@@ -38,12 +123,13 @@ export interface PublishDraft {
   overrides: Record<string, string>;
   tags: string;   // 话题标签，逗号分隔（小红书绑话题；其它平台按需写入）
 }
-const PUBLISH_KEY = 'easel_publish_draft';
+const PUBLISH_KEY = projectStorageKey('easel_publish_draft');
 const PREVIOUS_BRAND = ['post', 'craft'].join('');
 
 function readMigratedLocalValue(key: string, suffix: string): string | null {
   const current = localStorage.getItem(key);
   if (current !== null) return current;
+  if (ACTIVE_PROJECT_ID !== 'default' || ACTIVE_USER_ID) return null;
   const previousKey = `${PREVIOUS_BRAND}_${suffix}`;
   const previous = localStorage.getItem(previousKey);
   if (previous !== null) {
@@ -69,10 +155,10 @@ export function savePublishDraft(d: PublishDraft): void {
   try { localStorage.setItem(PUBLISH_KEY, JSON.stringify(d)); } catch { /* quota */ }
 }
 
-const STORAGE_KEY = 'easel_sessions';
-const ACTIVE_KEY = 'easel_active_session';
-const MAX_SESSIONS = 100;
+const STORAGE_KEY = projectStorageKey('easel_sessions');
+const ACTIVE_KEY = projectStorageKey('easel_active_session');
 const TITLE_MAX_CHARS = 24;
+let volatileSessions: ChatSession[] | null = null;
 
 /** 上次活跃会话 id：重开网页时据此续接上次对话（而不是丢进新空会话）。 */
 export function loadActiveId(): string | null {
@@ -90,6 +176,7 @@ function generateId(): string {
 }
 
 export function loadSessions(): ChatSession[] {
+  if (volatileSessions) return volatileSessions;
   try {
     const raw = readMigratedLocalValue(STORAGE_KEY, 'sessions');
     if (!raw) return [];
@@ -117,25 +204,29 @@ export function loadSessions(): ChatSession[] {
   }
 }
 
-/** 保存前清理：只保留最新 1 个空会话（避免空会话无限堆积），并封顶总数。 */
+/** Display limits belong in navigation, never in the durable history catalog. */
 function prune(sessions: ChatSession[]): ChatSession[] {
   let keptEmpty = false;
   const pruned = sessions.filter((s) => {
-    if (s.messages.length > 0) return true;
+    if (s.messages.length || s.pendingTurnId || s.queued?.length || loadPromptAttempt(s.id)) return true;
     if (keptEmpty) return false;
     keptEmpty = true;
     return true;
   });
-  return pruned.slice(0, MAX_SESSIONS);
+  return pruned;
 }
 
 export function saveSessions(sessions: ChatSession[]): boolean {
+  const retained = prune(sessions);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(prune(sessions)));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(retained));
+    volatileSessions = null;
     return true;
   } catch {
-    // Keep the live conversation in memory; never throw from a React state updater.
-    if (typeof window !== 'undefined') queueMicrotask(() => window.dispatchEvent(new Event('easel-session-save-error')));
+    volatileSessions = retained;
+    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('easel:history-storage-error'));
+    }
     return false;
   }
 }
@@ -147,6 +238,7 @@ export function createSession(persona?: string): ChatSession {
     messages: [],
     persona,
     created: Date.now(),
+    updated: Date.now(),
   };
 }
 

@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from .base import HarnessError
+from .models import valid_model_id
 
 IDS = ("api", "openclaw", "opencode", "codex", "acp")
 
@@ -73,7 +74,9 @@ def binding_path(sessions: Path, key: str) -> Path:
 def binding(sessions: Path, key: str) -> dict:
     record = read_json(binding_path(sessions, key))
     if record and (record.get("runtime") not in IDS
-                   or not isinstance(record.get("native_id"), str)):
+                   or not isinstance(record.get("native_id"), str)
+                   or ("model_baseline" in record and (record["runtime"] != "codex"
+                                                       or not valid_model_id(record["model_baseline"])))):
         raise HarnessError("Agent 会话记录格式无效，不会自动重置历史")
     return record
 
@@ -86,4 +89,14 @@ def bind(sessions: Path, key: str, runtime: str, native_id: str = "") -> None:
         raise HarnessError("此会话属于其他 Agent 底座，请新建对话")
     if current.get("native_id") and current["native_id"] != native_id:
         raise HarnessError("Agent 返回了不同的原生会话 ID，不会替换已有历史")
-    write_json(binding_path(sessions, key), {"runtime": runtime, "native_id": native_id})
+    write_json(binding_path(sessions, key), {"runtime": runtime, "native_id": native_id,
+        **({"model_baseline": current["model_baseline"]} if "model_baseline" in current else {})})
+
+
+def remember_model_baseline(sessions: Path, key: str, model: str) -> None:
+    """A Codex turn override persists natively; keep this scoped reset value."""
+    current = binding(sessions, key)
+    if current.get("runtime") != "codex" or not valid_model_id(model):
+        raise HarnessError("无法确定会话默认模型，未应用本轮覆盖")
+    if current.get("model_baseline") != model:
+        write_json(binding_path(sessions, key), {**current, "model_baseline": model})

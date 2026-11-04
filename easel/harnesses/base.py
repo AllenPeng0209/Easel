@@ -10,9 +10,24 @@ class HarnessError(Exception):
     pass
 
 
-Emit = Callable[[str, str], None]
+class SteerRejected(HarnessError):
+    """The active turn did not accept this input or nothing was sent."""
+
+
+Emit = Callable[[str, str | dict], None]
 Ask = Callable[[list[dict]], Awaitable[dict[str, list[str]]]]
 Bind = Callable[[str], None]
+Steer = Callable[[str], Awaitable[None]]
+# The host owns authorization, filesystem validation and durable receipts.
+Present = Callable[[list[dict], str], Awaitable[list[dict] | None]]
+# Publication authority, exact-payload approval and receipts remain host-owned.
+Publish = Callable[[dict, str], Awaitable[dict]]
+# Read an existing scoped approval/operation; never create or execute one.
+PublicationStatus = Callable[[str], Awaitable[dict]]
+PublicationStatusWithCall = Callable[[str, str], Awaitable[dict]]
+# Typed, read-only business queries; actor/IP scope and DTOs remain host-owned.
+BusinessObjects = Callable[[dict, str], Awaitable[dict]]
+WorkshopDelivery = Callable[[dict], Awaitable[list[dict]]]
 
 
 @dataclass(frozen=True)
@@ -35,6 +50,16 @@ class RunRequest:
     command: tuple[str, ...] = ()
     session_key: str = ""
     codex_auto_approve: bool = False
+    autonomy_mode: str = "autonomous"
+    present: Present | None = None
+    publish: Publish | None = None
+    publication_status: PublicationStatus | None = None
+    business_objects: BusinessObjects | None = None
+    bind_steer: Callable[[Steer | None], None] | None = None
+    record_subagent: Callable[[dict], None] | None = None
+    publication_status_with_call: PublicationStatusWithCall | None = None
+    auto_allow_tools: bool = False
+    workshop_delivery: WorkshopDelivery | None = None
 
 
 class Adapter(Protocol):

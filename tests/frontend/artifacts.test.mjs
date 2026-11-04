@@ -1,3 +1,4 @@
+import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -11,7 +12,7 @@ const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 });
 const exports = {};
-runInNewContext(outputText, { exports });
+runWithProjectScope(outputText, { exports, require: () => projectScope });
 const { artifactFromUrl, archiveFromUrl, mergeArtifacts, fitArtifact } = exports;
 
 test('local media types are recognized without converting text reports or external links', () => {
@@ -91,12 +92,12 @@ function gallery() {
   let selected = 0;
   const module = {};
   const jsx = (type, props) => ({ type, props });
-  runInNewContext(compiled, {
+  runWithProjectScope(compiled, {
     exports: module,
     require: id => id === 'react' ? {
       useState: initial => typeof initial === 'number' ? [selected, value => { selected = value; }] : [[], () => {}],
-      useEffect: () => {},
-    } : id === 'react/jsx-runtime' ? { jsx, jsxs: jsx }
+      useEffect: () => {}, useRef: current => ({ current }), useCallback: callback => callback,
+    } : id === 'react/jsx-runtime' ? { jsx, jsxs: jsx, Fragment: 'fragment' }
       : id.endsWith('/artifacts') ? exports : { IconChevron: 'chevron', IconOutputs: 'outputs' },
   });
   const artifacts = ['first', 'second', 'third'].map(name => ({

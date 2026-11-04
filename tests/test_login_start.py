@@ -1,14 +1,25 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 import web.app as web
 
 
+@pytest.fixture
+def unified_connection(monkeypatch):
+    """Native logins now enter the shared coordinator, never a real browser here."""
+    connection = SimpleNamespace(start=AsyncMock(return_value={"task_id": "native-task", "status": "opening"}))
+    runtime = SimpleNamespace(connections=connection)
+    manager = SimpleNamespace(get=AsyncMock(return_value=runtime))
+    monkeypatch.setattr(web, "_operations_manager", AsyncMock(return_value=manager))
+    monkeypatch.setattr(web, "_UNIFIED_LOGIN_TASKS", {})
+    return connection
+
+
 @pytest.mark.parametrize("platform", ["xiaohongshu", "zhihu", "wechat-oa"])
-def test_login_start_returns_without_waiting_for_qr(tmp_path, monkeypatch, platform):
+def test_login_start_returns_without_waiting_for_qr(tmp_path, monkeypatch, platform, unified_connection):
     monkeypatch.setattr(web, "LOGIN_DIR", tmp_path)
     monkeypatch.setattr(web, "LOGIN_PROCESSES", {})
     monkeypatch.setattr(web, "_WHOAMI_CACHE", {})
@@ -23,6 +34,13 @@ def test_login_start_returns_without_waiting_for_qr(tmp_path, monkeypatch, platf
     monkeypatch.setattr(web.asyncio, "sleep", sleep)
     start = web.api_mp_login_start if platform == "wechat-oa" else web.api_login_start
     result = asyncio.run(start(platform))
+    if platform == "xiaohongshu":
+        assert result["mode"] == "browser"
+        assert result["state"] == "window_login"
+        assert result["qr"] == ""
+        unified_connection.start.assert_awaited_once_with("xhs")
+        launch.assert_not_called()
+        return
     assert result["mode"] == "qr"
     assert result["state"] == "starting"
     assert result["qr"] == ""
@@ -34,12 +52,14 @@ def test_login_start_returns_without_waiting_for_qr(tmp_path, monkeypatch, platf
 
 
 @pytest.mark.parametrize("platform", ["xiaohongshu", "zhihu", "wechat-oa"])
-def test_login_start_reports_immediate_runner_exit(tmp_path, monkeypatch, platform):
+def test_login_start_reports_immediate_runner_exit(tmp_path, monkeypatch, platform, unified_connection):
     monkeypatch.setattr(web, "LOGIN_DIR", tmp_path)
     monkeypatch.setattr(web, "LOGIN_PROCESSES", {})
     monkeypatch.setattr(web, "_WHOAMI_CACHE", {})
     monkeypatch.setattr(web, "_LOGIN_START_LOCKS", {})
     monkeypatch.setattr(web.subprocess, "Popen", Mock(return_value=SimpleNamespace(poll=lambda: 1)))
+    if platform == "xiaohongshu":
+        unified_connection.start.return_value = {"task_id": "failed-native", "status": "error", "hint": "浏览器未能打开"}
     start = web.api_mp_login_start if platform == "wechat-oa" else web.api_login_start
     result = asyncio.run(start(platform))
     assert result["state"] == "error"
@@ -96,7 +116,7 @@ def test_zhihu_restart_keeps_old_qr_if_runner_cannot_exit(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize("platform", ["xiaohongshu", "weixin-channels", "douyin", "kuaishou", "bilibili"])
-def test_login_restart_reaps_old_runner_before_replacing_qr(tmp_path, monkeypatch, platform):
+def test_login_restart_reaps_old_runner_before_replacing_qr(tmp_path, monkeypatch, platform, unified_connection):
     monkeypatch.setattr(web, "LOGIN_DIR", tmp_path)
     monkeypatch.setattr(web, "_WHOAMI_CACHE", {})
     monkeypatch.setattr(web, "_LOGIN_START_LOCKS", {})
@@ -112,6 +132,19 @@ def test_login_restart_reaps_old_runner_before_replacing_qr(tmp_path, monkeypatc
         return SimpleNamespace(poll=lambda: None)
 
     monkeypatch.setattr(web.subprocess, "Popen", launch)
+    if platform in {"douyin", "xiaohongshu"}:
+        async def start_unified(canonical):
+            assert canonical == ("xhs" if platform == "xiaohongshu" else platform)
+            process.terminate.assert_called_once()
+            process.wait.assert_called_once_with(timeout=8)
+            return {"task_id": "replacement-native", "status": "opening"}
+
+        unified_connection.start.side_effect = start_unified
+        result = asyncio.run(web.api_login_start(platform, restart=True))
+        assert result["state"] == "window_login"
+        assert result["qr"] == ""
+        assert platform not in web.LOGIN_PROCESSES
+        return
     assert asyncio.run(web.api_login_start(platform, restart=True))["state"] == "starting"
 
 

@@ -1,0 +1,72 @@
+/* Adapted from DeepSeek Harness QuoteSelection.module.css @ ce7073d (MIT). */
+.root { position: relative; }
+.action {
+  position: absolute;
+  z-index: 3;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--bg-elev);
+  box-shadow: 0 5px 18px rgb(0 0 0 / 16%);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.action:hover { background: var(--surface-hover); }
+.action:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }
+
+.savedQuote {
+  display: block;
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--accent-start);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Token palette adapted from DeepSeek Harness ui-theme/src/styles/shiki.css. */
+.root {
+  --shiki-foreground: var(--text);
+  --shiki-background: var(--code-bg, var(--bg-elev));
+  --shiki-token-constant: #1c7ed6;
+  --shiki-token-string: #2f9e44;
+  --shiki-token-comment: #687582;
+  --shiki-token-keyword: #d6336c;
+  --shiki-token-parameter: #b64a0a;
+  --shiki-token-function: #6741d9;
+  --shiki-token-string-expression: #2b8a3e;
+  --shiki-token-punctuation: #495057;
+  --shiki-token-link: #1971c2;
+}
+:global([data-theme="dark"]) .root {
+  --shiki-token-constant: #4dabf7;
+  --shiki-token-string: #69db7c;
+  --shiki-token-comment: #adb5bd;
+  --shiki-token-keyword: #faa2c1;
+  --shiki-token-parameter: #ffa94d;
+  --shiki-token-function: #b197fc;
+  --shiki-token-string-expression: #8ce99a;
+  --shiki-token-punctuation: #ced4da;
+  --shiki-token-link: #74c0fc;
+}
+
+/* Per-block controls adapted from the pinned CodeBlock header. */
+.codeCopyToolbar { display: flex; justify-content: flex-end; position: relative; margin-top: 6px; }
+.codeCopyButton {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.codeCopyButton:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 1px; }
+.codeCopyButton[data-code-copy-state="failed"] { color: var(--red); }
+.codeCopyButton[data-code-copy-state="copied"] { color: var(--green); }
+.codeCopyStatus { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+.markdownBlock { display: contents; }

@@ -1,3 +1,4 @@
+import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -16,9 +17,9 @@ function setup() {
   const entries = new Map();
   const pending = [];
   const exports = {};
-  runInNewContext(outputText, {
+  runWithProjectScope(outputText, {
     exports, Date,
-    require: () => ({
+    require: name => name === './projectScope' ? projectScope : ({
       accountWhoami: platform => new Promise(resolve => pending.push({ platform, resolve })),
     }),
     localStorage: {

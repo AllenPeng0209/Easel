@@ -1,0 +1,39 @@
+.composer-command-menu {
+  position: relative;
+  z-index: 2;
+  margin: 4px 0 8px;
+  padding: 8px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 10%);
+}
+.composer-command-menu header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 4px; }
+.composer-command-menu :is(ul, p) { margin: 0; padding: 0; }
+.composer-command-menu ul { list-style: none; max-height: 17rem; overflow: auto; }
+.composer-command-menu li { margin: 2px 0; }
+.composer-command-menu .composer-command-group {
+  padding: 4px 7px 1px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.composer-command-menu [role="option"] {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.composer-command-menu [role="option"][aria-selected="true"],
+.composer-command-menu [role="option"]:hover { background: var(--accent-soft); border-color: var(--border); }
+.composer-command-menu [role="option"] > span:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px; }
+.composer-command-menu code { color: var(--accent-end); }
+.composer-command-menu small, .composer-command-menu p { color: var(--text-secondary); }

@@ -7,7 +7,7 @@ from pathlib import Path
 from .acp import ACPAdapter, OpenCodeAdapter
 from .base import Descriptor, HarnessError, RunRequest
 from .codex import CodexAdapter
-from .commands import acp_command, base_command
+from .commands import acp_command, base_command, codex_override
 from .store import settings
 
 OPENCLAW = Descriptor("openclaw", "OpenClaw", "gateway / CLI", "运行原有安装流程")
@@ -21,7 +21,7 @@ def adapter(runtime: str):
     return ADAPTERS[runtime]
 
 
-def describe(runtime: str) -> dict:
+def describe(runtime: str, environment: dict[str, str] | None = None) -> dict:
     descriptor = CHAT_ONLY if runtime == "api" else OPENCLAW if runtime == "openclaw" else adapter(runtime).descriptor
     from dataclasses import asdict
     result = asdict(descriptor)
@@ -34,6 +34,8 @@ def describe(runtime: str) -> dict:
             openclaw_base_cmd()
         elif runtime == "acp":
             acp_command(Path(__file__).resolve().parents[2])
+        elif runtime == 'codex' and codex_override(environment or {}):
+            pass
         else:
             base_command(runtime)
         result["installed"] = True

@@ -1,3 +1,4 @@
+import struct
 import zipfile
 
 import pytest
@@ -67,6 +68,22 @@ def test_archive_api_rejects_invalid_requests(tmp_path, monkeypatch, name, conte
     with pytest.raises(HTTPException) as error:
         web.api_artifact_archive(name)
     assert error.value.status_code == status
+
+
+def test_archive_api_treats_invalid_utf8_member_name_as_malformed_zip(tmp_path, monkeypatch):
+    monkeypatch.setattr(web, "OUTPUTS_DIR", tmp_path)
+    archive = make_archive(tmp_path, [("x.png", b"image")])
+    raw = bytearray(archive.read_bytes())
+    central = raw.index(b"PK\x01\x02")
+    # Set the UTF-8 filename flags in both records and make the first byte
+    # invalid without changing the recorded lengths or archive structure.
+    struct.pack_into("<H", raw, 6, 1 << 11)
+    struct.pack_into("<H", raw, central + 8, 1 << 11)
+    raw[30] = raw[central + 46] = 0xff
+    archive.write_bytes(raw)
+    with pytest.raises(HTTPException) as error:
+        web.api_artifact_archive(archive.name)
+    assert error.value.status_code == 400 and error.value.detail == "无法读取压缩包索引"
 
 
 def test_archive_gallery_bounds_member_count(tmp_path, monkeypatch):

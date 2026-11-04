@@ -160,7 +160,8 @@ def test_creator_account_request_includes_required_first_party_referer():
     context = SimpleNamespace(request=SimpleNamespace(get=request))
     assert xhs_publish._creator_account(context) == account
     request.assert_called_once_with(
-        xhs_publish.CREATOR_ACCOUNT_URL, headers={"Referer": xhs_publish.CREATOR_HOME_URL}, timeout=5000)
+        xhs_publish.CREATOR_ACCOUNT_URL,
+        headers={"Referer": xhs_publish.CREATOR_HOME_URL, "Cache-Control": "no-cache"}, timeout=5000)
 
 
 @pytest.mark.parametrize("complete", [False, True])
@@ -184,6 +185,7 @@ def test_whoami_enriches_incomplete_identity_without_losing_verified_login(monke
     assert xhs_publish.cmd_whoami(args) == 0
     assert json.loads(capsys.readouterr().out) == {
         "loggedIn": True, "name": "Me", "avatar": "https://self.test/avatar",
+        "accountId": "self", "accountIdKind": "userId", "accountIdentityStatus": "verified",
     }
     assert profile.call_count == (0 if complete else 1)
     assert dom.call_count == (0 if complete else 1)

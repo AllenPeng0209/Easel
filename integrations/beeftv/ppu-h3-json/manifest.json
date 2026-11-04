@@ -1,0 +1,46 @@
+{
+  "apiVersion": "beeftv.plugin/v2",
+  "id": "easel-ppu-h3-json",
+  "name": "Easel PPU MiniMax H3 JSON",
+  "version": "1.0.0",
+  "author": "Easel Local Integration",
+  "description": "Local PPU H3 text/image-to-video protocol with stable submission identity and native audio.",
+  "documentation": "# Local PPU H3\nPOST /v1/videos accepts JSON model, prompt, seconds, size and request_id. Optional image is a data URI. Native audio is always enabled. Poll GET /v1/videos/:id; authenticated video download GET /v1/videos/:id/content. request_id is the host-owned stable submission key; generation is never triggered during installation or discovery.",
+  "permissions": ["generation.run", "media.read"],
+  "configuration": {"fields": [{"name": "apiKey", "type": "secret", "label": "API Key", "required": true}]},
+  "contributes": {
+    "providers": [{
+      "id": "easel-ppu-h3-json",
+      "label": "PPU MiniMax H3 JSON (T2VA / I2VA)",
+      "capabilities": ["video"],
+      "scopes": ["admin.system-channel", "user.custom-channel", "canvas", "creation", "agent"],
+      "baseUrl": "http://127.0.0.1:8878",
+      "requiresPublicMediaUrls": false,
+      "auth": {"type": "bearer", "field": "apiKey"},
+      "parameters": [
+        {"name": "model", "type": "string", "required": true, "mapping": "model"},
+        {"name": "prompt", "type": "string", "required": true, "mapping": "prompt"},
+        {"name": "duration", "type": "integer", "required": true, "mapping": "seconds"},
+        {"name": "aspectRatio", "type": "string", "required": true, "mapping": "size"},
+        {"name": "seed", "type": "integer", "mapping": "seed"}
+      ],
+      "create": {
+        "method": "POST",
+        "path": "/v1/videos",
+        "contentType": "application/json",
+        "body": {
+          "model": {"$ref": "request.model"},
+          "prompt": {"$ref": "request.prompt"},
+          "seconds": {"$ref": "request.duration"},
+          "size": {"$ref": "request.aspectRatio"},
+          "request_id": {"$ref": "request.extra.idempotencyKey"},
+          "seed": {"$omitEmpty": {"$ref": "request.providerOptions.easel-ppu-h3-json.seed"}},
+          "image": {"$omitEmpty": {"$ref": "request.images.0.value"}}
+        }
+      },
+      "poll": {"method": "GET", "path": "/v1/videos/{{taskId}}"},
+      "result": {"method": "GET", "path": "/v1/videos/{{taskId}}/content", "headers": {"Accept": "video/mp4"}},
+      "response": {"taskIdPaths": ["id"], "statusPaths": ["status"], "messagePaths": ["error.message", "message"], "errorPaths": ["error.code"], "resultKind": "video", "resultEphemeral": true}
+    }]
+  }
+}

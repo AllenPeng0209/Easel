@@ -1,0 +1,7 @@
+.composer-file-menu [role="option"] {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px 8px;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}

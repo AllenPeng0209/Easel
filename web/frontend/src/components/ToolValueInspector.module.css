@@ -1,0 +1,30 @@
+.section {
+  min-width: 0;
+  margin: 0 0 10px;
+}
+
+.header, .taskIds {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  flex-wrap: wrap;
+  margin: 0 0 5px;
+}
+
+.header h4 { margin: 0; }
+
+.copy {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.copy[data-copy-state="failed"] { color: var(--red); }
+.copy:hover { background: var(--accent-soft); }
+.copy:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 1px; }
+.taskId { min-width: 0; overflow-wrap: anywhere; }

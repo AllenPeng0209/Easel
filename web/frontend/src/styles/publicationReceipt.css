@@ -1,0 +1,45 @@
+/* Copyright (c) 2026 DeepSeek. MIT License.
+ * Header/summary/status layout adapted from packages/client/ui-workflow-run/src/client/WorkflowRunPanel.module.css
+ * @ ce7073d51254c26cd63b22a60835b8f948deb447.
+ * Easel changes: namespaced receipt fields and readonly refresh accessory.
+ * Notice: integrations/deepseek-harness/LICENSE.
+ */
+.publication-receipt { width: 100%; min-width: 0; color: var(--dsw-alias-label-secondary, var(--text-secondary)); }
+.publication-receipt__header {
+  box-sizing: border-box; display: flex; align-items: center; gap: 6px; min-width: 0;
+  min-height: 32px; padding: 0 8px; border-radius: var(--dsw-radius-md, 8px);
+  background: var(--dsw-alias-bg-module-platform, var(--surface-2));
+}
+.publication-receipt__header:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--accent-end)); outline-offset: -2px; }
+.publication-receipt__heading { flex: 1; min-width: 0; }
+.publication-receipt__heading-content { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.publication-receipt__title { flex: none; font-size: 13px; font-weight: 510; line-height: 24px; }
+.publication-receipt__summary { display: flex; flex: 1; align-items: center; gap: 6px; overflow: hidden; min-width: 0; font-size: 12px; line-height: 18px; }
+.publication-receipt__summary > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 20%; }
+.publication-receipt__summary > span + span::before { content: '·'; padding-right: 6px; opacity: .5; }
+.publication-receipt__summary > .publication-receipt__caption { flex: 1; max-width: none; }
+.publication-receipt__tail { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 8px; padding-left: 6px; font-size: 11px; line-height: 16px; }
+.publication-receipt__status { white-space: nowrap; }
+.publication-receipt__dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.publication-receipt[data-tone='warning'] .publication-receipt__status { color: var(--dsw-alias-state-warn-primary, var(--amber)); }
+.publication-receipt[data-tone='error'] .publication-receipt__status { color: var(--dsw-alias-state-error-primary, var(--red)); }
+.publication-receipt[data-tone='confirmed'] .publication-receipt__status { color: var(--dsw-alias-state-success-primary, var(--green)); }
+.publication-receipt__refresh { padding: 2px 4px; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary, var(--text-secondary)); font: inherit; cursor: pointer; white-space: nowrap; }
+.publication-receipt__refresh:disabled { opacity: .5; cursor: default; }
+.publication-receipt__refresh:focus-visible, .publication-receipt code:focus-visible { outline: 2px solid var(--accent-end); outline-offset: 2px; }
+.publication-receipt__refresh:hover:not(:disabled) { color: var(--dsw-alias-label-primary, var(--text)); }
+.publication-receipt__details { min-width: 0; padding: 8px 8px 12px 24px; font-size: 12px; line-height: 1.7; }
+.publication-receipt__note { margin: 0 0 8px; }
+.publication-receipt__fields { display: grid; grid-template-columns: 125px minmax(0, 1fr); gap: 4px 10px; margin: 0; }
+.publication-receipt__fields dt { color: var(--dsw-alias-label-tertiary, var(--text-tertiary)); }
+.publication-receipt__fields dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.publication-receipt code { font-family: var(--ds-font-family-code, monospace); font-size: 11px; overflow-wrap: anywhere; }
+.publication-receipt__media { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.publication-receipt__media > div { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.publication-receipt__error, .publication-receipt__restricted { margin: 6px 0; color: var(--dsw-alias-state-warn-primary, var(--amber)); font-size: 12px; line-height: 1.6; }
+@media (max-width: 760px) {
+  .publication-receipt__tail { flex-wrap: wrap; gap: 2px 6px; max-width: 45%; }
+  .publication-receipt__status { white-space: normal; text-align: right; }
+  .publication-receipt__fields { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .publication-receipt__fields dd { margin-bottom: 5px; }
+}

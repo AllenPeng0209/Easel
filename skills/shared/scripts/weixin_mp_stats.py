@@ -30,7 +30,7 @@ else:
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import login_state  # noqa: E402
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(os.environ.get("EASEL_ROOT") or Path(__file__).resolve().parents[3])
 LOGIN_DIR = PROJECT_ROOT / "outputs" / "_login"
 PROFILE_NAME = "WeixinMpProfile"
 MP_HOME = "https://mp.weixin.qq.com/"
@@ -56,7 +56,7 @@ def _die(msg, code=1):
 
 
 def _profile_dir(base):
-    root = Path(base).expanduser() if base else Path.home() / ".easel-browser-profiles"
+    root = Path(base or os.environ.get("EASEL_BROWSER_PROFILES", "")).expanduser() if (base or os.environ.get("EASEL_BROWSER_PROFILES")) else Path.home() / ".easel-browser-profiles"
     return root / PROFILE_NAME
 
 
@@ -636,6 +636,24 @@ def _editor_ctx(page, token):
 
 
 def cmd_publish(a):
+    from publication_receipt import PublicationReceiptReporter
+    reporter = PublicationReceiptReporter.from_args(a, 'wechat-oa')
+    state = {'phase': 'not_started', 'settled': False, 'reason': None}
+    reporter.record('not_started')
+    try:
+        result = _publish_draft(a, reporter, state)
+    except BaseException as error:
+        if not state['settled']:
+            reporter.record(state['phase'], reason='cancelled' if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else
+                'submit_error' if state['phase'] != 'not_started' else 'preflight_failed')
+        raise
+    if result and not state['settled']:
+        reporter.record(state['phase'], reason=state['reason'] or
+            ('platform_rejected' if state['phase'] != 'not_started' else 'preflight_failed'))
+    return result
+
+
+def _publish_draft(a, reporter, state):
     """用后台会话建草稿（免 AppID/AppSecret、免 IP 白名单）。
     步骤：编辑器取 ticket → filetransfer 传封面 → operate_appmsg sub=create 建草稿。"""
     from playwright.sync_api import sync_playwright
@@ -665,6 +683,9 @@ def cmd_publish(a):
                 u = (f"https://mp.weixin.qq.com/cgi-bin/filetransfer?action=upload_material&f=json&scene=8"
                      f"&writetype=doublewrite&groupid=1&ticket_id={info['user_name']}&ticket={info['ticket']}"
                      f"&svr_time={svr}&token={token}&lang=zh_CN")
+                if state['phase'] == 'not_started':
+                    state['phase'] = 'submit_attempted'
+                    reporter.record('submit_attempted')
                 rr = page.request.post(u, multipart={
                     "file": {"name": fpath.name, "mimeType": mime, "buffer": fpath.read_bytes()}},
                     headers={"Referer": page.url})
@@ -741,13 +762,19 @@ def cmd_publish(a):
                 out["error"] = f"建草稿返回非JSON: {r2.text()[:200]}"; print(json.dumps(out, ensure_ascii=False)); return 1
             ret = res.get("ret", res.get("base_resp", {}).get("ret", -1))
             if str(ret) == "0":
-                media_id = str(res.get("appMsgId") or res.get("appmsgid") or res.get("app_id") or "").strip()
-                if not media_id:
-                    out["error"] = "建草稿成功但未返回草稿 ID"
+                raw_id = res.get("appMsgId") or res.get("appmsgid") or res.get("app_id") or res.get("media_id")
+                media_id = (str(raw_id) if type(raw_id) is int and raw_id > 0
+                            else raw_id.strip() if isinstance(raw_id, str) else "")
+                if media_id == '0' or not re.fullmatch(r'[A-Za-z0-9_.+=-]{1,256}', media_id):
+                    state['reason'] = 'no_ack'
+                    out["error"] = "建草稿响应未返回有效草稿 ID，创建结果未核实"
                     print(json.dumps(out, ensure_ascii=False)); return 1
                 out["success"] = True
                 out["media_id"] = media_id
                 out["thumb_media_id"] = thumb_media_id
+                state['phase'] = 'platform_ack'
+                reporter.record('platform_ack', ack={'kind': 'draft', 'accepted': True, 'id': media_id, 'source': 'provider_response'})
+                state['settled'] = True
                 print(json.dumps(out, ensure_ascii=False)); return 0
             out["error"] = f"建草稿失败 ret={ret}: {json.dumps(res, ensure_ascii=False)[:250]}"
             print(json.dumps(out, ensure_ascii=False)); return 1
@@ -786,7 +813,10 @@ def cmd_selftest(_a=None):
 
 def cmd_whoami(a):
     from playwright.sync_api import sync_playwright
-    out = {"loggedIn": False, "name": "", "avatar": ""}
+    # The current MP reader verifies its web session and visible label only.
+    # A session token or configured AppID is not proof of a native account UID.
+    out = {"loggedIn": False, "name": "", "avatar": "", 'accountId': '',
+           'accountIdKind': '', 'accountIdentityStatus': 'unknown'}
     try:
         with sync_playwright() as p:
             ctx = _launch(p, a.headed, a.profile_base, _proxy(a.proxy, a.no_proxy))
@@ -847,6 +877,8 @@ def main():
     pp.add_argument("--digest", default="")
     pp.add_argument("--author", default="")
     pp.add_argument("--source-url", default="")
+    pp.add_argument("--receipt-context", help="Host 提供的机器回执上下文文件")
+    pp.add_argument("--receipt-file", help="机器回执输出文件")
     pp.set_defaults(func=cmd_publish)
 
     a = ap.parse_args()

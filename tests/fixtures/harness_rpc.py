@@ -36,9 +36,12 @@ def reply(message, result):
 
 def permission():
     if runtime == "codex":
-        send({"id": "permission-request", "method": "item/commandExecution/requestApproval",
-              "params": {"threadId": thread_id, "turnId": turn_id, "itemId": "tool",
-                         "command": os.environ.get("FAKE_HARNESS_COMMAND", "read public file")}})
+        kind = os.environ.get("FAKE_HARNESS_PERMISSION_KIND", "commandExecution")
+        params = {"threadId": thread_id, "itemId": "tool",
+                  "command": os.environ.get("FAKE_HARNESS_COMMAND", "read public file")}
+        if mode != "uncorrelated-permission":
+            params["turnId"] = turn_id
+        send({"id": "permission-request", "method": f"item/{kind}/requestApproval", "params": params})
     else:
         send({"id": "permission-request", "method": "session/request_permission",
               "params": {"sessionId": session_id, "toolCall": {"title": "read public file"},
@@ -56,6 +59,8 @@ while True:
         reply(message, {"protocolVersion": 1, "agentCapabilities": {"loadSession": mode != "no-resume"}})
     elif method == "initialized":
         pass
+    elif method == "config/read":
+        reply(message, {"config": {"model": "second-model", "other": "internal config"}, "origins": {}})
     elif method == "model/list":
         if mode == "models-error":
             send({"id": message["id"], "error": {"message": "invalid secret-test-key"}})
@@ -87,7 +92,9 @@ while True:
         if "id" in message:
             reply(message, {})
     elif method in ("turn/start", "session/prompt"):
-        if mode == "permission":
+        if mode in ("permission", "native-auto-permission", "uncorrelated-permission"):
+            if mode != "permission" and runtime == "codex":
+                reply(message, {"turn": {"id": turn_id}})
             permission()
         if mode in ("hang", "slow-cancel", "ignore-cancel"):
             pending_prompt = message
@@ -101,16 +108,43 @@ while True:
             continue
         if runtime == "codex":
             common = {"threadId": thread_id, "turnId": turn_id, "itemId": "text"}
-            send({"method": "item/reasoning/summaryTextDelta", "params": {**common, "delta": "思考"}})
-            send({"method": "item/agentMessage/delta", "params": {**common, "delta": "你好"}})
-            send({"method": "item/completed",
-                  "params": {**common, "item": {"type": "agentMessage", "id": "text", "text": "你好"}}})
+            send({"method": "item/reasoning/textDelta", "params": {**common, "delta": "private-native-reasoning"}})
+            send({"method": "item/reasoning/summaryTextDelta", "params": {**common, "summaryIndex": 0, "delta": "思考"}})
+            if mode == "public-summary":
+                send({"method": "item/completed", "params": {**common, "item": {
+                    "type": "reasoning", "id": "text", "summary": ["s" * 4010, "second"],
+                    "content": ["private-final-reasoning"]}}})
+                send({"method": "item/reasoning/summaryTextDelta", "params": {
+                    **common, "summaryIndex": 0, "delta": "late summary"}})
+            if mode != "answer-fallback":
+                send({"method": "item/agentMessage/delta", "params": {**common, "delta": "你好"}})
+            answer = {"type": "agentMessage", "id": "text", "text": "你好"}
+            if mode == "answer-phase":
+                final = {**answer, "phase": "final_answer"}
+                for method, envelope, item in (
+                    ("item/started", common, final),
+                    ("item/completed", {**common, "threadId": "foreign"}, final),
+                    ("item/completed", {**common, "turnId": "foreign"}, final),
+                    ("item/completed", {key: value for key, value in common.items() if key != "turnId"}, final),
+                    ("item/completed", common, {**answer, "phase": "partial_answer"}),
+                    ("item/completed", common, {**answer, "phase": "commentary"}),
+                    ("item/completed", common, final),
+                    ("item/completed", common, final),
+                ):
+                    send({"method": method, "params": {**envelope, "item": item}})
+            elif mode == "answer-fallback":
+                for item in ({**answer, "phase": "final_answer"},
+                             {**answer, "id": "new-final", "text": "再见", "phase": "final_answer"}):
+                    send({"method": "item/completed", "params": {**common, "item": item}})
+            else:
+                send({"method": "item/completed", "params": {**common, "item": answer}})
             if mode == "fatal":
                 send({"method": "error", "params": {**common, "willRetry": False}})
             else:
                 send({"method": "turn/completed",
                       "params": {**common, "turn": {"id": turn_id, "status": "completed"}}})
-            reply(message, {"turn": {"id": turn_id}})
+            if mode not in ("native-auto-permission", "uncorrelated-permission"):
+                reply(message, {"turn": {"id": turn_id}})
         else:
             for update, text in (("agent_thought_chunk", "思考"), ("agent_message_chunk", "你好")):
                 send({"method": "session/update", "params": {

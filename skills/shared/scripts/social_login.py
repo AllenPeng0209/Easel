@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Overseas social accounts: interactive official-site login in a dedicated browser.
+"""Overseas social accounts: interactive official-site login in an IP-scoped browser.
 
 This module manages browser sessions only. It does not grant API publishing scopes.
 Passwords and verification codes are entered directly on the platform website.

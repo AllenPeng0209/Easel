@@ -1,0 +1,168 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { projectStorageKey } from './projectScope';
+import type { ChatMessage, StreamState } from './store';
+import type { AgentEvent } from './agentEvents';
+import { scrollMetrics, useScrollFollow } from '../vendor/deepseek-harness/composer/use-scroll-follow';
+
+function eventContent(event: AgentEvent) {
+  if (event.business) return [event.kind, event.callId, event.business.id, event.business.snapshotHash];
+  const { id: _id, timestamp: _timestamp, startedAt: _startedAt, completedAt: _completedAt, ...content } = event;
+  return content;
+}
+
+function messageContent({ role, content, reasoningSummary, attachments, questions, events }: ChatMessage): string | null {
+  const summary = typeof reasoningSummary?.text === 'string' && typeof reasoningSummary.truncated === 'boolean'
+    && (reasoningSummary.text.trim() || reasoningSummary.truncated) ? [reasoningSummary.text, reasoningSummary.truncated] : null;
+  if (!content && !summary && !attachments?.length && !questions?.length && !events?.length) return null;
+  return JSON.stringify([role, content || '', summary, attachments || [], questions || [], events?.map(eventContent) || []]);
+}
+
+function nestedScrollConsumes(target: EventTarget, scrollport: HTMLElement, direction: number): boolean {
+  const node = target as Node;
+  for (let element = node.nodeType === 1 ? node as HTMLElement : node.parentElement;
+    element && element !== scrollport; element = element.parentElement) {
+    const { top, floor } = scrollMetrics(element);
+    if (floor <= 0) continue;
+    const style = window.getComputedStyle(element);
+    if (!['auto', 'scroll', 'overlay'].includes(style.overflowY)) continue;
+    if (style.overscrollBehaviorY === 'contain' || style.overscrollBehaviorY === 'none') return true;
+    if (direction < 0 ? top > 0.5 : top < floor - 0.5) return true;
+  }
+  return false;
+}
+
+/** Easel binding for the upstream follow controller; only reader intent releases the tail. */
+export function useChatReading(sessionId: string, messages: readonly ChatMessage[], stream: StreamState | undefined, enabled: boolean, historyStart = 0) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  const follow = useScrollFollow(true, 25);
+  const [following, setFollowing] = useState(true);
+  const [unread, setUnread] = useState(false);
+  const restored = useRef(false);
+  const history = useMemo(() => messages.map(messageContent).filter(token => token !== null), [messages]);
+  const { content, reasoningSummary, questions, events } = stream || {};
+  const live = useMemo(() => messageContent({ role: 'assistant', content: content || '', reasoningSummary, questions, events }),
+    [content, reasoningSummary, questions, events]);
+  const transcript = useMemo(() => live === null ? history : [...history, live], [history, live]);
+  const lastTranscript = useRef(transcript);
+  const lastHistoryStart = useRef(historyStart);
+  const key = projectStorageKey(`easel_chat_reading:${sessionId}`);
+
+  const remember = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    try { sessionStorage.setItem(key, JSON.stringify({ following: follow.active, top: element.scrollTop })); } catch { /* Nonessential reading memory. */ }
+  }, [key, follow]);
+  const backToBottom = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    follow.toBottom(element, scrollMetrics(element), 'instant');
+    setFollowing(true);
+    setUnread(false);
+    remember();
+  }, [follow, remember]);
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!enabled || !element || restored.current) return;
+    restored.current = true;
+    let saved: { following?: boolean; top?: number } | null = null;
+    try { saved = JSON.parse(sessionStorage.getItem(key) || 'null'); } catch { /* Follow tail on corrupt memory. */ }
+    if (saved?.following === false && typeof saved.top === 'number') {
+      follow.jump(element, scrollMetrics(element), saved.top);
+      setFollowing(follow.active);
+    } else backToBottom();
+  }, [enabled, key, follow, backToBottom]);
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!enabled || !element) return;
+    if (follow.active) backToBottom();
+    else {
+      // A historical prepend is not a new response. Compare the previously
+      // visible range, including genuine live updates that landed alongside it.
+      const prepended = Math.max(0, lastHistoryStart.current - historyStart);
+      const previousRange = prepended > 0 ? messages.slice(prepended).map(messageContent)
+        .filter(token => token !== null).concat(live === null ? [] : [live]) : transcript;
+      if (previousRange.some((item, index) => item !== lastTranscript.current[index])) setUnread(true);
+    }
+    lastTranscript.current = transcript;
+    lastHistoryStart.current = historyStart;
+  }, [enabled, transcript, messages, live, historyStart, follow, backToBottom]);
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!enabled || !element) return;
+    const release = follow.bind(element);
+    const settle = () => {
+      setFollowing(follow.settle(scrollMetrics(element)));
+      if (follow.active) setUnread(false);
+      remember();
+    };
+    element.addEventListener('scrollend', settle);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
+      if (follow.active) backToBottom();
+    }) : null;
+    if (threadRef.current) observer?.observe(threadRef.current);
+    return () => { remember(); release(); element.removeEventListener('scrollend', settle); observer?.disconnect(); };
+  }, [enabled, follow, remember, backToBottom]);
+
+  const pauseFollowing = () => {
+    const viewport = scrollRef.current;
+    if (viewport) follow.interrupt(viewport, scrollMetrics(viewport));
+    follow.setFollowing(false);
+    setFollowing(false);
+    remember();
+  };
+
+  const captureReadingAnchor = (): (() => void) | undefined => {
+    const viewport = scrollRef.current;
+    if (!viewport || follow.active) return;
+    const { top, bottom } = viewport.getBoundingClientRect();
+    const anchors: { element: HTMLElement; top: number }[] = [];
+    for (const element of viewport.querySelectorAll<HTMLElement>(
+      '[data-chat-message], [data-assistant-answer] :is(p, pre, table, h1, h2, h3, li)',
+    )) {
+      const rect = element.getBoundingClientRect();
+      if (rect.height > 0 && rect.bottom > top && rect.top < bottom) {
+        anchors.push({ element, top: rect.top });
+      }
+    }
+    // Prefer a fully visible text position inside long messages over a row
+    // whose beginning is already above the viewport.
+    anchors.sort((first, second) => (first.top < top ? 1 : 0) - (second.top < top ? 1 : 0));
+    return () => {
+      if (!viewport.isConnected || follow.active) return;
+      const anchor = anchors.find(item => item.element.isConnected && item.element.getBoundingClientRect().height > 0);
+      if (!anchor) return;
+      const delta = anchor.element.getBoundingClientRect().top - anchor.top;
+      if (Math.abs(delta) > 0.5) viewport.scrollTop += delta;
+      follow.sample(scrollMetrics(viewport), false);
+      remember();
+    };
+  };
+
+  const onScroll = () => {
+    const element = scrollRef.current;
+    if (!element) return;
+    setFollowing(follow.sample(scrollMetrics(element)));
+    if (follow.active) setUnread(false);
+    remember();
+  };
+  const interrupt = () => {
+    const element = scrollRef.current;
+    if (element) follow.interrupt(element, scrollMetrics(element));
+  };
+  const onWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.ctrlKey || event.deltaY === 0
+      || nestedScrollConsumes(event.target, event.currentTarget, event.deltaY)) return;
+    interrupt();
+    if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) { follow.setFollowing(false); setFollowing(false); }
+  };
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (!event.defaultPrevented && ['PageUp', 'Home', 'ArrowUp'].includes(event.key)
+      && event.currentTarget.scrollTop > 0 && !target.closest('input, textarea, select, [contenteditable]')
+      && !nestedScrollConsumes(target, event.currentTarget, -1)) {
+      interrupt(); follow.setFollowing(false); setFollowing(false);
+    }
+  };
+  return { scrollRef, threadRef, following, unread, backToBottom, pauseFollowing, captureReadingAnchor, onScroll, onWheel, onKeyDown, interrupt };
+}

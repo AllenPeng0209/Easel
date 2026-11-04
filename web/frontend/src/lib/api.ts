@@ -1,3 +1,9 @@
+import { projectUrl, projectFetch } from './projectScope';
+import type { AgentEvent } from './agentEvents';
+import type { ChatMessage, ChatSession, ChatHistoryWindow, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef } from './store';
+import type { ChatReference, ChatSessionReference } from './chatReferences';
+import type { ChatCommand, ChatCommandOption } from './chatCommands';
+import { mergeSessionCatalog } from './sessionSync';
 function getBasePath(): string {
   const path = window.location.pathname;
   const cleaned = path.replace(/\/index\.html$/, '').replace(/\/$/, '');
@@ -9,7 +15,7 @@ const BASE = getBasePath();
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   // 全部是动态应用接口（登录态/数据等），禁止浏览器 HTTP 缓存——否则 /api/accounts 等可能被启发式
   // 缓存住旧响应（曾表现为“扫码登录后卡片仍显示未登录”）。调用方可用 options.cache 覆盖。
-  const res = await fetch(`${BASE}${url}`, { cache: 'no-store', ...options });
+  const res = await projectFetch(projectUrl(`${BASE}${url}`), { cache: 'no-store', ...options });
   if (!res.ok) {
     // 优先显示后端返回的实质错误信息（FastAPI 的 {detail}），而不是无意义的 "API error: 400"
     let detail = '';
@@ -19,7 +25,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     } catch {
       /* 响应体不是 JSON，忽略 */
     }
-    throw new Error(detail || `请求失败（${res.status} ${res.statusText}）`);
+    throw Object.assign(new Error(detail || `请求失败（${res.status} ${res.statusText}）`), { status: res.status });
   }
   return res.json() as Promise<T>;
 }
@@ -321,8 +327,10 @@ export function deleteSchedule(id: string): Promise<{ ok: boolean }> {
 // ---- 选题库 ----
 export interface Idea {
   id: string; title: string; note: string; source: string; status: string; created: number;
+  provenance?: { platform: string; url: string; collectedAt: number };
 }
-export type IdeaInput = { title: string; note?: string; source?: string; status?: string };
+export type IdeaInput = { title: string; note?: string; source?: string; status?: string;
+  provenance?: { platform: string; url: string; collectedAt: number } };
 export function fetchIdeas(): Promise<Idea[]> { return request('/api/ideas'); }
 export function createIdea(item: IdeaInput): Promise<Idea> {
   return request('/api/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
@@ -396,7 +404,7 @@ export function fetchOutputContent(path: string): Promise<OutputContent> {
 
 /** 媒体文件（图片/视频/音频/HTML/PDF）的原样 URL，用于 <img>/<video>/iframe/下载。 */
 export function mediaUrl(path: string): string {
-  return `${BASE}/api/media/${path.split('/').map(encodeURIComponent).join('/')}`;
+  return projectUrl(`${BASE}/api/media/${path.split('/').map(encodeURIComponent).join('/')}`);
 }
 
 /** 删除内容库里的文件或整个项目目录（系统数据受保护，后端会拒）。 */
@@ -404,7 +412,24 @@ export function deleteOutput(path: string): Promise<{ ok: boolean; deleted: stri
   return request(`/api/output/${path.split('/').map(encodeURIComponent).join('/')}`, { method: 'DELETE' });
 }
 
-export interface UploadedFile { id: string; name: string; path: string; }
+export interface UploadedFile { id: string; name: string; path: string; size?: number; mime?: string; }
+
+export interface ChatAttachmentCandidate { id: string; name: string; mime: string; size: number; context?: string; }
+
+export function searchChatAttachments(sessionId: string, query: string, signal?: AbortSignal): Promise<{
+  files: UploadedFile[]; candidates: ChatAttachmentCandidate[];
+}> {
+  const params = new URLSearchParams({ sessionId, query });
+  return request(`/api/chat/attachment-search?${params}`, { signal });
+}
+
+export function selectChatAttachment(sessionId: string, candidateId: string, signal?: AbortSignal): Promise<{ file: UploadedFile }> {
+  return request('/api/chat/attachment-select', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, candidateId }), signal,
+  });
+}
+
 
 /** OpenClaw ask_user 问答题（SSE question 事件 payload）。 */
 export interface ChatQuestionOption { label: string; description?: string; }
@@ -414,57 +439,92 @@ export interface ChatQuestionItem {
   question: string;
   options?: ChatQuestionOption[];
   multiSelect?: boolean;
+  defaultAnswer?: string[];
 }
 export interface ChatQuestion {
+  turnId?: string;
+  publication?: import('./publicationApproval').PublicationApprovalRecord;
   id: string;              // gateway question record id (ask_...)
   questions: ChatQuestionItem[];
   expiresAtMs?: number;
   status?: string;
+  kind?: 'preference' | 'approval';
+  requiresHuman?: boolean;
+  defaultAnswers?: Record<string, string[]>;
+  autoResolveAtMs?: number | null;
+  answers?: Record<string, string[]>;
+  resolvedBy?: string;
 }
-export interface ChatQuestionClosed { id: string; status: string; }
+export interface ChatQuestionClosed {
+  id: string; status: string; answers?: Record<string, string[]>; resolvedBy?: string;
+}
+const questionTerminal = new Set([
+  'resolved', 'answered', 'expired', 'revoked', 'replaced', 'cancelled',
+  'declined', 'blocked', 'denied', 'not_found',
+]);
+
+function readQuestionReceipt(value: unknown, id: string): ChatQuestionClosed | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { id: reportedId, status, answers, resolvedBy } = value as Partial<ChatQuestionClosed>;
+  if (reportedId !== id || typeof status !== 'string' || !questionTerminal.has(status)) return undefined;
+  const validAnswers = answers && typeof answers === 'object' && !Array.isArray(answers)
+    && Object.values(answers).every(items => Array.isArray(items) && items.every(item => typeof item === 'string'));
+  return { id, status, ...(validAnswers ? { answers } : {}),
+    ...(typeof resolvedBy === 'string' ? { resolvedBy } : {}) };
+}
+
 export async function answerQuestion(
-  payload: { questionId: string; answers: Record<string, string[]>; resolvedBy?: string },
-): Promise<{ ok: boolean; error?: string; status?: string; expired?: boolean }> {
-  const res = await fetch(`${BASE}/api/chat/question/answer`, {
+  payload: { questionId: string; sessionId?: string; turnId?: string; answers: Record<string, string[]>; resolvedBy?: string },
+): Promise<{ ok: boolean; error?: string; status?: string; expired?: boolean; receipt?: ChatQuestionClosed }> {
+  const res = await projectFetch(projectUrl(`${BASE}/api/chat/question/answer`), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; status?: string; expired?: boolean };
-  return { ok: data.ok === true, error: data.error, status: data.status, expired: data.expired };
+  if (res.status === 401 || res.status === 403) return { ok: false, status: 'revoked' };
+  const data = await res.json().catch(() => ({})) as { ok?: boolean; status?: string; expired?: boolean; receipt?: unknown };
+  const receipt = readQuestionReceipt(data.receipt, payload.questionId);
+  const status = receipt?.status ?? (typeof data.status === 'string' &&
+    (questionTerminal.has(data.status) || data.status === 'pending' || data.status === 'unknown') ? data.status : 'pending');
+  return { ok: res.ok && data.ok === true && !!receipt && ['resolved', 'answered'].includes(receipt.status),
+    status, expired: data.expired === true, receipt };
 }
 
 /** 批量查 question 状态：过滤重放中已解决/已过期的旧题。 */
 export async function questionStatus(
-  questionIds: string[],
-): Promise<Record<string, { status: string }>> {
+  questionIds: string[], sessionId?: string,
+): Promise<Record<string, { status: string; answers?: Record<string, string[]>; resolvedBy?: string }>> {
   if (!questionIds.length) return {};
   try {
-    const res = await fetch(`${BASE}/api/chat/question/status`, {
+    const res = await projectFetch(projectUrl(`${BASE}/api/chat/question/status`), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ questionIds }),
+      body: JSON.stringify({ questionIds, sessionId }),
     });
-    const data = await res.json().catch(() => ({})) as { ok?: boolean; questions?: Record<string, { status: string }> };
+    if (res.status === 401 || res.status === 403) {
+      return Object.fromEntries(questionIds.map(id => [id, { status: 'revoked' }]));
+    }
+    if (!res.ok) return {};
+    const data = await res.json().catch(() => ({})) as { ok?: boolean; questions?: Record<string, { status: string; answers?: Record<string, string[]>; resolvedBy?: string }> };
     return data.questions || {};
   } catch {
     return {};
   }
 }
 /** 上传素材到当前会话的隔离 inbox，返回后端可校验的附件引用。 */
-export async function uploadFiles(files: File[], sessionId: string): Promise<UploadedFile[]> {
+export async function uploadFiles(files: File[], sessionId: string, signal?: AbortSignal): Promise<UploadedFile[]> {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   fd.append('sessionId', sessionId);
-  const r = await request<{ ok: boolean; files: UploadedFile[] }>('/api/upload', { method: 'POST', body: fd });
+  const r = await request<{ ok: boolean; files: UploadedFile[] }>('/api/upload', { method: 'POST', body: fd, signal });
   return r.files;
 }
 
 /** 超限文件复制通道：返回与 uploadFiles 同构的附件引用。 */
 export interface AdoptedFile { id: string; name: string; path: string; }
-export async function adoptOversize(files: File[], sessionId: string): Promise<AdoptedFile[]> {
+export async function adoptOversize(files: File[], sessionId: string, signal?: AbortSignal): Promise<AdoptedFile[]> {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   fd.append('sessionId', sessionId);
-  const r = await request<{ ok: boolean; files: AdoptedFile[] }>('/api/upload/local', { method: 'POST', body: fd });
+  const r = await request<{ ok: boolean; files: AdoptedFile[] }>('/api/upload/local', { method: 'POST', body: fd, signal });
   return r.files;
 }
 
@@ -546,6 +606,9 @@ export interface AccountWhoami {
   loggedIn: boolean;
   name: string;
   avatar: string;   // 头像 URL（http）或空
+  accountId?: string;
+  accountIdKind?: string;
+  accountIdentityStatus?: 'verified' | 'unknown';
 }
 
 /** 真校验某平台登录态 + 拉昵称/头像（后端起 headless 浏览器，数秒）。 */
@@ -584,34 +647,49 @@ export function exportManualPackage(platform: string, payload: {
   });
 }
 
-/** 一键发布到某平台（真发布，--exec）。media 为 outputs 相对路径数组。
- * 抖音返回 {async:true}，需轮询 publishStatus；其他平台同步返回结果。
- * draft=true 表示存草稿（仅今日头条支持，落后台草稿箱不公开发布）。 */
+/** Host preparation freezes the exact account/content/media subject; it does not dispatch. */
+export interface PublicationInput {
+  title: string; body: string; media: string[]; tags?: string; persona?: string;
+  draft?: boolean; artifactIds?: string[]; approvalId?: string; payloadHash?: string;
+}
+
+export function preparePublication(platform: string, payload: PublicationInput): Promise<import('./publicationApproval').PublicationApprovalRecord> {
+  return request(`/api/publish/${encodeURIComponent(platform)}/prepare`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export function fetchPublicationApproval(id: string): Promise<import('./publicationApproval').PublicationApprovalRecord & {
+  runnerStatus?: { state: string; message: string };
+}> { return request(`/api/publication-approvals/${encodeURIComponent(id)}`); }
+
+export function decidePublication(id: string, approved: boolean, payloadHash: string): Promise<import('./publicationApproval').PublicationApprovalRecord> {
+  return request(`/api/publication-approvals/${encodeURIComponent(id)}/decision`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approved, payloadHash }),
+  });
+}
+
 export function publishNow(
   platform: string,
-  payload: { title: string; body: string; media: string[]; tags?: string; draft?: boolean; persona?: string },
-): Promise<PublishResult> {
-  return request<PublishResult>(`/api/publish/${encodeURIComponent(platform)}`, {
+  payload: PublicationInput,
+): Promise<import('./publicationApproval').PublicationApprovalRecord> {
+  return request(`/api/publish/${encodeURIComponent(platform)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 }
 
-export interface PublishStatus {
-  mode: 'publish';
-  state: string;     // starting | sms_required | verifying | success | error | unknown
-  message: string;
-}
+export type PublishStatus = import('./publicationApproval').PublicationApprovalRecord & { mode: 'publish' };
 
 /** 轮询异步发布状态（抖音）。 */
-export function publishStatus(platform: string): Promise<PublishStatus> {
-  return request<PublishStatus>(`/api/publish/${encodeURIComponent(platform)}/status`);
+export function publishStatus(platform: string, approvalId: string): Promise<PublishStatus> {
+  return request<PublishStatus>(`/api/publish/${encodeURIComponent(platform)}/status?approvalId=${encodeURIComponent(approvalId)}`);
 }
 
 /** 发布触发短信墙时回填验证码。 */
-export function submitPublishSms(platform: string, code: string): Promise<{ ok: boolean }> {
-  return request(`/api/publish/${encodeURIComponent(platform)}/sms`, {
+export function submitPublishSms(platform: string, code: string, approvalId: string): Promise<{ ok: boolean }> {
+  return request(`/api/publish/${encodeURIComponent(platform)}/sms?approvalId=${encodeURIComponent(approvalId)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code }),
@@ -672,12 +750,53 @@ export function submitLoginSms(platform: string, code: string): Promise<{ ok: bo
 }
 
 /** 用户显式停止：终止后端正在跑的对话 agent，释放会话锁，令下一句能立刻发。 */
-export function stopChat(sessionId: string): Promise<{ stopped: boolean }> {
+export function stopChat(sessionId: string, expectedTurnId: string): Promise<{ stopped: boolean; status?: string }> {
   return request('/api/chat/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, expectedTurnId }),
   });
+}
+
+export type ChatTurnOutcome = 'completed' | 'failed' | 'stopped' | 'unconfirmed';
+
+export function steerChat(sessionId: string, turnId: string, requestId: string, message: string): Promise<{ status: 'accepted' | 'unconfirmed' }> {
+  return request('/api/chat/steer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, turnId, requestId, message }),
+  });
+}
+
+function publicReasoningSummary(value: unknown): ReasoningSummary | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { text, truncated } = value as Partial<ReasoningSummary>;
+  if (typeof text !== 'string' || !text.trim() || typeof truncated !== 'boolean') return undefined;
+  return { text, truncated };
+}
+
+function parseAnswerCompletion(value: unknown): AnswerCompletion | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { itemId } = value as Partial<AnswerCompletion>;
+  if (typeof itemId !== 'string' || !itemId.trim() || itemId.length > 512 || /\p{Cc}/u.test(itemId)) return undefined;
+  return { itemId };
+}
+
+const chatFailureCodes = new Set<ChatFailure['code']>([
+  'authentication', 'model_unavailable', 'rate_limit', 'quota_exhausted', 'network',
+  'timeout', 'permission_denied', 'session_conflict', 'storage', 'unknown',
+]);
+
+function parseChatFailure(value: unknown): ChatFailure {
+  const fallback: ChatFailure = { code: 'unknown', retryable: false, phase: 'execution' };
+  if (!value || typeof value !== 'object') return fallback;
+  const { code, phase, retryable } = value as Partial<ChatFailure>;
+  if (!code || !chatFailureCodes.has(code) || (phase !== 'startup' && phase !== 'execution' && phase !== 'finalization')) return fallback;
+  return { code, phase, retryable: phase === 'startup' && retryable === true && ['network', 'timeout', 'rate_limit'].includes(code) };
+}
+
+function chatFailureError(failure: ChatFailure, message = '执行失败', unconfirmed = false) {
+  return Object.assign(new Error(message), { failure, unconfirmed });
 }
 
 export function streamChat(
@@ -685,9 +804,9 @@ export function streamChat(
   persona: string | undefined,
   sessionId: string,
   onToken: (chunk: string) => void,
-  onDone: (sessionKey?: string) => void,
+  onDone: (sessionKey?: string, outcome?: ChatTurnOutcome) => void,
   onError: (err: Error) => void,
-  onThinking?: (chunk: string) => void,
+  onReasoningSummary?: (summary: ReasoningSummary) => void,
   onActivity?: (status: string) => void,
   onInterrupted?: () => void,
   turnId?: string,
@@ -697,20 +816,36 @@ export function streamChat(
   onQuestion?: (q: ChatQuestion) => void,
   onHeartbeat?: (note: string) => void,
   onQuestionClosed?: (q: ChatQuestionClosed) => void,
+  onAgentEvent?: (event: AgentEvent) => void,
+  topicRef?: { id: string; snapshotHash: string },
+  workshopRef?: import('./workshop').WorkshopReference,
+  onAdmitted?: (receipt: { turnId: string; sessionId: string }) => void,
+  requireAdmission = false,
+  references?: ChatReference[],
+  sessionReferences?: ChatSessionReference[],
+  command?: ChatCommand,
+  onAnswerCompleted?: (receipt: AnswerCompletion) => void,
+  planRef?: ChatPlanRef,
+  modelOverride?: string,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
+  let admitted = false;
+  let pendingFailure: ChatFailure | undefined;
+  let pendingUnconfirmed = false;
+  let admissionTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearAdmissionTimer = () => {
+    if (admissionTimer !== undefined) clearTimeout(admissionTimer);
+    admissionTimer = undefined;
+  };
 
-  const consume = async (res: Response): Promise<boolean> => {
+  const consume = async (res: Response, replay: boolean): Promise<boolean> => {
       if (!res.ok) {
-        let detail = `Stream error: ${res.status}`;
-        try {
-          const payload = await res.json() as { detail?: string };
-          if (payload.detail) detail = payload.detail;
-        } catch { /* non-JSON error */ }
-        const error = new Error(detail) as Error & { status?: number };
-        error.status = res.status;
-        throw error;
+        const detail = res.status === 401 ? '平台登录状态已失效，请重新登录。'
+          : res.status === 403 ? '当前账号没有发送权限。'
+          : modelOverride && res.status === 422 ? '服务端未接收这条消息，请核对所选模型、输入和附件。'
+          : '服务端未接收这条消息，请核对输入和附件。';
+        throw Object.assign(new Error(detail), { status: res.status });
       }
       const reader = res.body?.getReader();
       if (!reader) throw new Error('No response body');
@@ -722,15 +857,49 @@ export function streamChat(
       let dataLines: string[] = [];
 
       const dispatch = () => {
-        if (!currentEvent || dataLines.length === 0) return false;
-        if (currentId > lastEventId) lastEventId = currentId;
+        if (controller.signal.aborted) return true;
+        if (!currentEvent || dataLines.length === 0 || (currentId > 0 && currentId <= lastEventId)) return false;
         const data = dataLines.join('\n');
+        if (currentEvent === 'admitted') {
+          let receipt: { turnId?: string; sessionId?: string } | undefined;
+          try { receipt = JSON.parse(data); } catch { return false; }
+          if (!turnId || receipt?.turnId !== turnId || receipt.sessionId !== sessionId
+              || (requireAdmission && currentId !== 1)) return false;
+          if (currentId > 0) lastEventId = currentId;
+          if (!admitted) {
+            admitted = true;
+            clearAdmissionTimer();
+            onAdmitted?.({ turnId, sessionId });
+          }
+          return false;
+        }
+        if (requireAdmission && !admitted) {
+          if (replay && (currentEvent === 'done' || currentEvent === 'error')) {
+            onError(new Error('没有收到任务接收回执，发送状态未确认。'));
+            return true;
+          }
+          return false;
+        }
+        if (currentId > 0) lastEventId = currentId;
         if (currentEvent === 'token') {
           try { onToken(JSON.parse(data) as string); } catch { onToken(data); }
-        } else if (currentEvent === 'thinking' && onThinking) {
-          try { onThinking(JSON.parse(data) as string); } catch { onThinking(data); }
+        } else if (currentEvent === 'reasoning_summary' && onReasoningSummary) {
+          try {
+            const summary = publicReasoningSummary(JSON.parse(data));
+            if (summary) onReasoningSummary(summary);
+          } catch { /* Ignore malformed summary snapshots. */ }
+        } else if (currentEvent === 'answer_completed' && onAnswerCompleted) {
+          try {
+            const receipt = parseAnswerCompletion(JSON.parse(data));
+            if (receipt) onAnswerCompleted(receipt);
+          } catch { /* Ignore malformed answer receipts. */ }
         } else if (currentEvent === 'activity' && onActivity) {
           try { onActivity(JSON.parse(data) as string); } catch { onActivity(data); }
+        } else if (currentEvent === 'agent_event' && onAgentEvent) {
+          try {
+            const event = JSON.parse(data) as AgentEvent;
+            if (event && typeof event === 'object' && typeof event.id === 'string' && typeof event.kind === 'string') onAgentEvent(event);
+          } catch { /* malformed event is not executable UI */ }
         } else if (currentEvent === 'question' && onQuestion) {
           // 防御：question 事件负载必须是对象且带 questions 数组。旧后端重放流曾把
           // question 双层序列化（JSON.parse 后得到字符串），透传会渲染出无法作答的
@@ -748,12 +917,21 @@ export function streamChat(
           // 防呆心跳：独立于 activity/thinking，仅作「未卡住」提示，不覆盖真实状态。
           if (onHeartbeat) { try { onHeartbeat(JSON.parse(data) as string); } catch { onHeartbeat(data); } }
         } else if (currentEvent === 'error') {
-          let msg = '执行失败';
-          try { msg = JSON.parse(data) as string; } catch { msg = data; }
-          onError(new Error(msg));
-          return true;
+          let payload: unknown;
+          try { payload = JSON.parse(data); } catch { /* Legacy text has no safe structured fields. */ }
+          pendingFailure = parseChatFailure(payload);
+          pendingUnconfirmed = pendingFailure.phase === 'finalization' && !!payload && typeof payload === 'object'
+            && (payload as { unconfirmed?: unknown }).unconfirmed === true;
         } else if (currentEvent === 'done') {
-          try { onDone((JSON.parse(data) as { sessionKey?: string }).sessionKey); } catch { onDone(); }
+          let completion: { sessionKey?: string; outcome?: ChatTurnOutcome } | undefined;
+          try { completion = JSON.parse(data); } catch { /* Legacy done event. */ }
+          if (pendingFailure) {
+            onError(chatFailureError(pendingFailure, undefined, pendingUnconfirmed || completion?.outcome === 'unconfirmed'));
+            return true;
+          }
+          const outcome = completion?.outcome;
+          onDone(completion?.sessionKey, outcome === 'completed' || outcome === 'failed' ||
+            outcome === 'stopped' || outcome === 'unconfirmed' ? outcome : undefined);
           return true;
         }
         return false;
@@ -771,47 +949,65 @@ export function streamChat(
           if (line === '') {
             if (dispatch()) return true;
             currentEvent = ''; currentId = 0; dataLines = [];
-          } else if (line.startsWith('id:')) currentId = Number(line.slice(3).trim()) || 0;
+          } else if (line.startsWith('id:')) {
+            const id = Number(line.slice(3).trim());
+            currentId = Number.isSafeInteger(id) && id > 0 ? id : 0;
+          }
           else if (line.startsWith('event:')) currentEvent = line.slice(6).trim();
           else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
         }
       }
-      buffer += decoder.decode();
-      if (buffer) {
-        for (const line of buffer.split(/\r?\n/)) {
-          if (line.startsWith('id:')) currentId = Number(line.slice(3).trim()) || 0;
-          else if (line.startsWith('event:')) currentEvent = line.slice(6).trim();
-          else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
-        }
+      if (pendingFailure && (replay || !turnId) && !controller.signal.aborted) {
+        onError(chatFailureError(pendingFailure, undefined, pendingUnconfirmed));
+        return true;
       }
-      return dispatch();
+      // A disconnect can leave a complete-looking data line with no SSE frame
+      // terminator. Never dispatch it or move the recovery cursor past it.
+      return false;
   };
+
+  if (requireAdmission) {
+    admissionTimer = setTimeout(() => {
+      if (controller.signal.aborted || admitted) return;
+      controller.abort();
+      onError(new Error('等待任务接收回执超时，发送状态未确认。'));
+    }, 30_000);
+    controller.signal.addEventListener('abort', clearAdmissionTimer, { once: true });
+  }
 
   void (async () => {
     const started = Date.now();
     let first = !resumeOnly;
+    let legacyAdmission = false;
     while (!controller.signal.aborted) {
       try {
-        const res = first
-          ? await fetch(`${BASE}/api/chat/stream`, {
+        const res: Response = first
+          ? await projectFetch(projectUrl(`${BASE}/api/chat/stream`), {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments }),
+              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef,
+                ...(references?.length ? { references } : {}),
+                ...(sessionReferences?.length ? { sessionReferences } : {}),
+                ...(command ? { command } : {}), ...(planRef ? { planRef } : {}),
+                ...(modelOverride ? { modelOverride } : {}) }),
               signal: controller.signal,
             })
-          : await fetch(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`, {
+          : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}${legacyAdmission ? '&legacyAdmission=true' : ''}`), {
               signal: controller.signal,
             });
+        if (controller.signal.aborted) return;
+        legacyAdmission ||= res.headers.get('X-Easel-Legacy-Admission') === '1';
         // jobs 流 404 = 任务记录不存在（后端重启丢日志 / 首发请求 5xx 没起 supervisor）。
         // 必须终结：旧逻辑依赖 onRecoveryUnavailable（新发送不传），不传时静默落进
         // 无限重试（1s 一次 ×130 分钟），onError 永不触发，会话卡死在「自动续接」。
         if (!first && res.status === 404) {
           if (onRecoveryUnavailable) onRecoveryUnavailable();
-          else onError(new Error('任务记录不存在或已失效，无法续接；请重新发送'));
+          else if (pendingFailure) onError(chatFailureError(pendingFailure, undefined, pendingUnconfirmed));
+          else onError(chatFailureError({ code: 'network', retryable: false, phase: 'finalization' }, '任务记录不存在或已失效，无法续接', true));
           return;
         }
-        if (await consume(res)) return;
+        if (await consume(res, !first)) return;
       } catch (err: unknown) {
-        if (err instanceof Error && err.name === 'AbortError') return;
+        if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return;
         const status = (err as Error & { status?: number })?.status;
         if (first && status && status >= 400 && status < 500) {
           onError(err instanceof Error ? err : new Error('请求失败'));
@@ -822,21 +1018,166 @@ export function streamChat(
       // Backend chat runs may spend 5 minutes waiting for a session lock and then
       // run for 2 hours. Keep reconnecting for the same end-to-end budget.
       if (!turnId || Date.now() - started >= 130 * 60 * 1000) {
-        onError(new Error('连接中断，自动重连超时'));
+        onError(chatFailureError(pendingFailure ?? { code: 'timeout', retryable: false, phase: 'finalization' }, '连接中断，自动重连超时', !pendingFailure || pendingUnconfirmed));
         return;
       }
       onInterrupted?.();
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-  })();
+  })().finally(clearAdmissionTimer);
 
   return controller;
 }
 
 /** 取某会话最近一轮的完整结果（SSE 断线后据此取回）。 */
-export function fetchLastTurn(sessionId: string, turnId?: string): Promise<{ status: string; text: string; turn_id?: string }> {
+interface LastChatTurn {
+  status: string; text: string; turn_id?: string; events?: AgentEvent[]; questions?: ChatQuestion[];
+  outcome?: Exclude<ChatTurnOutcome, 'unconfirmed'>; clean_end?: boolean; stop_reason?: string;
+  reasoning_summary?: ReasoningSummary;
+  answer_completed?: AnswerCompletion;
+  error?: ChatFailure;
+}
+
+export async function fetchLastTurn(sessionId: string, turnId?: string, signal?: AbortSignal): Promise<LastChatTurn> {
   const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
-  return request(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`);
+  const result = await request<LastChatTurn>(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`, { signal });
+  return { ...result, reasoning_summary: publicReasoningSummary(result.reasoning_summary),
+    answer_completed: parseAnswerCompletion(result.answer_completed),
+    error: result.error == null ? undefined : parseChatFailure(result.error) };
+}
+
+interface ChatSessionPage {
+  sessions: ChatSession[];
+  deletedIds?: string[];
+  nextCursor?: string | null;
+}
+
+export interface SessionReferencePreview {
+  sessionId: string;
+  turnId?: string;
+  label: string;
+  snapshotHash: string;
+  preview: { role: 'user' | 'assistant'; content: string }[];
+  truncated: boolean;
+}
+
+export function fetchSessionReference(sessionId: string, signal?: AbortSignal, turnId?: string): Promise<SessionReferencePreview> {
+  const query = turnId ? `&turnId=${encodeURIComponent(turnId)}` : '';
+  return request(`/api/chat/session-reference?sessionId=${encodeURIComponent(sessionId)}${query}`, { signal });
+}
+
+export interface SessionReferenceTurnPage {
+  turns: { turnId: string; label: string }[];
+  before: string | null;
+}
+
+export function fetchSessionReferenceTurns(sessionId: string, before?: string, signal?: AbortSignal): Promise<SessionReferenceTurnPage> {
+  const query = before ? `&before=${encodeURIComponent(before)}` : '';
+  return request(`/api/chat/session-reference/turns?sessionId=${encodeURIComponent(sessionId)}${query}`, { signal });
+}
+
+export interface SessionModelCapability {
+  runtime: string;
+  model: string | null;
+  lastRequestedModel?: string;
+  options: { id: string; label: string }[];
+  canSelect: boolean;
+  reason?: string;
+}
+
+export function fetchSessionModels(sessionId: string, signal?: AbortSignal): Promise<SessionModelCapability> {
+  return request(`/api/chat/models?sessionId=${encodeURIComponent(sessionId)}`, { signal });
+}
+
+export function fetchChatCommands(signal?: AbortSignal): Promise<{ commands: ChatCommandOption[] }> {
+  return request('/api/chat/commands', { signal });
+}
+
+export async function fetchChatSessions(signal?: AbortSignal, windowed = false): Promise<{ sessions: ChatSession[]; deletedIds: string[] }> {
+  const sessions: ChatSession[] = [];
+  const deleted = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor = '';
+  while (true) {
+    signal?.throwIfAborted();
+    const query = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const page = await request<ChatSessionPage>(`/api/chat/sessions?limit=50${windowed ? '&windowed=true' : ''}${query}`, { signal });
+    if (!Array.isArray(page?.sessions) || (page.deletedIds !== undefined
+      && (!Array.isArray(page.deletedIds) || page.deletedIds.some(id => typeof id !== 'string')))) {
+      throw new Error('服务器会话目录回执无效');
+    }
+    for (const session of page.sessions) sessions.push(session);
+    for (const id of page.deletedIds || []) deleted.add(id);
+    if (page.nextCursor == null) {
+      const deletedIds = [...deleted];
+      return { sessions: mergeSessionCatalog([], sessions, deletedIds), deletedIds };
+    }
+    if (typeof page.nextCursor !== 'string' || !page.nextCursor || seenCursors.has(page.nextCursor) || !page.sessions.length) {
+      throw new Error('服务器会话目录游标无效');
+    }
+    cursor = page.nextCursor;
+    seenCursors.add(cursor);
+  }
+}
+export function syncChatSessions(sessions: ChatSession[]): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
+  return request('/api/chat/sessions?windowed=true', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions }) });
+}
+export function fetchEarlierChatTurns(sessionId: string, before: string, signal?: AbortSignal): Promise<{
+  messages: ChatMessage[]; historyWindow: ChatHistoryWindow;
+}> {
+  return request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/history?before=${encodeURIComponent(before)}`, { signal });
+}
+
+export function fetchCompleteChatSession(sessionId: string, signal?: AbortSignal): Promise<ChatSession> {
+  return request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/history?full=true`, { signal });
+}
+
+export async function forkPrefixHash(messages: readonly ChatMessage[], cutoffIndex: number): Promise<string> {
+  const prefix = messages.slice(0, cutoffIndex + 1).map(message => [message.role, message.content]);
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(prefix)));
+  return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function forkChatSession(sourceId: string, body: {
+  cutoffIndex: number; cutoffTurnId: string; prefixHash: string; requestId: string;
+}): Promise<{ session: ChatSession }> {
+  return request(`/api/chat/sessions/${encodeURIComponent(sourceId)}/fork`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+}
+
+/** Read a technical export with the same project and expected-user binding as chat. */
+export async function fetchSessionLogZip(sessionId: string, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {
+  const response = await projectFetch(`${BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}/export/logs`, {
+    signal, cache: 'no-store',
+  });
+  if (!response.ok) {
+    const message = response.status === 401 || response.status === 403 ? '当前没有技术日志导出权限。'
+      : response.status === 404 ? '该对话已删除或不在当前可访问范围。' : '日志暂时无法导出，请稍后重试。';
+    throw new Error(message);
+  }
+  if (response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/zip') {
+    throw new Error('服务器没有返回 ZIP 导出文件。');
+  }
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filename = /^attachment;\s*filename="?((?:easel-session-)[a-z0-9_-]{1,128}\.zip)"?(?:;|$)/i.exec(disposition)?.[1]
+    ?? 'easel-session-logs.zip';
+  return { blob: await response.blob(), filename };
+}
+
+export interface ChatDeletionReceipt {
+  ok: true;
+  sessionId: string;
+  catalogDeleted: true;
+  nativeHistoryDeleted: false;
+}
+
+export async function deleteChatSession(id: string): Promise<ChatDeletionReceipt> {
+  const value = await request<Partial<ChatDeletionReceipt>>(`/api/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!value || value.ok !== true || value.sessionId !== id || value.catalogDeleted !== true || value.nativeHistoryDeleted !== false) {
+    throw new Error('对话目录删除结果尚未确认。');
+  }
+  return { ok: true, sessionId: id, catalogDeleted: true, nativeHistoryDeleted: false };
 }
 
 // ═══ 设置面板 · 环境安装（install_tool 引擎桥） ═══

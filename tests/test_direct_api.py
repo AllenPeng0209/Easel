@@ -88,15 +88,18 @@ def test_stream_history_and_recovery_without_openclaw(sandbox, monkeypatch, lega
         response = sandbox.post("/api/chat/stream", json={"message": turn, "sessionId": "same", "turnId": turn})
         assert response.status_code == 200
         assert "event: token" in response.text and "测试成功" in response.text
-        assert "event: thinking" in response.text and "event: done" in response.text
+        assert "event: thinking" not in response.text and "event: reasoning_summary" not in response.text
+        assert "event: done" in response.text
         assert "event: error" not in response.text and "没写完" not in response.text
     assert [m["role"] for m in requests[1]["messages"]] == ["system", "user", "assistant", "user"]
     assert requests[1]["messages"][1]["content"] == "first"
     assert "技能库" not in requests[0]["messages"][-1]["content"]
     last = sandbox.get("/api/chat/last/same", params={"turn_id": "second"}).json()
     assert last["text"] == "测试成功" and last["clean_end"] is True
+    assert last["outcome"] == "completed"
     replay = sandbox.get("/api/chat/jobs/second/stream").text
     assert "测试成功" in replay and "event: done" in replay
+    assert '"outcome": "completed"' in replay
     assert sandbox.delete("/api/session/same").json()["deleted"]
     assert not direct_api.history_path(web.SESSIONS_DIR, "same").exists()
 
@@ -118,6 +121,17 @@ def test_failed_stream_is_not_committed(sandbox, monkeypatch, status, events):
     assert not direct_api.history_path(web.SESSIONS_DIR, "failed").exists()
     last = sandbox.get("/api/chat/last/failed").json()
     assert last["status"] == "done" and last["clean_end"] is False
+    assert last["outcome"] == "failed"
+    payloads = [json.loads(block.split('data: ', 1)[1]) for block in response.text.replace('\r\n', '\n').split('\n\n')
+                if 'event: error\n' in block]
+    [failure] = payloads
+    assert set(failure) == {'code', 'message', 'retryable', 'phase'}
+    assert last['error'] == failure
+    replay = sandbox.get('/api/chat/jobs/failure/stream').text
+    assert json.dumps(failure, ensure_ascii=False) in replay
+    assert 'gateway-secret' not in replay and 'gateway-secret' not in json.dumps(last)
+    if status == 401:
+        assert failure['code'] == 'authentication' and failure['retryable'] is False
 
 
 def test_nonstream_and_model_save_without_openclaw(sandbox, monkeypatch):
@@ -182,7 +196,8 @@ def test_stop_cancels_upstream_and_releases_session(sandbox, monkeypatch):
     assert not worker.is_alive()
     assert "event: done" in responses[0].text
     assert "event: error" not in responses[0].text
-    assert sandbox.get("/api/chat/last/stop").json()["stop_reason"] == "user_stopped"
+    stopped = sandbox.get("/api/chat/last/stop").json()
+    assert stopped["stop_reason"] == "user_stopped" and stopped["outcome"] == "stopped"
     assert not web._RUNNING_CHAT
     assert not direct_api.history_path(web.SESSIONS_DIR, "stop").exists()
 

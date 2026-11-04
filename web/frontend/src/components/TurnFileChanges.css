@@ -1,0 +1,19 @@
+.turn-file-changes { margin: 14px 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; color: var(--text-secondary); font-size: 12px; }
+.turn-file-changes header { padding: 9px 10px; background: var(--surface-2); }
+.turn-file-changes header strong { color: var(--text); font-size: 13px; }
+.turn-file-changes p { margin: 0; padding: 4px 10px; }
+.turn-file-changes header p { padding: 2px 0 0; }
+.turn-file-changes [data-change-coverage] { color: var(--amber); }
+.turn-file-changes ul { list-style: none; margin: 0; padding: 0; }
+.turn-file-changes li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 6px 10px; border-top: 1px solid var(--border); }
+.turn-file-changes li code { flex: 1 1 150px; min-width: 0; overflow-wrap: anywhere; }
+.turn-change-kind, .turn-change-counts { white-space: nowrap; }
+.turn-change-counts { display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; }
+.turn-change-counts [data-change-added] { color: var(--green); }
+.turn-change-counts [data-change-deleted] { color: var(--red); }
+.turn-file-changes > button { margin: 5px 10px 8px; }
+
+.turn-change-comparison { min-width: 0; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.turn-change-comparison header { display: flex; justify-content: space-between; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.turn-change-comparison dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 8px; font-size: 11px; }
+.turn-change-comparison dd { margin: 0; overflow-wrap: anywhere; }

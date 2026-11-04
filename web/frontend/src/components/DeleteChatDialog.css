@@ -1,0 +1,41 @@
+/* Destructive confirmation layout adapted from the pinned Harness workspace modal. */
+.delete-chat-overlay {
+  position: fixed;
+  z-index: 520;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 44%);
+}
+.delete-chat-dialog {
+  box-sizing: border-box;
+  width: min(480px, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.delete-chat-dialog h2 { margin: 0; font-size: 17px; }
+.delete-chat-dialog p, .delete-chat-dialog dd { color: var(--text-secondary); font-size: 13px; }
+.delete-chat-dialog dl { display: grid; gap: 4px; }
+.delete-chat-dialog dt { font-weight: 600; font-size: 13px; }
+.delete-chat-dialog dd { margin: 0 0 6px; }
+.delete-chat-dialog [data-delete-chat-error] { color: var(--red); }
+.delete-chat-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.delete-chat-dialog button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.delete-chat-dialog [data-delete-chat-action="delete"] { color: var(--red); }
+.delete-chat-dialog button:disabled { opacity: .65; cursor: default; }
+.delete-chat-dialog button:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }

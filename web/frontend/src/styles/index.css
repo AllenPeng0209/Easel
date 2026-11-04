@@ -1142,6 +1142,7 @@ textarea.field { resize: vertical; min-height: 90px; }
 .pv-badge-ok { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); }
 .pv-pubstate { margin: 8px 0 2px; font-size: 12px; padding: 6px 10px; border-radius: 8px; display: flex; align-items: center; gap: 6px; white-space: pre-wrap; word-break: break-word; }
 .pv-pubstate.publishing { background: var(--accent-soft); color: var(--accent-end); }
+.pv-pubstate.pending { background: var(--bg-secondary); color: var(--text-secondary); }
 .pv-pubstate.ok { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
 .pv-pubstate.fail { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); max-height: 120px; overflow: auto; }
 /* 媒体附件选择 */
@@ -1166,6 +1167,31 @@ textarea.field { resize: vertical; min-height: 90px; }
 /* ============ 子工具顶部小导航 ============ */
 .page-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .page-host > * { flex: 1; min-height: 0; }
+.page-host.workshop-chat-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+}
+.workshop-chat-panel {
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-inline-start: 1px solid var(--border);
+}
+.workshop-chat-panel > .video-workshop { flex: 1; min-height: 0; }
+.workshop-chat-panel .workshop-review-layout { grid-template-columns: minmax(0, 1fr); }
+.workshop-chat-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+}
+@media (max-width: 1000px) {
+  .page-host.workshop-chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1.4fr);
+  }
+}
 .subnav {
   display: flex; align-items: center; gap: 10px; flex-shrink: 0;
   padding: 8px 16px; border-bottom: 1px solid var(--border);

@@ -1,0 +1,94 @@
+/* Adapted from DeepSeek Harness ui-jobs/JobListAction.module.css @ ce7073d (MIT). */
+.workshop-jobs-overlay {
+  position: fixed;
+  z-index: 500;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: rgb(0 0 0 / 38%);
+}
+.workshop-jobs-drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  min-width: 0;
+  height: 100%;
+  border-inline-start: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text);
+}
+.workshop-jobs-drawer header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.workshop-jobs-drawer :is(h2, p) { margin: 0; }
+.workshop-jobs-drawer p { color: var(--text-secondary); font-size: 13px; }
+.workshop-jobs-drawer button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.workshop-jobs-drawer button:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }
+.workshop-jobs-drawer button:disabled { opacity: .65; cursor: default; }
+.workshop-jobs-body { overflow: auto; padding: 12px 16px; }
+.workshop-jobs-body > :is(p, ul) { margin-top: 10px; }
+.workshop-jobs-body ul { list-style: none; padding: 0; }
+.workshop-jobs-body li {
+  display: grid;
+  gap: 5px;
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.workshop-jobs-body li button { justify-self: start; }
+.workshop-jobs-row-title, .workshop-jobs-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 9px; }
+.workshop-jobs-row-title span { color: var(--accent-end); font-size: 12px; }
+.workshop-jobs-row-title [data-workshop-job-status="failed"] { color: var(--red); }
+.workshop-jobs-row-title [data-workshop-job-status="unconfirmed"] { color: var(--amber); }
+.workshop-jobs-progress { font-size: 12px; color: var(--text-secondary); }
+.workshop-jobs-progress progress { width: min(125px, 100%); accent-color: var(--accent-start); }
+.workshop-jobs-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.workshop-jobs-row-title [data-workshop-job-status="stopping"] { color: var(--amber); }
+.workshop-cancel-overlay {
+  position: fixed;
+  z-index: 520;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 44%);
+}
+.workshop-cancel-dialog {
+  width: min(440px, 100%);
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text);
+}
+.workshop-cancel-dialog h2 { margin: 0; font-size: 17px; }
+.workshop-cancel-dialog p { color: var(--text-secondary); font-size: 13px; }
+.workshop-cancel-dialog dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 10px; }
+.workshop-cancel-dialog dt { color: var(--text-secondary); }
+.workshop-cancel-dialog dd { margin: 0; overflow-wrap: anywhere; }
+.workshop-cancel-dialog footer { display: flex; justify-content: flex-end; gap: 6px; }
+.workshop-cancel-dialog button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.workshop-cancel-dialog button:disabled { opacity: .65; cursor: default; }
+.workshop-cancel-dialog button:focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }

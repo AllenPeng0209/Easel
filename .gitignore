@@ -94,3 +94,12 @@ skills/builtin/video-production/vendor/**/node_modules/
 skills/builtin/video-production/vendor/**/.remotion/
 skills/builtin/video-production/vendor/**/models/
 skills/builtin/video-production/vendor/**/*large-v3*
+
+# Local creator spaces contain private sessions and platform credentials.
+/projects/
+
+# Local user identities, password hashes and opaque sessions.
+/.easel/
+
+# Full pinned upstream checkout; migrated runtime modules retain their own MIT notice.
+/integrations/deepseek-harness/upstream/

@@ -1,3 +1,4 @@
+import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -31,6 +32,7 @@ function loadApi(fetchImpl) {
   const sandbox = {
     exports: module.exports,
     BASE: '',
+    require: (name) => name === './projectScope' ? projectScope : require(name),
     console,
     window: { location: { pathname: '/' } },
     AbortController,
@@ -42,7 +44,7 @@ function loadApi(fetchImpl) {
       return fetchImpl(...args);
     },
   };
-  runInNewContext(outputText, sandbox);
+  runWithProjectScope(outputText, sandbox);
   return { api: module.exports, calls };
 }
 
@@ -117,4 +119,181 @@ test('streamChat: 提供 onRecoveryUnavailable 时仍走回调（恢复语义不
   assert.equal(seen.recovered, 1, '恢复回调必须被调用');
   assert.equal(seen.error, 0, '有回调时不应再走 onError 兜底');
   assert.equal(calls.fetch, 1, '只发一次 jobs 请求后终结');
+});
+
+test('terminal SSE preserves the host outcome alongside the existing session key', async () => {
+  const { api } = loadApi(() => new Response(
+    'event: done\ndata: {"sessionKey":"saved-chat","outcome":"unconfirmed"}\n\n',
+    { headers: { 'Content-Type': 'text/event-stream' } },
+  ));
+  const result = await new Promise((resolve, reject) => {
+    api.streamChat('hello', undefined, 'chat', () => {}, (key, outcome) => resolve({ key, outcome }), reject);
+  });
+  assert.deepEqual(result, { key: 'saved-chat', outcome: 'unconfirmed' });
+});
+
+test('queue admission accepts only a receipt for the requested session and turn', async () => {
+  const events = [
+    { turnId: 'old-turn', sessionId: 'chat' },
+    { turnId: 'queue-q1', sessionId: 'other' },
+    { turnId: 'queue-q1', sessionId: 'chat' },
+  ];
+  const { api } = loadApi(() => new Response(
+    events.map(data => `event: admitted\ndata: ${JSON.stringify(data)}\n\n`).join('') +
+      'event: done\ndata: {"sessionKey":"chat"}\n\n',
+  ));
+  const received = [];
+  await new Promise((resolve, reject) => {
+    const args = Array(20).fill(undefined);
+    args.splice(0, 6, 'next task', undefined, 'chat', () => {}, resolve, reject);
+    args[9] = 'queue-q1';
+    args[19] = receipt => received.push(JSON.parse(JSON.stringify(receipt)));
+    api.streamChat(...args);
+  });
+  assert.deepEqual(received, [events[2]]);
+});
+
+test('chat renders only validated public summary snapshots from SSE and last-turn recovery', async () => {
+  const expected = { text: '引擎公开摘要', truncated: true };
+  const encoder = new TextEncoder();
+  const events = [
+    ['thinking', 'private trace'],
+    ['reasoning_summary', { text: 'malformed', truncated: 'yes' }],
+    ['reasoning_summary', { ...expected, raw: 'private payload' }],
+    ['done', { sessionKey: 'native-session', outcome: 'completed' }],
+  ].map(([kind, data]) => `event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+  const { api } = loadApi((_url, init) => {
+    if (init?.method !== 'POST') {
+      return { ok: true, json: async () => ({ status: 'done', text: '答复', reasoning_summary: { ...expected, raw: 'private payload' } }) };
+    }
+    let read = false;
+    return { ok: true, body: { getReader: () => ({
+      read: async () => read ? { done: true } : (read = true, { done: false, value: encoder.encode(events) }),
+      cancel: async () => {},
+    }) } };
+  });
+  const summaries = [];
+  await new Promise((resolve, reject) => {
+    api.streamChat('hi', undefined, 'summary-session', () => {}, resolve, reject, row => summaries.push(row));
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(summaries)), [expected]);
+  const recovered = await api.fetchLastTurn('summary-session', 'turn');
+  assert.deepEqual(JSON.parse(JSON.stringify(recovered.reasoning_summary)), expected);
+});
+
+test('explicit final answer evidence arrives independently of turn completion', async () => {
+  const encoder = new TextEncoder();
+  const receipt = { itemId: 'final-item-1' };
+  const events = [
+    ['token', '正文'],
+    ['answer_completed', { itemId: 123 }],
+    ['answer_completed', { ...receipt, text: 'strip unrelated fields' }],
+    ['done', { sessionKey: 'native-session', outcome: 'completed' }],
+  ].map(([kind, data]) => `event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+  const { api } = loadApi((_url, init) => {
+    if (init?.method !== 'POST') {
+      return { ok: true, json: async () => ({ status: 'done', text: '正文', answer_completed: { ...receipt, text: 'strip' } }) };
+    }
+    let read = false;
+    return { ok: true, body: { getReader: () => ({
+      read: async () => read ? { done: true } : (read = true, { done: false, value: encoder.encode(events) }),
+      cancel: async () => {},
+    }) } };
+  });
+  const observations = [];
+  await new Promise((resolve, reject) => {
+    const args = ['hi', undefined, 'answer-session', () => observations.push('token'),
+      () => { observations.push('turn-done'); resolve(); }, reject];
+    args[24] = value => observations.push(JSON.parse(JSON.stringify(value)));
+    api.streamChat(...args);
+  });
+  assert.deepEqual(observations, ['token', receipt, 'turn-done']);
+  const recovered = await api.fetchLastTurn('answer-session', 'turn');
+  assert.deepEqual(JSON.parse(JSON.stringify(recovered.answer_completed)), receipt);
+});
+
+test('live errors and last-turn recovery expose only the allowlisted failure contract', async () => {
+  const expected = { code: 'authentication', retryable: false, phase: 'execution' };
+  const rawProviderText = 'provider diagnostic with hidden account credential';
+  for (const payload of [{ ...expected, message: rawProviderText }, rawProviderText]) {
+    const encoder = new TextEncoder();
+    const events = `event: error\ndata: ${JSON.stringify(payload)}\n\n`;
+    const { api } = loadApi((_url, init) => {
+      if (init?.method !== 'POST') {
+        return { ok: true, json: async () => ({ status: 'done', text: '', error: payload }) };
+      }
+      let read = false;
+      return { ok: true, body: { getReader: () => ({
+        read: async () => read ? { done: true } : (read = true, { done: false, value: encoder.encode(events) }),
+        cancel: async () => {},
+      }) } };
+    });
+    const err = await new Promise((resolve, reject) => {
+      api.streamChat('hi', undefined, 'failure-session', () => {}, reject, resolve);
+    });
+    const failure = payload === rawProviderText ? { code: 'unknown', retryable: false, phase: 'execution' } : expected;
+    assert.deepEqual(JSON.parse(JSON.stringify(err.failure)), failure);
+    assert.doesNotMatch(err.message, /provider diagnostic/);
+    const recovered = await api.fetchLastTurn('failure-session', 'turn');
+    assert.deepEqual(JSON.parse(JSON.stringify(recovered.error)), failure);
+  }
+});
+
+test('a failed stream retains later scoped receipts before reporting its terminal error', async () => {
+  const receipt = { id: 'publication-receipt', kind: 'publication' };
+  const rows = [
+    ['error', { code: 'network', retryable: false, phase: 'execution' }],
+    ['agent_event', receipt],
+    ['done', { outcome: 'failed' }],
+  ].map(([event, data], i) => `id: ${i + 1}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const encoder = new TextEncoder();
+  let next = 0;
+  const { api } = loadApi(() => ({ ok: true, body: { getReader: () => ({
+    read: async () => next < rows.length ? { done: false, value: encoder.encode(rows[next++]) } : { done: true },
+  }) } }));
+  const observed = [];
+  const error = await new Promise((resolve, reject) => {
+    const args = ['hi', undefined, 'receipt-session', () => {}, reject, resolve];
+    args[16] = row => observed.push(row.id);
+    api.streamChat(...args);
+  });
+  assert.equal(error.failure.code, 'network');
+  assert.deepEqual(observed, [receipt.id]);
+});
+
+test('chat admission rejection keeps HTTP status but discards provider diagnostic text', async () => {
+  const { api } = loadApi(() => jsonResponse(400, 'private upstream diagnostic'));
+  const error = await new Promise((resolve, reject) => {
+    api.streamChat('hi', undefined, 'receipt-session', () => {}, reject, resolve);
+  });
+  assert.equal(error.status, 400);
+  assert.doesNotMatch(error.message, /private upstream diagnostic/);
+});
+
+test('approval answer success requires the exact authoritative server receipt', async () => {
+  const request = { questionId: 'exact-question', sessionId: 'chat-1', answers: { approval: ['approve'] } };
+  for (const data of [
+    { ok: true },
+    { ok: true, receipt: { id: 'different-question', status: 'resolved' } },
+    { ok: true, receipt: { id: 'exact-question', status: 'pending' } },
+  ]) {
+    const { api } = loadApi(() => ({ ok: true, status: 200, json: async () => data }));
+    assert.equal((await api.answerQuestion(request)).ok, false);
+  }
+  const receipt = { id: 'exact-question', status: 'resolved', answers: { approval: ['decline'] }, resolvedBy: 'human' };
+  const { api } = loadApi(() => ({ ok: true, status: 200, json: async () => ({ ok: false, receipt }) }));
+  const result = await api.answerQuestion(request);
+  assert.equal(result.ok, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.receipt)), receipt);
+});
+
+test('delete confirms only an exact catalog receipt and preserves the native-history boundary', async () => {
+  const id = 'session-1';
+  for (const body of [{ ok: true }, { ok: true, sessionId: 'wrong', catalogDeleted: true, nativeHistoryDeleted: false }]) {
+    const { api } = loadApi(() => ({ ok: true, json: async () => body }));
+    await assert.rejects(api.deleteChatSession(id));
+  }
+  const body = { ok: true, sessionId: id, catalogDeleted: true, nativeHistoryDeleted: false };
+  const { api } = loadApi(() => ({ ok: true, json: async () => body }));
+  assert.deepEqual(JSON.parse(JSON.stringify(await api.deleteChatSession(id))), body);
 });

@@ -9,9 +9,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from easel.projects import space_path, project_id, workspace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROFILES_DIR = PROJECT_ROOT / "profiles"
+
+def _profiles_dir() -> Path:
+    return space_path(PROJECT_ROOT, PROFILES_DIR, "profiles")
+
 
 # 六维画像文件的固定顺序（identity/style/... 先，其余 .md 追加在后）
 _FILE_ORDER = [
@@ -22,17 +27,17 @@ _FILE_ORDER = [
 
 def list_personas() -> list[str]:
     """列出所有可用画像目录名（排除下划线开头的内部目录）。"""
-    if not PROFILES_DIR.is_dir():
+    if not _profiles_dir().is_dir():
         return []
     return sorted(
-        d.name for d in PROFILES_DIR.iterdir()
+        d.name for d in _profiles_dir().iterdir()
         if d.is_dir() and valid_persona_name(d.name)
     )
 
 
 def profile_exists(name: str) -> bool:
     """检查画像目录是否存在，拒绝把路径片段当作画像名。"""
-    return valid_persona_name(name) and (PROFILES_DIR / name).is_dir()
+    return valid_persona_name(name) and (_profiles_dir() / name).is_dir()
 
 
 def valid_persona_name(name: str) -> bool:
@@ -50,7 +55,7 @@ def load_profile_text(name: str) -> str:
     """读取画像文件夹，按固定顺序拼接所有非空 .md。画像不存在返回空串。"""
     if not valid_persona_name(name):
         return ""
-    profile_dir = PROFILES_DIR / name
+    profile_dir = _profiles_dir() / name
     if not profile_dir.is_dir():
         return ""
     parts: list[str] = []
@@ -74,9 +79,10 @@ def persona_prefix(name: str | None) -> str:
     明确账号记忆作用域，避免 OpenClaw 的全局 MEMORY.md 污染并行画像会话。
     """
     if name and profile_exists(name):
+        memory = f"profiles/{name}/memory.md" if project_id() == "default" else str(_profiles_dir() / name / "memory.md")
         return (
             f"我当前使用的画像是「{name}」。"
-            f"本会话的账号长期记忆仅使用 profiles/{name}/memory.md，"
+            f"本会话的账号长期记忆仅使用 {memory}，"
             "不要使用工作区全局 MEMORY.md 作为账号记忆。"
         )
     return ""

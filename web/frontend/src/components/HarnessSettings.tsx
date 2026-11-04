@@ -125,7 +125,9 @@ export default function HarnessSettings({ onChange, onSelect }: {
             <p className="desc" role="status">未检测到 {selected.label}。请确认 CLI 已安装在运行 Web 的服务器账户下，并检查启动 PATH；
               安装或调整路径后重启 Web。原有配置未删除，安装前不能保存为执行引擎。</p>
           )}
-          {runtime !== settings?.runtime && <p className="desc">当前为配置预览；请先「保存底座」，再保存下方 API 配置。旧对话不迁移。</p>}
+          {runtime !== settings?.runtime && <p className="desc">当前为配置预览；{runtime === 'api' || runtime === 'openclaw'
+            ? '请先「保存底座」，再保存下方 API 配置。'
+            : '请点「保存底座」切换引擎，再新建对话验证；认证使用本机原生登录，无需填写下方 API 配置。'}旧对话不迁移。</p>}
         </div>
       </div>
       {runtime !== 'openclaw' && runtime !== 'api' && (
