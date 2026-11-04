@@ -2,7 +2,6 @@ import { AuthAccountMenu, useAuth } from './AuthGate';
 import { ProjectSwitcher, useIpPermissions } from './ProjectSpace';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ChatSession } from '../lib/store';
-import type { PersonaItem } from '../lib/api';
 import type { ComponentType } from 'react';
 import {
   IconChat, IconSkills, IconOutputs, IconAccounts, IconProfile,
@@ -24,10 +23,6 @@ export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'pub
 interface SidebarProps {
   currentPage: Page;
   onPageChange: (page: Page) => void;
-  personas: PersonaItem[];
-  selectedPersona: string;
-  onPersonaChange: (persona: string) => void;
-  onNewProfile: () => void;
   sessions: ChatSession[];
   activeSessionId: string | null;
   onSessionSelect: (id: string) => void;
@@ -83,10 +78,6 @@ function sessionAttention(state: string | undefined) {
 export default function Sidebar({
   currentPage,
   onPageChange,
-  personas,
-  selectedPersona,
-  onPersonaChange,
-  onNewProfile,
   sessions,
   activeSessionId,
   onSessionSelect,
@@ -312,20 +303,6 @@ export default function Sidebar({
               <button className="sidebar-new-chat" aria-label="新建对话" title="新建对话" disabled={!canOperate}
                 onClick={() => { if (canOperate) { onNewChat(); closeDrawer(); } }}><IconNewChat size={17} /></button>
             </div>
-
-            {currentPage === 'chat' && canOperate && <div className="sidebar-chat-context">
-              <label htmlFor="sidebar-chat-persona">创作画像</label>
-              <select id="sidebar-chat-persona" className="persona-select" value={selectedPersona}
-                title="选择用户画像（一个对话对应一个画像：切换会新建一个对话）"
-                onChange={(event) => {
-                  if (event.target.value === '__new__') { onNewProfile(); return; }
-                  onPersonaChange(event.target.value);
-                }}>
-                <option value="">通用模式</option>
-                {personas.map(persona => <option key={persona.name} value={persona.name}>{persona.name}</option>)}
-                <option value="__new__">+ 新建画像…</option>
-              </select>
-            </div>}
 
             {canOperate && <>
               <button className="sidebar-history-toggle" aria-label="历史对话"

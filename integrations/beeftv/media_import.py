@@ -14,7 +14,15 @@ import subprocess
 
 import httpx
 
+from easel.beeftv_bridge import client_for_workspace
+from easel.beeftv_runtime import runtime_paths
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def runtime_client():
+    paths = runtime_paths(PROJECT_ROOT)
+    return client_for_workspace(PROJECT_ROOT, paths.workspace)
 
 
 def import_media(path: str | Path, title: str, canvas_id: str, node_title: str | None = None) -> dict:
@@ -26,11 +34,10 @@ def import_media(path: str | Path, title: str, canvas_id: str, node_title: str |
     if kind not in ("image", "video", "audio"):
         raise ValueError("Only image, video and audio imports are supported")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    credential_file = PROJECT_ROOT / ".scratch/beeftv/run/client.json"
-    credentials = json.loads(credential_file.read_text())
-    client = httpx.Client(base_url=credentials["base_url"], trust_env=False, timeout=90,
-        headers={"X-Beeftv-Client": credentials["client_id"],
-                 "Authorization": "Bearer " + credentials["client_token"]})
+    selected = runtime_client()
+    client = httpx.Client(base_url=selected.base_url, trust_env=False, follow_redirects=False, timeout=90,
+        headers=selected.headers,
+        event_hooks={'request': [lambda _request: selected.before_request() if selected.before_request else None]})
 
     def api(method, endpoint, data=None, operation_id=None):
         response = client.request(method, endpoint, json=data,

@@ -1,0 +1,5 @@
+.office-snapshot-preview { min-width: 0; }
+.office-snapshot-preview iframe { display: block; width: 100%; height: min(60vh, 620px); min-height: 260px; border: 1px solid var(--border); border-radius: 6px; }
+.office-font-status { padding: 4px 10px; color: var(--text-secondary); font-size: 12px; }
+.office-font-status summary { cursor: pointer; color: var(--amber); }
+.office-font-status ul { margin: 4px 0 4px 16px; padding: 0; overflow-wrap: anywhere; }

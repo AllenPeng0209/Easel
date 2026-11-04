@@ -197,7 +197,7 @@ test('refresh preserves unsaved reply text and saving retains the original versi
 
 test('an approved draft on an unauthorized real channel remains unsendable', async () => {
   response = url => ({ ok: true, status: 200, data: url.includes('/conversations/') ? detail({ delivery_mode: 'official', drafts: [{ id: 'draft-1', text: '已审核回复', source: 'human', status: 'approved', confidence: 1 }] })
-    : fixture({ channels: [{ ...fixture().channels[0], delivery_mode: 'official', status: 'disconnected', capabilities: { can_send: false } }] }) });
+    : fixture({ channels: [{ ...fixture().channels[0], delivery_mode: 'official', status: 'disconnected', capabilities: { can_send: false } }], conversations: [{...fixture().conversations[0],delivery_mode:'official'}] }) });
   const ui = view(); await ui.flush(); ui.button('打开会话：模拟访客 · 了解亲子沟通课程').props.onClick(); await ui.flush();
   assert.equal(ui.button('发送回复').props.disabled, true); ui.dispose();
 });
@@ -214,9 +214,10 @@ test('discarding local edits explicitly reloads the current server draft', async
 });
 
 test('channel setup accepts metadata references without asking for plaintext credentials', async () => {
-  response = () => ({ ok: true, status: 200, data: fixture() });
-  const ui = view(); await ui.flush(); ui.button('渠道接入').props.onClick(); await ui.flush();
-  ui.button('＋ 新增渠道').props.onClick(); await ui.flush();
+  response = url => ({ ok: true, status: 200, data: url.includes('/operations/inbox/options') ? {accounts:[],works:[],conversations:[]} : fixture() });
+  const ui = view(); await ui.flush(); ui.button('账号连接').props.onClick(); await ui.flush();
+  ui.button('添加来源').props.onClick(); await ui.flush();
+  ui.findAll(n => n.type === 'select' && n.props.value === 'native')[0].props.onChange({target:{value:'official'}}); await ui.flush();
   const input = name => { const found = ui.findAll(n => n.type === 'input' && n.props['aria-label'] === name)[0]; assert.ok(found, `Missing field ${name}`); return found; };
   for (const [name, value] of [['渠道来源链接', 'https://www.xiaohongshu.com/explore/note-one'], ['环境变量前缀', 'EASEL_INTERACTION_CUSTOMER_A'], ['平台账号ID', 'account-1'], ['视频作品ID', 'video-1']]) {
     input(name).props.onChange({ target: { value } }); await ui.flush();
@@ -237,7 +238,7 @@ test('an older refresh cannot undo newly saved automation rules', async () => {
     if (deferRefresh) { deferRefresh = false; return new Promise(resolve => { resolveRefresh = resolve; }); }
     return { ok: true, status: 200, data: fixture() };
   };
-  const ui = view(); await ui.flush(); ui.button('知识库与规则').props.onClick(); await ui.flush();
+  const ui = view(); await ui.flush(); ui.button('回复规则').props.onClick(); await ui.flush();
   deferRefresh = true; ui.button('刷新互动中心').props.onClick(); await ui.flush();
   ui.findAll(n => n.type === 'select' && n.props['aria-label'] === '接待模式')[0].props.onChange({ target: { value: 'auto_faq' } }); await ui.flush();
   ui.findAll(n => n.type === 'input' && n.props.type === 'checkbox')[0].props.onChange({ target: { checked: true } }); await ui.flush();
@@ -287,5 +288,60 @@ test('keyboard navigation can reach the other interaction-center tabs', async ()
   response = () => ({ ok: true, status: 200, data: fixture() });
   const ui = view(); await ui.flush();
   ui.findAll(n => n.props?.role === 'tablist')[0].props.onKeyDown({ key: 'ArrowRight', preventDefault() {} }); await ui.flush();
-  assert.equal(ui.button('知识库与规则').props['aria-selected'], true); ui.dispose();
+  assert.equal(ui.button('回复规则').props['aria-selected'], true); ui.dispose();
+});
+
+test('CreatorHub channel syncs its bound work without a URL and shows the last successful read', async () => {
+  const channel = { ...fixture().channels[0], name: '抖音自有作品', platform: 'douyin', delivery_mode: 'creatorhub',
+    capabilities: { can_sync: true, can_send: false } };
+  const saved = { ...channel, last_sync_at: '2026-11-04T08:00:00Z' };
+  response = (url) => ({ ok: true, status: 200, data: fixture({ channels: [url.endsWith('/sync') ? saved : channel] }) });
+  const ui = view();
+  try {
+    await ui.flush(); ui.button('账号连接').props.onClick(); await ui.flush();
+    const sync = ui.button('同步评论');
+    assert.equal(sync.props.disabled, false);
+    assert.equal(ui.findAll(n => n.type === 'input' && n.props['aria-label']?.startsWith('同步链接')).length, 0);
+    sync.props.onClick(); await ui.flush();
+    assert.equal(calls.at(-1).url, '/api/interactions/channels/channel-1/sync');
+    assert.equal(JSON.parse(calls.at(-1).options.body).source_url, '');
+    assert.ok(ui.findAll(n => n.type === 'p' && ui.text(n).startsWith('最近成功同步')).length);
+  } finally {
+    ui.dispose();
+    response = () => ({ ok: true, status: 200, data: fixture() });
+  }
+});
+
+test('a successful inbox refresh retains the failed platform action until the user retries', async () => {
+  const channel={...fixture().channels[0],delivery_mode:'native',capabilities:{can_sync:true,can_send:false}};
+  response=url=>url.endsWith('/sync') ? {ok:false,status:503,data:{detail:'同步暂缓，请稍后重试'}}
+    : {ok:true,status:200,data:fixture({channels:[channel]})};
+  const ui=view();
+  try {
+    await ui.flush(); ui.button('账号连接').props.onClick(); await ui.flush();
+    ui.button('同步评论').props.onClick(); await ui.flush();
+    assert.ok(ui.findAll(n=>n.props?.role==='alert' && ui.text(n).startsWith('同步暂缓，请稍后重试')).length);
+    ui.button('刷新互动中心').props.onClick(); await ui.flush();
+    assert.ok(ui.findAll(n=>n.props?.role==='alert' && ui.text(n).startsWith('同步暂缓，请稍后重试')).length);
+  } finally {ui.dispose();response=()=>({ok:true,status:200,data:fixture()});}
+});
+
+test('switching customers ends an in-flight batch without sending old sources into the new workspace', async () => {
+  let resolveFirst;
+  const before=calls.length;
+  const channels=[1,2].map(number=>({...fixture().channels[0],id:`native-${number}`,delivery_mode:'native',capabilities:{can_sync:true,can_send:false}}));
+  response=(url,options)=>{
+    if (url.endsWith('/sync') && options.method==='POST') return new Promise(resolve=>{resolveFirst ||= resolve;});
+    return {ok:true,status:200,data:url.includes('client_id=client-2') ? fixture({client_id:'client-2',channels:[],conversations:[]}) : fixture({channels})};
+  };
+  const ui=view();
+  try {
+    await ui.flush();ui.button('同步消息').props.onClick();await ui.flush();
+    ui.findAll(node=>node.type==='select' && node.props['aria-label']==='客户工作区')[0].props.onChange({target:{value:'client-2'}});await ui.flush();
+    resolveFirst({ok:true,status:200,data:fixture({channels})});await ui.flush();
+    const writes=calls.slice(before).filter(call=>call.url.endsWith('/sync'));
+    assert.equal(writes.length,1);
+    assert.equal(JSON.parse(writes[0].options.body).client_id,'client-1');
+    assert.equal(ui.findAll(node=>node.props?.role==='status' && ui.text(node).includes('已同步')).length,0);
+  } finally {ui.dispose();response=()=>({ok:true,status:200,data:fixture()});}
 });

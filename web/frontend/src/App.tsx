@@ -105,7 +105,7 @@ export default function App() {
   const [businessEntry, setBusinessEntry] = useState<BusinessTarget | null>(null);
   const [businessNotice, setBusinessNotice] = useState('');
   const businessNavigation = useRef(0);
-  const [personas, setPersonas] = useState<PersonaItem[]>([]);
+  const [, setPersonas] = useState<PersonaItem[]>([]);
   const [selectedPersona, setSelectedPersona] = useState('');
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -1829,7 +1829,7 @@ export default function App() {
           initialArtifactId={businessEntry?.artifactId}
           onUseWorkshop={handleUseWorkshop} /></Suspense>;
       case 'interactions':
-        return <Suspense fallback={<div className="dash-empty">正在打开互动中心…</div>}><InteractionCenterPage key={interactionEntry} /></Suspense>;
+        return <Suspense fallback={<div className="dash-empty">正在打开互动中心…</div>}><InteractionCenterPage key={interactionEntry} onManageAccounts={() => setCurrentPage('accounts')} /></Suspense>;
       case 'outputs':
         return <OutputsPage jumpPath={outputsJump} onJumpHandled={clearOutputsJump} />;
       case 'accounts':
@@ -1888,10 +1888,6 @@ export default function App() {
           if (page === 'interactions') setInteractionEntry(entry => entry + 1);
           setCurrentPage(page);
         }}
-        personas={personas}
-        selectedPersona={selectedPersona}
-        onPersonaChange={handlePersonaChange}
-        onNewProfile={() => setShowWizard(true)}
         sessions={sessions}
         activeSessionId={activeSessionId}
         onSessionSelect={id => { businessNavigation.current += 1; setBusinessNotice(''); setWorkshopPanel(null); handleSessionSelect(id); }}

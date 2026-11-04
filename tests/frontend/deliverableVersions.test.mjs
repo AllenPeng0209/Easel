@@ -484,7 +484,7 @@ test('generic deliverables retain type, size and exact downloads independently o
   const formats = [
     ['a', 'captions.srt', 'application/x-subrip', 'SRT', false],
     ['b', 'data.json', 'application/json', 'JSON', true],
-    ['c', 'report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'DOCX', false],
+    ['c', 'report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'DOCX', true],
     ['d', 'result.custom', 'application/octet-stream', 'CUSTOM', false],
   ];
   const files = formats.map(([id, name, mime]) => snapshot({ artifactId: id.repeat(32), name, mime,

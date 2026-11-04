@@ -194,7 +194,7 @@ test('delivery format and preview support are independent of authenticated downl
     ['archive.custom', 'application/octet-stream', 'CUSTOM', null],
     ['captions.srt', 'application/x-subrip', 'SRT', null],
     ['payload.json', 'application/json', 'JSON', 'text'],
-    ['report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'DOCX', null],
+    ['report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'DOCX', 'office'],
     ['cover.png', 'image/png', 'PNG', 'media'],
     ['bundle.zip', 'application/zip', 'ZIP', 'archive'],
     ['no-extension', 'application/octet-stream', '文件', null],

@@ -1,17 +1,17 @@
 export type InteractionPlatform = 'xiaohongshu' | 'douyin';
 export type InteractionKind = 'comment' | 'dm';
-export type InteractionMode = 'simulation' | 'manual' | 'official';
+export type InteractionMode = 'simulation' | 'manual' | 'official' | 'creatorhub' | 'native';
 export type InteractionQueue = 'pending' | 'review' | 'handled' | 'failed';
 export interface InteractionClient { id: string; name: string; created_at?: string }
 export interface InteractionChannel {
   id: string; client_id: string; name: string; platform: InteractionPlatform; kind: InteractionKind;
-  delivery_mode: InteractionMode; account_label?: string; enabled: boolean; source_url?: string;
+  delivery_mode: InteractionMode; account_label?: string; enabled: boolean; source_url?: string; last_sync_at?: string;
   status?: string; capabilities?: { can_sync?: boolean; can_send?: boolean; send_ready?: boolean; message?: string; [key: string]: unknown };
 }
 export interface InteractionConversation {
   id: string; client_id: string; channel_id: string; platform: InteractionPlatform; kind: InteractionKind;
   delivery_mode: InteractionMode; subject: string; author_name: string; status: InteractionQueue; revision: number;
-  preview: string; last_message_at?: string; updated_at: string; human_takeover: boolean; last_error?: string;
+  preview: string; last_message_at?: string; updated_at: string; human_takeover: boolean; last_error?: string; source_url?: string;
 }
 export interface InteractionDraft {
   id: string; text: string; source: string; knowledge_id?: string; status: 'draft' | 'approved' | 'sent' | 'superseded';
@@ -88,3 +88,23 @@ export function interactionStatus(status: string) {
 export const platformName = (platform: string) => platform === 'douyin' ? '抖音' : '小红书';
 export const kindName = (kind: string) => kind === 'dm' ? '私信' : '评论';
 import { projectUrl, projectFetch } from './projectScope';
+
+export interface NativeInteractionOptions {
+  accounts: { id:string;name:string;platform:InteractionPlatform }[];
+  works: { account_id:string;value:string;name:string }[];
+  conversations: { account_id:string;value:string;name:string }[];
+}
+export async function fetchNativeInteractionOptions(): Promise<NativeInteractionOptions> {
+  const response=await projectFetch('/api/operations/inbox/options');
+  if (!response.ok) throw new Error('读取内置账号失败，请到账号管理检查状态');
+  return response.json();
+}
+
+export async function refreshNativeInteractionSources(accountId: string, kind: InteractionKind): Promise<NativeInteractionOptions> {
+  const action = kind === 'comment' ? 'works' : 'dm';
+  const response = await projectFetch(`/api/operations/api/accounts/${encodeURIComponent(accountId)}/${action}/sync`, { method: 'POST' });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(typeof result?.detail === 'string' ? result.detail : '读取消息来源失败');
+  if (result?.skipped) throw new Error('平台暂缓了本次读取，请稍后重试');
+  return fetchNativeInteractionOptions();
+}

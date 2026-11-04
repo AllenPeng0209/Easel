@@ -1,6 +1,6 @@
 # 视频工坊：BeefTV 本机运行时
 
-Easel 的“视频工坊”接入真实 BeefTV Web 界面、官方 CLI/MCP 和业务操作层。Easel 保存简报、项目关联、交付及审阅记录，BeefTV 管理画布、素材、任务和时间线。本接入当前用于本机内部制作与验收；多客户产品的授权、身份与运行隔离另行验收。
+Easel 的“视频工坊”接入真实 BeefTV Web 界面、官方 CLI/MCP 和业务操作层。Easel 保存简报、项目关联、交付及审阅记录，BeefTV 管理画布、素材、任务和时间线。每个 IP（包括默认 IP）使用独立的创作实例、数据目录、端口和客户端；只共用程序安装与依赖缓存。本接入用于本机内部制作与验收。
 
 ## 固定版本与目录
 
@@ -11,9 +11,11 @@ Easel 的“视频工坊”接入真实 BeefTV Web 界面、官方 CLI/MCP 和�
 - 完整上游源码：`.scratch/beeftv/source/`，保留其 `LICENSE`、`NOTICE` 和第三方声明。
 - 二进制：`.scratch/beeftv/bin/beeftv-server`、`.scratch/beeftv/bin/cli/beeftv`。
 - Go/Bun 缓存：`.scratch/beeftv/cache/`。
-- 数据与模型配置：`.scratch/beeftv/data/`。
-- 进程与客户端记录：`.scratch/beeftv/run/`。
-- 日志：`.scratch/beeftv/logs/backend.log`、`frontend.log`。
+- 当前 IP 的数据与模型配置：`<workspace>/.easel/beeftv/data/`。
+- 进程、实例、客户端及迁移记录：`<workspace>/.easel/beeftv/run/`。
+- 日志：`<workspace>/.easel/beeftv/logs/backend.log`、`frontend.log`。
+
+默认 IP 的 workspace 是仓库根目录，其他 IP 是 `projects/<IP_ID>/`。旧 `.scratch/beeftv/data/` 保留为迁移档案，不再作为任何 IP 的活动画布库。
 
 `.scratch/` 已由 Easel Git 忽略。不要提交数据库、上传文件、真实凭据、依赖、构建产物或运行日志。默认安装不下载大模型，不启动 Docker，也不修改全局 Codex MCP 配置。
 
@@ -28,6 +30,15 @@ bash scripts/beeftv_runtime.sh connect
 bash scripts/beeftv_runtime.sh status
 ```
 
+其他 IP 使用相同包装器，并显式指定工作空间：
+
+```bash
+EASEL_ROOT="$PWD/projects/<IP_ID>" bash scripts/beeftv_runtime.sh start
+EASEL_ROOT="$PWD/projects/<IP_ID>" bash scripts/beeftv_runtime.sh status
+```
+
+程序在发送客户端凭据前核对实例目录、端口和进程身份；未配置的 IP 不会回退到旧全局服务。启动时移除继承的共享数据库 DSN、其他客户端及 desktop launch token。
+
 `bootstrap` 是 `install` 的别名。安装时只拉取固定标签，随后检查准确提交；已有源码提交不匹配时停止，不自动切换、覆盖或清理目录。安装保留现有数据库、客户端凭据与进程记录，不主动停止或重启运行时。
 
 安装分别编译后端和官方 CLI，用项目内的 Go 缓存；前端使用 `bun install --frozen-lockfile --ignore-scripts`，不重写上游锁文件。Go 构建写入版本与提交信息，安装记录保存于 `run/installation.json`。
@@ -35,10 +46,9 @@ bash scripts/beeftv_runtime.sh status
 启动后：
 
 - Easel：`http://127.0.0.1:7860/`，侧栏“视频工坊”。
-- BeefTV Web：`http://127.0.0.1:8843/`。
-- 实际画布：`http://127.0.0.1:8843/canvas/<画布ID>`。
-- 后端原点：`http://127.0.0.1:8842`。
-- **官方 CLI/MCP 基地址**：`http://127.0.0.1:8842/api`，包含 `/api`。
+- BeefTV API/UI 使用各 IP 独立分配的 loopback 端口，地址由 `status` 输出。
+- 实际画布为该 IP 的 `ui_url` 加 `/canvas/<画布ID>`。
+- **官方 CLI/MCP 基地址**为该 IP 的 `api_url` 加 `/api`。
 
 ```bash
 bash scripts/beeftv_runtime.sh stop
@@ -60,13 +70,13 @@ ffprobe 仍需在 PATH 中。启动已存在的服务不会替换其进程环境
 
 `connect` 先验证现有专用客户端；仍有效则复用。需要新建时，仅在本机官方 `POST /api/agent-clients` 登记“Easel 视频工坊”普通读写客户端，owner 凭据只用于这个登记请求，不作为日常 UI、CLI 或 MCP 身份。
 
-客户端 ID 和 token 原子写入 `.scratch/beeftv/run/client.json`，权限为 `0600`。命令输出只显示保存路径，不显示值。不要复制这个文件进源码、项目正文、截图、URL 或日志。
+客户端 ID 和 token 原子写入当前 workspace 的 `.easel/beeftv/run/client.json`，权限为 `0600`。命令输出只显示保存路径，不显示值。不要复制这个文件进源码、项目正文、截图、URL 或日志。
 
 运行时采用以下边界：
 
 - 后端与 Vite 仅监听 `127.0.0.1`。
 - 私网模型出站设置为 `CANVAS_ALLOW_PRIVATE_UPSTREAMS=false`，只通过 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=127.0.0.1` 精确放行本机上游。
-- `BEEFTV_ALLOWED_ORIGINS` 仅包含本机 8843 前端；CORS 单独配置本机界面来源。
+- `BEEFTV_ALLOWED_ORIGINS` 仅包含本实例前端；CORS 单独配置本机界面来源。
 - `integrations/beeftv/vite.workshop.config.mts` 在服务端读取普通客户端文件，只为 **`GET /api/ops`** 与 **`POST /api/ops/canvas.document.commit`** 添加客户端身份。凭据不进入 Vite 客户端环境或页面 URL。
 - 其他路由不自动添加身份；例如通过同一代理调用 `canvas.nodes.create` 仍不会获得这一身份。需要这些能力的外部 Agent 使用其明确配置的官方 MCP 客户端。
 - 不得把代理改为向所有 API 注入 owner 身份。此前这类全量 owner 代理动作已被自动审批审查拒绝，未启用；当前为更窄、已验收的替代。
@@ -83,7 +93,13 @@ bash scripts/beeftv_runtime.sh mcp --read-only
 
 包装器从项目内的 `0600` 文件加载普通客户端凭据，并移除继承的 owner／desktop token；标准输入保留给 MCP JSON-RPC，标准输出只传协议或官方 CLI 结果。
 
-`connect` 同时生成 `.scratch/beeftv/run/mcp-config.json`。它只记录包装器路径，不含明文凭据；可将其对应服务器配置合并到已授权的外部 Agent 配置中。不要直接运行配置文件里的模型生成工具做连接测试，先握手和 `tools/list`。
+`connect` 同时生成当前 workspace 的 `.easel/beeftv/run/mcp-config.json`。它记录该 IP 的包装器与环境，不含明文凭据；可将其对应服务器配置合并到已授权的外部 Agent 配置中。不要直接运行配置文件里的模型生成工具做连接测试，先握手和 `tools/list`。
+
+## 从旧共享实例迁移
+
+`easel.beeftv_migration.migrate_workspace` 只导入本 IP 的工坊元数据明确关联的画布及引用素材，保留画布 ID、版本和已有审核关联。目标先由自己的实例初始化 schema，再停止；迁移在生命周期锁内执行，源只读，冲突或发布失败回滚，不复制整个共享数据库。迁移清单位于本 IP 的 `run/migration.json`。
+
+初始化的插件配置确需替换时，显式使用 `replace_initialized_configuration=True`，且目标不能已有业务或模型记录。归属不明的画布和素材保留在旧档案；不自动分配给某个 IP。历史任务仅能通过本 IP 精确清单读取原状态或收取结果，不能回退创建、重试渲染或取消。
 
 Easel 也提供 `.venv/bin/python scripts/video_workshop.py mcp`，具体项目与审阅用法见 [视频工坊使用说明](video-workshop-usage.md)。
 

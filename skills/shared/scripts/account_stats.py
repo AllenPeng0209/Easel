@@ -629,6 +629,16 @@ def _scrape(platform: str, headed: bool, base: str | None, proxy: str | None) ->
                 if proxy:
                     kwargs["proxy"] = {"server": proxy}
                 ctx = p.chromium.launch_persistent_context(str(profile), **kwargs)
+                if platform == "douyin":
+                    try:
+                        from easel.account_sessions import apply_session
+                        apply_session(ctx, "douyin")
+                    except BaseException:
+                        try:
+                            ctx.close()
+                        except Exception:
+                            pass
+                        raise
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
                 if platform == "xiaohongshu":

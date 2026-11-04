@@ -138,7 +138,7 @@ class InteractionStore:
                 result = capabilities(dict(channel))
                 if isinstance(result, dict):
                     result = {k: result[k] for k in ('state', 'can_sync', 'can_send', 'message') if k in result}
-                    if channel['delivery_mode'] == 'manual':
+                    if channel['delivery_mode'] in ('manual', 'creatorhub', 'native'):
                         result['can_send'] = False
                     return result
             except Exception:
@@ -192,6 +192,8 @@ class InteractionStore:
         with self._tx() as db:
             self._client(db, client_id)
             channel = self._get(db, 'channel', channel_id, client_id)
+            if channel['delivery_mode'] == 'creatorhub' and {'config', 'source_url'} & values.keys():
+                raise InteractionError('CreatorHub 来源绑定固定，请新建渠道接入其他作品', 409)
             channel.update(values)
             self._put(db, 'channel', channel, client_id)
         return self.bootstrap(client_id, capabilities)
@@ -210,27 +212,33 @@ class InteractionStore:
         with self._tx() as db:
             self._client(db, client_id)
             channel = self._get(db, 'channel', channel_id, client_id)
-            duplicate = db.execute('SELECT conversation_id FROM inbound WHERE channel_id=? AND external_id=?', (channel_id, external_id)).fetchone()
-            if duplicate:
-                return self._get(db, 'conversation', duplicate['conversation_id'], client_id)
-            thread = conversation_external_id or external_id
-            conversations = self._all(db, 'conversation', client_id)
-            c = next((c for c in conversations if c['channel_id'] == channel_id and c['external_id'] == thread), None)
-            if c is None:
-                c = {'id': uid(), 'client_id': client_id, 'channel_id': channel_id, 'external_id': thread,
-                     'platform': channel['platform'], 'kind': channel['kind'], 'delivery_mode': channel['delivery_mode'],
-                     'subject': subject or ('模拟咨询' if channel['delivery_mode'] == 'simulation' else '新咨询'), 'author_name': author_name,
-                     'revision': 0, 'status': 'pending', 'human_takeover': False, 'last_error': '', 'messages': [], 'drafts': [], 'events': [], 'sends': [], 'created_at': now()}
-            for d in c['drafts']:
-                if d['status'] in ('draft', 'approved'):
-                    d['status'] = 'superseded'
-            c['messages'].append({'id': uid(), 'external_id': external_id, 'direction': 'inbound', 'text': text,
-                'author_name': author_name, 'created_at': now(), 'simulated': channel['delivery_mode'] == 'simulation'})
-            c.update(status='pending', preview=text[:500], last_message_at=now(), last_inbound_external_id=external_id, source_url=source_url or channel.get('source_url', ''))
-            self._event(c, 'message_received', '收到模拟消息' if channel['delivery_mode'] == 'simulation' else '收到平台消息')
-            self._save(db, c)
-            db.execute('INSERT INTO inbound VALUES(?,?,?)', (channel_id, external_id, c['id']))
-            return c
+            return self._ingest(db, client_id, channel, external_id, text, author_name,
+                                conversation_external_id, source_url, subject)
+
+    def _ingest(self, db, client_id, channel, external_id, text, author_name,
+                conversation_external_id, source_url, subject, direction='inbound', created_at=''):
+        channel_id = channel['id']
+        duplicate = db.execute('SELECT conversation_id FROM inbound WHERE channel_id=? AND external_id=?', (channel_id, external_id)).fetchone()
+        if duplicate:
+            return self._get(db, 'conversation', duplicate['conversation_id'], client_id)
+        thread = conversation_external_id or external_id
+        conversations = self._all(db, 'conversation', client_id)
+        c = next((c for c in conversations if c['channel_id'] == channel_id and c['external_id'] == thread), None)
+        if c is None:
+            c = {'id': uid(), 'client_id': client_id, 'channel_id': channel_id, 'external_id': thread,
+                 'platform': channel['platform'], 'kind': channel['kind'], 'delivery_mode': channel['delivery_mode'],
+                 'subject': subject or ('模拟咨询' if channel['delivery_mode'] == 'simulation' else '新咨询'), 'author_name': author_name,
+                 'revision': 0, 'status': 'pending', 'human_takeover': False, 'last_error': '', 'messages': [], 'drafts': [], 'events': [], 'sends': [], 'created_at': now()}
+        for d in c['drafts']:
+            if d['status'] in ('draft', 'approved'):
+                d['status'] = 'superseded'
+        c['messages'].append({'id': uid(), 'external_id': external_id, 'direction': direction, 'text': text,
+            'author_name': author_name, 'created_at': created_at or now(), 'simulated': channel['delivery_mode'] == 'simulation'})
+        c.update(status='pending' if direction=='inbound' else 'handled', preview=text[:500], last_message_at=now(), last_inbound_external_id=external_id, source_url=source_url or channel.get('source_url', ''))
+        self._event(c, 'message_received', '收到模拟消息' if channel['delivery_mode'] == 'simulation' else '收到平台消息')
+        self._save(db, c)
+        db.execute('INSERT INTO inbound VALUES(?,?,?)', (channel_id, external_id, c['id']))
+        return c
 
     def add_knowledge(self, client_id, values, identity=None):
         with self._tx() as db:
@@ -271,6 +279,8 @@ class InteractionStore:
             c = self._get(db, 'conversation', conversation_id, client_id)
             self._expect(c, revision)
             inbound = self._last_inbound(c)
+            if inbound is None:
+                raise InteractionError('当前会话尚无收到的消息，暂不生成回复', 409)
             rules = self._rules(db, client_id)
             text = inbound['text'].casefold()
             blocked = any(word.casefold() in text for word in rules['blocked_keywords'])
@@ -447,6 +457,8 @@ class InteractionStore:
             channel = self._get(db, 'channel', channel_id, client_id)
         if channel['delivery_mode'] == 'simulation':
             return self.bootstrap(client_id, capabilities)
+        if channel['delivery_mode'] == 'creatorhub' and source_url:
+            raise InteractionError('CreatorHub 通道只读取绑定的自有作品，不能临时指定链接')
         if not channel['enabled'] or sync_adapter is None or not self._capability(channel, capabilities).get('can_sync'):
             raise InteractionError('通道尚未具备消息读取权限，请先完成接入', 503)
         try:
@@ -458,15 +470,29 @@ class InteractionStore:
                     or not item['external_id'] or len(item['external_id']) > 512
                     or not isinstance(item.get('text'), str) or not item['text'].strip() or len(item['text']) > 20000):
                     raise ValueError
+                if item.get('direction','inbound') not in ('inbound','outbound'):
+                    raise ValueError
+                if item.get('created_at'):
+                    datetime.fromisoformat(item['created_at'])
                 for key, limit in (('author_name', 256), ('conversation_external_id', 512), ('source_url', 4096), ('subject', 300)):
                     value = item.get(key, '')
                     if not isinstance(value, str) or len(value) > limit:
                         raise ValueError
         except Exception:
             raise InteractionError('平台消息读取未完成，请检查账号状态与授权', 503) from None
-        for item in items[:200]:
-            self.ingest(client_id, channel_id, item['external_id'], item['text'], author_name=item.get('author_name', ''),
-                conversation_external_id=item.get('conversation_external_id'), source_url=item.get('source_url', ''), subject=item.get('subject', ''))
+        with self._tx() as db:
+            current = self._get(db, 'channel', channel_id, client_id)
+            if (not current['enabled'] or current['config'] != channel['config']
+                    or current['source_url'] != channel['source_url']):
+                raise InteractionError('通道设置已变更，请重新同步', 409)
+            for item in items[:200]:
+                self._ingest(db, client_id, current, item['external_id'], item['text'],
+                             item.get('author_name', ''), item.get('conversation_external_id'),
+                             item.get('source_url', ''), item.get('subject', ''),
+                             item.get('direction','inbound'), item.get('created_at',''))
+            if current['delivery_mode'] in ('creatorhub','native'):
+                current['last_sync_at'] = now()
+                self._put(db, 'channel', current, client_id)
         return self.bootstrap(client_id, capabilities)
 
     def tick(self, client_id=None, send_adapter=None, capabilities=None):

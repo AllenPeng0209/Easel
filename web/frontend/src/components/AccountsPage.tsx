@@ -7,6 +7,7 @@ import {
 import type { AccountItem, AccountWhoami } from '../lib/api';
 import { getWhoamiCache, setWhoamiCache, verifyStale } from '../lib/whoami';
 import { useIpPermissions } from './ProjectSpace';
+import InteractionAccounts from './InteractionAccounts';
 
 type QRState = {
   platform: string;
@@ -15,10 +16,12 @@ type QRState = {
   message: string;
   qr: string;          // outputs 相对路径
   qrTs?: number;       // 二维码文件 mtime，作 img 缓存键：码刷新一次就变，避免看到过期旧码
+  mode?: 'qr' | 'browser';
 };
 
 const STATE_LABEL: Record<string, string> = {
   starting: '启动中…',
+  window_login: '请在浏览器登录',
   qr_ready: '请扫码',
   scanned: '扫码成功',
   sms_required: '需短信验证',
@@ -44,6 +47,7 @@ export default function AccountsPage() {
   const { canManageAccounts } = useIpPermissions();
   const accountPermission = useRef(canManageAccounts);
   accountPermission.current = canManageAccounts;
+  const [refreshToken, setRefreshToken] = useState(0);
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [err, setErr] = useState('');
   const [qr, setQr] = useState<QRState | null>(null);
@@ -236,7 +240,8 @@ export default function AccountsPage() {
     qrPlatformRef.current = a.platform;
     setQrNonce((n) => n + 1);
     setQr({ platform: a.platform, name: a.name, state: 'starting',
-            message: '正在启动浏览器并准备二维码…', qr: '' });
+            mode: a.loginMode || 'qr',
+            message: a.loginMode === 'browser' ? '正在打开平台登录浏览器…' : '正在启动浏览器并准备二维码…', qr: '' });
     try {
       const res = await startLogin(a.platform);
       if (!aliveRef.current || qrRequest.current !== sequence) return;
@@ -247,6 +252,7 @@ export default function AccountsPage() {
       }
       if (res.mode === 'credentials') { setQr(null); openCred(a); return; }
       setQr({ platform: a.platform, name: a.name, state: res.state || 'starting',
+              mode: res.mode === 'browser' ? 'browser' : 'qr',
               message: res.message || '', qr: res.qr || '', qrTs: res.qrTs });
       stopPoll();
       let polling = false;
@@ -371,7 +377,7 @@ export default function AccountsPage() {
   }, [stopPoll, runWhoami, load]);
 
   const handleLogout = useCallback(async (a: AccountItem) => {
-    if (!window.confirm(`确定退出「${a.name}」的登录？登录态将被清除，下次发布需重新扫码。`)) return;
+    if (!window.confirm(`确定退出「${a.name}」的登录？登录态将被清除，下次使用需重新登录。`)) return;
     setLogoutBusy(a.platform);
     try {
       await logoutAccount(a.platform);
@@ -405,13 +411,13 @@ export default function AccountsPage() {
     <div className="accounts-page">
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div>
-          <h1 className="page-title">平台账号 Accounts</h1>
+          <h1 className="page-title">账号管理</h1>
           <p className="page-subtitle">
-            {canManageAccounts ? '连接当前 IP 的各平台账号，登录后可持续用于内容运营与发布。'
-              : '当前账号为只读访问。平台登录、退出和身份校验由此 IP 的 owner 管理。'}
+            {canManageAccounts ? '连接和管理 Easel 的各平台账号。'
+              : '当前为只读查看，平台账号连接由当前 IP 的负责人管理。'}
           </p>
         </div>
-        <button className="btn btn-sm" onClick={load}>⟳ 刷新</button>
+        <button className="btn btn-sm" onClick={() => { load(); setRefreshToken(value => value + 1); }}>⟳ 刷新</button>
       </div>
 
       {err && <div style={{ color: 'var(--red)', fontSize: 13, marginTop: 12 }}>{err}</div>}
@@ -419,7 +425,12 @@ export default function AccountsPage() {
         <div className="card" style={{ padding: 13, fontSize: 13, marginTop: 14 }}>{terminalMsg}</div>
       )}
 
-      <div className="accounts-grid">
+      <InteractionAccounts refreshToken={refreshToken} platforms={accounts} onConnected={load} onPlatformLogin={account => {
+        if (!accountPermission.current || !account.supported) return;
+        return account.backend === 'wechat-oa' ? handleMpLogin(account) : handleLogin(account);
+      }} />
+      <details className="account-other-platforms"><summary>全部平台账号{accounts.length ? ` · ${accounts.length} 个平台` : ''}</summary>
+      <div className="accounts-list">
         {accounts.map((a) => {
           const w = whoami[a.platform];
           const info = w && w !== 'loading' ? w : null;
@@ -438,7 +449,7 @@ export default function AccountsPage() {
                 </div>
               )}
               {!logged && (
-                <div className="account-card-note">{a.note ? a.note : `后端：${a.name}`}</div>
+                <div className="account-card-note">{a.note ? a.note : '连接平台账号后可使用相关内容功能'}</div>
               )}
 
               {canManageAccounts ? <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
@@ -464,12 +475,13 @@ export default function AccountsPage() {
                     {(busy === a.platform || busy === a.platform + ':mp') ? '启动中…' : '登录'}
                   </button>
                 )}
-              </div> : <div className="account-card-note" style={{ marginTop: 'auto' }}>只读 · 由 owner 管理连接</div>}
+              </div> : <div className="account-card-note" style={{ marginTop: 'auto' }}>由负责人管理连接</div>}
             </div>
           );
         })}
       </div>
 
+      </details>
       {canManageAccounts && qr && (
         <div className="overlay" onClick={closeQr}>
           <div className="modal" style={{ width: 360, maxWidth: '100%', textAlign: 'center' }}
@@ -480,7 +492,13 @@ export default function AccountsPage() {
                 : ['error', 'expired'].includes(qr.state) ? 'var(--red)' : 'var(--text-secondary)' }}>
               {STATE_LABEL[qr.state] || qr.state}{qr.message ? ` — ${qr.message}` : ''}
             </div>
-            {qr.state === 'sms_required' ? (
+            {qr.state === 'window_login' ? (
+              <div className="loading" style={{ padding: '28px 8px', lineHeight: 1.7, flexDirection: 'column', gap: 12 }}>
+                <div className="spinner" />
+                <div>在运行 Easel 的电脑上，切换到新打开的浏览器完成登录。</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>完成后自动保存登录状态，并更新此页面。</div>
+              </div>
+            ) : qr.state === 'sms_required' ? (
               <div style={{ padding: '6px 4px 2px' }}>
                 <div style={{ fontSize: 13, marginBottom: 10,
                   color: /错误|过期|失败|重新|未找到|未完成|不正确|失效/.test(qr.message || '')
@@ -516,7 +534,8 @@ export default function AccountsPage() {
                 {qr.message || '登录失败'}<br />请根据上方具体原因排查；可关闭后重试，日志在 outputs/_login/。
               </div>
             ) : (
-              <div className="loading" style={{ padding: 40 }}><div className="spinner" />准备二维码…</div>
+              <div className="loading" style={{ padding: 40 }}><div className="spinner" />
+                {qr.mode === 'browser' ? '正在打开登录浏览器…' : '准备二维码…'}</div>
             )}
             <div style={{ marginTop: 16 }}>
               <button className="btn" onClick={closeQr}>{qr.state === 'success' ? '完成' : '关闭'}</button>

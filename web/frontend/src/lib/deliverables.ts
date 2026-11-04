@@ -103,11 +103,18 @@ export function deliverableTypeLabel(file: ChatDeliverable): string {
   return /^[a-z0-9][a-z0-9_-]{0,23}$/i.test(extension) ? extension.toUpperCase() : '文件';
 }
 
+export function officeSnapshotPreviewHref(file: ChatDeliverable): string | null {
+  if (file.storageMode !== 'snapshot' || file.status !== 'available'
+      || !/\.(?:docx|pptx)$/i.test(file.path) || typeof file.sha256 !== 'string' || !SHA256.test(file.sha256)) return null;
+  return safeDeliverableHref(file)?.replace(/\/content$/, '/office-preview') ?? null;
+}
+
 /** Download remains available independently of a supported, authorized viewer. */
-export function deliverablePreviewCapability(file: ChatDeliverable): 'media' | 'archive' | 'text' | null {
+export function deliverablePreviewCapability(file: ChatDeliverable): 'media' | 'archive' | 'text' | 'office' | null {
   if (file.status !== 'available' || !safeDeliverableHref(file)) return null;
   if (file.storageMode === 'snapshot' && /\.zip$/i.test(file.path)) return 'archive';
   if (deliverablePreview(file)) return 'media';
+  if (officeSnapshotPreviewHref(file)) return 'office';
   return file.size <= MAX_DELIVERABLE_TEXT_PREVIEW_BYTES && draftSnapshotHref(file) ? 'text' : null;
 }
 

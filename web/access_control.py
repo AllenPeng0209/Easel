@@ -120,6 +120,10 @@ def _is_global(resource: str) -> bool:
 def _capability(method: str, resource: str, kind: str) -> str | None:
     """Classify existing endpoints, including GETs that start tools or write state."""
     read = method in {"GET", "HEAD"}
+    if resource == 'superagent/tasks' and method == 'GET':
+        return 'view'
+    if method == 'POST' and re.fullmatch(r'superagent/tasks(?:/(?:publish|[a-f0-9]{32}/(?:answer|stop|retry)))?', resource):
+        return 'operate'
     if kind == "members":
         return "view" if read else "manage_members"
     if kind == "project":
@@ -145,6 +149,9 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return 'operate' if read else None
     if re.fullmatch(r"chat/turn-changes/[A-Za-z0-9_.-]{1,160}/compare", resource):
         return "operate" if read else None
+    if resource == 'operations' or resource.startswith('operations/'):
+        from easel.operations_web import operations_capability
+        return operations_capability(method, resource)
     if resource in {"upload/validate", "chat/attachment-select"}:
         return "operate" if method == "POST" else None
     if re.fullmatch(r'publication-approvals/[a-f0-9]{32}(?:/decision)?', resource):
@@ -152,7 +159,7 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
     if re.fullmatch(r'publish/[^/]+/prepare', resource):
         return 'operate' if method == 'POST' else None
     if resource == 'chat/artifact-related' or re.fullmatch(
-            r"chat/artifacts/[a-f0-9]{32}(?:/(?:content|related|versions|compare|archive)|/archive/[0-9]+/(?:content|related))?", resource):
+            r"chat/artifacts/[a-f0-9]{32}(?:/(?:content|related|versions|compare|archive|office-preview)|/archive/[0-9]+/(?:content|related))?", resource):
         return "operate" if read else None
     if (resource.startswith(("login/", "logout/"))
             or re.fullmatch(r"accounts/[^/]+/(?:credentials|mp-login(?:/status)?)", resource)
@@ -253,9 +260,6 @@ class AccessControlMiddleware:
                        or (path in {"/api/auth/logout"} and method == "POST"))
             if not allowed:
                 return await reject(403, "当前账号没有执行此操作的权限")
-        elif (path == "/api/superagent/tasks" and method in {"GET", "POST"}) or (
-                method == "POST" and re.fullmatch(r"/api/superagent/tasks/(?:publish|[a-f0-9]{32}/(?:answer|stop|retry))", path)):
-            pass  # The task routes enforce exact membership and task ownership.
         elif path == "/api/users" or path.startswith("/api/users/"):
             if not is_admin:
                 return await reject(403, "只有平台管理员可以管理用户")

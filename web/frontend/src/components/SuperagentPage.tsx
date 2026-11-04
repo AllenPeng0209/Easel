@@ -1,14 +1,14 @@
 import { useCallback, useRef } from 'react';
-import { ACTIVE_PROJECT_ID, ACTIVE_USER_ID, projectStorageKey } from '../lib/projectScope';
+import { ACTIVE_PROJECT_ID, projectFetch, projectStorageKey } from '../lib/projectScope';
 import SuperagentPanel, { type SuperagentTask } from './SuperagentPanel';
 
 const endpoint = '/api/superagent/tasks';
 type CreateRequest = { projectId: string; title: string; brief: string };
 
 async function request<T>(path: string, body?: object, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(endpoint + path, {
+  const response = await projectFetch(endpoint + path, {
     cache: 'no-store', signal,
-    headers: { 'Content-Type': 'application/json', 'X-Easel-User': ACTIVE_USER_ID },
+    headers: { 'Content-Type': 'application/json' },
     ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
   });
   if (!response.ok) {

@@ -1,0 +1,872 @@
+"""数据模型 (SQLModel)。精简自逆向的 DouyinAccount / MonitorTarget / ContentRecord。"""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import Index
+from sqlmodel import Field
+from .model_base import SQLModel
+
+
+class TaskSubmission(SQLModel, table=True):
+    """A request receipt committed in the same transaction as its new task."""
+    digest: str = Field(primary_key=True)
+    scope: str
+    payload_hash: str
+    response_json: str = "{}"
+    resource_table: str = ""
+    resource_id: Optional[int] = None
+    resource_created_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DouyinAccount(SQLModel, table=True):
+    """登录得到的平台账号(浏览器会话持有者)。表名沿用历史,实际承载多平台账号。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs | kuaishou | shipinhao | tiktok
+    nickname: str = ""
+    sec_uid: str = ""              # 抖音 sec_uid / 小红书 user_id
+    uid: str = ""                  # 抖音数字 uid(= IM device_id,用于 frontier-im WS 接收)
+    douyin_id: str = ""            # 抖音号 / 小红书号(red_id)
+    avatar: str = ""              # 头像
+    follower_count: int = 0
+    following_count: int = 0        # 关注数
+    aweme_count: int = 0
+    total_favorited: int = 0        # 主页累计获赞/获赞与收藏（平台口径）
+    gender: str = ""               # 平台返回的性别标记（M/F/男/女）
+    cookie: str = ""               # 原始 Cookie 串(粘贴登录时填,仅展示/兜底)
+    storage_state: str = ""        # Patchright storage_state JSON(浏览器登录态)
+    creator_storage_state: str = ""  # 创作中心登录态(用于自有账号评论模式)
+    status: str = "active"         # active | invalid
+    # ── 设备/网络画像(防多账号关联风控:登录时生成一次,之后永久固定)──
+    profile_dir: str = ""          # 独立持久化用户目录(Chromium user-data-dir)
+    proxy: str = ""               # 该账号专属代理 http://user:pass@host:port / socks5://...
+    ua: str = ""                  # 该账号固定 User-Agent
+    viewport_w: int = 1280
+    viewport_h: int = 800
+    timezone_id: str = "Asia/Shanghai"
+    locale: str = "zh-CN"
+    fp_seed: str = ""             # 指纹种子(canvas/webgl/navigator 据此确定性生成,保证每次一致)
+    fp_source_ip: str = ""        # 最近一次生成指纹时使用的真实出口 IP
+    fp_country: str = ""          # IP 对应的 ISO2 国家/地区
+    fp_region: str = ""
+    fp_city: str = ""
+    fp_generated_at: Optional[datetime] = None
+    # fingerprint-chromium 官方命令行可覆盖项；空/0 表示继续按种子或内核默认生成。
+    fp_platform: str = ""
+    fp_platform_version: str = ""
+    fp_brand: str = ""
+    fp_brand_version: str = ""
+    fp_hardware_concurrency: int = 0
+    fp_gpu_vendor: str = ""
+    fp_gpu_renderer: str = ""
+    fp_accept_languages: str = ""
+    fp_disable_spoofing: str = ""  # comma list: font,audio,canvas,clientrects,gpu
+    fp_language_mode: str = "auto"       # auto | custom
+    fp_timezone_mode: str = "auto"       # auto | custom
+    fp_viewport_mode: str = "auto"       # auto | custom
+    fp_location_mode: str = "auto"       # auto | custom
+    fp_geolocation_permission: str = "allow"  # ask | allow | deny
+    fp_webrtc_mode: str = "conceal"      # conceal | allow
+    fp_extra_args: str = ""               # validated additional Chromium args
+    geo_lat: float = 0.0          # geolocation 伪造纬度(代理体检时按出口 IP 归属地写入;0=按种子派生兜底)
+    geo_lon: float = 0.0          # geolocation 伪造经度
+    proxy_status: str = "unknown"  # unknown | bound | ok | rotating | bad | auth_error | blocked
+    # 由账号的真实浏览器 context 探测并持久化；后续写操作用它识别出口漂移。
+    exit_ip: str = ""
+    exit_country: str = ""
+    exit_asn: str = ""
+    exit_timezone: str = ""
+    exit_proxy_signature: str = ""
+    exit_checked_at: Optional[datetime] = None
+    last_active_at: Optional[datetime] = None  # 上次活跃(用于错峰调度)
+    write_paused_until: Optional[datetime] = None  # 平台风控后暂停自动写操作
+    write_pause_reason: str = ""                    # 最近一次暂停原因
+    identity_mode: str = "legacy"                  # legacy=保留存量画像 | native=浏览器原生画像
+    # default=跟随全局；local=现有 Patchright/CDP；fingerprint_chromium=开源内核。
+    browser_backend: str = "default"
+    # fingerprint_chromium 下绑定的具体内核运行时；空=跟随默认内核。
+    browser_runtime_id: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AccountIdReservation(SQLModel, table=True):
+    """Permanent numeric identity watermark; contains no account credentials.
+
+    Kept independently of account deletion, including on existing databases
+    whose account table predates SQLite AUTOINCREMENT.
+    """
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class MonitorIdReservation(SQLModel, table=True):
+    """Keep deleted task IDs from being assigned to unrelated new monitors."""
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class MonitorTarget(SQLModel, table=True):
+    """被监控的对象。抖音=用户;小红书=创作者(creator)或搜索关键词(keyword)。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs
+    target_kind: str = "creator"   # creator(账号/创作者) | keyword(小红书搜索词)
+    keyword: str = ""              # target_kind=keyword 时的搜索词
+    sec_uid: str = Field(default="", index=True)  # 抖音 sec_uid / 小红书 user_id
+    xsec_token: str = ""          # 小红书:打开主页所需令牌(可选,缺失时靠登录态)
+    nickname: str = ""
+    avatar: str = ""
+    alias: str = ""               # 管理别名,用于大量监控时快速识别
+    group_name: str = Field(default="", index=True)  # 单一业务分组
+    tags: str = ""                # JSON 字符串数组,用于多维筛选
+    enabled: bool = True
+    interval_seconds: int = 300
+    initial_backfill_count: int = 0            # 首扫历史回填数;0=仅订阅后,-1=尽可能全量
+    download_dir: str = ""                  # 自定义下载目录(空=用全局默认)
+    video_quality: str = ""                 # 画质偏好(空=用全局默认)
+    download_enabled: bool = True           # 新作品是否自动下载；关闭时仍保留作品记录
+    media_filter: str = "all"               # all | video | images
+    # 作品监控策略。0 表示使用平台默认值（小红书 6/12，其他平台 12/不限）。
+    max_scrolls: int = 0                    # 单轮页面下滑深度
+    max_items_per_scan: int = 0             # 单轮详情/入库上限
+    record_media_filter: str = "all"        # all | video | images，仅控制是否入库
+    min_like_count: int = 0
+    min_comment_count: int = 0
+    recent_days: int = 0                    # 0=不限发布时间
+    include_keywords: str = "[]"            # JSON 字符串数组，任一命中
+    exclude_keywords: str = "[]"            # JSON 字符串数组，任一命中即排除
+    account_id: Optional[int] = None       # 用哪个登录账号的 Cookie 抓取
+    last_scan_at: Optional[datetime] = None
+    last_error: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProxyPool(SQLModel, table=True):
+    """代理池条目。提前配置好,账号从池里关联使用(一号一代理 sticky)。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    label: str = ""               # 备注名(如 "住宅-广东-01")
+    url: str = Field(default="", index=True)  # http://user:pass@host:port / socks5://...
+    enabled: bool = True          # 关闭后不参与自动分配
+    status: str = "unknown"       # unknown | ok | bad(最近一次连通性测试结果)
+    note: str = ""
+    # 出口 IP 归属地(判别/测试时写入,用于核对 IP 地区是否与账号一致)
+    exit_ip: str = ""
+    country: str = ""
+    region: str = ""
+    city: str = ""
+    isp: str = ""
+    last_checked_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class BrowserRuntime(SQLModel, table=True):
+    """可由账号固定选择的本地 Chromium 内核运行时。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    runtime_id: str = Field(default="", index=True, unique=True)
+    name: str = ""
+    backend: str = "fingerprint_chromium"
+    version: str = ""
+    executable_path: str = ""
+    platform: str = "auto"
+    allow_headless: bool = False
+    enabled: bool = True
+    is_default: bool = False
+    status: str = "unknown"       # unknown | ok | bad
+    last_error: str = ""
+    file_sha256: str = ""
+    last_checked_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AppSetting(SQLModel, table=True):
+    """全局键值设置(如默认下载目录)。"""
+    key: str = Field(primary_key=True)
+    value: str = ""
+
+
+class AccountRiskState(SQLModel, table=True):
+    """跨功能共享的账号平台风险状态，一账号一行。"""
+    account_id: int = Field(primary_key=True)
+    risk_level: int = 0
+    cooldown_until: Optional[datetime] = Field(default=None, index=True)
+    probe_only_until: Optional[datetime] = None
+    consecutive_risk: int = 0
+    consecutive_network_failures: int = 0
+    network_failure_key: str = ""
+    recovery_successes: int = 0
+    last_risk_at: Optional[datetime] = None
+    last_risk_reason: str = ""
+    last_operation_at: Optional[datetime] = None
+    last_write_at: Optional[datetime] = None
+    last_heavy_read_at: Optional[datetime] = None
+    last_recovery_at: Optional[datetime] = None
+    manual_review_required: bool = False
+    manual_review_reason: str = ""
+    retry_not_before: Optional[datetime] = None
+    operation_not_before: Optional[datetime] = None
+    session_operation_count: int = 0
+    session_rest_until: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RiskEvent(SQLModel, table=True):
+    """统一平台操作计数事件；不保存 Cookie、代理凭据或响应正文。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    account_id: int = Field(index=True)
+    network_key: str = Field(default="direct", index=True)
+    operation_kind: str = Field(default="read_light", index=True)
+    outcome: str = Field(default="success", index=True)
+    signal: str = ""
+    detail: str = ""              # 脱敏后的原因摘要；不保存响应正文或账号凭据
+    occurred_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class RiskAdminAudit(SQLModel, table=True):
+    """Local administrative changes to risk policy and account state."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    action: str = Field(index=True)
+    account_id: Optional[int] = Field(default=None, index=True)
+    actor: str = "local-ui"
+    detail: str = "{}"             # JSON diff/reason; never contains credentials
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class NotificationChannel(SQLModel, table=True):
+    """通知渠道。对应逆向 model.NotificationChannel。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = ""
+    type: str = "bark"             # bark | dingtalk | telegram
+    config: str = ""              # JSON: 各渠道所需字段
+    enabled: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ContentRecord(SQLModel, table=True):
+    """抓到的一条作品/笔记。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs
+    target_id: int = Field(index=True)
+    aweme_id: str = Field(index=True)  # 抖音 aweme_id / 小红书 note_id
+    desc: str = ""
+    media_type: str = "video"          # video | images
+    quality: str = ""                  # 实际下载的画质,如 1080p
+    create_time: int = 0               # 作品发布时间(unix 秒)
+    cover_url: str = ""
+    like_count: int = 0                # 点赞数
+    comment_count: int = 0             # 评论数
+    duration: int = 0                  # 时长(秒)
+    media_json: str = ""               # 媒体直链快照(JSON),用于失败重试
+    xsec_token: str = ""               # 小红书:重新拉详情(feed)所需令牌
+    xsec_source: str = ""              # 与令牌配套的来源；旧记录为空时按监控类型处理
+    download_status: str = "pending"   # pending | downloading | done | failed
+    retry_count: int = 0               # 已重试次数
+    local_path: str = ""
+    error: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CommentWatchIdReservation(SQLModel, table=True):
+    """Do not assign a deleted comment monitor's ID to a new task."""
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class DanmakuWatchIdReservation(SQLModel, table=True):
+    """Danmaku and comment monitors have independent ID namespaces."""
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class CommentWatch(SQLModel, table=True):
+    """独立的评论监控对象(不依赖作品监控)。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs
+    kind: str = "video"            # video(单条视频/笔记) | user(账号/创作者近期作品)
+    aweme_id: str = ""             # video 模式:被盯的视频 / 笔记 note_id
+    sec_uid: str = ""             # user 模式:被盯的账号 / 创作者 user_id
+    xsec_token: str = ""          # 小红书:打开笔记/主页所需的安全令牌(可能过期)
+    title: str = ""               # 展示名(视频描述 / 账号昵称)
+    avatar: str = ""
+    alias: str = ""               # 管理别名
+    group_name: str = Field(default="", index=True)  # 单一业务分组
+    tags: str = ""                # JSON 字符串数组,用于多维筛选
+    mode: str = "public"           # public(公开评论区) | creator(创作中心,仅抖音自有账号)
+    account_id: Optional[int] = None
+    interval_seconds: int = 600
+    recent_works: int = 0          # 账号型监控检查最近 N 个作品；0=全局默认
+    recent_days: int = 0           # 账号型监控只检查最近 N 天；0=全局默认
+    max_scrolls: int = 0           # 单个评论区抓取深度；0=全局默认
+    enabled: bool = True
+    last_scan_at: Optional[datetime] = None
+    last_error: str = ""
+    comment_count: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PublishTask(SQLModel, table=True):
+    """多平台发布任务(可定时、可来自跨平台作品转发)。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="xhs", index=True)   # xhs | douyin | kuaishou | shipinhao
+    account_id: Optional[int] = None                   # 用哪个已登录账号发布
+    media_type: str = "images"                         # images | video
+    title: str = ""                                    # 标题(各平台上限不同)
+    desc: str = ""                                     # 正文
+    topics: str = ""                                   # 话题,逗号分隔(不带 #)
+    location: str = ""                                 # 视频号:位置 POI(可选,best-effort)
+    media_json: str = ""                               # 本地文件路径列表(JSON)
+    visibility: str = "public"                         # 抖音:public 公开 | friends 好友可见 | private 仅自己可见
+    allow_save: bool = True                            # 抖音:是否允许他人保存(下载)
+    scheduled_at: Optional[datetime] = None            # UTC；空=尽快发
+    scheduled_at_is_utc: bool = True  # 存量无时区预约需要人工确认，不自动猜时区
+    status: str = "pending"        # draft | pending | publishing | uncertain | done | failed | canceled
+    result_url: str = ""           # 发布成功后的笔记链接(能取到则填)
+    error: str = ""
+    blocked_reason: str = ""
+    blocked_signal: str = ""
+    blocked_operation: str = ""
+    blocked_at: Optional[datetime] = None
+    next_allowed_at: Optional[datetime] = Field(default=None, index=True)
+    source_platform: str = ""      # 来源(如 douyin),跨平台转发时填
+    source_content_id: Optional[int] = None            # 来源作品记录 id
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    done_at: Optional[datetime] = None
+
+
+class CommentRecord(SQLModel, table=True):
+    """抓到的一条评论。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs
+    watch_id: Optional[int] = Field(default=None, index=True)   # 归属的评论监控
+    target_id: int = Field(default=0, index=True)               # 旧:作品监控目标(兼容,0=无)
+    aweme_id: str = Field(index=True)
+    comment_id: str = Field(index=True)        # 抖音 cid
+    text: str = ""
+    user_nickname: str = ""
+    user_sec_uid: str = ""                    # 抖音评论用户 sec_uid
+    ip_label: str = ""                        # 平台返回的评论地区标签
+    like_count: int = 0
+    create_time: int = 0                       # 评论时间(unix 秒)
+    reply_to: str = ""                         # 上级评论 cid(子评论时)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class KeywordCollectionJob(SQLModel, table=True):
+    """一次性的关键词批量采集任务。与持续轮询的 MonitorTarget 分开建模。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs | kuaishou | shipinhao
+    account_id: int = Field(index=True)
+    source_type: str = Field(default="keyword", index=True)  # keyword | creator | favorite_all | favorite_board | account_works
+    source_ref: str = ""              # 收藏夹 id 等平台来源标识
+    source_name: str = ""             # 面向用户的来源名称
+    keywords: str = "[]"                 # JSON 字符串数组
+    max_contents_per_keyword: int = 20
+    max_pages_per_keyword: int = 12       # 抖音搜索为滚动加载；页面上以“深度页”表达
+    stagnant_pages: int = 3               # 连续多少次滚动无新结果后提前停止
+    search_sort: str = "general"          # general | latest | most_liked
+    publish_time: str = "all"             # all | day | week | half_year
+    content_type: str = "all"             # all | video | images
+    min_likes: int = 0
+    min_comments: int = 0
+    max_comments_per_content: int = 20
+    include_replies: bool = False
+    download_media: bool = False
+    video_quality: str = "highest"
+    download_dir: str = ""
+    status: str = Field(default="pending", index=True)  # pending | running | done | partial | failed | canceled
+    current_keyword: str = ""
+    current_step: str = "等待执行"
+    processed_keyword_count: int = 0
+    current_item_index: int = 0
+    current_item_total: int = 0
+    content_count: int = 0
+    comment_count: int = 0
+    error_count: int = 0
+    error: str = ""
+    blocked_reason: str = ""
+    blocked_signal: str = ""
+    blocked_operation: str = ""
+    blocked_at: Optional[datetime] = None
+    next_allowed_at: Optional[datetime] = Field(default=None, index=True)
+    cancel_requested: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+
+class KeywordCollectionContent(SQLModel, table=True):
+    """关键词任务发现的一条作品/笔记。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_id: int = Field(index=True)
+    platform: str = Field(default="douyin", index=True)
+    keyword: str = Field(default="", index=True)
+    aweme_id: str = Field(index=True)       # 抖音 aweme_id / 小红书 note_id / 快手 photo_id / 视频号 object_id
+    desc: str = ""
+    author_name: str = ""
+    author_id: str = ""
+    source_url: str = ""                      # 作品规范链接；TikTok 必须保存真实作者路径
+    media_type: str = "video"
+    create_time: int = 0
+    cover_url: str = ""
+    like_count: int = 0
+    comment_count: int = 0                  # 平台显示的评论总数
+    collected_comment_count: int = 0        # 本任务实际入库数
+    media_json: str = "[]"
+    xsec_token: str = ""
+    xsec_source: str = ""               # 与搜索结果令牌配套的来源
+    download_status: str = "skipped"       # skipped | pending | downloading | done | failed
+    local_path: str = ""
+    error: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class KeywordCollectionComment(SQLModel, table=True):
+    """关键词任务抓到的评论；按任务与作品单独保存，便于删除和导出。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_id: int = Field(index=True)
+    content_id: int = Field(index=True)
+    platform: str = Field(default="douyin", index=True)
+    aweme_id: str = Field(index=True)
+    comment_id: str = Field(index=True)
+    text: str = ""
+    user_nickname: str = ""
+    user_sec_uid: str = ""
+    ip_label: str = ""
+    like_count: int = 0
+    create_time: int = 0
+    reply_to: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class AccountOperationLog(SQLModel, table=True):
+    """账号维度的统一任务/操作流水，仅记录状态，不保存凭据。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)
+    account_id: int = Field(index=True)
+    task_type: str = Field(default="collection", index=True)
+    task_id: str = Field(default="", index=True)
+    action: str = Field(default="", index=True)
+    target: str = ""
+    channel: str = ""
+    status: str = Field(default="info", index=True)
+    risk_signal: str = ""
+    detail: str = ""
+    duration_ms: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class GroupConversation(SQLModel, table=True):
+    """已纳入成员监控的群会话。"""
+    __table_args__ = (
+        Index("ux_group_conversation_scope", "platform", "account_id", "group_id", unique=True),
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="xhs", index=True)
+    account_id: int = Field(index=True)
+    group_id: str = Field(default="", index=True)
+    name: str = ""
+    member_count: int = 0
+    last_snapshot_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class GroupMember(SQLModel, table=True):
+    """群成员的当前态；离群后保留记录用于审计。"""
+    __table_args__ = (
+        Index("ux_group_member_scope", "platform", "account_id", "group_id", "member_id", unique=True),
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="xhs", index=True)
+    account_id: int = Field(index=True)
+    group_id: str = Field(default="", index=True)
+    member_id: str = Field(default="", index=True)
+    nickname: str = ""
+    avatar: str = ""
+    role: str = "member"
+    active: bool = Field(default=True, index=True)
+    raw_json: str = "{}"
+    first_seen_at: datetime = Field(default_factory=datetime.utcnow)
+    last_seen_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    left_at: Optional[datetime] = None
+
+
+class GroupSnapshot(SQLModel, table=True):
+    """一次群成员快照的汇总。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="xhs", index=True)
+    account_id: int = Field(index=True)
+    group_id: str = Field(default="", index=True)
+    member_count: int = 0
+    joined_count: int = 0
+    left_count: int = 0
+    changed_count: int = 0
+    payload_hash: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class GroupMemberEvent(SQLModel, table=True):
+    """两次群成员快照之间的加入、退出或资料变化。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_id: int = Field(index=True)
+    platform: str = Field(default="xhs", index=True)
+    account_id: int = Field(index=True)
+    group_id: str = Field(default="", index=True)
+    member_id: str = Field(default="", index=True)
+    change_type: str = Field(default="changed", index=True)  # joined | left | changed
+    before_json: str = "{}"
+    after_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class LiveLead(SQLModel, table=True):
+    """直播间发现的线索及人工跟进状态。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)
+    account_id: int = Field(index=True)
+    room_id: str = Field(default="", index=True)
+    user_id: str = Field(default="", index=True)
+    nickname: str = ""
+    source_event: str = "comment"
+    content: str = ""
+    tags: str = "[]"
+    score: int = 0
+    status: str = Field(default="new", index=True)  # new | following | won | lost
+    assignee: str = ""
+    note: str = ""
+    occurred_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class WebhookSubscription(SQLModel, table=True):
+    """事件中心订阅；secret 仅用于 HMAC 签名且不通过读取 API 返回。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = ""
+    url: str = ""
+    secret: str = ""
+    event_types: str = "[]"
+    enabled: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class WebhookEvent(SQLModel, table=True):
+    """可重试的 Webhook outbox 事件。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event_type: str = Field(default="", index=True)
+    aggregate_type: str = ""
+    aggregate_id: str = Field(default="", index=True)
+    payload_json: str = "{}"
+    status: str = Field(default="pending", index=True)  # pending | delivered | partial | failed
+    attempts: int = 0
+    delivered_count: int = 0
+    last_error: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    delivered_at: Optional[datetime] = None
+
+
+class DanmakuWatch(SQLModel, table=True):
+    """短视频弹幕监控对象。弹幕与评论字段不同，单独建模。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)
+    kind: str = "video"             # video(单条视频) | user(账号近期作品)
+    aweme_id: str = Field(default="", index=True)
+    sec_uid: str = Field(default="", index=True)
+    title: str = ""
+    avatar: str = ""
+    alias: str = ""
+    group_name: str = Field(default="", index=True)
+    tags: str = "[]"
+    mode: str = "public"            # public(播放页) | creator(创作中心)
+    account_id: Optional[int] = None
+    interval_seconds: int = 0       # 0=跟随全局 scan_interval_seconds
+    recent_works: int = 0           # 0=跟随全局 danmaku_recent_works
+    recent_days: int = 0            # 0=跟随全局 danmaku_recent_days
+    max_scrolls: int = 0            # 0=跟随全局 danmaku_max_scrolls
+    time_start_ms: int = 0          # 视频内时间起点,0=从头
+    time_end_ms: int = 0            # 视频内时间终点,0=到结尾
+    probe_step_seconds: float = 0.0  # 0=跟随全局时间轴步长
+    include_keywords: str = "[]"    # 命中任一关键词才保留
+    exclude_keywords: str = "[]"    # 命中任一关键词则丢弃
+    min_text_length: int = 0
+    max_text_length: int = 0
+    min_like_count: int = 0
+    max_records_per_scan: int = 0   # 0=跟随全局
+    max_records_total: int = 0      # 0=跟随全局
+    enabled: bool = True
+    last_scan_at: Optional[datetime] = None
+    last_error: str = ""
+    danmaku_count: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DanmakuRecord(SQLModel, table=True):
+    """抓到的一条短视频弹幕。video_time_ms 是视频内时间点。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)
+    watch_id: Optional[int] = Field(default=None, index=True)
+    aweme_id: str = Field(default="", index=True)
+    danmaku_id: str = Field(default="", index=True)
+    text: str = ""
+    user_id: str = ""
+    user_nickname: str = ""
+    video_time_ms: int = 0
+    create_time: int = 0
+    like_count: int = 0
+    is_blocked: bool = False
+    source: str = "public"          # public | creator
+    raw_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CommentRule(SQLModel, table=True):
+    """自动评论规则(循环配置)。引擎按 interval 生成一批 CommentTask。
+    auto_reply  = 回复「自己作品」收到的评论(内容目标较温和,但仍属于高敏感写操作)。
+    auto_comment= 去「别人帖子」下评论(高风险,需节流+去重护着)。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)   # douyin | xhs
+    name: str = ""                       # 备注名
+    mode: str = "auto_reply"             # auto_reply | auto_comment
+    account_id: Optional[int] = None     # 用哪个登录账号发(必填,发评论需登录态)
+    # ── 目标范围 ──
+    target_kind: str = "self"            # auto_reply: self(自己近期作品) | work(指定作品)
+                                         # auto_comment: keyword(搜索词) | creator(指定博主)
+    keyword: str = ""                    # target_kind=keyword 时的搜索词
+    sec_uid: str = ""                    # creator 模式:目标博主 user_id / sec_uid
+    aweme_id: str = ""                   # work 模式:指定作品 / 笔记 note_id
+    xsec_token: str = ""                 # 小红书:打开目标所需令牌(可选)
+    # ── 文案 ──
+    templates: str = ""                  # JSON 字符串数组,支持 {nick} 变量与 spintax {a|b|c}
+    use_ai: bool = False                 # 用大模型 API 生成文案(失败/未配置时回退模板库)
+    reply_filter: str = ""               # auto_reply:仅回复正文含此关键词的评论(空=全回)
+    skip_keywords: str = ""              # 命中任一(逗号分隔)则跳过该评论/作品
+    # ── 节流 / 风控闸 ──
+    daily_cap: int = 20                  # 该规则每日最多发多少条(每账号每日另有全局上限)
+    min_gap_seconds: int = 90            # 同规则两条任务最小间隔(实际叠加 jitter)
+    max_per_run: int = 5                 # 单轮最多生成多少条任务(避免一次铺太多)
+    interval_seconds: int = 1800         # 规则多久跑一轮(发现+生成任务)
+    require_review: bool = False         # 草稿审核:生成的任务为 draft,人工通过后才发
+    enabled: bool = False                # 默认关,确认无误再开
+    last_run_at: Optional[datetime] = None
+    last_error: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CommentTask(SQLModel, table=True):
+    """一条待发评论动作(由规则生成,或手动创建)。状态机同 PublishTask。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)   # douyin | xhs
+    rule_id: Optional[int] = Field(default=None, index=True)   # 来源规则(手动=None)
+    account_id: Optional[int] = None
+    aweme_id: str = Field(default="", index=True)         # 目标作品 / 笔记 note_id
+    target_url: str = ""                                  # TikTok 等需要作者路径的平台规范链接
+    xsec_token: str = ""                                  # 小红书:发评论所需令牌
+    target_comment_id: str = ""                           # 非空=回复该条评论;空=作品下顶层评论
+    target_nick: str = ""                                 # 被回复者昵称(供 {nick} 用)
+    target_text: str = ""                                 # 目标评论原文(定位回复目标)
+    content: str = ""                                     # 已渲染好的文案
+    scheduled_at: Optional[datetime] = None               # 计划发送时间(错峰)
+    # draft=草稿待审;uncertain=已提交但未取得明确结果,不可自动重试
+    status: str = "pending"        # draft | pending | doing | uncertain | done | failed | canceled
+    result: str = ""               # 成功后的评论 id / 链接
+    error: str = ""
+    blocked_reason: str = ""
+    blocked_signal: str = ""
+    blocked_operation: str = ""
+    blocked_at: Optional[datetime] = None
+    next_allowed_at: Optional[datetime] = Field(default=None, index=True)
+    method: str = ""               # 实际走的通道:manual | api | browser
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    done_at: Optional[datetime] = None
+
+
+# ─────────── 本账号管理(作品 / 关注 / 粉丝 / 私信)───────────
+class AccountWork(SQLModel, table=True):
+    """本登录账号自己发布的一条作品(与监控别人的 ContentRecord 区分:这里挂在 account_id 上)。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs | kuaishou
+    account_id: int = Field(index=True)
+    item_id: str = Field(default="", index=True)   # aweme_id / note_id / photo_id
+    desc: str = ""
+    media_type: str = "video"          # video | images
+    cover_url: str = ""
+    create_time: int = 0               # 发布时间(unix 秒)
+    like_count: int = 0
+    comment_count: int = 0
+    collect_count: int = 0             # 收藏数
+    share_count: int = 0
+    play_count: int = 0                # 播放数(部分平台无)
+    status: str = ""                   # 平台审核/可见状态(能取到则填)
+    xsec_token: str = ""               # 小红书:打开笔记/抓评论所需令牌(其余平台空)
+    raw_json: str = ""                 # 原始项快照
+    fetched_at: Optional[datetime] = None  # 上次同步时间
+    # ── 作品健康监控(B5)去重标记:同一异常只推一次 ──
+    zero_play_alerted: bool = False    # 已就「发布满 N 小时仍 0 播」推过预警
+    status_alerted: str = ""           # 已就此状态(如「违规/已删除」)推过预警(存已告警的状态文案)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AccountStatSnapshot(SQLModel, table=True):
+    """本账号每日数据快照(B4:粉丝/作品/互动趋势)。每账号每天一行,体检时写入。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)
+    account_id: int = Field(index=True)
+    date: str = Field(default="", index=True)   # YYYY-MM-DD(账号时区);每账号每天唯一
+    follower_count: int = 0
+    aweme_count: int = 0
+    total_like: int = 0                # 已同步本账号作品的点赞合计(能取到的范围)
+    total_comment: int = 0
+    total_play: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FollowEdge(SQLModel, table=True):
+    """关注关系一行一人。direction=following(我关注的) / fan(关注我的)。"""
+    __table_args__ = (
+        Index("ix_followedge_account_direction_id",
+              "account_id", "direction", "id"),
+        Index("ix_followedge_account_direction_uid",
+              "account_id", "direction", "uid"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs | kuaishou
+    account_id: int = Field(index=True)
+    direction: str = Field(default="following", index=True)  # following | fan
+    uid: str = Field(default="", index=True)   # 对方 user_id(快手/小红书) / 抖音 uid
+    sec_uid: str = ""                          # 抖音 sec_uid(用于打开主页/操作)
+    nickname: str = ""
+    avatar: str = ""
+    signature: str = ""
+    is_mutual: bool = False                    # 互关
+    is_following: bool = True                   # 我当前是否已关注 ta(供回关/取关判断)
+    raw_json: str = ""
+    fetched_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DmConversation(SQLModel, table=True):
+    """私信会话(一条会话 = 与某人的对话)。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs | kuaishou
+    account_id: int = Field(index=True)
+    conv_id: str = Field(default="", index=True)   # 平台会话 id(无则用 peer_uid)
+    peer_uid: str = ""
+    peer_sec_uid: str = ""
+    peer_nickname: str = ""
+    peer_avatar: str = ""
+    last_text: str = ""
+    last_time: int = 0                  # 最近一条消息时间(unix 秒)
+    unread_count: int = 0
+    conv_short_id: str = ""             # 抖音 conversation_short_id(发消息用)
+    ticket: str = ""                    # 抖音会话票据(发消息用)
+    raw_json: str = ""
+    fetched_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DmMessage(SQLModel, table=True):
+    """私信单条消息。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs | kuaishou
+    account_id: int = Field(index=True)
+    conv_id: str = Field(default="", index=True)
+    msg_id: str = Field(default="", index=True)
+    direction: str = "in"              # in(收到) | out(发出)
+    msg_type: str = "text"            # text | image | ...
+    text: str = ""
+    create_time: int = 0
+    raw_json: str = ""
+    # Empty means the message has not participated in auto-reply evaluation.
+    # ``baseline`` prevents replying to historical mail when automation starts.
+    auto_reply_state: str = Field(default="", index=True)
+    auto_reply_rule_id: Optional[int] = Field(default=None, index=True)
+    auto_reply_task_id: Optional[int] = Field(default=None, index=True)
+    auto_reply_processed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DmAutoReplyRule(SQLModel, table=True):
+    """Per-account private-message reply rule."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="xhs", index=True)
+    account_id: int = Field(index=True)
+    name: str = "自动回复"
+    enabled: bool = True
+    match_mode: str = "keywords"       # all | keywords
+    keywords: str = "[]"               # JSON array; any term matches
+    exclude_keywords: str = "[]"       # JSON array; any term excludes
+    reply_templates: str = "[]"        # JSON array
+    review_before_send: bool = True
+    min_delay_seconds: int = 75
+    max_delay_seconds: int = 300
+    cooldown_seconds: int = 21600
+    max_message_age_seconds: int = 1800
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DmMonitorState(SQLModel, table=True):
+    """Durable account-wide XHS DM monitoring cursor state.
+
+    The baseline belongs to an account, not to each conversation. Once the
+    account baseline exists, a conversation first seen later is considered a
+    genuinely new conversation and is eligible for rule evaluation.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="xhs", index=True)
+    account_id: int = Field(index=True)
+    baseline_initialized: bool = False
+    baseline_at: Optional[datetime] = None
+    last_poll_at: Optional[datetime] = None
+    last_push_at: Optional[datetime] = None
+    last_error: str = ""
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AccountActionTask(SQLModel, table=True):
+    """本账号写操作队列(取关/回关/发私信)。状态机同 CommentTask,带节流。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="douyin", index=True)  # douyin | xhs | kuaishou
+    account_id: int = Field(index=True)
+    action: str = Field(default="follow", index=True)  # follow | unfollow | send_dm
+    target_uid: str = ""              # 目标 user_id
+    target_sec_uid: str = ""          # 抖音 sec_uid
+    target_nick: str = ""             # 展示用
+    conv_id: str = ""                 # send_dm:会话 id(可空,用 target_uid 新开)
+    content: str = ""                 # send_dm 的文案
+    source_msg_id: str = Field(default="", index=True)  # 自动回复去重键
+    source_rule_id: Optional[int] = Field(default=None, index=True)
+    scheduled_at: Optional[datetime] = None
+    status: str = "pending"        # draft | pending | doing | done | failed | uncertain | canceled
+    result: str = ""
+    error: str = ""
+    blocked_reason: str = ""
+    blocked_signal: str = ""
+    blocked_operation: str = ""
+    blocked_at: Optional[datetime] = None
+    next_allowed_at: Optional[datetime] = Field(default=None, index=True)
+    method: str = ""               # 实际走的通道:browser
+    min_gap_seconds: int = 60      # 同账号两次写操作最小间隔
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    done_at: Optional[datetime] = None
+
+
+class ShareDownloadRecord(SQLModel, table=True):
+    """分享链接下载历史。只读作品信息不会写入，实际下载成功或失败都会记录。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(default="generic", index=True)
+    source_url: str = ""
+    account_id: Optional[int] = Field(default=None, index=True)
+    item_id: str = Field(default="", index=True)
+    title: str = ""
+    author: str = ""
+    media_type: str = ""
+    media_count: int = 0
+    cover_url: str = ""
+    status: str = Field(default="done", index=True)  # done | failed
+    output_dir: str = ""
+    files_json: str = "[]"
+    metadata_json: str = "{}"
+    error: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)

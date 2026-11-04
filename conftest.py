@@ -19,6 +19,11 @@ def isolate_web_outputs(request, tmp_path_factory, monkeypatch):
         module = sys.modules.get(name)
         if module is not None and hasattr(module, "OUTPUTS_DIR"):
             monkeypatch.setattr(module, "OUTPUTS_DIR", outputs)
+            if hasattr(module, 'OperationsManager'):
+                from easel.operations import OperationsManager
+                operations_root = outputs / 'native-runtime-fixture'
+                monkeypatch.setattr(module, 'OperationsManager', lambda _root: OperationsManager(operations_root))
+                monkeypatch.setattr(module.app.state, 'operations_manager', None, raising=False)
 
 
 def pytest_configure(config):

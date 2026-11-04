@@ -14,8 +14,10 @@ import zipfile
 
 import httpx
 
+from easel.beeftv_bridge import client_for_workspace
+from easel.beeftv_runtime import runtime_paths
+
 PROJECT = Path(__file__).resolve().parents[2]
-ROOT = PROJECT / ".scratch/beeftv"
 SPECS = {
     "t2va": {"directory": "ppu-h3-json", "provider": "easel-ppu-h3-json",
              "channel": "easel-ppu-h3-local", "name": "PPU MiniMax H3 · 本机",
@@ -24,6 +26,11 @@ SPECS = {
               "channel": "easel-ppu-h3-ref11-local", "name": "PPU MiniMax H3 Ref11 · 全参考",
               "base": "http://127.0.0.1:8881", "model": "minimax-h3-ref2va-ref11-8step"},
 }
+
+
+def runtime_client():
+    paths = runtime_paths(PROJECT)
+    return client_for_workspace(PROJECT, paths.workspace)
 
 
 def existing_video_key() -> str:
@@ -50,13 +57,13 @@ def main():
     parser.add_argument("--refresh-key", action="store_true", help="explicitly replace the saved channel key from the current environment")
     args = parser.parse_args()
     spec = SPECS[args.mode]
-    credential_file = ROOT / "run/client.json"
-    credentials = json.loads(credential_file.read_text())
+    paths = runtime_paths(PROJECT)
+    selected = runtime_client()
     expected = json.loads((Path(__file__).parent / spec["directory"] / "manifest.json").read_text())
     warnings = []
-    with httpx.Client(base_url=credentials["base_url"], trust_env=False, follow_redirects=False,
-        timeout=30, headers={"X-Beeftv-Client": credentials["client_id"],
-                            "Authorization": "Bearer " + credentials["client_token"]}) as client:
+    with httpx.Client(base_url=selected.base_url, trust_env=False, follow_redirects=False,
+        timeout=30, headers=selected.headers,
+        event_hooks={'request': [lambda _request: selected.before_request() if selected.before_request else None]}) as client:
         def api(method, path, data=None, operation_id=None):
             response = client.request(method, path, json=data,
                 headers={"X-Idempotency-Key": operation_id} if operation_id else {})
@@ -107,7 +114,7 @@ def main():
             saved = api("PUT", "/workspace/model-config", {"config": config, "expectedRevision": state["revision"]},
                         "easel-configure-" + spec["channel"] + "-" + str(state["revision"]))
             state["revision"] = saved["revision"]
-            local_config = ROOT / "data/local-model-config.json"
+            local_config = paths.data / "local-model-config.json"
             if local_config.exists():
                 os.chmod(local_config, 0o600)
         print(json.dumps({"mode": args.mode, "installed": installed, "enabled": enabled,

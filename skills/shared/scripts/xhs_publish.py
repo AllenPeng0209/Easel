@@ -1069,6 +1069,15 @@ def _launch(p, headed: bool, base: str | None, proxy: str | None, *, login_asset
     for attempt in range(2):
         try:
             context = p.chromium.launch_persistent_context(str(profile), **kwargs)
+            try:
+                from easel.account_sessions import apply_session
+                apply_session(context, "xhs")
+            except BaseException:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                raise
             if login_assets:
                 login_transport.install(context, "xiaohongshu")
             return context

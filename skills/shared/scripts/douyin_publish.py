@@ -160,7 +160,17 @@ def _launch(p, headed: bool, base: str | None, proxy: str | None):
     kwargs = dict(headless=not headed, locale="zh-CN", args=args)
     if proxy:
         kwargs["proxy"] = {"server": proxy}
-    return p.chromium.launch_persistent_context(str(profile), **kwargs)
+    context = p.chromium.launch_persistent_context(str(profile), **kwargs)
+    try:
+        from easel.account_sessions import apply_session
+        apply_session(context, "douyin")
+    except BaseException:
+        try:
+            context.close()
+        except Exception:
+            pass
+        raise
+    return context
 
 
 def _wait_ready(page, timeout_ms: int = 15000) -> None:

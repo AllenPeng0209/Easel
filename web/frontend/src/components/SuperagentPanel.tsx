@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import ToolValueInspector from './ToolValueInspector';
+import { ACTIVE_PROJECT_ID } from '../lib/projectScope';
 import './SuperagentPanel.css';
 
 export type SuperagentTaskStatus = 'queued' | 'running' | 'waiting_input' | 'stopping' | 'stopped' | 'completed' | 'failed' | 'unconfirmed';
@@ -140,12 +141,14 @@ function PublicationIntake({ projects, onQueue, onQueued }: {
   onQueue: NonNullable<SuperagentPanelProps['queuePublication']>;
   onQueued: (task: SuperagentTask) => void;
 }) {
-  const [projectId, setProjectId] = useState('');
+  const projectId = ACTIVE_PROJECT_ID;
   const [approvalId, setApprovalId] = useState('');
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<{ error: boolean; text: string }>();
   const pendingRef = useRef(false);
   const mounted = useRef(false);
+  const permission = useRef(false);
+  permission.current = projects.some(project => project.id === projectId && project.canOperate !== false);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -154,7 +157,7 @@ function PublicationIntake({ projects, onQueue, onQueued }: {
     projects.some(project => project.id === projectId && project.canOperate !== false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!eligible || pendingRef.current) return;
+    if (!eligible || !permission.current || pendingRef.current) return;
     pendingRef.current = true;
     setPending(true);
     setNotice(undefined);
@@ -177,11 +180,7 @@ function PublicationIntake({ projects, onQueue, onQueued }: {
     <form data-superagent-queue-publication aria-label="将已批准的发布加入任务" onSubmit={event => void submit(event)}>
       <p>草稿审核与正式发布分别记录。此入口使用已确认的发布批准，加入后会执行该版本的发布任务。</p>
       <div className="superagent-create-fields">
-        <label>发布所属 IP<select className="field" value={projectId} disabled={pending} required
-          onChange={event => setProjectId(event.target.value)}>
-          <option value="">选择批准记录所属 IP</option>
-          {projects.filter(project => project.canOperate !== false).map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-        </select></label>
+        <p>当前 IP：{projects.find(project => project.id === projectId)?.name || '当前工作空间'}</p>
         <label>已批准发布编号<input className="field" value={approvalId} disabled={pending} maxLength={32}
           pattern="[a-f0-9]{32}" required spellCheck={false} onChange={event => setApprovalId(event.target.value)} /></label>
       </div>
@@ -196,7 +195,7 @@ export default function SuperagentPanel({ embedded = false, projects, loadTasks,
   const [tasks, setTasks] = useState<SuperagentTask[]>();
   const [listError, setListError] = useState('');
   const [refresh, setRefresh] = useState(0);
-  const [projectId, setProjectId] = useState('');
+  const projectId = ACTIVE_PROJECT_ID;
   const [title, setTitle] = useState('');
   const [brief, setBrief] = useState('');
   const [creating, setCreating] = useState(false);
@@ -207,6 +206,8 @@ export default function SuperagentPanel({ embedded = false, projects, loadTasks,
   const mutationEpoch = useRef(0);
   const createPending = useRef(false);
   const taskRequests = useRef(new Set<string>());
+  const permission = useRef(false);
+  permission.current = projects.some(project => project.id === projectId && project.canOperate !== false);
 
   useEffect(() => {
     alive.current = true;
@@ -225,7 +226,7 @@ export default function SuperagentPanel({ embedded = false, projects, loadTasks,
       try {
         const result = await loadTasks(request.signal);
         if (!request.signal.aborted && epoch === mutationEpoch.current) {
-          setTasks(result);
+          setTasks(result.filter(task => task.projectId === ACTIVE_PROJECT_ID));
           setListError('');
         }
       } catch {
@@ -258,7 +259,7 @@ export default function SuperagentPanel({ embedded = false, projects, loadTasks,
   const canCreate = projects.some(project => project.id === projectId && project.canOperate !== false) && !!title.trim() && !!brief.trim();
   const create = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canCreate || createPending.current) return;
+    if (!canCreate || !permission.current || createPending.current) return;
     createPending.current = true;
     setCreating(true);
     setCreateError('');
@@ -278,6 +279,7 @@ export default function SuperagentPanel({ embedded = false, projects, loadTasks,
   };
 
   const execute = async (task: SuperagentTask, operation: Operation, run: () => Promise<SuperagentTask>) => {
+    if (task.projectId !== ACTIVE_PROJECT_ID || !permission.current) return;
     const key = JSON.stringify([task.projectId, task.id]);
     if (taskRequests.current.has(key)) return;
     taskRequests.current.add(key);
@@ -302,6 +304,7 @@ export default function SuperagentPanel({ embedded = false, projects, loadTasks,
 
   const byProject = new Map<string, SuperagentTask[]>();
   for (const task of tasks ?? []) {
+    if (task.projectId !== ACTIVE_PROJECT_ID) continue;
     const group = byProject.get(task.projectId) ?? [];
     group.push(task);
     byProject.set(task.projectId, group);
@@ -311,16 +314,13 @@ export default function SuperagentPanel({ embedded = false, projects, loadTasks,
   const Container = embedded ? 'section' : 'main';
   return <Container className={`superagent-panel${embedded ? ' superagent-panel-embedded' : ''}`} data-superagent-panel aria-label="Super Agent 任务">
     <header className="superagent-header">
-      <div>{embedded ? <h2>Super Agent · 后台任务</h2> : <><p>跨 IP 任务管理</p><h1>Super Agent</h1></>}</div>
+      <div>{embedded ? <h2>Super Agent · 后台任务</h2> : <><p>当前 IP 的后台任务</p><h1>Super Agent</h1></>}</div>
       <button type="button" className="btn btn-sm" data-superagent-refresh onClick={() => setRefresh(value => value + 1)}>刷新任务</button>
     </header>
     {!embedded && <form className="superagent-create" data-superagent-create aria-label="新建自主任务" onSubmit={event => void create(event)}>
       <h2>新建自主任务</h2>
       <div className="superagent-create-fields">
-        <label>所属 IP<select className="field" value={projectId} disabled={creating} onChange={event => setProjectId(event.target.value)} required>
-          <option value="">选择要执行的 IP</option>
-          {projects.filter(project => project.canOperate !== false).map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-        </select></label>
+        <p>当前 IP：{projects.find(project => project.id === projectId)?.name || '当前工作空间'}</p>
         <label>任务名称<input className="field" value={title} maxLength={160} disabled={creating} required
           onChange={event => setTitle(event.target.value)} /></label>
       </div>

@@ -1193,6 +1193,12 @@ else
     fatal "未找到 Playwright 模块；Python 依赖安装不完整（重试：bash setup.sh）"
 fi
 
+if [ "$SETUP_MODE" = check ]; then
+    emit_action run_step '运营浏览器' 'python3 -m patchright install chromium'
+else
+    run_step '运营浏览器' python3 -m patchright install chromium || warn_collect '运营浏览器' '下载失败，可重试安装' 'python3 -m patchright install chromium'
+fi
+
 write_install_report
 print_summary
 if [ "$SKIP_OPENCLAW" = true ]; then

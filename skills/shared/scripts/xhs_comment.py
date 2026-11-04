@@ -283,7 +283,17 @@ def _launch(p, headed: bool, base: str | None, proxy: str | None):
     else:
         # 显式直连：Chromium 级屏蔽系统/环境代理（开 VPN 也能用）——同抖音链兜底
         args.append("--no-proxy-server")
-    return p.chromium.launch_persistent_context(str(profile), **kwargs)
+    context = p.chromium.launch_persistent_context(str(profile), **kwargs)
+    try:
+        from easel.account_sessions import apply_session
+        apply_session(context, "xhs")
+    except BaseException:
+        try:
+            context.close()
+        except Exception:
+            pass
+        raise
+    return context
 
 
 def _open_note(page, note_id: str, token: str):

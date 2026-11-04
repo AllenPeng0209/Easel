@@ -3,6 +3,7 @@ import { deliverablePreview, deliverablePreviewCapability, normalizeDeliverable,
 import ArtifactGallery from './ArtifactGallery';
 import SnapshotArchivePreview from './SnapshotArchivePreview';
 import DraftSnapshotPreview from './DraftSnapshotPreview';
+import OfficeSnapshotPreview from './OfficeSnapshotPreview';
 import DeliverableVersionNotice from './DeliverableVersionNotice';
 
 /** Resolve previews from the same authorized artifact ID as the delivery card. */
@@ -17,6 +18,7 @@ export default function DeliverablePreviewBody({ file: input }: { file: ChatDeli
   const capability = deliverablePreviewCapability(file);
   const viewer = capability === 'archive' ? <SnapshotArchivePreview artifact={file} />
     : capability === 'media' && media.length ? <ArtifactGallery artifacts={media} />
+    : capability === 'office' ? <OfficeSnapshotPreview key={file.artifactId} file={file} />
     : capability === 'text' ? <DraftSnapshotPreview key={file.artifactId} file={file} initialOpen />
     : <div className="deliverable-preview__fallback">
     <p>此格式暂不支持预览，可下载查看。</p>

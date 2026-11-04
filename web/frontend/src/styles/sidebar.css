@@ -15,9 +15,6 @@
 .sidebar-new-chat { display: inline-flex; justify-content: center; align-items: center; width: 30px; height: 32px; margin-right: 7px; flex-shrink: 0; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; transition: color var(--t-fast), background var(--t-fast); }
 .sidebar-new-chat:hover:not(:disabled) { color: var(--accent-end); background: var(--surface-hover); }
 .sidebar-new-chat:disabled { opacity: .4; cursor: default; }
-.sidebar-chat-context { margin: 12px 4px 3px; }
-.sidebar-chat-context label { display: block; margin: 0 0 5px 2px; color: var(--text-tertiary); font-size: 10px; }
-.sidebar-chat-context .persona-select { padding: 7px 28px 7px 10px; font-size: 12px; background-color: transparent; }
 .sidebar-history-toggle { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 6px; padding: 7px 8px; border: 0; border-radius: 6px; background: none; color: var(--text-tertiary); font-size: 11px; cursor: pointer; text-align: left; }
 .sidebar-history-toggle:hover, .sidebar-archive-toggle:hover { background: var(--surface-hover); color: var(--text-secondary); }
 .sidebar-history-chevron { display: inline-flex; transition: transform var(--t-fast); }
@@ -41,5 +38,5 @@
 .sidebar-footer .sidebar-status { padding: 10px 14px; font-size: 10px; }
 .sidebar-footer .status-dot { width: 6px; height: 6px; box-shadow: none; }
 .sidebar-navigation :is(button, select):focus-visible { outline: 2px solid var(--accent-start); outline-offset: 2px; }
-@media (max-height: 780px) { .sidebar-navigation { padding-top: 10px; padding-bottom: 12px; } .sidebar-ai-entry { min-height: 53px; } .sidebar-ai-link { padding-top: 9px; padding-bottom: 9px; } .sidebar-nav-group + .sidebar-nav-group { margin-top: 9px; } .sidebar-chat-context { margin-top: 9px; } }
+@media (max-height: 780px) { .sidebar-navigation { padding-top: 10px; padding-bottom: 12px; } .sidebar-ai-entry { min-height: 53px; } .sidebar-ai-link { padding-top: 9px; padding-bottom: 9px; } .sidebar-nav-group + .sidebar-nav-group { margin-top: 9px; } }
 @media (prefers-reduced-motion: reduce) { .sidebar-history-chevron { transition: none; } }

@@ -68,6 +68,7 @@ from easel.harnesses.models import codex_model_profile, valid_model_id
 from easel.harnesses.diagnostics import ChatFailure, chat_failure, classify_provider_failure, normalize_chat_failure
 from easel.harnesses.codex_subagents import read_subagent
 from easel.chat_artifacts import ArtifactError, ChatArtifactStore, is_private_output_part
+from easel.office_preview import OfficePreviewError, convert_office_preview, prepare_office_preview
 from easel.artifact_archives import ArchiveSnapshotReader
 from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
@@ -458,6 +459,7 @@ def _project_agent_command(command: list[str], env: dict) -> tuple[list[str], di
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 REACT_DIR = Path(__file__).resolve().parent / "frontend" / "dist"
+REACT_ASSET_ARCHIVE = Path(__file__).resolve().parents[1] / '.scratch' / 'frontend-assets'
 OPENCLAW_PROFILE = "easel"
 # 对话传输层：http＝直连常驻 gateway 的 OpenAI 兼容端点，agent 在 gateway 进程里直接跑，
 # 省掉每轮 spawn `openclaw agent` 瘦客户端的冷启动（本机实测同一句话：CLI 7.1-7.6s/轮，
@@ -582,6 +584,7 @@ from model_registry import model_group
 from publication_receipt import PublicationReceiptFiles, PublicationReceiptError as ReceiptFileError
 from easel.publication_receipts import normalize_receipt, PublicationReceiptError as ReceiptEvidenceError
 from easel.publication_process import run_publication_process, PublicationProcessStartError
+from social_login import PLATFORMS as SOCIAL_LOGIN_PLATFORMS
 
 BROWSER_PROFILES = Path.home() / ".easel-browser-profiles"
 LOGIN_DIR = OUTPUTS_DIR / "_login"
@@ -597,9 +600,11 @@ LOGIN_PROCESSES: dict[str, subprocess.Popen] = ProjectMap()
 # whoami 真校验（起 headless 浏览器，数秒）的进程内缓存：避免账号页 + 工作台重复起浏览器。
 WHOAMI_TTL = 600  # 秒
 _WHOAMI_CACHE: dict[str, tuple[float, dict]] = ProjectMap()
+_WHOAMI_SESSION_GENERATIONS: dict[str, int] = ProjectMap()
 _WHOAMI_LOCK = threading.Lock()
 _WHOAMI_TASKS: dict[str, asyncio.Task] = ProjectMap()
 _LOGIN_START_LOCKS: dict[str, asyncio.Lock] = ProjectMap()
+_UNIFIED_LOGIN_TASKS: dict[str, str] = ProjectMap()
 
 LOGIN_RUNNERS: dict[str, dict] = {
     "xiaohongshu": {"name": "小红书", "backend": "xhs", "profile": "XiaohongshuProfile"},
@@ -610,6 +615,9 @@ LOGIN_RUNNERS: dict[str, dict] = {
     "douyin": {"name": "抖音", "backend": "douyin", "profile": "DouyinProfile"},
     # 微信公众号：扫码登录后台会话（发布+数据都走它），backend=='wechat-oa' 在各处单独分支处理。
     "wechat-oa": {"name": "微信公众号", "backend": "wechat-oa"},
+    **{platform: {"name": cfg["name"], "profile": cfg["profile"], "backend": "social-browser",
+                  "loginMode": "browser", "note": "在独立浏览器中登录，支持平台二次验证"}
+       for platform, cfg in SOCIAL_LOGIN_PLATFORMS.items()},
 }
 
 # ---- 微信公众号（wechat-oa）凭证式接入 ----
@@ -824,10 +832,15 @@ async def _lifespan(_app: FastAPI):
     _app.state.superagent_worker = superagent_worker
     superagent_worker.start()
     try:
+        operations = await _operations_manager()
+        await operations.resume()
         yield
     finally:
         await superagent_worker.close()
         await interaction_worker.stop()
+        operations = getattr(_app.state, 'operations_manager', None)
+        if operations is not None:
+            await operations.close()
     tasks = list(_HARNESS_TASKS)
     for task in tasks:
         task.cancel()
@@ -843,6 +856,24 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Easel", docs_url=None, redoc_url=None, lifespan=_lifespan)
+
+from easel.operations import OperationsManager
+from easel.operations_web import OperationsMount
+
+async def _operations_manager():
+    existing = getattr(app.state, 'operations_manager', None)
+    if existing is None or existing.root != PROJECT_ROOT.resolve():
+        if existing is not None:
+            await existing.close()
+        existing = OperationsManager(PROJECT_ROOT)
+        app.state.operations_manager = existing
+    return existing
+
+app.mount('/api/operations', OperationsMount(
+    _operations_manager,
+    before_account_change=lambda platform: _require_publication_profile_idle(
+        'xiaohongshu' if platform == 'xhs' else platform)), name='operations')
+
 app.include_router(project_router(lambda: PROJECT_ROOT))
 app.add_middleware(ProjectScopeMiddleware, get_root=lambda: PROJECT_ROOT)
 from web.access_routes import create_router as _access_router
@@ -891,9 +922,13 @@ from easel.interaction_channels import (channel_capabilities as _interaction_cap
                                        sync_channel as _interaction_sync,
                                        send_reply as _interaction_send)
 
+async def _native_interaction_sync(store, client_id, channel_id):
+    from easel.operations_inbox import sync_native_inbox
+    return await sync_native_inbox(await _operations_manager(), store, client_id, channel_id)
+
 app.include_router(_interaction_router(lambda: _outputs_dir(), send_adapter=_interaction_send,
                                       sync_adapter=_interaction_sync,
-                                      capabilities=_interaction_capabilities))
+                                      capabilities=_interaction_capabilities, native_sync=_native_interaction_sync))
 
 
 def _interaction_tick():
@@ -1109,9 +1144,12 @@ def clean_agent_output(raw: str) -> str:
 def _proxy_env() -> dict[str, str]:
     """返回带外网代理的环境变量（保护内网直连）。"""
     env = os.environ.copy()
-    native = read_settings(ENV_FILE).get('EASEL_CODEX_EXECUTABLE', '').strip()
+    settings = read_settings(ENV_FILE)
+    native = settings.get('EASEL_CODEX_EXECUTABLE', '').strip()
     if native:
         env['EASEL_CODEX_EXECUTABLE'] = native
+    if settings.get('EASEL_SOCIAL_PROXY', '').strip():
+        env['EASEL_SOCIAL_PROXY'] = settings['EASEL_SOCIAL_PROXY'].strip()
     env['EASEL_ROOT'] = str(_workspace_root())
     env['EASEL_BROWSER_PROFILES'] = str(_browser_profiles())
     env['EASEL_WECHAT_CONFIG'] = str(_wechat_config_yaml())
@@ -1831,13 +1869,19 @@ async def onepage():
 
 @app.get("/assets/{path:path}")
 async def react_assets(path: str):
-    base = (REACT_DIR / "assets").resolve()
-    fp = (REACT_DIR / "assets" / path).resolve()
-    if base != fp and base not in fp.parents:
+    relative = Path(path)
+    if relative.is_absolute() or '..' in relative.parts or '\\' in path or '\x00' in path:
         raise HTTPException(403, "非法路径")
-    if not fp.is_file():
-        raise HTTPException(404)
-    return FileResponse(fp, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    # Open tabs retain their original import graph across releases. The build
+    # archives generated assets independently of the active dist directory.
+    for directory in (REACT_DIR / 'assets', REACT_ASSET_ARCHIVE):
+        base = directory.resolve()
+        fp = (directory / relative).resolve()
+        if base != fp and base not in fp.parents:
+            raise HTTPException(403, "非法路径")
+        if fp.is_file():
+            return FileResponse(fp, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    raise HTTPException(404)
 
 
 @app.get("/static/{path:path}")
@@ -4804,6 +4848,40 @@ async def api_chat_artifact_versions(artifact_id: str):
     return {'versions': versions}
 
 
+@app.get('/api/chat/artifacts/{artifact_id}/office-preview')
+async def api_chat_artifact_office_preview(artifact_id: str, request: Request):
+    _require_operation()
+    store = _chat_artifact_store()
+    metadata = _artifact_metadata(store, artifact_id)
+    prepared = None
+    try:
+        prepared = await _artifact_acquire(prepare_office_preview, store, metadata,
+                                           _attachment_scope(metadata['sessionId']))
+        _require_operation()
+        pdf, missing_fonts = await convert_office_preview(prepared, disconnected=request.is_disconnected)
+        _require_operation()
+    except OfficePreviewError as error:
+        raise HTTPException(error.status, {"code": error.code, "message": str(error)}) from None
+    finally:
+        if prepared is not None:
+            prepared.close()
+    names = []
+    for name in missing_fonts or []:
+        candidate = [*names, name]
+        if len(urllib.parse.quote(json.dumps(candidate, ensure_ascii=False), safe="")) > 4096:
+            break
+        names = candidate
+    return Response(pdf, media_type="application/pdf", headers={
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": 'inline; filename="preview.pdf"',
+        "X-Easel-Office-Source-Sha256": metadata['sha256'],
+        "X-Easel-Office-Font-Status": "unknown" if missing_fonts is None else "checked",
+        "X-Easel-Office-Font-Source": "unknown" if missing_fonts is None else "declared_inventory",
+        "X-Easel-Office-Missing-Fonts": urllib.parse.quote(json.dumps(names, ensure_ascii=False), safe=""),
+        "X-Easel-Office-Missing-Font-Count": str(len(missing_fonts or [])),
+    })
+
+
 @app.get('/api/chat/artifacts/{artifact_id}/compare')
 async def api_chat_artifact_compare(artifact_id: str, request: Request):
     _require_operation()
@@ -6956,6 +7034,82 @@ def _write_login_marker(platform: str, state: str, message: str = '') -> None:
             pass
 
 
+def _shared_content_account_state(platform: str) -> bool | None:
+    """Return the current owned content-session result, or legacy when unmigrated."""
+    from easel.account_sessions import load_session, session_generation
+
+    canonical = 'xhs' if platform == 'xiaohongshu' else platform
+    workspace = _workspace_root()
+    try:
+        record = load_session(workspace, canonical)
+        if record is None:
+            return False if session_generation(workspace, canonical) else None
+        capabilities = record.get('capabilities') or {}
+        return any(capabilities.get(name) in (True, 'verified') for name in ('creator', 'publish'))
+    except (OSError, ValueError):
+        # A broken/revoked shared session must not revive an unrelated old marker.
+        return False
+
+
+def _shared_account_generation(platform: str) -> int:
+    if platform not in {'douyin', 'xiaohongshu'}:
+        return 0
+    from easel.account_sessions import session_generation
+
+    try:
+        return session_generation(_workspace_root(), 'xhs' if platform == 'xiaohongshu' else platform)
+    except (OSError, ValueError):
+        return -1
+
+
+def _shared_identity_matches(platform: str, expected: dict, actual: dict) -> bool:
+    """Compare only authority-issued IDs in the same platform namespace."""
+    if not isinstance(expected, dict) or actual.get('accountIdentityStatus') != 'verified':
+        return False
+    identifier, kind = actual.get('accountId'), actual.get('accountIdKind')
+    if not isinstance(identifier, str) or not identifier.strip() or not isinstance(kind, str):
+        return False
+
+    def namespace(value):
+        if not isinstance(value, str):
+            return ''
+        return 'user_id' if platform == 'xiaohongshu' and value in {'userId', 'user_id'} else value
+
+    def value(item):
+        if isinstance(item, str):
+            return item.strip()
+        return str(item) if isinstance(item, int) and not isinstance(item, bool) else ''
+
+    candidates = []
+    if namespace(expected.get('accountIdKind')) == namespace(kind):
+        candidates.append(value(expected.get('accountId')))
+    for name in ({'userId', 'user_id'} if platform == 'xiaohongshu' and namespace(kind) == 'user_id' else {kind}):
+        if name in expected:
+            candidates.append(value(expected[name]))
+    return bool(candidates) and all(candidate and candidate == identifier.strip() for candidate in candidates)
+
+
+def _unified_login_response(info: dict) -> dict:
+    """Adapt the shared connection task to the existing login-modal contract."""
+    status = info.get('status', 'waiting')
+    state = {'confirmed': 'success', 'error': 'error', 'expired': 'expired'}.get(status, 'window_login')
+    capabilities = {name: value for name, value in (info.get('capabilities') or {}).items()
+                    if name in {'creator', 'publish', 'analytics', 'comments', 'dm', 'can_send'}
+                    and value in (True, False, 'verified', 'needs_verification', 'unavailable', 'unknown')}
+    if state == 'success':
+        incomplete = info.get('completion') == 'partial' or any(
+            capabilities.get(name) not in (True, 'verified')
+            for name in ('creator', 'publish', 'analytics', 'comments', 'dm'))
+        message = ('账号已连接；部分功能仍需补充验证。' if incomplete
+                   else '账号已连接，内容与互动登录已核验。')
+    else:
+        message = (info.get('hint') or info.get('message') or info.get('error')
+                   or ('本次登录未完成，请重新连接账号。' if state in {'error', 'expired'}
+                       else '请在同一个浏览器窗口完成登录及平台验证。'))
+    return {'mode': 'browser', 'state': state, 'message': message,
+            'qr': '', 'qrTs': 0, 'capabilities': capabilities}
+
+
 def _account_logged_in(platform: str, cfg: dict) -> bool:
     """尽力判断某平台是否已登录。
     浏览器平台的登录态只有启动浏览器才真能知道（profile 里总有 Cookies 文件，存在≠已登录，
@@ -6964,6 +7118,10 @@ def _account_logged_in(platform: str, cfg: dict) -> bool:
     backend = cfg['backend']
     if backend == 'unsupported':
         return False
+    if platform in {'douyin', 'xiaohongshu'}:
+        shared = _shared_content_account_state(platform)
+        if shared is not None:
+            return shared
     if backend == 'biliup':
         return (_cookie_path()).is_file()
     if backend == 'wechat-oa':
@@ -7019,6 +7177,7 @@ async def api_accounts():
         {'platform': pf, 'name': cfg['name'], 'backend': cfg['backend'],
          'supported': cfg['backend'] != 'unsupported',
          'loggedIn': _account_logged_in(pf, cfg),
+         'loginMode': cfg.get('loginMode', 'qr'),
          'note': cfg.get('note', '')}
         for pf, cfg in LOGIN_RUNNERS.items()
     ]
@@ -7040,16 +7199,34 @@ async def _start_login(platform: str, restart: bool = False):
     if not cfg:
         raise HTTPException(404, '未知平台')
     backend = cfg['backend']
+    mode = cfg.get('loginMode', 'qr')
     if backend == 'unsupported':
         raise HTTPException(400, f"{cfg['name']} 暂不可用：{cfg.get('note', '')}")
     if backend == 'wechat-oa':
         # 公众号不走扫码：前端应改用凭证表单提交到 /api/accounts/{platform}/credentials。
         return {'mode': 'credentials', 'configured': _wechat_has_credentials(),
                 'message': '微信公众号请填写 AppID / AppSecret'}
+    if platform in {'douyin', 'xiaohongshu'}:
+        previous = LOGIN_PROCESSES.pop(platform, None)
+        if previous is not None and previous.poll() is None:
+            previous.terminate()
+            try:
+                await asyncio.to_thread(previous.wait, timeout=8)
+            except subprocess.TimeoutExpired:
+                raise HTTPException(409, '上一次登录仍在退出，请稍后重试') from None
+        runtime = await (await _operations_manager()).get(project_id())
+        try:
+            info = await runtime.connections.start('xhs' if platform == 'xiaohongshu' else platform)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from None
+        _UNIFIED_LOGIN_TASKS[platform] = info['task_id']
+        with _WHOAMI_LOCK:
+            _WHOAMI_CACHE.pop(platform, None)
+        return _unified_login_response(info)
     existing = LOGIN_PROCESSES.get(platform)
     if existing is not None and existing.poll() is None:
         if not restart:
-            return {'mode': 'qr', **_login_status(platform)}
+            return {'mode': mode, **_login_status(platform)}
         try:
             existing.terminate()
             await asyncio.to_thread(existing.wait, timeout=8)
@@ -7064,7 +7241,10 @@ async def _start_login(platform: str, restart: bool = False):
             f.unlink()
         except OSError:
             pass
-    if backend == 'xhs':
+    if backend == 'social-browser':
+        cmd = [sys.executable, str(SHARED_SCRIPTS / 'social_login.py'), 'login',
+               '--platform', platform, '--status-file', str(status), '--timeout', str(LOGIN_TIMEOUT)]
+    elif backend == 'xhs':
         cmd = [sys.executable, str(SHARED_SCRIPTS / 'xhs_publish.py'), 'login', '--no-proxy',
                '--qr-out', str(qr), '--status-file', str(status), '--timeout', str(LOGIN_TIMEOUT)]
     elif backend == 'biliup':
@@ -7102,14 +7282,30 @@ async def _start_login(platform: str, restart: bool = False):
     LOGIN_PROCESSES[platform] = proc
     s = _login_status(platform)
     if s['state'] == 'unknown':
-        s.update(state='starting', message='正在启动浏览器并准备二维码…')
-    return {'mode': 'qr', **s}
+        s.update(state='starting', message='正在打开平台登录浏览器…' if mode == 'browser'
+                 else '正在启动浏览器并准备二维码…')
+    return {'mode': mode, **s}
 
 
 @app.get("/api/login/{platform}/status")
 async def api_login_status(platform: str):
     if platform not in LOGIN_RUNNERS:
         raise HTTPException(404, '未知平台')
+    if platform in {'douyin', 'xiaohongshu'} and platform in _UNIFIED_LOGIN_TASKS:
+        runtime = await (await _operations_manager()).get(project_id(), start=False)
+        try:
+            info = runtime.connections.poll(_UNIFIED_LOGIN_TASKS[platform])
+        except (KeyError, ValueError):
+            return _unified_login_response({'status': 'error', 'hint': '登录流程已结束，请重新连接账号。'})
+        except HTTPException as error:
+            if error.status_code != 404:
+                raise
+            return _unified_login_response({'status': 'error', 'hint': '登录流程已结束，请重新连接账号。'})
+        response = _unified_login_response(info)
+        if response['state'] == 'success':
+            with _WHOAMI_LOCK:
+                _WHOAMI_CACHE.pop(platform, None)
+        return response
     s = _login_status(platform)
     if s.get('state') == 'success':
         # 登录刚成功 → 清掉登录前缓存的「未登录」whoami 结果，令下次 whoami 重新真校验；
@@ -7117,7 +7313,7 @@ async def api_login_status(platform: str):
         # 只清缓存、不改任何登录/检测逻辑。
         with _WHOAMI_LOCK:
             _WHOAMI_CACHE.pop(platform, None)
-    return {'mode': 'qr', **s}
+    return {'mode': LOGIN_RUNNERS[platform].get('loginMode', 'qr'), **s}
 
 
 class SmsCodeRequest(BaseModel):
@@ -7295,6 +7491,20 @@ async def _check_account_whoami(platform: str, force: bool = False, *, strict: b
     backend = cfg['backend']
     if backend == 'unsupported':
         return {'loggedIn': False, 'name': '', 'avatar': ''}
+    initial_session_generation = _shared_account_generation(platform)
+    shared_record = None
+    if platform in {'douyin', 'xiaohongshu'}:
+        from easel.account_sessions import load_session
+
+        try:
+            shared_record = load_session(_workspace_root(), 'xhs' if platform == 'xiaohongshu' else platform)
+        except (OSError, ValueError):
+            raise HTTPException(409 if strict else 502, '统一账号会话需要重新验证，请到账号管理补充验证。') from None
+    managed_session = shared_record is not None or initial_session_generation != 0
+    if strict and managed_session:
+        capabilities = (shared_record or {}).get('capabilities') or {}
+        if not shared_record or any(capabilities.get(name) not in (True, 'verified') for name in ('creator', 'publish')):
+            raise HTTPException(409, '内容发布登录尚未核实，请到账号管理补充验证。')
     if backend == 'wechat-oa':
         if _mp_login_status()['state'] != 'success':
             acc = _wechat_web_account()
@@ -7315,7 +7525,11 @@ async def _check_account_whoami(platform: str, force: bool = False, *, strict: b
         else:
             with _WHOAMI_LOCK:
                 previous = _WHOAMI_CACHE.get(platform)
-            return previous[1] if previous else {
+            if (previous and (not managed_session or shared_record and
+                    _shared_identity_matches(platform, shared_record.get('identity'), previous[1]) and
+                    _WHOAMI_SESSION_GENERATIONS.get(platform, 0) == initial_session_generation)):
+                return previous[1]
+            return {
                 'loggedIn': _account_logged_in(platform, cfg), 'name': '', 'avatar': '',
             }
     marker_path = _login_dir() / f'{process_key}.json'
@@ -7331,9 +7545,15 @@ async def _check_account_whoami(platform: str, force: bool = False, *, strict: b
     cache_ttl = (min(WHOAMI_TTL, 60) if hit and hit[1].get('loggedIn')
                  and (not hit[1].get('name') or not hit[1].get('avatar')) else WHOAMI_TTL)
     if (not force and hit and (time.time() - hit[0]) < cache_ttl
+            and _WHOAMI_SESSION_GENERATIONS.get(platform, 0) == initial_session_generation
+            and _shared_account_generation(platform) == initial_session_generation
+            and (not managed_session or not hit[1].get('loggedIn') or shared_record and
+                 _shared_identity_matches(platform, shared_record.get('identity'), hit[1]))
             and hit[1]['loggedIn'] == _account_logged_in(platform, cfg)):
         return hit[1]
-    if backend == 'biliup':
+    if backend == 'social-browser':
+        cmd = [sys.executable, str(SHARED_SCRIPTS / 'social_login.py'), 'whoami', '--platform', platform]
+    elif backend == 'biliup':
         cmd = [sys.executable, str(SHARED_SCRIPTS / 'bili_login.py'), 'whoami',
                '--cookie', str(_cookie_path())]
     elif backend == 'xhs':
@@ -7373,18 +7593,24 @@ async def _check_account_whoami(platform: str, force: bool = False, *, strict: b
                 continue
     current_process = LOGIN_PROCESSES.get(process_key)
     if (marker_version() != initial_marker
+            or _shared_account_generation(platform) != initial_session_generation
             or (current_process is not None and current_process.poll() is None)):
         if strict:
             raise HTTPException(409, '账号在校验期间发生变化，请重新核验')
         return {'loggedIn': _account_logged_in(platform, cfg), 'name': '', 'avatar': ''}
     if not confident:
         raise HTTPException(502, '未能确认当前账号身份，请稍后重试校验；原登录状态和账号资料保持不变')
+    if managed_session and data['loggedIn'] and (not shared_record or not _shared_identity_matches(
+            platform, shared_record.get('identity'), data)):
+        raise HTTPException(409 if strict else 502,
+                            '创作者账号与当前统一登录的账号身份未能匹配，请到账号管理补充验证。')
     verified_logged_in = data['loggedIn']
     if backend == 'wechat-oa' and not verified_logged_in and _wechat_has_credentials():
         account = _wechat_web_account()
         data = {'loggedIn': True, 'name': account.get('name', '') or '微信公众号', 'avatar': ''}
     with _WHOAMI_LOCK:
         _WHOAMI_CACHE[platform] = (time.time(), data)
+        _WHOAMI_SESSION_GENERATIONS[platform] = initial_session_generation
     # 回写标记：确认已登录 → 快速路径（/api/accounts、/api/analytics/platforms）此后也正确；
     # biliup 走 cookies.json 判定，不用标记文件。
     if backend != 'biliup':
@@ -7405,6 +7631,10 @@ async def api_logout(platform: str):
     if not cfg:
         raise HTTPException(404, '未知平台')
     _require_publication_profile_idle(platform)
+    if platform in {'douyin', 'xiaohongshu'}:
+        runtime = await (await _operations_manager()).get(project_id(), start=False)
+        await runtime.connections.revoke('xhs' if platform == 'xiaohongshu' else platform)
+        _UNIFIED_LOGIN_TASKS.pop(platform, None)
     deleted = []
     if cfg['backend'] == 'wechat-oa':
         # 1) 清 AppID 凭证（旧配置兜底）
@@ -7799,6 +8029,8 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
     backend = cfg['backend']
     if backend == 'unsupported':
         raise HTTPException(400, f"{cfg['name']} 暂不支持一键发布")
+    if backend == 'social-browser':
+        raise HTTPException(400, f"{cfg['name']} 当前仅支持账号登录，尚未接入一键发布")
     profile = (req.persona or '').strip()
     if profile and (not valid_persona_name(profile) or not profile_exists(profile)):
         raise HTTPException(400, '选择的画像不存在或名称非法')

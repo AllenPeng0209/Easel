@@ -4,11 +4,12 @@ from __future__ import annotations
 from pathlib import Path
 import re
 import sqlite3
+import asyncio
 from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from easel.interaction_center import InteractionError, InteractionStore
 from easel.projects import project_id
@@ -37,7 +38,7 @@ def safe_url(value):
 
 
 def safe_config(value):
-    if set(value) - {'env_prefix', 'account_id', 'video_id', 'profile_name'}:
+    if set(value) - {'env_prefix', 'account_id', 'video_id', 'profile_name', 'conversation_id'}:
         raise ValueError('通道设置只接受环境变量引用和账号元数据，不接受密钥或文件路径')
     if any(len(v) > 256 or any(ord(c) < 32 for c in v) for v in value.values()):
         raise ValueError('通道设置格式无效')
@@ -64,13 +65,27 @@ class NewChannel(Scoped):
     name: str = Field(min_length=1, max_length=120)
     platform: Literal['xiaohongshu', 'douyin']
     kind: Literal['comment', 'dm']
-    delivery_mode: Literal['simulation', 'manual', 'official'] = 'manual'
+    delivery_mode: Literal['simulation', 'manual', 'official', 'creatorhub', 'native'] = 'manual'
     account_label: str = Field(default='', max_length=120)
     source_url: str = Field(default='', max_length=4096)
     enabled: bool = Field(default=True, strict=True)
     config: dict[str, str] = Field(default_factory=dict, max_length=4)
     _url = field_validator('source_url')(safe_url)
     _config = field_validator('config')(safe_config)
+
+    @model_validator(mode='after')
+    def creatorhub_comment_binding(self):
+        if self.delivery_mode == 'native':
+            target = 'video_id' if self.kind == 'comment' else 'conversation_id'
+            if (self.source_url or set(self.config) != {'account_id',target}
+                    or not re.fullmatch(r'[1-9][0-9]{0,17}',self.config.get('account_id',''))
+                    or not self.config.get(target,'')):
+                raise ValueError('请选择内置账号及其作品或会话')
+        if self.delivery_mode == 'creatorhub' and (
+                (self.platform, self.kind) != ('douyin', 'comment') or self.source_url
+                or set(self.config) != {'env_prefix'} or not self.config['env_prefix']):
+            raise ValueError('CreatorHub 首期仅支持绑定服务端配置的抖音自有作品评论')
+        return self
 
 
 class ChannelPatch(Scoped):
@@ -160,7 +175,7 @@ class Sync(Scoped):
     _url = field_validator('source_url')(safe_url)
 
 
-def create_router(outputs_provider, *, send_adapter=None, sync_adapter=None, capabilities=None):
+def create_router(outputs_provider, *, send_adapter=None, sync_adapter=None, capabilities=None, native_sync=None):
     router = APIRouter(prefix='/api/interactions', tags=['interaction-center'])
 
     def store(*, initialize_default_client=True):
@@ -220,8 +235,18 @@ def create_router(outputs_provider, *, send_adapter=None, sync_adapter=None, cap
                        channel_values(request.model_dump(exclude={'client_id'}, exclude_unset=True), previous), capabilities)
 
     @router.post('/channels/{channel_id}/sync')
-    def sync_channel(channel_id: str, request: Sync):
-        return perform(store().sync_channel, request.client_id, channel_id, request.source_url, sync_adapter, capabilities)
+    async def sync_channel(channel_id: str, request: Sync):
+        instance=store()
+        channels=perform(instance.bootstrap, request.client_id)['channels']
+        channel=next((item for item in channels if item['id']==channel_id),None)
+        if channel is not None and channel['delivery_mode']=='native':
+            if request.source_url or native_sync is None:
+                raise HTTPException(400,'内置通道使用已绑定的账号、作品或会话')
+            try:
+                return await native_sync(instance,request.client_id,channel_id)
+            except InteractionError as error:
+                raise HTTPException(error.status,str(error)) from error
+        return await asyncio.to_thread(perform, instance.sync_channel, request.client_id, channel_id, request.source_url, sync_adapter, capabilities)
 
     @router.post('/simulation')
     def simulation(request: Scoped):

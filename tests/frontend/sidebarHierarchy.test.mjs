@@ -36,8 +36,7 @@ function sidebar({ currentPage = 'chat', role = 'owner', isPlatformAdmin = true 
         : name.endsWith('/sessionNavigation') ? sessionNavigation
           : name.endsWith('/useModalLayer') ? { useModalLayer() {} }
         : new Proxy({}, { get: (_, name) => name }) });
-  const props = { currentPage, onPageChange: page => events.push(['page', page]), personas: [{ name: '教育画像' }], selectedPersona: '',
-    onPersonaChange: value => events.push(['persona', value]), onNewProfile: () => events.push(['new-profile']),
+  const props = { currentPage, onPageChange: page => events.push(['page', page]),
     sessions: [{ id: 'existing', title: '已有对话', messages: [{ role: 'user', content: 'hi' }] },
       { id: 'archived', title: '归档对话', messages: [{ role: 'user', content: 'old' }], archived: true }],
     activeSessionId: 'existing', onSessionSelect: id => events.push(['select', id]),
@@ -108,19 +107,6 @@ test('history starts collapsed and retains selection, rename, archive and delete
   const archivedRow = nodes.find(node => node.props?.className?.includes('session-item') && descendants(node).some(child => child.props?.className === 'session-item-title' && text(child) === '归档对话'));
   descendants(archivedRow).find(node => node.type === 'button' && node.props.title === '取消归档').props.onClick(stop);
   assert.deepEqual(ui.events.at(-1), ['archive', 'archived', false]);
-});
-
-test('persona selection appears in the AI context and preserves its profile callbacks', () => {
-  const ui = sidebar();
-  let { nodes } = ui.render();
-  const header = nodes.find(node => node.props?.className === 'sidebar-header');
-  assert.ok(!descendants(header).some(node => node.type === 'select'));
-  const select = nodes.find(node => node.type === 'select' && node.props.className === 'persona-select');
-  assert.ok(select);
-  select.props.onChange({ target: { value: '教育画像' } });
-  select.props.onChange({ target: { value: '__new__' } });
-  assert.deepEqual(ui.events, [['persona', '教育画像'], ['new-profile']]);
-  assert.ok(!ui.render({ currentPage: 'workshop' }).nodes.some(node => node.type === 'select' && node.props.className === 'persona-select'));
 });
 
 test('viewer sees the AI entry as read-only and cannot access writable or administrator shortcuts', () => {

@@ -20,6 +20,9 @@ function component(name, role, props = {}) {
   const accounts = [
     { platform: 'xiaohongshu', name: '小红书', backend: 'xhs', supported: true, loggedIn: true },
     { platform: 'douyin', name: '抖音', backend: 'douyin', supported: true, loggedIn: false },
+    { platform: 'bilibili', name: 'B站', backend: 'biliup', supported: true, loggedIn: false },
+    { platform: 'wechat-oa', name: '微信公众号', backend: 'wechat-oa', supported: true, loggedIn: false },
+    { platform: 'youtube', name: 'YouTube', backend: 'social-browser', supported: true, loggedIn: false, loginMode: 'browser' },
   ];
   const api = new Proxy({
     fetchAccounts: async () => { calls.push('fetchAccounts'); return accounts; },
@@ -98,6 +101,40 @@ test('an owner retains account verification and social platform login controls',
   assert.ok(ui.calls.includes('verifyStale'));
   assert.ok(buttons(nodes).some(node => text(node) === '校验账号'));
   assert.ok(buttons(nodes).some(node => text(node) === '登录'));
+});
+
+test('the unified account picker receives the existing catalog and opens the original Bilibili login', async () => {
+  const ui = component('AccountsPage', 'owner');
+  const nodes = await ui.ready();
+  const picker = nodes.find(node => typeof node.props?.onPlatformLogin === 'function');
+  assert.ok(picker, 'The add-account picker must route existing Easel platforms to their login flow');
+  assert.deepEqual(picker.props.platforms.map(account => account.platform),
+    ['xiaohongshu', 'douyin', 'bilibili', 'wechat-oa', 'youtube']);
+  await picker.props.onPlatformLogin(picker.props.platforms.find(account => account.platform === 'bilibili'));
+  assert.ok(ui.calls.includes('startLogin'));
+  assert.ok(!ui.calls.includes('startMpLogin'));
+  assert.ok(ui.render().some(node => text(node).includes('登录 B站')));
+});
+
+test('the unified account picker uses the public-account session login instead of developer credentials', async () => {
+  const ui = component('AccountsPage', 'owner');
+  const nodes = await ui.ready();
+  const picker = nodes.find(node => typeof node.props?.onPlatformLogin === 'function');
+  assert.ok(picker, 'The add-account picker must retain public-account login');
+  await picker.props.onPlatformLogin(picker.props.platforms.find(account => account.platform === 'wechat-oa'));
+  assert.ok(ui.calls.includes('startMpLogin'));
+  assert.ok(!ui.calls.includes('getCredentials'));
+});
+
+test('a stale unified account picker cannot start a login after management permission is removed', async () => {
+  const ui = component('AccountsPage', 'owner');
+  const nodes = await ui.ready();
+  const picker = nodes.find(node => typeof node.props?.onPlatformLogin === 'function');
+  assert.ok(picker, 'The add-account picker must retain current permission checks');
+  ui.setRole('operator');
+  ui.render();
+  await picker.props.onPlatformLogin(picker.props.platforms.find(account => account.platform === 'youtube'));
+  assert.ok(!ui.calls.includes('startLogin'));
 });
 
 test('a viewer dashboard can select cached analytics without starting verification or fresh collection', async () => {

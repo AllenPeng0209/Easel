@@ -98,6 +98,29 @@ class InteractionChannels:
         value = self.environ.get(prefix + '_' + suffix, '') if prefix else ''
         return value.strip() if isinstance(value, str) else ''
 
+    def _creatorhub_binding(self, channel: dict) -> tuple[int, int, int, str] | None:
+        from easel.projects import project_id
+
+        if (channel.get('platform'), channel.get('kind')) != ('douyin', 'comment'):
+            return None
+        prefix = self._config(channel).get('env_prefix', '')
+        namespace = 'EASEL_INTERACTION_' + project_id().upper() + '_'
+        if not isinstance(prefix, str) or not _ENV_PREFIX.fullmatch(prefix) or not prefix.startswith(namespace):
+            return None
+        binding = prefix + '_CREATORHUB_'
+        customer = self.environ.get(binding + 'CLIENT_ID', '')
+        if not customer or customer != channel.get('client_id'):
+            return None
+        account = self.environ.get(binding + 'ACCOUNT_ID', '')
+        work = self.environ.get(binding + 'WORK_ID', '')
+        item = self.environ.get(binding + 'ITEM_ID', '')
+        port = self.environ.get('EASEL_CREATORHUB_PORT', '8000')
+        if not all(re.fullmatch(r'[1-9][0-9]{0,17}', value) for value in (account, work)):
+            return None
+        if not re.fullmatch(r'[0-9]{1,32}', item) or not re.fullmatch(r'[0-9]{1,5}', port) or not 1 <= int(port) <= 65535:
+            return None
+        return int(port), int(account), int(work), item
+
     def _douyin_credentials(self, channel: dict) -> tuple[str, str, str, bool]:
         config = self._config(channel)
         token = self._setting(channel, 'ACCESS_TOKEN')
@@ -137,6 +160,15 @@ class InteractionChannels:
             return {**base, 'state': 'simulation', 'message': '模拟通道仅在本机记录测试消息和回执'}
         if channel.get('enabled') is False:
             return {**base, 'state': 'disabled', 'message': '此通道已停用'}
+        if channel.get('delivery_mode') == 'native':
+            from easel.operations_inbox import native_capability
+            return {**base, **native_capability(channel)}
+        if channel.get('delivery_mode') == 'creatorhub':
+            configured = self._creatorhub_binding(channel) is not None
+            return {**base, 'state': 'configured' if configured else 'awaiting_authorization',
+                    'can_sync': configured,
+                    'message': '已绑定本机 CreatorHub。仅导入已采集的评论，回复请到抖音处理。' if configured
+                    else '请在 Easel 服务端配置当前 IP、客户、账号与自有作品绑定。'}
         if kind == 'dm':
             return {**base, 'message': '私信需要平台单独准入与授权，当前尚未接通'}
         if platform == 'douyin' and kind == 'comment' and channel.get('delivery_mode') == 'official':
@@ -180,6 +212,8 @@ class InteractionChannels:
     def sync(self, channel: dict, source_url: str = '') -> list[dict]:
         if channel.get('delivery_mode') == 'simulation':
             raise ChannelError('模拟消息由互动中心本机生成，不连接真实平台')
+        if channel.get('delivery_mode') == 'creatorhub':
+            return self._sync_creatorhub(channel)
         if channel.get('platform') == 'xiaohongshu' and channel.get('kind') == 'comment':
             return self._sync_xhs(channel, source_url or channel.get('source_url', ''))
         capability = self.capabilities(channel)
@@ -275,6 +309,56 @@ class InteractionChannels:
             thread = parent if isinstance(parent, str) and _REMOTE_ID.fullmatch(parent) else identity
             items.append({'external_id': identity, 'text': text[:10000], 'author_name': str(row.get('nickname') or '小红书用户')[:120],
                           'conversation_external_id': thread, 'source_url': public_url, 'subject': '小红书笔记评论'})
+        return items
+
+    def _sync_creatorhub(self, channel: dict) -> list[dict]:
+        binding = self._creatorhub_binding(channel)
+        if not binding or channel.get('enabled') is False:
+            raise ChannelError('CreatorHub 通道未绑定或已停用')
+        port, account_id, work_id, item_id = binding
+        origin = f'http://127.0.0.1:{port}'
+
+        def read(client, path, **params):
+            response = client.get(origin + path, params=params)
+            response.raise_for_status()
+            rows = response.json()
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise ChannelError('CreatorHub 返回的资料格式不正确')
+            return rows
+
+        try:
+            with self._http() as client:
+                accounts = read(client, '/api/accounts', platform='douyin')
+                if not any(row.get('id') == account_id and row.get('platform') == 'douyin'
+                           and row.get('status') == 'active' and (row.get('has_read_login') is True
+                                                                or row.get('has_creator') is True)
+                           for row in accounts):
+                    raise ChannelError('绑定的 CreatorHub 账号不可用')
+                works = read(client, '/api/account-works', account_id=account_id)
+                work = next((row for row in works if row.get('id') == work_id
+                             and row.get('account_id') == account_id and row.get('platform') == 'douyin'
+                             and row.get('item_id') == item_id), None)
+                if work is None:
+                    raise ChannelError('CreatorHub 作品与账号绑定不一致')
+                comments = read(client, f'/api/account-works/{work_id}/comments', limit=200)
+        except (httpx.HTTPError, ValueError):
+            raise ChannelError('无法读取本机 CreatorHub，请检查服务与账号状态') from None
+
+        path = 'note' if work.get('media_type') == 'images' else 'video'
+        source_url = f'https://www.douyin.com/{path}/{item_id}'
+        subject = str(work.get('desc') or '抖音自有作品评论')[:300]
+        items = []
+        for row in reversed(comments[:200]):
+            comment_id = row.get('comment_id')
+            if (row.get('watch_id') != 0 or row.get('platform') != 'douyin' or row.get('aweme_id') != item_id
+                    or not isinstance(comment_id, str) or not re.fullmatch(r'[0-9]{1,32}', comment_id)):
+                raise ChannelError('CreatorHub 评论来源与作品绑定不一致')
+            content = row.get('text')
+            if not isinstance(content, str) or not content.strip():
+                continue
+            items.append({'external_id': f'creatorhub:douyin:{item_id}:{comment_id}', 'text': content[:20000],
+                          'author_name': str(row.get('user_nickname') or '访客')[:256],
+                          'source_url': source_url, 'subject': subject})
         return items
 
     def send(self, channel: dict, conversation: dict, draft: dict, operation_id: str) -> dict:

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from easel.access import AccessStore
-from easel.projects import _registry, project_context
+from easel.projects import _registry, project_context, project_id as current_project_id
 from easel.superagent_runtime import DRAFT_STEPS
 from easel.superagent_tasks import SuperAgentTaskError, SuperAgentTaskStore
 
@@ -38,10 +38,11 @@ def task_store(root):
     return SuperAgentTaskStore(root / "outputs" / "_superagent")
 
 
-def projects_for(root, actor_id):
+def projects_for(root, actor_id, identifier):
     access = AccessStore(root)
     return [{"id": row["id"], "name": row["name"], "canOperate": role in ("owner", "operator")}
-            for row in _registry(root) if (role := access.role(actor_id, row["id"])) is not None]
+            for row in _registry(root) if row['id'] == identifier
+            and (role := access.role(actor_id, row["id"])) is not None]
 
 
 def create_router(get_root, publication_workflow):
@@ -55,6 +56,8 @@ def create_router(get_root, publication_workflow):
 
     def scope(request, project_id):
         actor_id = actor(request)
+        if project_id != current_project_id():
+            raise HTTPException(409, "任务所属 IP 与当前工作空间不一致，请先切换 IP")
         root = get_root()
         if not any(row["id"] == project_id for row in _registry(root)):
             raise HTTPException(404, "IP 不存在")
@@ -71,8 +74,10 @@ def create_router(get_root, publication_workflow):
     async def list_tasks(request: Request):
         actor_id = actor(request)
         root = get_root()
+        identifier = current_project_id()
+        AccessStore(root).require_role(actor_id, identifier, {"owner", "operator", "viewer"})
         def read():
-            projects = projects_for(root, actor_id)
+            projects = projects_for(root, actor_id, identifier)
             store = task_store(root)
             tasks = [task for row in projects if row["canOperate"]
                      for task in store.list(actor_id=actor_id, project_id=row["id"])]
