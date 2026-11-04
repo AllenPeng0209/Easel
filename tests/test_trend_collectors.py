@@ -355,7 +355,7 @@ def test_web_discovery_registered_sources_and_failure_isolation(tmp_path, monkey
     remote = http_source(tmp_path, base + "/ok")
     monkeypatch.setattr(web, "_trend_registry", lambda: ([source, remote], dict(os.environ), []))
     monkeypatch.setattr(web, "_TREND_SERVICE", TrendService())
-    with TestClient(web.app, base_url="http://127.0.0.1:7860") as client:
+    with TestClient(web.app, base_url="http://127.0.0.1:7860", client=("127.0.0.1", 50000)) as client:
         discovery = client.get("/api/trends/sources")
         assert discovery.status_code == 200
         assert {s["id"] for s in discovery.json()["sources"]} == {"local", "remote"}
@@ -374,6 +374,6 @@ def test_web_reports_invalid_configuration(tmp_path, monkeypatch):
     monkeypatch.setattr(web, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(web, "ENV_FILE", tmp_path / ".env")
     monkeypatch.setenv("EASEL_TREND_SOURCES_CONFIG", "missing.json")
-    with TestClient(web.app, base_url="http://127.0.0.1:7860") as client:
+    with TestClient(web.app, base_url="http://127.0.0.1:7860", client=("127.0.0.1", 50000)) as client:
         assert client.get("/api/trends/sources").json()["warnings"]
         assert client.get("/api/trends").json()["trends"] == []

@@ -113,7 +113,7 @@ def _output_allowed(role: str, resource: str, request: Request) -> bool:
 
 
 def _is_global(resource: str) -> bool:
-    return (resource in {"env", "clipper", "skill", "workshop/status"}
+    return (resource in {"env", "clipper", "skill", "workshop/status", "trends/manage"}
             or resource.startswith(("settings/", "env/", "gateway/")))
 
 
@@ -170,7 +170,7 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
             return "operate"
         if resource in {"status", "personas", "skills", "outputs", "artifacts/archive", "accounts",
                         "analytics/platforms", "publishing-policy", "upload/limits", "schedule",
-                        "schedule/context", "ideas", "trends", "interactions/bootstrap", "workshop/projects", "workshop/jobs"}:
+                        "schedule/context", "ideas", "trends", "trends/sources", "interactions/bootstrap", "workshop/projects", "workshop/jobs"}:
             return "view"
         if (re.fullmatch(r"persona/[^/]+(?:/files)?", resource)
                 or re.fullmatch(r"skill/[^/]+", resource)

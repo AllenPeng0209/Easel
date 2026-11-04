@@ -68,7 +68,8 @@ def browser_flow(monkeypatch, tmp_path, platform='zhihu', *, click_error=False, 
     if platform in ('kuaishou', 'weixin-channels'):
         media = tmp_path / 'video.mp4'; media.write_bytes(b'fixture-video'); args.media = str(media)
     page = SimpleNamespace(url='https://platform.test/write', pages=[], wait_for_timeout=lambda *_: None,
-        goto=lambda *args, **kwargs: None, query_selector=lambda *_: None, screenshot=lambda **kwargs: None)
+        goto=lambda *args, **kwargs: None, query_selector=lambda *_: None, screenshot=lambda **kwargs: None,
+        on=lambda *args: None)
     def click(**kwargs):
         timeline.append(('click', platform))
         page.url = 'https://platform.test/p/one'
@@ -201,6 +202,7 @@ def test_dry_run_creates_no_submission_receipt_or_child(monkeypatch, tmp_path):
 def test_channels_records_before_enter_and_never_repeats_an_uncertain_submit(monkeypatch):
     timeline = []
     page = SimpleNamespace(url='https://channels.weixin.qq.com/platform/post/create',
+        on=lambda *args: None,
         goto=lambda *args, **kwargs: None, wait_for_timeout=lambda *_: None,
         wait_for_selector=lambda *args, **kwargs: None, wait_for_url=lambda *args, **kwargs: None,
         set_input_files=lambda *args, **kwargs: None)

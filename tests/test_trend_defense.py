@@ -222,7 +222,8 @@ def test_manager_endpoints_reject_remote_clients_even_with_forged_origin(tmp_pat
                     headers={"Origin": "http://127.0.0.1:7860"}) as client:
         assert client.get("/api/trends/manage").status_code == 403
         assert client.post("/api/trends/manage", json={"action": "add"}).status_code == 403
-    with TestClient(web.app, base_url="http://127.0.0.1:7860", client=("127.0.0.1", 50000)) as client:
+    with TestClient(web.app, base_url="http://127.0.0.1:7860", client=("127.0.0.1", 50000),
+                    headers={"Origin": "http://127.0.0.1:7860"}) as client:
         assert client.post("/api/trends/manage", content='x' * (MAX_MANAGEMENT_BYTES + 1)).status_code == 413
         assert client.post("/api/trends/manage", content='{"action":"add","action":"delete"}').status_code == 400
         added = client.post("/api/trends/manage", json={"action": "add", "type": "rss", "label": "订阅", "url": "https://example.com/feed"})

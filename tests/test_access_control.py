@@ -79,6 +79,7 @@ def users(tmp_path):
 @pytest.mark.parametrize("path", [
     "/api/projects/aaaaaaaaaaaaaaaa/ideas",
     "/api/projects/aaaaaaaaaaaaaaaa/accounts",
+    "/api/projects/aaaaaaaaaaaaaaaa/trends/sources",
     "/api/projects/aaaaaaaaaaaaaaaa/chat/last/same-id",
     "/api/projects/aaaaaaaaaaaaaaaa/media/topic/report.txt",
 ])
@@ -134,6 +135,7 @@ def test_account_connection_is_owner_only(users, method, path):
 
 @pytest.mark.parametrize("method,path", [
     ("GET", "/api/settings/models"), ("POST", "/api/settings/models/save"),
+    ("GET", "/api/trends/manage"), ("POST", "/api/trends/manage"),
     ("POST", "/api/gateway/restart"), ("POST", "/api/env/install"),
     ("GET", "/api/projects/aaaaaaaaaaaaaaaa/env/tools"),
     ("POST", "/api/projects/aaaaaaaaaaaaaaaa/skill"),

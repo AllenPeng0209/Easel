@@ -1011,8 +1011,10 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
                         try:
                             el.click(force=True, timeout=5000)
                         except Exception:
-                            if (receipt is not None or reporter.enabled) and s.get("commit"):
+                            if reporter.enabled and s.get("commit"):
                                 raise
+                            if receipt is not None and s.get("commit"):
+                                _die("提交结果未知，请到平台后台核对，先别重发。", 5)
                             # 回退：完整指针事件链（pointerdown→mousedown→mouseup→click）
                             page.evaluate("""
                                 el => {
