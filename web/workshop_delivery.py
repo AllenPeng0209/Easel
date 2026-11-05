@@ -5,16 +5,29 @@ from pathlib import Path, PurePosixPath
 import json
 import re
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from easel.video_workshop import WorkshopError, WorkshopStore, _file_lock
 from easel.workshop_delivery import load_episodes, produce_episode
+
+
+class _CandidateSelectionManifest(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    workshopId: str = Field(pattern=r'^[a-f0-9]{32}$')
+    expectedRevision: int = Field(ge=1)
+    shotId: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    candidateId: str = Field(pattern=r'^[a-f0-9]{32}$')
 
 
 def _manifest_request(payload: object, outputs: Path) -> tuple[Path, set[str], bool]:
     if not isinstance(payload, dict) or set(payload) - {"action", "manifestPath", "episodes"}:
         raise ValueError("工坊交付工具参数无效")
     action, relative = payload.get("action"), payload.get("manifestPath")
-    if action not in ("plan", "deliver", "update") or not isinstance(relative, str) or not 1 <= len(relative) <= 512:
-        raise ValueError("请指定计划或交付操作及当前 IP 下的制作清单")
+    if action not in ("plan", "deliver", "update", "select_candidate") or not isinstance(relative, str) or not 1 <= len(relative) <= 512:
+        raise ValueError("请指定工坊操作及当前 IP 下的制作清单")
+    if action == 'select_candidate' and 'episodes' in payload:
+        raise ValueError('采用候选只操作清单指定的一个分镜，不接受集数筛选')
     if '\\' in relative or any(ord(char) < 32 or ord(char) == 127 for char in relative):
         raise ValueError("清单路径无效")
     path = PurePosixPath(relative)
@@ -36,6 +49,14 @@ def run_workshop_delivery(payload: object, *, outputs: Path, ip: str, authorize)
     authorize()
     outputs = outputs.resolve()
     manifest, selected, plan_only = _manifest_request(payload, outputs)
+    if payload['action'] == 'select_candidate':
+        request = _CandidateSelectionManifest.model_validate_json(manifest.read_text(encoding='utf-8'))
+        authorize()
+        project = WorkshopStore(outputs).select_candidate(request.workshopId, request.expectedRevision,
+                                                          request.shotId, request.candidateId)
+        return [{'workshopId': project['id'], 'revision': project['revision'],
+                 'shotId': request.shotId, 'selectedCandidateId': request.candidateId,
+                 'stage': project['stage']}]
     if payload['action'] == 'update':
         from web.workshop_routes import Production
         raw = json.loads(manifest.read_text(encoding='utf-8'))

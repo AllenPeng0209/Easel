@@ -394,27 +394,61 @@ class HuobaoRuntime:
 
     def _pull(self, identifier, binding):
         snapshot=self._snapshot(binding);project=self.store.get(identifier)
+        old_assets={row['id']:row for row in project['assets']}
+        old_shots={row['id']:row for row in project['shots']}
         reverse_assets={(value['kind'],value['id']):key for key,value in binding['asset_map'].items()}
-        assets=[row for row in project['assets'] if row['kind'] not in {'character','scene','prop','image'}]
+        pulled_assets={}
         for kind,rows in snapshot['assets'].items():
             for row in rows:
                 native=reverse_assets.get((kind,row['id']),f"huobao-{kind}-{row['id']}")
                 binding['asset_map'][native]={'kind':kind,'id':row['id']}
-                assets.append({'id':native,'kind':kind,'name':row.get('name') or row.get('location') or '素材',
-                    'description':row.get('prompt' if kind == 'scene' else 'description') or '', 'image_prompt':row.get('final_prompt') or '',
-                    'path':self._native_file(row.get('image_url')) or '',
-                    **{key:row[key] or '' for key in ('appearance','styling','lighting') if key in row}})
+                previous=old_assets.get(native)
+                asset=dict(previous) if previous else {'id':native,'kind':kind}
+                media=self._native_file(row.get('image_url')) or ''
+                if media and previous and previous.get('sha256')==_digest(self.store._content_path(media)):
+                    media=previous.get('path',media)
+                fields={'name':row.get('name') or row.get('location') or '素材',
+                    'description':row.get('prompt' if kind == 'scene' else 'description') or '',
+                    'image_prompt':row.get('final_prompt') or '', 'path':media,
+                    **{key:row[key] or '' for key in ('appearance','styling','lighting') if key in row}}
+                for key,value in fields.items():
+                    # SQL NULL and an absent optional native field both display
+                    # as empty. A readback must not invent a content edit.
+                    if previous is None or (previous.get(key) or '')!=value:
+                        asset[key]=value
+                if not media:
+                    # Clearing a reference removes the current file identity;
+                    # the immutable versions list still retains its history.
+                    asset.pop('sha256',None)
+                    asset.pop('created_at',None)
+                pulled_assets[native]=asset
+        represented={row['id'] for row in project['assets']
+                     if row['kind'] in {'character','scene','prop','image'} and row['id'] in binding['asset_map']}
+        # Keep native order, types and fields that the upstream schema cannot
+        # represent. Only an actual upstream deletion removes a mapped asset.
+        assets=[pulled_assets.pop(row['id']) if row['id'] in pulled_assets else row
+                for row in project['assets'] if row['id'] in pulled_assets or row['id'] not in represented]
+        assets.extend(pulled_assets.values())
+        available={row['id'] for row in assets}
         reverse_shots={value:key for key,value in binding['shot_map'].items()}
         shots=[]
         for row in snapshot['shots']:
             native=reverse_shots.get(row['id'],f"huobao-shot-{row['id']}");binding['shot_map'][native]=row['id']
-            refs=[key for key,value in binding['asset_map'].items() if key in {asset['id'] for asset in assets} and ((value['kind']=='character' and value['id'] in row['character_ids'])
+            upstream_refs=[key for key,value in binding['asset_map'].items() if key in available and ((value['kind']=='character' and value['id'] in row['character_ids'])
                   or (value['kind']=='scene' and value['id']==row['scene_id']) or (value['kind']=='prop' and value['id'] in row['prop_ids']))]
-            shots.append({'id':native,'title':row.get('title') or f"分镜 {row['storyboard_number']:02d}",
+            previous=old_shots.get(native,{})
+            refs=[key for key in previous.get('asset_ids',[]) if key in available
+                  and (key not in represented or key in upstream_refs)]
+            refs.extend(key for key in upstream_refs if key not in refs)
+            shots.append({**previous,'id':native,'title':row.get('title') or f"分镜 {row['storyboard_number']:02d}",
                 'description':row.get('description') or '', 'atmosphere':row.get('atmosphere') or '',
                 'prompt':row.get('video_prompt') or '', 'seconds':max(1,min(60,row.get('duration') or 5)), 'asset_ids':refs})
-        project=self.store.production(identifier,project['revision'],{'raw_content':snapshot['episode']['content'] or '',
-            'script':snapshot['episode']['script_content'] or '', 'assets':assets,'shots':shots})
+        content=snapshot['episode']['content'] or ''
+        raw_content=project['raw_content'] if content==(project.get('raw_content') or project['brief']) else content
+        script=snapshot['episode']['script_content'] or ''
+        if (raw_content,script,assets,shots)!=(project['raw_content'],project['script'],project['assets'],project['shots']):
+            project=self.store.production(identifier,project['revision'],{'raw_content':raw_content,
+                'script':script, 'assets':assets,'shots':shots})
         reverse_candidates={value:key for key,value in binding['candidate_map'].items()}
         candidates_by_path={}
         for task in snapshot['tasks']:

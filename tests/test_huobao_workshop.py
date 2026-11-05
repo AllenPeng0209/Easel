@@ -369,3 +369,74 @@ def test_failed_first_import_does_not_block_native_edits_or_a_later_retry(engine
     drama = engine.request('GET', f"/api/v1/dramas/{binding['drama_id']}")['data']
     assert drama['episodes'][0]['script_content'] == 'AI继续保存的完整剧本'
     assert len(store.list()) == 1
+
+
+def make_material_roundtrip_project(engine, media):
+    import shutil
+    folder = engine.workspace / 'outputs' / 'edit'
+    folder.mkdir(parents=True)
+    shutil.copy2(media, folder / 'clip.mp4')
+    (folder / 'timeline.json').write_text('{"source":"clip.mp4"}')
+    store = WorkshopStore(engine.workspace / 'outputs')
+    project = store.create({'title': '二修素材与成片版本', 'brief': '原始内容尚未另填', 'aspect_ratio': '1:1'})
+    project = store.production(project['id'], project['revision'], {'raw_content': '', 'script': '原剧本', 'assets': [
+        {'id': 'mother', 'kind': 'character', 'name': '母亲'},
+        {'id': 'timeline', 'kind': 'document', 'name': '剪辑表', 'path': 'edit/timeline.json'},
+        {'id': 'room', 'kind': 'scene', 'name': '客厅', 'description': '窗边'},
+        {'id': 'clip', 'kind': 'video', 'name': '已剪镜头', 'path': 'edit/clip.mp4'},
+        {'id': 'reference', 'kind': 'image', 'name': '联合参考'},
+        {'id': 'blocks', 'kind': 'prop', 'name': '积木'}],
+        'shots': [{'id': 'first', 'title': '护桥', 'description': '原画面描述', 'atmosphere': '自然窗光',
+                   'prompt': '护住作品', 'seconds': 1, 'asset_ids': ['mother', 'timeline', 'room', 'clip', 'reference', 'blocks']}]})
+    project = store.add_candidate(project['id'], project['revision'], 'first', 'edit/clip.mp4')
+    project = store.deliver(project['id'], project['revision'], 'edit/clip.mp4')
+    return store, project
+
+
+def test_unchanged_workbench_save_keeps_delivery_reviewable_and_all_native_materials(engine, media):
+    store, project = make_material_roundtrip_project(engine, media)
+    binding = engine.open(project['id'])
+    engine.request('PUT', '/api/v1/storyboards/' + str(binding['shot_map']['first']), {'video_prompt': '护住作品'})
+    current = engine.pull(project['id'])
+    assert current['revision'] == project['revision']
+    assert current['stage'] == 'rendered'
+    assert current['assets'] == project['assets']
+    assert current['shots'] == project['shots']
+    assert current['raw_content'] == ''
+    assert store._reviewable_artifact(current, project['deliverables'][-1]['id'])['sha256'] == project['deliverables'][-1]['sha256']
+
+
+def test_real_workbench_edit_preserves_native_only_bindings_and_asset_order(engine, media):
+    from easel.video_workshop import WorkshopError
+    store, project = make_material_roundtrip_project(engine, media)
+    binding = engine.open(project['id'])
+    # The upstream UI can change its cast references, but cannot represent the
+    # native clip and document attachments that must survive that edit.
+    engine.request('PUT', '/api/v1/storyboards/' + str(binding['shot_map']['first']),
+                   {'description': '人工调整的画面描述', 'character_ids': []})
+    current = engine.pull(project['id'])
+    assert current['revision'] == project['revision'] + 1
+    assert [a['id'] for a in current['assets']] == [a['id'] for a in project['assets']]
+    assert next(a for a in current['assets'] if a['id'] == 'reference')['kind'] == 'image'
+    assert current['shots'][0]['asset_ids'] == ['timeline', 'room', 'clip', 'blocks']
+    assert current['shots'][0]['description'] == '人工调整的画面描述'
+    with pytest.raises(WorkshopError):
+        store._reviewable_artifact(current, project['deliverables'][-1]['id'])
+
+
+def test_clearing_an_upstream_reference_drops_current_file_metadata_but_keeps_history(engine):
+    from PIL import Image
+    folder = engine.workspace / 'outputs' / 'refs'
+    folder.mkdir(parents=True)
+    Image.new('RGB', (64, 64), 'beige').save(folder / 'mother.png')
+    store = WorkshopStore(engine.workspace / 'outputs')
+    project = store.create({'title': '删除当前参考仍保留历史'})
+    project = store.production(project['id'], project['revision'], {'script': '剧本', 'assets': [
+        {'id': 'mother', 'kind': 'character', 'name': '母亲', 'path': 'refs/mother.png'}], 'shots': []})
+    binding = engine.open(project['id'])
+    engine.request('PUT', '/api/v1/characters/' + str(binding['asset_map']['mother']['id']), {'image_url': ''})
+    current = engine.pull(project['id'])
+    assert current['revision'] == project['revision'] + 1
+    assert current['assets'][0]['path'] == ''
+    assert 'sha256' not in current['assets'][0]
+    assert current['assets'][0]['versions'] == project['assets'][0]['versions']

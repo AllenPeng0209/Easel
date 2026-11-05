@@ -155,12 +155,15 @@ EASEL_WORKSHOP_DELIVERY_TOOL = {
         'Plan can precede media creation. Deliver requires real audio/video masters already in outputs. '
         'Update reads {workshopId,expectedRevision,production:{raw_content,script,assets,shots}} from a manifest '
         'and CAS-updates the existing project while preserving all candidates. Use update for studio edits. '
+        'Select_candidate reads {workshopId,expectedRevision,shotId,candidateId} to adopt an already-collected '
+        'candidate in that shot. It preserves history, invalidates the old film review when the selection '
+        'changes, and never generates, imports or publishes media. Read the current revision first. '
         'Use returned workshopUrl and artifact receipts. Never pass identities, commands or credentials.'
     ),
     'inputSchema': {
         'type': 'object', 'additionalProperties': False, 'required': ['action', 'manifestPath'],
         'properties': {
-            'action': {'type': 'string', 'enum': ['plan', 'deliver', 'update']},
+            'action': {'type': 'string', 'enum': ['plan', 'deliver', 'update', 'select_candidate']},
             'manifestPath': {'type': 'string', 'minLength': 1, 'maxLength': 512},
             'episodes': {'type': 'array', 'maxItems': 12, 'uniqueItems': True,
                          'items': {'type': 'string', 'pattern': '^[A-Za-z0-9_-]{1,120}$'}},
@@ -855,6 +858,11 @@ class CodexAdapter:
                     'automatic retakes. The selected resolution is the local delivery target; use catalog '
                     'nativeResolution for understanding the source, never claim the provider generated the '
                     'delivery dimensions. A collected production_segment is source media, not the complete film. '
+                    'After checking a collected candidate, use easel_workshop_delivery action select_candidate '
+                    'with a current-IP manifest {workshopId,expectedRevision,shotId,candidateId} to adopt the '
+                    'actual source you will use. candidateId is the existing shot candidates[].id, not a '
+                    'provider task ID or a final publication artifact ID. Read the fresh Workshop revision '
+                    'first; changing the selected source requires a new complete delivery and publication preparation. '
                     'Edit the real audiovisual clips, preserve original voices, add requested subtitles in '
                     'post, and verify the full film. Put the actual edited/subtitled clip paths in series.json '
                     'episodes[].timeline, its complete master path in episodes[].path, and the original '
