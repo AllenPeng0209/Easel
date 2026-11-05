@@ -21,3 +21,5 @@ bash integrations/huobao-drama/install.sh
 ```
 
 前端构建输出 `.output/public`；依赖、构建和私有数据均不入库。安装使用临时 npm 配置，不覆盖用户全局 registry 或登录信息。各 IP 的原版后端在进入项目时按需启动，关闭页面不停止已提交的原版生成任务。
+
+安装脚本还会验证 `better-sqlite3` 并记录该次安装所用的 Node 到本机 `.runtime.json`。启动后端时固定使用这一可执行文件，避免桌面启动器的 PATH 选择另一版本、导致原生 SQLite 模块 ABI 不兼容。运行时不存在或依赖不兼容时会返回明确的 503；使用期望的 Node 重新运行安装脚本即可恢复。已有依赖且当前 Node 已能正常加载它时，也可运行 `node integrations/huobao-drama/configure-runtime.cjs` 重新记录，经验证成功后才会更新本机记录。

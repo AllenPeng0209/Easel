@@ -21,6 +21,7 @@ from easel.video_provider import NativeVideoClient
 from easel.video_workshop import WorkshopStore, WorkshopError, _digest, _file_lock, _now
 
 SOURCE = Path(__file__).resolve().parents[1] / 'integrations' / 'huobao-drama' / 'source'
+RUNTIME_FILE = SOURCE.parent / '.runtime.json'
 
 
 def _json(path, data):
@@ -71,8 +72,51 @@ class HuobaoRuntime:
         except (httpx.HTTPError, ValueError, KeyError):
             raise WorkshopError('火宝制作服务暂时不可用，请刷新原项目', 503) from None
 
+    @staticmethod
+    def _node_runtime():
+        """Use the Node that built native dependencies, not the launcher's PATH."""
+        try:
+            if RUNTIME_FILE.is_file():
+                value = json.loads(RUNTIME_FILE.read_text())
+                if (not isinstance(value, dict) or value.get('schemaVersion') != 1
+                        or not isinstance(value.get('node'), str)
+                        or not Path(value['node']).is_absolute()
+                        or not isinstance(value.get('version'), str)
+                        or not isinstance(value.get('modules'), str)):
+                    raise ValueError
+                node = value['node']
+            else:
+                node = shutil.which('node')
+                value = {'node': node}
+            if not node or not Path(node).is_file() or not os.access(node, os.X_OK):
+                raise ValueError
+            return value
+        except (OSError, ValueError, TypeError):
+            raise WorkshopError('火宝制作引擎的 Node 运行时未就绪，请重新运行集成安装脚本', 503) from None
+
+    @staticmethod
+    def _verify_node_runtime(runtime):
+        # Loading the real addon catches ABI and architecture mismatches before
+        # opening any project database or starting an immediately dying server.
+        script = ("const Database = require(process.argv[1]);"
+                  "const db = new Database(':memory:'); db.close();"
+                  "process.stdout.write(JSON.stringify({node:process.execPath,"
+                  "version:process.version,modules:process.versions.modules}));")
+        try:
+            result = subprocess.run([runtime['node'], '-e', script,
+                                     str(SOURCE / 'backend' / 'node_modules' / 'better-sqlite3')],
+                                    check=True, capture_output=True, text=True, timeout=15)
+            actual = json.loads(result.stdout)
+            if any(runtime.get(key) and runtime[key] != actual.get(key) for key in ('version', 'modules')):
+                raise ValueError
+            return actual
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise WorkshopError('火宝制作引擎的 Node 与原生依赖不匹配，请重新运行集成安装脚本', 503) from None
+
     def ensure(self):
-        binaries = {'ffmpeg_bin': shutil.which('ffmpeg') or '', 'ffprobe_bin': shutil.which('ffprobe') or ''}
+        node_runtime = self._node_runtime()
+        binaries = {'node_bin': node_runtime['node'],
+                    'ffmpeg_bin': shutil.which('ffmpeg') or '', 'ffprobe_bin': shutil.which('ffprobe') or ''}
         if self.state:
             try:
                 if self.request('GET', '/api/v1/health').get('status') == 'ok' and all(self.state.get(key)==value for key,value in binaries.items()):
@@ -83,6 +127,7 @@ class HuobaoRuntime:
         if not executable.is_file():
             raise WorkshopError('火宝制作引擎依赖尚未安装，请运行集成安装脚本', 503)
         with _file_lock(self.directory / 'start.lock'):
+            self._verify_node_runtime(node_runtime)
             if self.state_path.is_file():
                 self.state = json.loads(self.state_path.read_text())
                 healthy = False
@@ -123,7 +168,7 @@ class HuobaoRuntime:
                 FFMPEG_BIN=binaries['ffmpeg_bin'], FFPROBE_BIN=binaries['ffprobe_bin'])
             log = os.open(self.directory / 'backend.log', os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
             with os.fdopen(log, 'ab') as stream:
-                self.process = subprocess.Popen([str(executable), 'src/index.ts'], cwd=SOURCE / 'backend', env=env,
+                self.process = subprocess.Popen([node_runtime['node'], str(executable), 'src/index.ts'], cwd=SOURCE / 'backend', env=env,
                     stdin=subprocess.DEVNULL, stdout=stream, stderr=stream, start_new_session=True)
             self.state['pid'] = self.process.pid
             _json(self.state_path, self.state)
@@ -230,7 +275,9 @@ class HuobaoRuntime:
             self._canonical_selection(project,binding)
             if project['revision'] != binding['native_revision']:
                 self._push(project, binding)
-            binding['native_revision'] = self.store.get(identifier)['revision']
+            # Record only the revision actually imported. A newer native edit
+            # can arrive while artwork is extracted and must be pushed next time.
+            binding['native_revision'] = project['revision']
             binding['engine_digest'] = _fingerprint(self._snapshot(binding))
             _json(self.bindings_path, bindings)
             return binding
@@ -268,14 +315,15 @@ class HuobaoRuntime:
                 if media:artwork.append(media)
                 if not mapped:
                     if kind == 'scene':
-                        row_id = db.execute('INSERT INTO scenes(drama_id,location,description,created_at,updated_at) VALUES(?,?,?,?,?)',
-                            (binding['drama_id'], asset['name'], asset.get('description',''), _now(), _now())).lastrowid
+                        row_id = db.execute('INSERT INTO scenes(drama_id,episode_id,location,time,prompt,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',
+                            (binding['drama_id'], binding['episode_id'], asset['name'], '', asset.get('description',''), _now(), _now())).lastrowid
                     else:
                         row_id = db.execute(f'INSERT INTO {table}(drama_id,name,description,created_at,updated_at) VALUES(?,?,?,?,?)',
                             (binding['drama_id'], asset['name'], asset.get('description',''), _now(), _now())).lastrowid
                     mapped = {'kind':kind,'id':row_id};binding['asset_map'][asset['id']] = mapped
                 name_field = 'location' if kind == 'scene' else 'name'
-                db.execute(f'UPDATE {table} SET {name_field}=?,description=?,image_url=?,final_prompt=?,updated_at=?,deleted_at=NULL WHERE id=?',
+                description_field = 'prompt' if kind == 'scene' else 'description'
+                db.execute(f'UPDATE {table} SET {name_field}=?,{description_field}=?,image_url=?,final_prompt=?,updated_at=?,deleted_at=NULL WHERE id=?',
                     (asset['name'],asset.get('description',''),media,asset.get('image_prompt',''),_now(),mapped['id']))
                 if not db.execute(f'SELECT 1 FROM {link} WHERE episode_id=? AND {field}=?', (binding['episode_id'],mapped['id'])).fetchone():
                     db.execute(f'INSERT INTO {link}(episode_id,{field},created_at) VALUES(?,?,?)',(binding['episode_id'],mapped['id'],_now()))
@@ -332,6 +380,9 @@ class HuobaoRuntime:
         with _file_lock(self.directory / 'sync.lock'):
             bindings=self.bindings();binding=bindings.get(identifier)
             if binding is None:return self.store.get(identifier)
+            # A failed first import has no engine baseline to reconcile. The
+            # native project remains authoritative until open() retries it.
+            if not binding.get('engine_digest'):return self.store.get(identifier)
             digest=_fingerprint(self._snapshot(binding))
             if digest==binding['engine_digest']:return self.store.get(identifier)
             if self.store.get(identifier)['revision']!=binding['native_revision']:
@@ -350,7 +401,7 @@ class HuobaoRuntime:
                 native=reverse_assets.get((kind,row['id']),f"huobao-{kind}-{row['id']}")
                 binding['asset_map'][native]={'kind':kind,'id':row['id']}
                 assets.append({'id':native,'kind':kind,'name':row.get('name') or row.get('location') or '素材',
-                    'description':row.get('description') or '', 'image_prompt':row.get('final_prompt') or '',
+                    'description':row.get('prompt' if kind == 'scene' else 'description') or '', 'image_prompt':row.get('final_prompt') or '',
                     'path':self._native_file(row.get('image_url')) or '',
                     **{key:row[key] or '' for key in ('appearance','styling','lighting') if key in row}})
         reverse_shots={value:key for key,value in binding['shot_map'].items()}

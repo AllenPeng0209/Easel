@@ -113,12 +113,12 @@ def create_router(get_host):
         host._require_operation(roles=('owner','operator','viewer'))
         body=await request.json()
         engine=runtime(host)
-        project=engine.store.get(identifier)
         try:
+            project=engine.store.get(identifier)
             engine.store._expect(project,body.get('expected_revision'))
+            binding=await asyncio.to_thread(engine.open,identifier)
         except WorkshopError as error:
             raise HTTPException(error.status,str(error)) from None
-        binding=await asyncio.to_thread(engine.open,identifier)
         stage='videos' if project['shots'] else 'assets' if project['script'] else 'script'
         query=urlencode({'xiangyaProject':identifier,'xiangyaIp':project_id(),'xiangyaUser':actor['id'],'stage':stage,
                          'theme':body.get('theme','dark') if body.get('theme') in {'dark','light'} else 'dark'})

@@ -9,3 +9,4 @@ export NPM_CONFIG_GLOBALCONFIG="$TASK_GLOBAL_CONFIG"
 npm --prefix "$INTEGRATION_ROOT/source/backend" ci --registry=https://registry.npmjs.org --no-audit --no-fund
 npm --prefix "$INTEGRATION_ROOT/source/frontend" ci --registry=https://registry.npmjs.org --no-audit --no-fund
 npm --prefix "$INTEGRATION_ROOT/source/frontend" run generate
+node "$INTEGRATION_ROOT/configure-runtime.cjs"

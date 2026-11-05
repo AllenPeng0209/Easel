@@ -113,3 +113,5 @@ skills/builtin/video-production/vendor/**/*large-v3*
 /integrations/huobao-drama/source/frontend/.output/
 /integrations/huobao-drama/source/frontend/dist/
 /integrations/huobao-drama/source/frontend/dist
+/integrations/huobao-drama/.runtime.json
+/integrations/huobao-drama/.runtime.json.tmp

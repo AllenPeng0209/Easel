@@ -256,3 +256,116 @@ def test_upstream_extract_all_can_queue_all_three_asset_types(artifact_http_envi
             assert {row['kind'] for row in store.get(project['id'])['assets']} == {'character','scene','prop'}
     finally:
         if engine is not None:engine.stop()
+
+
+def test_runtime_uses_installation_node_when_web_path_selects_another_version(tmp_path, monkeypatch):
+    import json
+    import os
+    import shutil
+    import subprocess
+    import easel.huobao_runtime as module
+
+    node = shutil.which('node')
+    details = json.loads(subprocess.check_output([node, '-p',
+        'JSON.stringify({node:process.execPath,version:process.version,modules:process.versions.modules})'], text=True))
+    descriptor = tmp_path / 'runtime.json'
+    descriptor.write_text(json.dumps({'schemaVersion': 1, **details}))
+    monkeypatch.setattr(module, 'RUNTIME_FILE', descriptor, raising=False)
+    wrong_bin = tmp_path / 'wrong-version'
+    wrong_bin.mkdir()
+    marker = tmp_path / 'wrong-node-used'
+    fake_node = wrong_bin / 'node'
+    fake_node.write_text('#!/bin/sh\nprintf wrong-node > "' + str(marker) + '"\nexit 19\n')
+    fake_node.chmod(0o755)
+    monkeypatch.setenv('PATH', str(wrong_bin) + os.pathsep + os.environ['PATH'])
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    engine = module.HuobaoRuntime(workspace, workspace, 'default', directory=tmp_path / 'engine')
+    try:
+        store = WorkshopStore(workspace / 'outputs')
+        project = store.create({'title': 'Web launcher has a different Node version'})
+        binding = engine.open(project['id'])
+        assert engine.request('GET', '/api/v1/dramas/' + str(binding['drama_id']))['data']['title'] == project['title']
+        assert not marker.exists(), 'tsx must not resolve node again through the web launcher PATH'
+    finally:
+        engine.stop()
+
+
+@pytest.mark.access_integration
+def test_engine_open_reports_startup_errors_as_service_unavailable(artifact_http_environment, monkeypatch):
+    from easel.video_workshop import WorkshopError
+    import web.huobao_bridge as bridge
+    root, owner, _, _, _ = artifact_http_environment
+    project = WorkshopStore(root / 'outputs').create({'title': 'Unavailable production engine'})
+    class Unavailable:
+        store = WorkshopStore(root / 'outputs')
+        def open(self, identifier):
+            raise WorkshopError('制作引擎运行时与依赖不匹配', 503)
+    monkeypatch.setattr(bridge, 'runtime', lambda host: Unavailable())
+    response = owner.post('/api/workshop/projects/' + project['id'] + '/engine/open',
+                          json={'expected_revision': 1})
+    assert response.status_code == 503
+    assert response.json()['detail'] == '制作引擎运行时与依赖不匹配'
+
+
+def test_scene_assets_and_descriptions_round_trip_through_original_schema(engine):
+    store = WorkshopStore(engine.workspace / 'outputs')
+    project = store.create({'title': '包含人物场景道具的真实制作工程'})
+    project = store.production(project['id'], 1, {'script': '母子坐在窗边桌前。', 'assets': [
+        {'id': 'mother', 'kind': 'character', 'name': '母亲', 'description': '米色毛衣'},
+        {'id': 'room', 'kind': 'scene', 'name': '窗边客厅', 'description': '左窗光与木桌',
+         'lighting': '自然窗光', 'image_prompt': '客厅全景，无人物'},
+        {'id': 'blocks', 'kind': 'prop', 'name': '积木桥', 'description': '三个蓝色部件'}],
+        'shots': [{'id': 'first', 'title': '护桥', 'prompt': '孩子护住积木桥', 'seconds': 8,
+                   'asset_ids': ['mother', 'room', 'blocks']}]})
+    binding = engine.open(project['id'])
+    scene_id = binding['asset_map']['room']['id']
+    with engine.database() as db:
+        scene = dict(db.execute('SELECT * FROM scenes WHERE id=?', (scene_id,)).fetchone())
+    assert scene['prompt'] == '左窗光与木桌'
+    assert scene['time'] == ''
+    assert scene['final_prompt'] == '客厅全景，无人物'
+    assert scene['lighting'] == '自然窗光'
+    engine.request('PUT', f'/api/v1/scenes/{scene_id}', {'description': '人工更新的空间说明'})
+    engine.pull(project['id'])
+    current = store.get(project['id'])
+    assert next(asset for asset in current['assets'] if asset['id'] == 'room')['description'] == '人工更新的空间说明'
+    assert current['shots'][0]['asset_ids'] == ['mother', 'room', 'blocks']
+
+
+def test_native_change_during_import_is_synced_on_the_next_open(engine, monkeypatch):
+    store = WorkshopStore(engine.workspace / 'outputs')
+    project = store.create({'title': '导入时并发编辑'})
+    project = store.production(project['id'], 1, {'script': '导入开始前的剧本', 'assets': [], 'shots': []})
+    push = engine._push
+    def import_then_native_edit(snapshot, binding):
+        push(snapshot, binding)
+        current = store.get(project['id'])
+        store.production(project['id'], current['revision'], {'script': '导入期间AI保存的新剧本', 'assets': [], 'shots': []})
+    monkeypatch.setattr(engine, '_push', import_then_native_edit)
+    binding = engine.open(project['id'])
+    monkeypatch.setattr(engine, '_push', push)
+    engine.open(project['id'])
+    drama = engine.request('GET', f"/api/v1/dramas/{binding['drama_id']}")['data']
+    assert drama['episodes'][0]['script_content'] == '导入期间AI保存的新剧本'
+
+
+def test_failed_first_import_does_not_block_native_edits_or_a_later_retry(engine, monkeypatch):
+    import sqlite3
+    store = WorkshopStore(engine.workspace / 'outputs')
+    project = store.create({'title': '首次导入失败后继续制作'})
+    push = engine._push
+    def fail_import(*_):
+        raise sqlite3.OperationalError('fixture import failure')
+    monkeypatch.setattr(engine, '_push', fail_import)
+    with pytest.raises(sqlite3.OperationalError, match='fixture import failure'):
+        engine.open(project['id'])
+    current = store.production(project['id'], project['revision'],
+        {'script': 'AI继续保存的完整剧本', 'assets': [], 'shots': []})
+    assert engine.pull(project['id'])['script'] == 'AI继续保存的完整剧本'
+    assert store.get(project['id'])['revision'] == current['revision']
+    monkeypatch.setattr(engine, '_push', push)
+    binding = engine.open(project['id'])
+    drama = engine.request('GET', f"/api/v1/dramas/{binding['drama_id']}")['data']
+    assert drama['episodes'][0]['script_content'] == 'AI继续保存的完整剧本'
+    assert len(store.list()) == 1
