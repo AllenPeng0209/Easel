@@ -270,8 +270,10 @@
 .native-shot-bindings label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 
 /* Project detail runs the upstream Huobao app; collection retains the original compact table. */
-.huobao-workshop-shell { position: fixed; inset: 8px; z-index: 1100; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
-.huobao-workshop-shell > iframe { width: 100%; height: 100%; display: block; border: 0; background: var(--bg); }
+.huobao-workshop-shell { position: fixed; inset: 8px; z-index: 1100; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; }
+.huobao-workshop-shell > iframe { width: 100%; flex: 1; min-height: 0; display: block; border: 0; background: var(--bg); }
+.huobao-host-toolbar { display: flex; flex-shrink: 0; gap: 12px; align-items: center; justify-content: flex-end; min-height: 38px; padding: 4px 14px; border-bottom: 1px solid var(--border); }
+.huobao-host-toolbar > span { font-size: 11px; color: var(--text-tertiary); }
 .huobao-loading { height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px; }
 .huobao-loading h2 { font-size: 17px; font-weight: 550; }
 .huobao-review-overlay { position: absolute; inset: 0; background: var(--bg); padding: 24px; overflow-y: auto; }
@@ -279,3 +281,24 @@
 .huobao-question-overlay { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 24px; background: #0009; overflow-y: auto; }
 .huobao-question-overlay > .workshop-panel { width: min(720px, 100%); max-height: 90vh; overflow-y: auto; }
 .workshop-topic-title { max-width: 380px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.huobao-materials-overlay { position: absolute; inset: 0; z-index: 1; background: var(--bg); padding: 24px; overflow-y: auto; }
+.huobao-materials-overlay > header { margin-bottom: 24px; }
+.huobao-materials-overlay header p { color: var(--text-secondary); font-size: 12px; margin: 8px 0 0; }
+.huobao-materials-overlay > section { margin: 24px 0; }
+.huobao-materials-overlay h2 { font-size: 17px; }
+.huobao-materials-overlay h2 small { color: var(--text-tertiary); font-size: 12px; margin-left: 6px; }
+.workshop-material-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 14px; }
+.workshop-material-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--surface); display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; }
+.workshop-material-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; width: 100%; }
+.workshop-material-title h3 { font-size: 13px; margin: 0; overflow-wrap: anywhere; }
+.workshop-material-title > span { flex-shrink: 0; color: var(--accent-end); font-size: 11px; }
+.workshop-material-card img, .workshop-material-card video { width: 100%; height: 220px; object-fit: contain; background: var(--surface-hover); border-radius: 6px; }
+.workshop-material-card audio { width: 100%; }
+.workshop-material-card > a { max-width: 100%; overflow-wrap: anywhere; }
+.workshop-material-description { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 12px; margin: 0; }
+.workshop-material-history { margin-top: 8px; color: var(--text-secondary); font-size: 12px; }
+.workshop-material-history a { display: block; margin: 8px; }
+.workshop-material-shot { border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px; }
+.workshop-material-shot > h3 { font-size: 14px; margin: 0; }
+.workshop-material-review-actions { display: flex; gap: 8px; flex-shrink: 0; }
+@media (max-width: 600px) { .huobao-materials-overlay { padding: 16px; } .workshop-material-grid { grid-template-columns: 1fr; } }

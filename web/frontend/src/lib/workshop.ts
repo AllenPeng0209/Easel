@@ -145,7 +145,7 @@ export interface WorkshopRenderReceipt {
 }
 
 export interface WorkshopAsset {
-  id: string; kind: 'character' | 'scene' | 'prop' | 'image' | 'video' | 'audio' | 'subtitle';
+  id: string; kind: 'character' | 'scene' | 'prop' | 'image' | 'video' | 'audio' | 'subtitle' | 'document';
   name: string; description?: string; path: string; sha256?: string;
   versions: { path: string; sha256: string; created_at: string }[];
 }

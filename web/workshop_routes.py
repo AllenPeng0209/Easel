@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
 from pydantic import BaseModel, ConfigDict, Field, field_validator, ValidationError
 
-from easel.video_workshop import WorkshopCancelAuthorizationError, WorkshopError, WorkshopStore
+from easel.video_workshop import ASSET_SUFFIXES, WorkshopCancelAuthorizationError, WorkshopError, WorkshopStore
 from easel.projects import project_id
 from web.workshop_jobs import workshop_jobs
 
@@ -117,7 +117,7 @@ class Publication(Versioned):
 
 class Asset(RequestModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
-    kind: Literal['character', 'scene', 'prop', 'image', 'video', 'audio', 'subtitle']
+    kind: Literal['character', 'scene', 'prop', 'image', 'video', 'audio', 'subtitle', 'document']
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default='', max_length=4000)
     path: str = Field(default='', max_length=1024)
@@ -221,8 +221,8 @@ def create_router(outputs_provider: Callable[[], Path], *, publication_workflow=
         current = perform(current_store.get, identifier)
         perform(current_store._expect, current, expected_revision)
         suffix = Path(file.filename or '').suffix.lower()
-        if suffix not in {'.png', '.jpg', '.jpeg', '.webp', '.mp4', '.mov', '.webm', '.wav', '.mp3', '.m4a', '.srt'}:
-            raise HTTPException(422, '请选择图片、音视频或 SRT 字幕')
+        if suffix not in ASSET_SUFFIXES:
+            raise HTTPException(422, '请选择图片、音视频、字幕或制作文档')
         directory = current_store.outputs / ('素材导入-' + identifier[:8])
         if directory.is_symlink():
             raise HTTPException(403, '素材导入目录不能是符号链接')

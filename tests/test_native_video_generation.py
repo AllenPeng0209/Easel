@@ -60,6 +60,81 @@ def test_plan_saves_reusable_assets_and_stable_storyboard_before_generation(gene
     assert current['shots'][0]['asset_ids'] == [current['assets'][0]['id']]
 
 
+def test_plan_keeps_existing_editorial_shot_and_semantic_bindings_when_adding_retakes(generation_setup):
+    from PIL import Image
+    store, service, backend, outputs, project, payload, _ = generation_setup
+    folder = outputs / 'film'
+    folder.mkdir()
+    Image.new('RGB', (32, 32), 'red').save(folder / 'family.png')
+    Image.new('RGB', (32, 32), 'blue').save(folder / 'window.png')
+    source = folder / 'adopted.mp4'
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+        'color=c=red:s=64x112:r=10:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(source)],
+        check=True, capture_output=True)
+    project = store.production(project['id'], project['revision'], {
+        'raw_content': '人工原稿', 'script': '人工已定稿的剧情',
+        'assets': [
+            {'id': 'mother', 'kind': 'character', 'name': '母亲', 'path': 'film/family.png',
+             'image_prompt': '母亲米色毛衣', 'appearance': '披发', 'styling': '日常家居'},
+            {'id': 'child', 'kind': 'character', 'name': '孩子', 'path': 'film/family.png'},
+            {'id': 'blocks', 'kind': 'prop', 'name': '积木', 'path': 'film/family.png'},
+        ],
+        'shots': [{'id': 'scene-one', 'title': '保留作品', 'description': '人工写好的画面描述',
+                   'atmosphere': '傍晚柔光', 'prompt': '人工已采用的主镜头提示词',
+                   'seconds': 7, 'asset_ids': ['mother', 'child']}],
+    })
+    project = store.add_candidate(project['id'], project['revision'], 'scene-one', 'film/adopted.mp4',
+                                  candidate_id='a' * 32, task_id='original-task')
+    before_shot, before_assets = project['shots'][0], project['assets']
+    (folder / 'production.json').write_text(json.dumps({'version': 1, 'title': '定向返修',
+        **{key: payload[key] for key in ['modelId', 'aspectRatio', 'resolution']},
+        'clips': [
+            {'clipId': 'main', 'shotId': 'scene-one', 'seconds': 5, 'prompt': '本次主候选',
+             'references': [{'kind': 'image', 'path': 'film/family.png'}]},
+            {'clipId': 'retake', 'shotId': 'scene-one', 'seconds': 6, 'prompt': '仅失败后使用的备用',
+             'references': [{'kind': 'image', 'path': 'film/window.png'}]},
+        ]}))
+    request = {'action': 'plan', 'workshopId': project['id'], 'manifestPath': 'film/production.json'}
+    result = service.run(request)
+    current = store.get(project['id'])
+    assert [shot['id'] for shot in current['shots']] == ['scene-one']
+    shot = current['shots'][0]
+    assert {key: value for key, value in shot.items() if key != 'asset_ids'} == {
+        key: value for key, value in before_shot.items() if key != 'asset_ids'}
+    assert current['assets'][:3] == before_assets
+    assert [asset['name'] for asset in current['assets'] if asset['id'] in shot['asset_ids']] == ['母亲', '孩子', 'window']
+    assert current['raw_content'] == '人工原稿' and current['script'] == '人工已定稿的剧情'
+    assert backend.submitted == []
+    assert service.run(request)['planId'] == result['planId']
+    assert store.get(project['id'])['revision'] == current['revision']
+
+
+def test_plan_uses_first_candidate_for_new_shot_and_keeps_shared_character_reference_roles(generation_setup):
+    from PIL import Image
+    store, service, _, outputs, project, payload, _ = generation_setup
+    folder = outputs / 'film'
+    folder.mkdir()
+    Image.new('RGB', (32, 32), 'red').save(folder / 'family.png')
+    project = store.production(project['id'], project['revision'], {'script': '母子对话', 'shots': [],
+        'assets': [{'id': 'mother', 'kind': 'character', 'name': '母亲', 'path': 'film/family.png'},
+                   {'id': 'child', 'kind': 'character', 'name': '孩子', 'path': 'film/family.png'}]})
+    (folder / 'production.json').write_text(json.dumps({'version': 1, 'title': '母子对话',
+        **{key: payload[key] for key in ['modelId', 'aspectRatio', 'resolution']},
+        'clips': [
+            {'clipId': 'main', 'shotId': 'scene-one', 'seconds': 5, 'prompt': '主候选提示词',
+             'references': [{'kind': 'image', 'path': 'film/family.png'}]},
+            {'clipId': 'backup', 'shotId': 'scene-one', 'seconds': 6, 'prompt': '仅失败后使用的备用提示词',
+             'references': [{'kind': 'image', 'path': 'film/family.png'}]},
+        ]}))
+    service.run({'action': 'plan', 'workshopId': project['id'], 'manifestPath': 'film/production.json'})
+    current = store.get(project['id'])
+    assert len(current['shots']) == 1
+    shot = current['shots'][0]
+    assert shot['prompt'] == '主候选提示词' and shot['seconds'] == 5
+    assert shot['asset_ids'] == ['mother', 'child']
+    assert len(current['assets']) == 2
+
+
 def test_rework_prepares_a_new_candidate_for_the_original_stable_shot(generation_setup):
     store, service, _, _, project, payload, _ = generation_setup
     service.run(payload)

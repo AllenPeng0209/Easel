@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { fetchWorkshopProject, openHuobaoStudio } from '../lib/workshop';
 import type { WorkshopProject, WorkshopReference } from '../lib/workshop';
 import type { ChatQuestion } from '../lib/api';
 import WorkshopReviewPanel from './WorkshopReviewPanel';
+import WorkshopMaterialsPanel from './WorkshopMaterialsPanel';
 const Questions = lazy(() => import('./QuestionCards'));
 interface Props {
   project: WorkshopProject; initialView?: 'production' | 'review'; initialArtifactId?: string;
@@ -14,8 +15,22 @@ export default function HuobaoWorkshopFrame({ project, initialView, initialArtif
   const [target, setTarget] = useState<{ id: string; url: string }>();
   const [error, setError] = useState('');
   const [review, setReview] = useState(initialView === 'review');
+  const [materials, setMaterials] = useState(false), [loadingMaterials, setLoadingMaterials] = useState(false);
+  const materialsRequest = useRef<AbortController | null>(null);
+  const closeMaterials = useCallback(() => setMaterials(false), []);
   const [question, setQuestion] = useState<{ session: string; questions: ChatQuestion[] }>();
   const current = useRef(project); current.current = project;
+  useEffect(() => () => materialsRequest.current?.abort(), [project.id]);
+  const openMaterials = async () => {
+    materialsRequest.current?.abort();
+    const controller = new AbortController(); materialsRequest.current = controller;
+    setLoadingMaterials(true); setError('');
+    try {
+      const fresh = await fetchWorkshopProject(project.id, controller.signal);
+      if (!controller.signal.aborted) { onUpdate(fresh); setMaterials(true); }
+    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '制作资料暂不可用'); }
+    finally { if (!controller.signal.aborted) setLoadingMaterials(false); }
+  };
   useEffect(() => {
     if (initialView === 'review') return;
     const controller = new AbortController();
@@ -47,14 +62,20 @@ export default function HuobaoWorkshopFrame({ project, initialView, initialArtif
     return () => window.removeEventListener('message', receive);
   }, [project.id, onBack, onUpdate, onUseWorkshop]);
   return <section className="huobao-workshop-shell" data-workshop-project-id={project.id} aria-label="视频制作工作台">
+    <div className="huobao-host-toolbar"><span>项目制作资料</span><button className="btn btn-sm" onClick={() => void openMaterials()} disabled={loadingMaterials}>
+      {loadingMaterials ? '正在读取资料…' : '二修素材'}</button></div>
     {target?.id === project.id ? <iframe ref={frame} src={target.url} title="火宝原版视频制作工作台"
       allow="clipboard-write; fullscreen" /> : !review && <div className="huobao-loading"><h2>{error || '正在打开视频制作工作台…'}</h2>
       <button className="btn btn-sm" onClick={onBack}>返回视频列表</button></div>}
     {error && target && <div className="workshop-error" role="alert">{error}</div>}
     {review && <div className="huobao-review-overlay native-workshop" role="dialog" aria-modal="true" aria-label="成片审核与发布">
-      <header className="workshop-section-title"><h2>{project.title} · 成片审核</h2><button className="btn btn-sm" onClick={() => { if (target) setReview(false); else onBack(); }}>返回制作</button></header>
+      <header className="workshop-section-title"><h2>{project.title} · 成片审核</h2><div className="workshop-material-review-actions">
+        <button className="btn btn-sm" disabled={loadingMaterials} onClick={() => void openMaterials()}>二修素材</button>
+        <button className="btn btn-sm" onClick={() => { if (target) setReview(false); else onBack(); }}>返回制作</button></div></header>
+      {error && <p className="workshop-error" role="alert">{error}</p>}
       <WorkshopReviewPanel project={project} onUpdate={onUpdate} onUseWorkshop={onUseWorkshop} initialArtifactId={initialArtifactId} />
     </div>}
+    {materials && <WorkshopMaterialsPanel project={project} onClose={closeMaterials} />}
     {question && <div className="huobao-question-overlay" role="dialog" aria-modal="true" aria-label="AI 制作确认"><div className="workshop-panel">
       <Suspense fallback={<p>正在读取制作确认…</p>}><Questions sessionId={question.session} questions={question.questions} /></Suspense>
     </div></div>}

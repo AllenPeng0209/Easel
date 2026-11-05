@@ -30,6 +30,13 @@ class WorkshopCancelAuthorizationError(WorkshopError):
 _PROJECT_ID = re.compile(r"[a-f0-9]{32}")
 _TASK_ID = re.compile(r"[A-Za-z0-9:_-]{1,160}")
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
+_IMAGE_ASSET_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp'}
+_VIDEO_ASSET_SUFFIXES = {'.mp4', '.mov', '.webm'}
+_AUDIO_ASSET_SUFFIXES = {'.wav', '.mp3', '.m4a'}
+_SUBTITLE_ASSET_SUFFIXES = {'.srt', '.ass', '.vtt'}
+_DOCUMENT_ASSET_SUFFIXES = {'.md', '.txt', '.json', '.csv'}
+ASSET_SUFFIXES = (_IMAGE_ASSET_SUFFIXES | _VIDEO_ASSET_SUFFIXES | _AUDIO_ASSET_SUFFIXES
+                  | _SUBTITLE_ASSET_SUFFIXES | _DOCUMENT_ASSET_SUFFIXES)
 _LOCKS: dict[str, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
 _RENDER_TERMINAL = {"succeeded", "failed", "cancelled"}
@@ -298,7 +305,7 @@ class WorkshopStore:
                 raise ValueError
             if kind in {'character', 'scene', 'prop', 'image'}:
                 from PIL import Image
-                if suffix not in {'.png', '.jpg', '.jpeg', '.webp'} or source.stat().st_size > 10 * 1024 * 1024:
+                if suffix not in _IMAGE_ASSET_SUFFIXES or source.stat().st_size > 10 * 1024 * 1024:
                     raise ValueError
                 with Image.open(source) as image:
                     if image.width * image.height > 32 * 1024 * 1024:
@@ -309,9 +316,17 @@ class WorkshopStore:
                     '-of', 'json', str(source)], check=True, capture_output=True, timeout=20)
                 if not any(row['codec_type'] == kind for row in json.loads(result.stdout)['streams']):
                     raise ValueError
-            elif kind == 'subtitle':
-                if suffix != '.srt' or not source.read_text(encoding='utf-8-sig').strip():
+            elif kind in {'subtitle', 'document'}:
+                allowed = _SUBTITLE_ASSET_SUFFIXES if kind == 'subtitle' else _DOCUMENT_ASSET_SUFFIXES
+                if suffix not in allowed or source.stat().st_size > 5 * 1024 * 1024:
                     raise ValueError
+                content = source.read_text(encoding='utf-8-sig')
+                if not content.strip() or '\x00' in content:
+                    raise ValueError
+                if suffix == '.json':
+                    json.loads(content)
+            else:
+                raise ValueError
         except (OSError, ValueError, KeyError, subprocess.SubprocessError):
             raise WorkshopError('素材未通过实际媒体类型或大小校验', 422) from None
 
@@ -334,8 +349,8 @@ class WorkshopStore:
                 versions = list(previous.get('versions', []))
                 if raw.get('path'):
                     source = self._content_path(raw['path'])
-                    if source.suffix.lower() not in {'.png', '.jpg', '.jpeg', '.webp', '.mp4', '.mov', '.webm', '.wav', '.mp3', '.m4a', '.srt'}:
-                        raise WorkshopError('素材须为图片、音视频或 SRT 字幕', 422)
+                    if source.suffix.lower() not in ASSET_SUFFIXES:
+                        raise WorkshopError('素材须为图片、音视频、字幕或制作文档', 422)
                     self._validate_asset(source, raw['kind'])
                     digest = _digest(source)
                     if previous.get('sha256') == digest:

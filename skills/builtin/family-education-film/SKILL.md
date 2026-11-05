@@ -25,7 +25,7 @@ layer: produce
 }
 ```
 
-5. 在支持的 Codex 对话里，用宿主工具 `easel_workshop_delivery`。传 `{"action":"plan","manifestPath":"family-series/series.json"}` 登记视频工坊项目；成片存在且检查通过后，将同一清单的 `action` 改为 `deliver` 渲染并收集同一批工程。可传 `episodes` 集号数组，先验首支再处理后续。若宿主未提供工具，由已授权的操作者在 响芽 根目录使用本机 CLI。操作者经受控环境变量 `EASEL_VIDEO_SESSION` 传入现有的本机登录凭据，避免贴进聊天或制作清单。
+5. 在支持的 Codex 对话里，用宿主工具 `easel_workshop_delivery`。传 `{"action":"plan","manifestPath":"family-series/series.json"}` 登记视频工坊项目，再用 `update` 保存完整制作资产和分镜。完整成片实际剪辑、压字且检查通过后，将同一清单的 `action` 改为 `deliver` 登记不可变成片；`timeline` 只校验素材，不会代替剪辑或创建字幕轨。可传 `episodes` 集号数组，先验首支再处理后续。若宿主未提供工具，由已授权的操作者在 响芽 根目录使用本机 CLI。操作者经受控环境变量 `EASEL_VIDEO_SESSION` 传入现有的本机登录凭据，避免贴进聊天或制作清单。
 
 ```bash
 .venv/bin/python scripts/easel_video_delivery.py /absolute/path/series.json --project IP_ID --plan-only

@@ -273,27 +273,35 @@ class VideoGenerationService:
         return plan
 
     def _sync_plan_project(self, project, plan):
-        assets = [{key: row[key] for key in ('id', 'kind', 'name', 'description', 'path') if key in row}
-                  for row in project['assets']]
-        by_digest = {row.get('sha256'): row['id'] for row in project['assets'] if row.get('sha256')}
-        shots = {row['id']: {key: row[key] for key in ('id', 'title', 'prompt', 'seconds', 'asset_ids')}
-                 for row in project['shots']}
+        assets = [dict(row) for row in project['assets']]
+        by_digest = {}
+        for asset in assets:
+            if asset.get('sha256'):
+                by_digest.setdefault(asset['sha256'], []).append(asset['id'])
+        shots = {row['id']: {**row, 'asset_ids': list(row['asset_ids'])} for row in project['shots']}
         for clip in plan['clips']:
-            bound = []
-            for reference in clip['references']:
-                identifier = by_digest.get(reference['sha256'])
-                if not identifier:
-                    identifier = 'ref-' + reference['sha256'][:16]
-                    assets.append({'id': identifier, 'kind': reference['kind'],
-                        'name': Path(reference['path']).stem[:120], 'description': '', 'path': reference['path']})
-                    by_digest[reference['sha256']] = identifier
-                bound.append(identifier)
             identifier = clip.get('shotId', clip['clipId'])
-            old = shots.get(identifier, {})
-            shots[identifier] = {'id': identifier, 'title': old.get('title', identifier),
-                'prompt': clip['prompt'], 'seconds': clip['seconds'], 'asset_ids': bound}
+            # A plan freezes candidate inputs, not a replacement for an edited
+            # storyboard. Retakes for one shot must not overwrite its main view.
+            if identifier not in shots:
+                shots[identifier] = {'id': identifier, 'title': identifier,
+                    'prompt': clip['prompt'], 'seconds': clip['seconds'], 'asset_ids': []}
+            bound = shots[identifier]['asset_ids']
+            for reference in clip['references']:
+                matching = by_digest.get(reference['sha256'])
+                if not matching:
+                    asset_id = 'ref-' + reference['sha256'][:16]
+                    assets.append({'id': asset_id, 'kind': reference['kind'],
+                        'name': Path(reference['path']).stem[:120], 'description': '', 'path': reference['path']})
+                    matching = by_digest[reference['sha256']] = [asset_id]
+                # One image can deliberately represent several named roles.
+                # Keep explicit bindings; never arbitrarily replace them with
+                # the last asset having the same bytes.
+                if not any(asset_id in bound for asset_id in matching):
+                    bound.extend(matching)
         self.store.production(project['id'], project['revision'],
-            {'script': project['script'], 'assets': assets, 'shots': list(shots.values())})
+            {'raw_content': project['raw_content'], 'script': project['script'],
+             'assets': assets, 'shots': list(shots.values())})
 
     def _collected_parent_claims(self, parent, project):
         """Build replacement evidence exclusively from private Host collection records."""
