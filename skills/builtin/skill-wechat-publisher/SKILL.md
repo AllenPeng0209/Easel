@@ -27,13 +27,13 @@ layer: publish
 
 ## 账号与人格
 
-YAML 示例提供 2 个账号配置：`main`（刷屏AI / 飞哥 / `refined-blue`，热情北京口语，面向 AI 产品）与 `tech`（蒜是哪根葱 / 葱哥 / `minimal-mono`，冷幽默技术直男，面向工程实践）。官方 API 模式按 `--account` 或 YAML 的 `default` 选择账号。后台会话模式的实际发布账号以当前扫码登录的公众号为准，`--account` 不会切换浏览器登录态；没有 YAML 时，可用 `--author` / `--theme` 指定署名和主题，并优先使用当前 Easel Profile 的语气。
+YAML 示例提供 2 个账号配置：`main`（刷屏AI / 飞哥 / `refined-blue`，热情北京口语，面向 AI 产品）与 `tech`（蒜是哪根葱 / 葱哥 / `minimal-mono`，冷幽默技术直男，面向工程实践）。官方 API 模式按 `--account` 或 YAML 的 `default` 选择账号。后台会话模式的实际发布账号以当前扫码登录的公众号为准，`--account` 不会切换浏览器登录态；没有 YAML 时，可用 `--author` / `--theme` 指定署名和主题，并优先使用当前 响芽 Profile 的语气。
 
 **必须按当前账号的 voice 改写语气** —— 两个号写出明显风格差异，这本身就是反 AI 检测的关键（平台对每个号建历史文风基线）。
 
 ## 前置条件
 
-以下命令均从 Easel 项目根目录运行。
+以下命令均从 响芽 项目根目录运行。
 
 ### 默认：公众号后台会话（Markdown / HTML）
 
@@ -129,7 +129,7 @@ python3 skills/builtin/skill-wechat-publisher/scripts/publish.py --account main 
 | `multi_publish.py` | 多平台同步（阶段七，默认不启用，需浏览器） |
 
 ## Profile 感知
-有 Easel Profile 时，用 Profile 的账号定位/受众/语气凝练覆盖账号 voice；无 Profile 时退到 yaml 内置 `main`/`tech` 双账号 voice。
+有 响芽 Profile 时，用 Profile 的账号定位/受众/语气凝练覆盖账号 voice；无 Profile 时退到 yaml 内置 `main`/`tech` 双账号 voice。
 
 ## 注意事项
 - 文章始终发**草稿箱**，不自动群发；后台会话发布到当前扫码账号，官方 API 模式才用 `--account` 选择发布账号。

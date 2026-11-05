@@ -33,7 +33,7 @@ export default function BrushEntry({ onPick }: { onPick: (text: string) => void 
 
   const pick = (it: CapabilityItem, pipe?: boolean) => {
     const familyPrompts: Record<string, string> = {
-      'family-education-film': '用家庭教育成片（family-education-film）技能，串联选题策划和视频工坊，制作并交付竖屏短片。主题：',
+      'family-education-film': '用家庭教育成片（family-education-film）技能，制作竖屏短片，完成后自动进入视频工坊审核。主题：',
       'family-education-strategy': '用家庭教育选题策略（family-education-strategy）技能，策划可拍的短剧或老师口播。主题：',
     };
     onPick(pipe ? '用「视频产线」做一支整片：' : familyPrompts[it.skill || ''] || `帮我做「${it.label}」`);

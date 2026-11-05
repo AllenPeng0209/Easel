@@ -1,7 +1,7 @@
 """Local immutable Office previews, adapted from Harness office-to-pdf (MIT).
 
 The upstream authorization-before-read, bounded conversion and declared-font
-warning contract is applied to Easel's verified snapshot FD. The installed
+warning contract is applied to Xiangya's verified snapshot FD. The installed
 LibreOffice CLI is the engine; its diagnostics are never exposed to the user.
 """
 from __future__ import annotations

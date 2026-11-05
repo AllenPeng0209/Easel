@@ -1,7 +1,7 @@
 """Task outbox for publication effects with independent, exact host approval.
 
 Adapted from the persisted receipt/effect boundary in dsh-superagent
-8c32a9d src/app/outbox.ts. Publishing uses Easel's existing approval dispatcher.
+8c32a9d src/app/outbox.ts. Publishing uses Xiangya's existing approval dispatcher.
 A reserved effect cannot be dispatched again, including after a process crash.
 """
 from __future__ import annotations
@@ -208,7 +208,8 @@ async def execute_publication_effect(workflow, effects: SuperagentEffectStore, t
     if reservation['dispatch']:
         data = {key: subject.get(key, '') for key in ('title', 'body', 'tags', 'persona')}
         data.update(artifactIds=[item['artifactId'] for item in subject.get('media', [])],
-                    approvalId=approval_id, payloadHash=record['payloadHash'])
+                    approvalId=approval_id, payloadHash=record['payloadHash'],
+                    aiGenerated=subject.get('aiGenerated', False))
         check_lease()
         try:
             await workflow.start(subject['platform']['id'], data, before_claim=check_lease, wait_for_execution=True)

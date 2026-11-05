@@ -11,7 +11,7 @@ const declaration=app.body.statements.find(node=>ts.isVariableStatement(node)&&n
 function page(currentPage){
   const code=ts.transpileModule(declaration.getText(source)+'\nrenderPage();',{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
   return runInNewContext(code,{exports:{},currentPage,canOperate:true,isPlatformAdmin:true,selectedPersona:'',interactionEntry:0,setCurrentPage(){},
-    AccountsPage:'accounts',PublishPage:'publish',InteractionCenterPage:'interactions',Suspense:'suspense',OperationsPage:'broad-workbench',
+    AccountsPage:'accounts',PublishPage:'publish',publicationHandoff:null,consumePublicationHandoff(){},InteractionCenterPage:'interactions',Suspense:'suspense',OperationsPage:'broad-workbench',
     require:()=>({jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})})});
 }
 test('account management renders its own account page',()=>assert.equal(page('accounts').type,'accounts'));

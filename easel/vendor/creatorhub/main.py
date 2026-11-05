@@ -326,6 +326,13 @@ def _persist_douyin_read_session(identity, profile: dict, state: dict, recipe: d
         account = session.get(DouyinAccount, identity.account_id)
         if not account or account.platform != "douyin" or account.profile_dir != identity.profile_dir:
             return False
+        # Closing a browser does not guarantee that every response callback
+        # has settled. A response queued before logout must not recreate auth;
+        # only an explicit login/verification may enable a cleared account.
+        if account.status != "active" or not any(
+                (value or "").strip() for value in (
+                    account.storage_state, account.creator_storage_state, account.cookie)):
+            return False
         comparisons = [str(profile[field]) == str(getattr(account, field))
                        for field in ("uid", "sec_uid")
                        if profile.get(field) and getattr(account, field, "")]
@@ -4769,12 +4776,25 @@ async def _opened_page_login_state(page, platform: str,
 
 @app.post("/api/accounts/{account_id}/open-browser")
 async def open_account_browser(
-        account_id: int, url: str = "", environment_check: bool = False):
+        account_id: int, url: str = "", environment_check: bool = False,
+        authorize=None):
     """用该账号登录态弹出一个真实浏览器窗口。默认停在平台首页;传 url 则停在该地址
     (仅允许本平台域名,用于「查看」视频号作品/管理页等需登录态才能打开的页面)。
     留给用户手动操作(查看/收发私信、F12 抓接口、手动维护等)。关闭窗口即落盘 Cookie。
     小红书复用账号专属常驻 Context；手动窗口只占用当前账号 Profile，不长期占用
     共享网络出口或全局可视操作锁，因此不同账号/平台窗口可以并存。"""
+    authority_failed = False
+
+    def check_authority():
+        nonlocal authority_failed
+        if authorize is not None:
+            try:
+                authorize()
+            except BaseException:
+                authority_failed = True
+                raise
+
+    check_authority()
     if browser is None:
         raise HTTPException(503, "浏览器未就绪")
     with get_session() as s:
@@ -4821,6 +4841,7 @@ async def open_account_browser(
         old_page = getattr(old, "page", None)
         try:
             if old_page is not None and not old_page.is_closed():
+                check_authority()
                 check_opened = False
                 foreground_page = old_page
                 if environment_check:
@@ -4837,9 +4858,11 @@ async def open_account_browser(
                     await old_page.goto(
                         home, wait_until="domcontentloaded", timeout=30000)
                 await foreground_page.bring_to_front()
+                check_authority()
                 reused_login_state = "unconfirmed"
                 if platform == "douyin" and not environment_check:
                     reused_login_state = await _opened_page_login_state(old_page, platform)
+                    check_authority()
                     if reused_login_state == "logged_out":
                         with get_session() as session:
                             account = session.get(DouyinAccount, account_id)
@@ -4859,6 +4882,8 @@ async def open_account_browser(
                     "environment_check": None,
                 }
         except Exception:
+            if authority_failed:
+                raise
             pass
         open_browsers.pop(account_id, None)
         try:
@@ -4920,15 +4945,37 @@ async def open_account_browser(
     check_error = ""
     check_page = None
     ctx = None
+    prior_context = None
+
+    async def close_new_context():
+        if ctx is None:
+            return
+        if authorize is not None:
+            contexts = getattr(browser, "_contexts", None)
+            # An authorization failure cannot close a pre-existing user or
+            # background context, nor a context another owner has replaced.
+            if (ctx is prior_context or not isinstance(contexts, dict)
+                    or contexts.get(identity.key) is not ctx):
+                return
+        with suppress(Exception):
+            await browser.close_context(identity.key)
+
     try:
+        check_authority()  # Recheck after waiting for this account's lock.
         await startup_guard.__aenter__()
         startup_entered = True
+        check_authority()
+        if authorize is not None:
+            contexts = getattr(browser, "_contexts", None)
+            prior_context = contexts.get(identity.key) if isinstance(contexts, dict) else None
         ctx = await browser.open_headed(identity)
+        check_authority()  # Opening may await; do not inject stale credentials.
         if cookies:
             try:
                 await ctx.add_cookies(_sanitize_cookies(cookies))
             except Exception as e:
                 print(f"[open-browser] 注入 Cookie 失败: {e!r}")
+        check_authority()
         check_opener = getattr(browser, "open_environment_check", None)
         if environment_check:
             if not callable(check_opener):
@@ -4951,6 +4998,7 @@ async def open_account_browser(
                     print(f"[environment-check] 自动打开失败: {check_exc!r}")
             page = (await browser.new_page(identity, block_media=False)
                     if platform == "xhs" else await ctx.new_page())
+            check_authority()
             xhs_evidence: dict = {}
             if platform == "xhs" and open_scope == "read":
                 page.on("response", _xhs_open_auth_response_handler(xhs_evidence))
@@ -4965,6 +5013,7 @@ async def open_account_browser(
             login_state = await _opened_page_login_state(
                 page, ("xhs_creator" if platform == "xhs"
                        and open_scope == "creator" else platform), xhs_evidence)
+            check_authority()  # No status/session mutation after logout/rebind.
             logged_out = login_state == "logged_out"
             if logged_out or (platform == "xhs" and login_state == "authenticated"):
                 with get_session() as s:
@@ -4987,18 +5036,19 @@ async def open_account_browser(
                 except Exception:
                     pass
     except BaseException as e:
-        if ctx is not None:
-            with suppress(Exception):
-                await browser.close_context(identity.key)
+        await close_new_context()
         if startup_entered:
             await startup_guard.__aexit__(type(e), e, e.__traceback__)
         await guard.__aexit__(type(e), e, e.__traceback__)
-        if not isinstance(e, Exception):
+        if authority_failed or not isinstance(e, Exception):
             raise
         raise HTTPException(500, f"打开浏览器失败: {e!r}")
     try:
         await startup_guard.__aexit__(None, None, None)
+        check_authority()  # Lease registration must retain the live owner fence.
     except BaseException as e:
+        if authorize is not None:
+            await close_new_context()
         await guard.__aexit__(type(e), e, e.__traceback__)
         raise
     # All headed account contexts are manager-owned. Releasing the manual

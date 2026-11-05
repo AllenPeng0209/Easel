@@ -2,17 +2,21 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {componentModule} from './agentMessagesHarness.mjs';
 const user='navigation-actor';
-const record={schemaVersion:1,actorId:user,projectId:'default',kind:'idea',id:'1'.repeat(12),title:'真实选题',summary:'摘要',
- status:{code:'idea_pending',label:'待做选题',source:'stored'},version:{revision:null,sha256:null},snapshotHash:'a'.repeat(64),
- observedAt:100,details:{},actions:[{kind:'open',target:'ideas',entityId:'1'.repeat(12),label:'查看选题'}]};
+const record={schemaVersion:1,actorId:user,projectId:'default',kind:'workshop',id:'1'.repeat(32),title:'真实工程',summary:'摘要',
+ status:{code:'producing',label:'制作中',source:'stored'},version:{revision:null,sha256:null},snapshotHash:'a'.repeat(64),
+ observedAt:100,details:{},actions:[{kind:'open',target:'workshop',entityId:'1'.repeat(32),label:'查看工坊'}]};
 const load=(fetch=()=>{})=>componentModule('lib/businessObjectApi.ts',{user,globals:{Headers,URLSearchParams,fetch}});
+
+test('retired planning links cannot reopen an idea workspace',()=>{
+ const {parseBusinessHash}=load();
+ assert.equal(parseBusinessHash('#/business/default/idea/legacy-idea'),null);
+});
 
 test('business deep links preserve exact IP, kind and entity ID',()=>{
  const {parseBusinessHash}=load();
- assert.deepEqual(JSON.parse(JSON.stringify(parseBusinessHash('#/business/default/idea/'+record.id))),{kind:'idea',id:record.id});
- assert.equal(parseBusinessHash('#/business/default/idea/Legacy_idea-2026').id,'Legacy_idea-2026');
+ assert.deepEqual(JSON.parse(JSON.stringify(parseBusinessHash('#/business/default/workshop/'+record.id))),{kind:'workshop',id:record.id});
  assert.equal(parseBusinessHash('#/business/other/idea/'+record.id),null);
- for(const suffix of ['/draft/'+record.id,'/workshop/'+record.id,'/idea/../../private','/idea/%2fsecret','/idea/'+record.id+'?url=https://example.invalid']) {
+ for(const suffix of ['/draft/'+record.id,'/workshop/not-a-hex-id','/idea/../../private','/idea/%2fsecret','/idea/'+record.id+'?url=https://example.invalid']) {
   assert.equal(parseBusinessHash('#/business/default'+suffix),null);
  }
  assert.equal(parseBusinessHash('https://example.invalid'),null);
@@ -21,23 +25,23 @@ test('business deep links preserve exact IP, kind and entity ID',()=>{
 test('read-only navigation request uses the actual authenticated scope and a single inspected object',async()=>{
  const calls=[];
  const api=load(async(url,options)=>{calls.push({url,options});return{ok:true,status:200,json:async()=>({items:[record]})};});
- const value=await api.fetchBusinessObject('idea',record.id);
+ const value=await api.fetchBusinessObject('workshop',record.id);
  assert.equal(value.id,record.id);assert.equal(calls.length,1);
- assert.match(calls[0].url,/chat\/business-objects\?action=inspect&kind=idea&id=111111111111/);
+ assert.match(calls[0].url,/chat\/business-objects\?action=inspect&kind=workshop&id=11111111111111111111111111111111/);
  assert.equal(calls[0].options.headers.get('X-Easel-User'),user);
  assert.equal(calls[0].options.cache,'no-store');
 });
 
-for(const change of [{actorId:'another-user'},{projectId:'another-ip'},{id:'2'.repeat(12)},{kind:'workshop'}]) {
+for(const change of [{actorId:'another-user'},{projectId:'another-ip'},{id:'2'.repeat(32)},{kind:'draft'}]) {
  test('navigation refuses a changed response binding '+Object.keys(change)[0],async()=>{
   const api=load(async()=>({ok:true,status:200,json:async()=>({items:[{...record,...change}]})}));
-  await assert.rejects(api.fetchBusinessObject('idea',record.id));
+  await assert.rejects(api.fetchBusinessObject('workshop',record.id));
  });
 }
 
 test('a missing business object carries the real status to the historical card',async()=>{
  const api=load(async()=>({ok:false,status:404}));
- await assert.rejects(api.fetchBusinessObject('idea',record.id),error=>error.status===404);
+ await assert.rejects(api.fetchBusinessObject('workshop',record.id),error=>error.status===404);
 });
 
 test('workshop deep links retain only a valid delivery ID in the current IP', () => {

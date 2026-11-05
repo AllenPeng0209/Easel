@@ -12,7 +12,7 @@
 
 ## 来源与边界
 
-固定DeepSeek Harness `ce7073d51254c26cd63b22a60835b8f948deb447`（MIT）：适配 `packages/subprocess/subprocess-local/src/managed-owner.ts` 的观察失败拒绝、whole-range settlement，及 `packages/shell/bash-local/src/index.ts` 的TERM→KILL、有界输出契约。Python实现与Easel批准/回执接线为必要Host适配，不宣称逐字复制TypeScript。来源与12个代码/测试文件SHA登记在manifest的B18-publication-process条目。
+固定DeepSeek Harness `ce7073d51254c26cd63b22a60835b8f948deb447`（MIT）：适配 `packages/subprocess/subprocess-local/src/managed-owner.ts` 的观察失败拒绝、whole-range settlement，及 `packages/shell/bash-local/src/index.ts` 的TERM→KILL、有界输出契约。Python实现与响芽批准/回执接线为必要Host适配，不宣称逐字复制TypeScript。来源与12个代码/测试文件SHA登记在manifest的B18-publication-process条目。
 
 macOS实机验证的管理范围是本次新建POSIX进程组内的非僵尸成员；仅直接子进程可由owner wait回收，非直接后代僵尸由其父/init回收。主动setsid逃组仍需独立OS containment。Linux未做实机验收；Windows仅有taskkill及独立inventory的协议fixture验证，不当作Windows实机通过。
 

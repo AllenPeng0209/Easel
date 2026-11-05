@@ -1,6 +1,6 @@
 """OpenClaw gateway 端点解析（端口 / 主机 / URL 的唯一真相源）。
 
-为什么需要这个模块：**OpenClaw 对非默认 profile 不用 18789**。Easel 用
+为什么需要这个模块：**OpenClaw 对非默认 profile 不用 18789**。响芽 用
 ``--profile easel`` 隔离自己的配置，于是走的是 OpenClaw 这段（dist/paths-*.mjs
 ``resolveGatewayPort``）：
 
@@ -18,10 +18,10 @@
 2. ``gateway.sh status/start`` 同病 —— start 每次 --force 重启一个健康的 gateway；
 3. 对话静默退回 CLI 传输（``_gateway_http_ready`` 探不到 HTTP 端点），每轮多付一次冷启动。
 
-这里按 OpenClaw 自己的优先级解析，保证「Easel 连的端口 == gateway 监听的端口」：
+这里按 OpenClaw 自己的优先级解析，保证「响芽 连的端口 == gateway 监听的端口」：
 
     1. 环境变量 ``OPENCLAW_GATEWAY_PORT``（gateway 进程最认这个）/
-       ``EASEL_GATEWAY_PORT``（Easel 自己的覆盖，gateway.sh 会透传给上面那个）
+       ``EASEL_GATEWAY_PORT``（响芽 自己的覆盖，gateway.sh 会透传给上面那个）
     2. ``<state dir>/openclaw.json`` 的 ``gateway.port``（onboard 会把解析结果写进去）
     3. profile 哈希兜底：``20000 + fnv1a32(profile) % 40000``，默认 profile 才是 18789
 
@@ -50,7 +50,7 @@ _PROFILE_PORT_BASE = 20_000
 _PROFILE_PORT_SPAN = 40_000
 _MAX_TCP_PORT = 65_535
 
-# 环境变量优先级：OpenClaw 自己的在前 —— gateway 进程实际认的是它，Easel 只能跟随。
+# 环境变量优先级：OpenClaw 自己的在前 —— gateway 进程实际认的是它，响芽 只能跟随。
 _PORT_ENV_KEYS = ("OPENCLAW_GATEWAY_PORT", "EASEL_GATEWAY_PORT")
 
 
@@ -65,8 +65,8 @@ def _as_port(text: str) -> int | None:
 def parse_port_value(raw: str | None) -> int | None:
     """照抄 OpenClaw 的 ``parseGatewayPortEnvValue``：``18789`` / ``host:18789`` / ``[::1]:18789``。
 
-    那三种写法 OpenClaw 都接受，Easel 也得接受 —— 否则用户照着 OpenClaw 文档设了
-    ``OPENCLAW_GATEWAY_PORT=127.0.0.1:19001``，gateway 认、Easel 不认，又是端口错配。
+    那三种写法 OpenClaw 都接受，响芽 也得接受 —— 否则用户照着 OpenClaw 文档设了
+    ``OPENCLAW_GATEWAY_PORT=127.0.0.1:19001``，gateway 认、响芽 不认，又是端口错配。
     """
     trimmed = (raw or "").strip()
     if not trimmed:
@@ -115,7 +115,7 @@ def profile_port(profile: str = PROFILE) -> int:
 
     OpenClaw 的 normalizeProfileName 只在判断是否等于 "default" 时转小写比较，
     参与哈希的仍是原始大小写（见 profile-utils.ts）；这里必须照办，否则
-    "Easel"/"easel" 会被当成同一个 profile，算出跟真实 gateway 不一致的端口。
+    "响芽"/"easel" 会被当成同一个 profile，算出跟真实 gateway 不一致的端口。
     """
     name = (profile or "").strip()
     if not name or name.lower() == "default":
@@ -149,7 +149,7 @@ def port_source(profile: str = PROFILE) -> str:
 
 
 def gateway_host() -> str:
-    """gateway 主机。Easel 起 gateway 时固定 ``--bind loopback``，所以默认就是回环。"""
+    """gateway 主机。响芽 起 gateway 时固定 ``--bind loopback``，所以默认就是回环。"""
     host = (os.environ.get("EASEL_GATEWAY_HOST") or "").strip() or DEFAULT_GATEWAY_HOST
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"          # IPv6 字面量进 URL 得加方括号

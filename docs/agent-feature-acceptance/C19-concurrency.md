@@ -6,7 +6,7 @@
 
 每个连接执行journal_mode=WAL，导致首次建库的并发reader/claim竞争升级锁。仅移除重复模式协商，保留10秒连接timeout、BEGIN IMMEDIATE、主键与独占事件文件；既有WAL库不降级。不以thread lock或sleep掩盖跨连接竞争。
 
-这是Easel SQLite宿主适配修复，沿用DeepSeek session-controller的有序写入、request identity与单writer语义，不冒称复制一份不存在的上游Python实现。
+这是响芽 SQLite宿主适配修复，沿用DeepSeek session-controller的有序写入、request identity与单writer语义，不冒称复制一份不存在的上游Python实现。
 
 ## 验证
 

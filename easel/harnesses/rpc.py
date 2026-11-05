@@ -16,9 +16,12 @@ from .workspace import harness_instructions
 class RpcRejected(HarnessError):
     """A JSON-RPC response explicitly rejected the request."""
 
-    def __init__(self, message: str, failure_code: str = "unknown"):
+    def __init__(self, message: str, failure_code: str = "unknown", *, method: str | None = None,
+                 active_writer_thread_id: str | None = None):
         super().__init__(message)
         self.failure_code = failure_code
+        self.method = method
+        self.active_writer_thread_id = active_writer_thread_id
 
 
 _POOLS: dict[asyncio.AbstractEventLoop, dict[tuple, dict]] = {}
@@ -130,6 +133,7 @@ class RPC:
         self.respond = respond
         self.acp = acp
         self.pending: dict[int, asyncio.Future] = {}
+        self.pending_methods: dict[int, str] = {}
         self.sequence = 0
         self.tasks: set[asyncio.Task] = set()
         self.process = None
@@ -171,6 +175,7 @@ class RPC:
         request_id = self.sequence
         future = asyncio.get_running_loop().create_future()
         self.pending[request_id] = future
+        self.pending_methods[request_id] = method
         try:
             await self.send({"id": request_id, "method": method, "params": params})
             result = await asyncio.wait_for(future, timeout)
@@ -181,6 +186,7 @@ class RPC:
             raise HarnessError(f"Agent 协议请求超时：{method}") from error
         finally:
             self.pending.pop(request_id, None)
+            self.pending_methods.pop(request_id, None)
 
     async def _serve(self, message):
         try:
@@ -229,6 +235,10 @@ class RPC:
                     if future is not None and not future.done():
                         if "error" in message:
                             error = message["error"]
+                            active_writer = (self.request.native_id if self.request.native_id
+                                and type(error.get("code")) is int and error["code"] == -32600
+                                and error.get("message") == f"thread {self.request.native_id} already has an active writer"
+                                else None)
                             if error.get("code") in (-32700, -32600, -32602, "INVALID_REQUEST"):
                                 detail = "请求格式或参数无效，请检查 Agent CLI 协议版本"
                             else:
@@ -238,7 +248,11 @@ class RPC:
                                         if len(value) >= 4:
                                             detail = detail.replace(value, "***")
                             failure_code, _ = classify_provider_failure(error)
-                            future.set_exception(RpcRejected(f"Agent 协议错误：{detail}", failure_code))
+                            if active_writer:
+                                failure_code = "session_conflict"
+                                detail = "原生会话已有其他写入者，未中断原会话"
+                            future.set_exception(RpcRejected(f"Agent 协议错误：{detail}", failure_code,
+                                method=self.pending_methods.get(message["id"]), active_writer_thread_id=active_writer))
                         else:
                             future.set_result(message.get("result") or {})
         except asyncio.CancelledError:

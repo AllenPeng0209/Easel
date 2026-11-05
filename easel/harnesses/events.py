@@ -5,7 +5,7 @@ Harness conversation contract (MIT, Copyright (c) 2026 DeepSeek):
   packages/client/ui-chat/src/client/model/tool-call-tree.ts
   packages/client/ui-tool/src/client/tool/models/tool-call-model.ts
 at ce7073d51254c26cd63b22a60835b8f948deb447.  Native Codex/ACP field
-translation and credential filtering are Easel's host boundary adaptation.
+translation and credential filtering are Xiangya's host boundary adaptation.
 The upstream notice is retained in integrations/deepseek-harness/LICENSE.
 """
 from __future__ import annotations

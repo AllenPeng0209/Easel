@@ -56,10 +56,10 @@ function setup(responses = [automaticPolicy]) {
   const exports = {};
   runInNewContext(outputText, { exports, require: name => modules[name] });
   return {
-    render() {
+    render(props = {}) {
       cursor = 0;
       pending = [];
-      const tree = exports.default({ persona: 'travel-brand' });
+      const tree = exports.default({ persona: 'travel-brand', ...props });
       pending.forEach(callback => callback());
       return tree;
     },
@@ -92,6 +92,17 @@ test('default policy keeps the existing automatic page and exposes both paths', 
   assert.equal(button(tree, '人工审核发布').props['aria-pressed'], false);
   assert.equal(nodes(tree).find(node => node.type === 'automated-page').props.persona, 'travel-brand');
   assert.equal(nodes(tree).some(node => node.type === 'manual-page'), false);
+});
+
+test('AI handoff reaches the existing automatic editor while policy still controls whether it is available', async () => {
+  const handoff = { kind: 'approval', approvalId: 'existing-id', payloadHash: 'a'.repeat(64) };
+  for (const policy of [automaticPolicy, manualPolicy]) {
+    const app = setup([policy]); app.render({ handoff }); await settle();
+    const tree = app.render({ handoff });
+    const editor = nodes(tree).find(node => node.type === 'automated-page');
+    if (policy === automaticPolicy) assert.equal(editor.props.handoff, handoff);
+    else { assert.equal(editor, undefined); assert.equal(button(tree, '自动发布').props.disabled, true); }
+  }
 });
 
 test('switching to manual and back only changes the visible workflow', async () => {

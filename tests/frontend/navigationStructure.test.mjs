@@ -20,31 +20,6 @@ function nodes(tree) {
 const text = node => typeof node === 'string' || typeof node === 'number' ? String(node)
   : !node || typeof node !== 'object' ? '' : [node.props?.children].flat(Infinity).map(text).join('');
 
-function subnav(canOperate = true) {
-  const exports = {};
-  runInNewContext(compile('components/SubNav.tsx'), { exports, require: name => name === 'react/jsx-runtime'
-    ? { jsx, jsxs:jsx } : name === './ProjectSpace' ? { useIpPermissions: () => ({canOperate}) }
-      : new Proxy({}, {get: (_, key) => key}) });
-  const navigated=[];
-  const buttons = nodes(exports.default({current:'ideas',onNavigate: page => navigated.push(page)})).filter(node => node.type === 'button');
-  return {buttons,navigated};
-}
-
-test('topic planning keeps discovery, ideas and breakdown together without operations tabs', () => {
-  const ui=subnav();
-  assert.deepEqual(ui.buttons.map(text),['AI 对话','热点雷达','选题库','爆款拆解']);
-  ui.buttons[0].props.onClick();
-  ui.buttons[1].props.onClick();
-  assert.deepEqual(ui.navigated,['chat','trends']);
-});
-
-test('viewer topic navigation returns to its read-only overview and does not expose analysis execution', () => {
-  const ui=subnav(false);
-  assert.deepEqual(ui.buttons.map(text),['运营总览','热点雷达','选题库']);
-  ui.buttons[0].props.onClick();
-  assert.deepEqual(ui.navigated,['dashboard']);
-});
-
 for (const canOperate of [true,false]) test(`the application opens the ${canOperate ? 'AI conversation' : 'viewer overview'} by default`, () => {
   const exports={};
   const hooks={lazy: () => 'lazy-page',Suspense:'suspense',useRef: value => ({current:value}),useEffect() {},

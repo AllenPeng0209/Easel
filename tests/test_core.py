@@ -1,4 +1,4 @@
-"""Easel 整合层核心纯函数单测。
+"""响芽 整合层核心纯函数单测。
 
 覆盖 CLI（skill.py 输入分类/SKILL 查找）+ Web 后端（app.py 文件类型/路径安全/画像生成/输出树）。
 运行：pytest tests/ -q

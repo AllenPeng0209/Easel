@@ -35,7 +35,7 @@ test('image and video comparisons use only verified fixed IDs and identify unkno
     for (const [name, mime, element] of [['cover.png', 'image/png', 'img'], ['clip.mp4', 'video/mp4', 'video']]) {
       const before = file('a', 1, name, mime);
       const after = file('b', 2, name, mime);
-      const generation = { source: 'beeftv_workshop', workshopProjectId: 'c'.repeat(32), renderId: 'd'.repeat(32),
+      const generation = { source: 'native_workshop', workshopProjectId: 'c'.repeat(32), renderId: 'd'.repeat(32),
         taskId: 'e'.repeat(32), contentRevision: 3, engineRevision: 4 };
       response = { kind: 'media', path: before.path, identical: false, before: summary(before),
         after: summary(after, element === 'video' ? generation : null) };
@@ -47,7 +47,7 @@ test('image and video comparisons use only verified fixed IDs and identify unkno
       assert.equal(requests.at(-1), after.url.replace('/content', '/compare') + '?beforeId=' + before.artifactId);
       assert.deepEqual([...result.querySelectorAll(element)].map(node => node.getAttribute('src')), [before.url, after.url]);
       assert.match(result.textContent, /未记录生成参数/);
-      if (element === 'video') assert.match(result.textContent, /BeefTV.*工程版本.*V3.*引擎版本.*V4/s);
+      if (element === 'video') assert.match(result.textContent, /原生工坊.*工程版本.*V3/s);
 
       response = { ...response, after: { ...response.after, url: 'https://outside.invalid/foreign' } };
       await React.act(async () => compare.click());

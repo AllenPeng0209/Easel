@@ -1,4 +1,4 @@
-"""Real public API collectors. No fixtures, API keys or Easel imports required.
+"""Real public API collectors. No fixtures, API keys or Xiangya imports required.
 
 python -X utf8 live_collector.py --provider hackernews --limit 20
 python -X utf8 live_collector.py --provider github --limit 10

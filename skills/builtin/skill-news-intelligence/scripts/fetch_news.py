@@ -219,7 +219,7 @@ def source_domain(key):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Easel 中文资讯情报抓取器")
+    parser = argparse.ArgumentParser(description="响芽 中文资讯情报抓取器")
     sources_map = build_sources_map()
 
     parser.add_argument('--source', default='all', help='源 key，逗号分隔（--list-sources 查看全部）')

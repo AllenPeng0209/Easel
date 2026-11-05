@@ -1,7 +1,7 @@
 /**
  * Adapted from DeepSeek Harness ui-input-trigger keyboard candidate behavior
  * @ ce7073d51254c26cd63b22a60835b8f948deb447, MIT.
- * Easel's Host supplies the reviewed catalog. Browsing or selecting never executes it.
+ * 响芽's Host supplies the reviewed catalog. Browsing or selecting never executes it.
  */
 import { Fragment, useEffect, useId, useState } from 'react';
 import { validateChatCommand, type ChatCommand, type ChatCommandOption } from '../lib/chatCommands';

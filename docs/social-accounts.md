@@ -3,8 +3,8 @@
 账号管理新增 Facebook、Instagram、TikTok、YouTube 的浏览器会话登录，并保留主线已有的 X（Twitter）窗口登录。
 
 1. 打开当前 IP 的「账号管理」，选择平台并点击「登录」。
-2. 在运行 Easel 的电脑上弹出的独立浏览器中，直接在平台官网输入账号密码，并完成平台要求的验证。
-3. Easel 检测到已登录页面后关闭登录窗口，保存会话，再更新账号卡片。
+2. 在运行 响芽 的电脑上弹出的独立浏览器中，直接在平台官网输入账号密码，并完成平台要求的验证。
+3. 响芽 检测到已登录页面后关闭登录窗口，保存会话，再更新账号卡片。
 4. 之后可「校验账号」；「退出登录」清除当前 IP 下该平台的本地会话。
 
 这次新增四个平台的范围是账号会话管理，一键发布、官方 OAuth API 权限和运营数据采集尚未接入。X 继续使用已有的 TwitterXProfile 及发布、取数实现。
@@ -12,12 +12,12 @@
 
 ## 运行条件
 
-- Easel 所在电脑有图形桌面，且能访问对应平台。如果从另一台电脑访问 Easel，登录窗口仍会在服务器电脑上打开。
+- 响芽 所在电脑有图形桌面，且能访问对应平台。如果从另一台电脑访问 响芽，登录窗口仍会在服务器电脑上打开。
 - 已安装 Playwright 的 Chromium：`python -m playwright install chromium`。
 - 海外浏览器保留系统网络配置；也可在项目 `.env` 中配置 `EASEL_SOCIAL_PROXY=http://127.0.0.1:7890`。修改后重新发起登录即可。
 - 代理优先级：`EASEL_SOCIAL_PROXY` → `EASEL_PROXY` → `https_proxy` / `HTTPS_PROXY` → `all_proxy` / `ALL_PROXY` → 系统网络。
 
-平台账号不需要在 Easel 内填写开发者 App ID、App Secret、密码或验证码。会话保存在当前 IP 的独立浏览器目录，包含敏感登录信息，请勿分享或提交到 Git。
+平台账号不需要在 响芽 内填写开发者 App ID、App Secret、密码或验证码。会话保存在当前 IP 的独立浏览器目录，包含敏感登录信息，请勿分享或提交到 Git。
 
 默认 IP 使用 `~/.easel-browser-profiles/<平台>Profile`；其他 IP 使用 `projects/<IP ID>/browser/<平台>Profile`。
 X 保留既有的 `TwitterXProfile`，不新增重复账号入口。

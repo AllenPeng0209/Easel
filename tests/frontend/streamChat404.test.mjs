@@ -32,7 +32,7 @@ function loadApi(fetchImpl) {
   const sandbox = {
     exports: module.exports,
     BASE: '',
-    require: (name) => name === './projectScope' ? projectScope : name === './trendValidation' ? {} : require(name),
+    require: (name) => name === './projectScope' ? projectScope : require(name),
     console,
     window: { location: { pathname: '/' } },
     AbortController,
@@ -146,7 +146,7 @@ test('queue admission accepts only a receipt for the requested session and turn'
     const args = Array(20).fill(undefined);
     args.splice(0, 6, 'next task', undefined, 'chat', () => {}, resolve, reject);
     args[9] = 'queue-q1';
-    args[19] = receipt => received.push(JSON.parse(JSON.stringify(receipt)));
+    args[18] = receipt => received.push(JSON.parse(JSON.stringify(receipt)));
     api.streamChat(...args);
   });
   assert.deepEqual(received, [events[2]]);
@@ -203,7 +203,7 @@ test('explicit final answer evidence arrives independently of turn completion', 
   await new Promise((resolve, reject) => {
     const args = ['hi', undefined, 'answer-session', () => observations.push('token'),
       () => { observations.push('turn-done'); resolve(); }, reject];
-    args[24] = value => observations.push(JSON.parse(JSON.stringify(value)));
+    args[23] = value => observations.push(JSON.parse(JSON.stringify(value)));
     api.streamChat(...args);
   });
   assert.deepEqual(observations, ['token', receipt, 'turn-done']);

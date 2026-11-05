@@ -1,6 +1,6 @@
 # EASEL-META — skill-content-calendar-log
 
-- **类型**：🔧 自研（Easel）
+- **类型**：🔧 自研（响芽）
 - **层**：attribute（归因）
 - **引擎**：`skills/shared/scripts/calendar_ops.py`（读写 `outputs/_schedule.json`，与 Web `/api/schedule` 同一文件）
 - **由来**：把"每次发布/排期/平台活动记到统一日历 + Agent 读回规划"从分散在发布页回流、publish-log、event-calendar 三处的割裂逻辑，收敛成一个时间线底座。

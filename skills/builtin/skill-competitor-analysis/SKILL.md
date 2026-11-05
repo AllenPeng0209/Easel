@@ -3,8 +3,6 @@ name: skill-competitor-analysis
 description: >-
   分析竞品账号的内容策略，拆解选题、格式、爆款规律和互动模式，输出差异化机会与行动建议。
   当用户说"分析竞品""竞品账号""对标账号""拆解爆款""竞品在做什么""对手内容策略""竞争分析"时使用。
-  和 skill-content-gap-analysis 的区别：本 SKILL 拆解具体竞品账号的内容策略与爆款规律；
-  content-gap-analysis 从赛道整体供需找"没人做好"的蓝海选题空白。
 layer: discover
 ---
 

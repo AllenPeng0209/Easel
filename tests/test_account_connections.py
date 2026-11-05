@@ -683,6 +683,205 @@ async def test_revocation_fences_a_browser_that_finishes_after_cancellation(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize('selected,shared_active', [(1, True), (2, False)])
+async def test_revoking_one_account_keeps_the_other_same_platform_account_logged_in(
+    runtime, monkeypatch, session_store, selected, shared_active
+):
+    native_account(runtime, identifier=1)
+    native_account(runtime, identifier=2)
+    _, closed = install_platform(runtime, monkeypatch)
+    profiles = {}
+    with runtime.module.get_session() as db:
+        for identifier in (1, 2):
+            account = db.get(runtime.module.DouyinAccount, identifier)
+            account.uid = str(identifier * 100)
+            account.sec_uid = 'secure-' + str(identifier * 100)
+            account.creator_storage_state = json.dumps(state('douyin', 'creator-' + str(identifier)))
+            account.cookie = 'account-' + str(identifier)
+            profiles[identifier] = Path(account.profile_dir)
+            (profiles[identifier] / 'account-session-marker').write_text(str(identifier))
+            db.add(account)
+        db.commit()
+    generation = session_store.begin_generation(runtime.workspace, 'douyin')
+    session_store.save_session(runtime.workspace, 'douyin', 1, state('douyin', 'active-content'),
+        identity={'uid': '100', 'accountIdentityStatus': 'verified'}, capabilities={'creator': 'verified'}, expected_generation=generation)
+    api = connections(runtime)
+    result = await api.revoke_account(selected)
+    assert result == {'account_id': selected, 'platform': 'douyin', 'shared_active': shared_active}
+    with runtime.module.get_session() as db:
+        revoked = db.get(runtime.module.DouyinAccount, selected)
+        other = db.get(runtime.module.DouyinAccount, 3 - selected)
+        assert revoked.status == 'invalid'
+        assert revoked.storage_state == revoked.creator_storage_state == revoked.cookie == ''
+        assert other.status == 'active'
+        assert other.storage_state and other.creator_storage_state and other.cookie
+    assert closed == [selected]
+    assert not (profiles[selected] / 'account-session-marker').exists()
+    assert (profiles[3 - selected] / 'account-session-marker').read_text() == str(3 - selected)
+    if shared_active:
+        assert session_store.load_session(runtime.workspace, 'douyin') is None
+        assert session_store.session_generation(runtime.workspace, 'douyin') > generation
+    else:
+        assert session_store.load_session(runtime.workspace, 'douyin')['account_id'] == 1
+        assert session_store.session_generation(runtime.workspace, 'douyin') == generation
+    await api.close()
+
+
+@pytest.mark.anyio
+async def test_revoking_an_unknown_account_does_not_change_current_session(runtime, session_store):
+    native_account(runtime)
+    session_store.save_session(runtime.workspace, 'douyin', 1, state('douyin', 'active-content'),
+        identity={'uid': '100', 'accountIdentityStatus': 'verified'}, capabilities={'creator': 'verified'})
+    before = session_store.load_session(runtime.workspace, 'douyin')
+    api = connections(runtime)
+    with pytest.raises(HTTPException) as error:
+        await api.revoke_account(999)
+    assert error.value.status_code == 404
+    assert session_store.load_session(runtime.workspace, 'douyin') == before
+    await api.close()
+
+
+@pytest.mark.anyio
+async def test_revoking_an_account_cannot_cancel_another_account_login(runtime, monkeypatch, session_store):
+    native_account(runtime, identifier=1)
+    native_account(runtime, identifier=2)
+    pause = asyncio.Event()
+    install_platform(runtime, monkeypatch, pause=pause, unknown_read=True)
+    api = connections(runtime)
+    started = await api.start('douyin', account_id=2)
+    await asyncio.sleep(0)
+    with pytest.raises(HTTPException) as error:
+        await api.revoke_account(1)
+    assert error.value.status_code == 409
+    assert api.poll(started['task_id'])['status'] not in {'error', 'expired'}
+    with runtime.module.get_session() as db:
+        assert all(account.status == 'active' for account in db.exec(select(runtime.module.DouyinAccount)).all())
+    pause.set()
+    await settled(api, started['task_id'])
+    await api.close()
+
+
+@pytest.mark.anyio
+async def test_single_account_logout_fences_a_late_login_without_clearing_another_account(
+    runtime, monkeypatch, session_store
+):
+    native_account(runtime, identifier=1)
+    native_account(runtime, identifier=2)
+    pause = asyncio.Event()
+    install_platform(runtime, monkeypatch, pause=pause, unknown_read=True)
+    api = connections(runtime)
+    started = await api.start('douyin', account_id=1)
+    await asyncio.sleep(0)
+    logout = asyncio.create_task(api.revoke_account(1))
+    await asyncio.sleep(0)
+    pause.set()
+    result = await logout
+    assert result['account_id'] == 1
+    assert api.poll(started['task_id'])['status'] == 'error'
+    assert session_store.load_session(runtime.workspace, 'douyin') is None
+    with runtime.module.get_session() as db:
+        account = db.get(runtime.module.DouyinAccount, 1)
+        assert account.status == 'invalid' and account.storage_state == ''
+        other = db.get(runtime.module.DouyinAccount, 2)
+        assert other.status == 'active' and other.storage_state
+    await api.close()
+
+
+@pytest.mark.anyio
+async def test_single_logout_does_not_erase_a_newer_other_account_session(runtime, monkeypatch, session_store):
+    native_account(runtime, identifier=1)
+    native_account(runtime, identifier=2)
+    install_platform(runtime, monkeypatch)
+    api = connections(runtime)
+    generation = session_store.begin_generation(runtime.workspace, 'douyin')
+    session_store.save_session(runtime.workspace, 'douyin', 1, state('douyin', 'old-active'),
+        identity={'uid': '100', 'accountIdentityStatus': 'verified'}, capabilities={'creator': 'verified'}, expected_generation=generation)
+    finish = asyncio.Event()
+
+    async def boundary():
+        try:
+            await finish.wait()
+        except asyncio.CancelledError:
+            await finish.wait()
+
+    runner = asyncio.create_task(boundary())
+    api._runners['target'] = runner
+    api._records['target'] = {'platform': 'douyin', 'account_id': 1, '_generation': generation,
+                              'status': 'waiting', '_leaves': []}
+    await asyncio.sleep(0)
+    logout = asyncio.create_task(api.revoke_account(1))
+    await asyncio.sleep(0)
+    newer = session_store.begin_generation(runtime.workspace, 'douyin')
+    session_store.save_session(runtime.workspace, 'douyin', 2, state('douyin', 'new-active'),
+        identity={'uid': '200'}, capabilities={'creator': 'verified'}, expected_generation=newer)
+    finish.set()
+    await logout
+    assert session_store.load_session(runtime.workspace, 'douyin')['account_id'] == 2
+    assert session_store.session_generation(runtime.workspace, 'douyin') == newer
+    await api.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('identity', [
+    {'uid': 'different-person', 'accountIdentityStatus': 'verified'},
+    {'uid': '100'},
+])
+async def test_a_reused_internal_id_cannot_log_out_a_different_or_unverified_shared_subject(
+    runtime, session_store, identity
+):
+    native_account(runtime)
+    session_store.save_session(runtime.workspace, 'douyin', 1, state('douyin', 'shared-person'),
+        identity=identity, capabilities={'creator': 'verified'})
+    before = session_store.load_session(runtime.workspace, 'douyin')
+    api = connections(runtime)
+    with pytest.raises(HTTPException) as error:
+        await api.revoke_account(1)
+    assert error.value.status_code == 409
+    assert session_store.load_session(runtime.workspace, 'douyin') == before
+    with runtime.module.get_session() as db:
+        account = db.get(runtime.module.DouyinAccount, 1)
+        assert account.status == 'active' and account.storage_state
+    await api.close()
+
+
+@pytest.mark.anyio
+async def test_logout_rechecks_owner_permission_after_waiting_for_the_account_lock(
+    runtime, monkeypatch, session_store
+):
+    native_account(runtime)
+    _, closed = install_platform(runtime, monkeypatch)
+    session_store.save_session(runtime.workspace, 'douyin', 1, state('douyin', 'active-session'),
+        identity={'uid': '100', 'accountIdentityStatus': 'verified'}, capabilities={'creator': 'verified'})
+    before = session_store.load_session(runtime.workspace, 'douyin')
+    with runtime.module.get_session() as db:
+        prior_account = db.get(runtime.module.DouyinAccount, 1).model_dump()
+        profile = Path(prior_account['profile_dir'])
+    marker = profile / 'still-authenticated'
+    marker.write_text('owned fixture')
+    permission = {'owner': True}
+
+    def authorize():
+        if not permission['owner']:
+            raise HTTPException(403, '账号操作权限已撤回')
+
+    api = connections(runtime)
+    await api._lock.acquire()
+    logout = asyncio.create_task(api.revoke_account(1, authorize=authorize))
+    await asyncio.sleep(0)
+    permission['owner'] = False
+    api._lock.release()
+    with pytest.raises(HTTPException) as error:
+        await logout
+    assert error.value.status_code == 403
+    assert session_store.load_session(runtime.workspace, 'douyin') == before
+    with runtime.module.get_session() as db:
+        assert db.get(runtime.module.DouyinAccount, 1).model_dump() == prior_account
+    assert marker.read_text() == 'owned fixture'
+    assert closed == []
+    await api.close()
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("force_reauth,expected", [(None, True), (False, False)])
 async def test_native_login_preserves_default_reauth_and_checks_the_candidate_before_writing(
     runtime, monkeypatch, force_reauth, expected

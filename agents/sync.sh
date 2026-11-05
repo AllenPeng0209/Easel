@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Easel — 同步 SKILL + workspace 到 OpenClaw 的 easel 隔离 profile
+# 响芽 — 同步 SKILL + workspace 到 OpenClaw 的 easel 隔离 profile
 #
 # workspace 目标目录**不写死**：OpenClaw 的默认布局变过（2026.6.x 是
 #   ~/.openclaw/workspace-easel，2026.9.x 起是 ~/.openclaw-easel/workspace）。
@@ -141,7 +141,7 @@ cat >> "$OPENCLAW_WORKSPACE_DST/AGENTS.md" << AGENTROOTEOF
 
 当前执行引擎：OpenClaw。使用该引擎实际提供的工具和权限；共享工作区规则同样适用于其它引擎。
 
-Easel 项目根绝对路径：\`$PROJECT_ROOT\`
+响芽 项目根绝对路径：\`$PROJECT_ROOT\`
 
 运行任何 \`skills/...\` 项目脚本前都必须先执行：
 
@@ -164,7 +164,7 @@ echo ""
 # 清掉历史残留，避免旧画像污染 system prompt。
 if ! "$DOCS_ONLY"; then
     rm -f "$OPENCLAW_WORKSPACE_DST/USER.md" 2>/dev/null && echo "Cleanup: ✓ 移除残留 USER.md" || true
-# Easel 的长期记忆按画像隔离；全局 MEMORY.md 必须保持为空，避免跨画像污染。
+# 响芽 的长期记忆按画像隔离；全局 MEMORY.md 必须保持为空，避免跨画像污染。
     : > "$OPENCLAW_WORKSPACE_DST/MEMORY.md"
     echo "Cleanup: ✓ 清空全局 MEMORY.md（画像记忆按会话读取）"
 fi
@@ -197,7 +197,7 @@ echo ""
 
 # ---- 记录项目根路径（供 workspace 内人工/工具读取；AGENTS.md 另有每轮注入副本） ----
 cat > "$OPENCLAW_WORKSPACE_DST/CONTEXT.md" << CTXEOF
-# Easel 项目路径
+# 响芽 项目路径
 
 项目根目录：$PROJECT_ROOT
 

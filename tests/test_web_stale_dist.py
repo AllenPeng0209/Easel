@@ -1,4 +1,4 @@
-"""easel web 启动时的前端 dist 陈旧警告（_warn_stale_frontend）。
+"""xiangya web 启动时的前端 dist 陈旧警告（_warn_stale_frontend）。
 
 回归背景：服务托管的是 web/frontend/dist；源码改了不重建，浏览器一直跑旧
 bundle，曾导致「登录成功仍显示未登录」。启动时检测 src/public/index.html
@@ -112,7 +112,7 @@ def test_warns_when_profiles_dir_unwritable(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(tempfile, 'TemporaryFile', denied)
     cli._warn_unwritable_profiles_dir(ro)
     err = capsys.readouterr().err
-    assert "不可写" in err and "easel web" in err
+    assert "不可写" in err and "xiangya web" in err
 
 
 def test_silent_when_profiles_dir_writable(tmp_path, capsys):

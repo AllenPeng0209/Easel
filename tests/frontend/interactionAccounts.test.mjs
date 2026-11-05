@@ -21,16 +21,18 @@ function compile(path) {
 }
 compile(source);
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const account = (nickname = '测试账号') => ({ id: 1, platform: 'douyin', nickname, status: 'active', has_read_login: true });
+const account = (name = '测试账号') => ({ key: 'native:1', nativeAccountId: 1, platform: 'douyin', platformName: '抖音', name, avatar: '', loggedIn: true, status: 'logged_in', current: true, identityVerified: true, capabilities: { creator: 'verified', comments: 'verified', dm: 'needs_verification' } });
+const directory = (accounts = [account()], catalog = platforms) => ({ project_id: 'default', platforms: catalog, accounts });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-async function view(respond = () => [account()], initialProps = {}) {
+async function view(respond = () => directory(), initialProps = {}) {
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   let focused = document.body;
   Object.defineProperty(document, 'activeElement', { get: () => focused?.isConnected ? focused : document.body });
   const originalFocus = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'focus');
   const originalMatches = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'matches');
   window.HTMLElement.prototype.focus = function () { focused = this; };
+  window.confirm = () => true;
   const matches = window.HTMLElement.prototype.matches;
   window.HTMLElement.prototype.matches = function (selector) { return selector === ':focus' ? document.activeElement === this : matches.call(this, selector); };
   const saved = new Map();
@@ -66,7 +68,7 @@ async function view(respond = () => [account()], initialProps = {}) {
           return { ...runtime, jsx: observe('jsx'), jsxs: observe('jsxs') };
         }
         if (name.endsWith('/ProjectSpace')) return { useIpPermissions: () => permissions };
-        if (name.endsWith('/projectScope')) return { projectFetch: async (url, options = {}) => {
+        if (name.endsWith('/projectScope')) return { ACTIVE_PROJECT_ID: 'default', projectFetch: async (url, options = {}) => {
           calls.push({ url, options });
           const data = await respond(url, options);
           return { ok: true, json: async () => data };
@@ -120,7 +122,7 @@ async function view(respond = () => [account()], initialProps = {}) {
 
 test('closing an in-flight login does not let its response reopen the dialog', async () => {
   const pending = deferred();
-  const ui = await view(url => url.includes('/start') ? pending.promise : [account()]);
+  const ui = await view(url => url.includes('/start') ? pending.promise : directory());
   try {
     await ui.click('＋ 添加账号');
     await ui.click('打开登录窗口');
@@ -136,7 +138,7 @@ test('closing an in-flight login does not let its response reopen the dialog', a
 test('a dismissed login cannot replace a newer login request or clear its busy state', async () => {
   const first = deferred(); const second = deferred(); let starts = 0;
   const ui = await view(url => url.includes('/start') ? (++starts === 1 ? first.promise : second.promise)
-    : url.includes('/poll') ? { status: 'waiting' } : [account()]);
+    : url.includes('/poll') ? { status: 'waiting' } : directory());
   try {
     await ui.click('＋ 添加账号'); await ui.click('打开登录窗口'); await ui.click('关闭账号连接');
     await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
@@ -154,7 +156,7 @@ test('a dismissed login cannot replace a newer login request or clear its busy s
 
 test('login waiting state keeps focus inside the dialog and closing restores the invoking button', async () => {
   const pending = deferred();
-  const ui = await view(url => url.includes('/start') ? pending.promise : [account()]);
+  const ui = await view(url => url.includes('/start') ? pending.promise : directory());
   try {
     const trigger = ui.button('＋ 添加账号');
     await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
@@ -167,7 +169,7 @@ test('login waiting state keeps focus inside the dialog and closing restores the
 
 test('keyboard focus cannot escape the waiting dialog and Escape restores its trigger', async () => {
   const pending = deferred();
-  const ui = await view(url => url.includes('/start') ? pending.promise : [account()]);
+  const ui = await view(url => url.includes('/start') ? pending.promise : directory());
   try {
     const trigger = ui.button('＋ 添加账号');
     await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
@@ -182,7 +184,7 @@ test('keyboard focus cannot escape the waiting dialog and Escape restores its tr
 
 test('retrying a failed login keeps focus inside the waiting dialog', async () => {
   const pending = deferred(); let starts = 0;
-  const ui = await view(url => url.includes('/start') ? (++starts === 1 ? Promise.reject(new Error('离线登录失败')) : pending.promise) : [account()]);
+  const ui = await view(url => url.includes('/start') ? (++starts === 1 ? Promise.reject(new Error('离线登录失败')) : pending.promise) : directory());
   try {
     await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
     assert.ok(ui.document.body.textContent.includes('离线登录失败'));
@@ -198,16 +200,17 @@ test('account table exposes named column headers', async () => {
   finally { await ui.dispose(); }
 });
 
-test('a late account refresh cannot overwrite a newer verification result', async () => {
+test('a late directory read cannot overwrite the directory returned after an account action', async () => {
   const old = deferred(); let reads = 0;
-  const ui = await view(url => url.endsWith('/accounts') ? (++reads === 1 ? [account('旧昵称')] : reads === 2 ? old.promise : [account('新昵称')]) : { ok: true });
+  const fresh = { ...account('最新资料'), key: 'legacy:bilibili', platform: 'bilibili', platformName: 'B站', nativeAccountId: null };
+  const ui = await view(url => url === '/api/accounts/directory' ? (++reads === 1 ? directory([fresh]) : reads === 2 ? old.promise : directory([{ ...fresh, name: '校验后的资料' }])) : { ok: true });
   try {
     await ui.render({ refreshToken: 1 });
-    await ui.click('管理'); await ui.click('校验登录');
-    assert.ok(ui.document.body.textContent.includes('新昵称'));
-    await ui.settle(() => old.resolve([account('旧昵称')]));
-    assert.ok(ui.document.body.textContent.includes('新昵称'));
-    assert.ok(!ui.document.body.textContent.includes('旧昵称'));
+    await ui.click('管理'); await ui.click('检查登录');
+    assert.ok(ui.document.body.textContent.includes('校验后的资料'));
+    await ui.settle(() => old.resolve(directory([account('旧资料')])));
+    assert.ok(ui.document.body.textContent.includes('校验后的资料'));
+    assert.ok(!ui.document.body.textContent.includes('旧资料'));
   } finally { await ui.dispose(); }
 });
 
@@ -241,9 +244,9 @@ for (const platform of ['bilibili', 'youtube', 'wechat-oa']) {
 
 test('小红书 has one login for content and interaction without asking the user to choose a purpose', async () => {
   const chosen = [];
-  const ui = await view(url => url.includes('/start') ? { task_id: 'xhs-unified', status: 'opening' } : [account()], { platforms, onPlatformLogin: item => chosen.push(item) });
+  const ui = await view(url => url.includes('/start') ? { task_id: 'xhs-unified', status: 'opening' } : directory(), { platforms, onPlatformLogin: item => chosen.push(item) });
   try {
-    await ui.click('＋ 添加账号'); await ui.select('平台', 'xhs');
+    await ui.click('＋ 添加账号'); await ui.select('平台', 'xiaohongshu');
     assert.ok(![...ui.document.querySelectorAll('label')].some(label => label.textContent.startsWith('用途')));
     await ui.click('打开登录窗口');
     assert.equal(chosen.length, 0);
@@ -253,7 +256,7 @@ test('小红书 has one login for content and interaction without asking the use
 
 test('Douyin uses the unified login service when the full platform catalog is present', async () => {
   const chosen = [];
-  const ui = await view(url => url.includes('/start') ? { task_id: 'native', status: 'opening' } : [account()], { platforms, onPlatformLogin: item => chosen.push(item) });
+  const ui = await view(url => url.includes('/start') ? { task_id: 'native', status: 'opening' } : directory(), { platforms, onPlatformLogin: item => chosen.push(item) });
   try {
     await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
     assert.equal(ui.calls.find(call => call.options.method === 'POST').url, '/api/operations/api/accounts/connect/start?platform=douyin');
@@ -267,7 +270,7 @@ for (const capabilities of [
 ]) test('a partial unified login reports pending verification instead of claiming both login checks passed', async () => {
   const ui = await view(url => url.includes('/start') ? { task_id: 'partial', status: 'opening' }
     : url.includes('/poll') ? { status: 'confirmed', completion: 'partial', capabilities }
-      : [account()], { platforms });
+      : directory(), { platforms });
   try {
     await ui.click('＋ 添加账号'); await ui.click('打开登录窗口'); await ui.poll();
     assert.equal(ui.document.querySelector('[role="dialog"]'), null);
@@ -279,7 +282,7 @@ for (const capabilities of [
 test('a unified login displays its safe platform verification hint', async () => {
   const ui = await view(url => url.includes('/start') ? { task_id: 'needs-proof', status: 'opening', hint: '正在检查已有登录。' }
     : url.includes('/poll') ? { status: 'error', hint: '主站与内容后台账号不一致，请使用同一账号完成验证。' }
-      : [account()]);
+      : directory());
   try {
     await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
     assert.ok(ui.document.body.textContent.includes('正在检查已有登录。'));
@@ -290,7 +293,7 @@ test('a unified login displays its safe platform verification hint', async () =>
 
 test('an unsupported catalog platform cannot start a login', async () => {
   const chosen = [];
-  const ui = await view(undefined, { platforms: [{ ...platforms[4], supported: false }], onPlatformLogin: item => chosen.push(item) });
+  const ui = await view(() => directory([], [{ ...platforms[4], supported: false }]), { onPlatformLogin: item => chosen.push(item) });
   try {
     await ui.click('＋ 添加账号'); await ui.select('平台', 'bilibili');
     assert.equal(ui.button('打开登录窗口').disabled, true);
@@ -325,4 +328,213 @@ test('closing the catalog blocks an older confirmation from starting a platform 
     assert.equal(chosen.length, 0);
     assert.equal(ui.calls.filter(call => call.options.method === 'POST').length, 0);
   } finally { await ui.dispose(); }
+});
+
+
+test('an empty IP shows one account list and keeps every platform only in the add picker', async () => {
+  const ui = await view(() => directory([]));
+  try {
+    assert.equal(ui.calls[0].url, '/api/accounts/directory');
+    assert.equal(ui.document.querySelectorAll('[role="table"]').length, 1);
+    assert.equal(ui.document.querySelectorAll('details.account-other-platforms').length, 0);
+    assert.ok(!ui.document.body.textContent.includes('内容与互动'));
+    assert.ok(!ui.document.body.textContent.includes('小红书'));
+    await ui.click('＋ 添加账号');
+    assert.equal(ui.document.querySelectorAll('select option').length, 12);
+  } finally { await ui.dispose(); }
+});
+
+test('legacy-only and native accounts appear together in the single backend directory', async () => {
+  const legacy = { ...account('已有小红书'), key: 'legacy:xiaohongshu', platform: 'xiaohongshu', platformName: '小红书', nativeAccountId: null };
+  const ui = await view(() => directory([account('统一抖音'), legacy]));
+  try {
+    assert.ok(ui.document.body.textContent.includes('统一抖音'));
+    assert.ok(ui.document.body.textContent.includes('已有小红书'));
+    assert.equal(ui.document.querySelectorAll('.connected-account-item').length, 2);
+    assert.equal(ui.document.querySelectorAll('[role="table"]').length, 1);
+  } finally { await ui.dispose(); }
+});
+
+test('viewers read the same directory without login or logout controls', async () => {
+  const ui = await view();
+  try {
+    await ui.setPermissions({ canOperate: false, canManageAccounts: false });
+    assert.ok(ui.document.body.textContent.includes('测试账号'));
+    assert.equal([...ui.document.querySelectorAll('button')].some(node => node.textContent === '＋ 添加账号'), false);
+    await ui.click('管理');
+    assert.equal([...ui.document.querySelectorAll('button')].some(node => /检查登录|退出登录/.test(node.textContent)), false);
+    assert.equal(ui.calls.filter(call => call.options.method === 'POST').length, 0);
+  } finally { await ui.dispose(); }
+});
+
+test('logging out a row sends the exact directory key and never the platform-wide logout', async () => {
+  let loggedOut = false;
+  const ui = await view(url => {
+    if (url.endsWith('/native%3A1/logout')) { loggedOut = true; return { ok: true }; }
+    return directory([{ ...account(), loggedIn: !loggedOut, status: loggedOut ? 'needs_login' : 'logged_in' }]);
+  });
+  try {
+    await ui.click('管理'); await ui.click('退出登录');
+    assert.equal(ui.calls.find(call => call.options.method === 'POST').url, '/api/accounts/directory/native%3A1/logout');
+    assert.ok(ui.document.body.textContent.includes('需要登录'));
+  } finally { await ui.dispose(); }
+});
+
+test('a missing directory cannot silently reduce the add picker to two native platforms', async () => {
+  const ui = await view(() => { throw new Error('目录暂时无法读取'); });
+  try {
+    assert.equal(ui.button('＋ 添加账号').disabled, true);
+    assert.ok(ui.document.body.textContent.includes('目录暂时无法读取'));
+    assert.equal(ui.document.querySelector('select'), null);
+    assert.ok(!ui.document.body.textContent.includes('当前 IP 还没有账号'));
+  } finally { await ui.dispose(); }
+});
+
+
+for (const label of ['检查登录', '退出登录']) {
+  test(`a retained ${label} row action cannot run after account management is revoked`, async () => {
+    const ui = await view();
+    try {
+      await ui.click('管理');
+      const oldAction = ui.handler(label);
+      await ui.setPermissions({ canOperate: true, canManageAccounts: false });
+      await ui.settle(oldAction);
+      assert.equal(ui.calls.filter(call => call.options.method === 'POST').length, 0);
+    } finally { await ui.dispose(); }
+  });
+}
+
+test('the add picker keeps catalog extensions instead of a fixed platform count', async () => {
+  const ui = await view(() => directory([], [...platforms, { platform: 'juejin', name: '掘金', supported: true, backend: 'web', loggedIn: false, note: '' }]));
+  try {
+    await ui.click('＋ 添加账号');
+    assert.equal(ui.document.querySelectorAll('select option').length, 13);
+    assert.ok([...ui.document.querySelectorAll('option')].some(node => node.value === 'juejin'));
+  } finally { await ui.dispose(); }
+});
+
+test('checking an existing legacy 小红书 account does not create another native account', async () => {
+  const existing = { ...account('已有小红书'), key: 'legacy:xiaohongshu', platform: 'xiaohongshu', platformName: '小红书', nativeAccountId: null };
+  const ui = await view(() => directory([existing]));
+  try {
+    await ui.click('管理'); await ui.click('检查登录');
+    assert.equal(ui.calls.find(call => call.options.method === 'POST').url, '/api/accounts/directory/legacy%3Axiaohongshu/verify');
+    assert.equal(ui.document.querySelector('[role="dialog"]'), null);
+  } finally { await ui.dispose(); }
+});
+
+test('a directory response from another IP cannot replace the current account list', async () => {
+  const ui = await view(() => ({ ...directory([account('其他IP账号')]), project_id: 'another-ip' }));
+  try {
+    assert.ok(!ui.document.body.textContent.includes('其他IP账号'));
+    assert.equal(ui.button('＋ 添加账号').disabled, true);
+    assert.ok(ui.document.body.textContent.includes('当前 IP'));
+  } finally { await ui.dispose(); }
+});
+
+test('an ambiguous directory status is not displayed as a fully confirmed login', async () => {
+  const ui = await view(() => directory([{ ...account(), loggedIn: true, status: 'unknown', identityVerified: false }]));
+  try {
+    assert.equal(ui.document.querySelector('.connected-account-state').textContent, '待核实');
+    assert.equal(ui.document.querySelector('.connected-account-state').classList.contains('ready'), false);
+  } finally { await ui.dispose(); }
+});
+
+test('opening a native account backend posts only its encoded directory key and shows the server summary', async () => {
+  const existing = { ...account(), key: 'native:1/猫咪' };
+  const ui = await view(url => url.endsWith('/open-backend')
+    ? { opened: true, summary: '已打开该账号的平台后台。' } : directory([existing]));
+  try {
+    await ui.click('管理'); await ui.click('打开平台后台');
+    const posts = ui.calls.filter(call => call.options.method === 'POST');
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].url, '/api/accounts/directory/native%3A1%2F%E7%8C%AB%E5%92%AA/open-backend');
+    assert.equal(posts[0].options.body, undefined);
+    assert.deepEqual(Object.keys(posts[0].options).sort(), ['cache', 'method']);
+    assert.match(ui.document.querySelector('[role="status"]').textContent, /已打开该账号的平台后台。/);
+    assert.equal(ui.document.querySelector('[role="dialog"]'), null);
+    assert.equal(ui.calls.some(call => /connect\/start|connect\/poll/.test(call.url)), false);
+  } finally { await ui.dispose(); }
+});
+
+test('backend opening requires a positive safe native account ID', async () => {
+  for (const nativeAccountId of [null, undefined, 0, -1, 1.5, '1', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    const ui = await view(() => directory([{ ...account(), nativeAccountId }]));
+    try {
+      await ui.click('管理');
+      assert.equal([...ui.document.querySelectorAll('button')].some(button => button.textContent === '打开平台后台'), false);
+      assert.equal(ui.calls.filter(call => call.options.method === 'POST').length, 0);
+    } finally { await ui.dispose(); }
+  }
+});
+
+test('repeated backend activation dispatches once before React commits its busy state', async () => {
+  const pending = deferred();
+  const ui = await view(url => url.endsWith('/open-backend') ? pending.promise : directory());
+  try {
+    await ui.click('管理');
+    const open = ui.handler('打开平台后台');
+    assert.equal(typeof open, 'function');
+    await ui.settle(() => { open(); open(); });
+    assert.equal(ui.calls.filter(call => call.options.method === 'POST').length, 1);
+    assert.equal(ui.button('打开中…').disabled, true);
+    assert.equal(ui.button('检查登录').disabled, true);
+    await ui.settle(() => pending.resolve({ opened: true, summary: '后台已打开。' }));
+    assert.equal(ui.button('打开平台后台').disabled, false);
+  } finally { await ui.dispose(); }
+});
+
+test('backend opening rejects malformed acknowledgements and reports account errors', async () => {
+  for (const result of [null, {}, { opened: false, summary: '未打开' }, { opened: true, summary: 1 },
+    { opened: true, summary: '' }, new Error('账号身份尚未验证')]) {
+    const ui = await view(url => {
+      if (!url.endsWith('/open-backend')) return directory();
+      if (result instanceof Error) throw result;
+      return result;
+    });
+    try {
+      await ui.click('管理'); await ui.click('打开平台后台');
+      assert.ok(ui.document.querySelector('[role="alert"]'));
+      if (result instanceof Error) assert.match(ui.document.querySelector('[role="alert"]').textContent, /账号身份尚未验证/);
+      assert.equal(ui.document.querySelector('[role="status"]'), null);
+      assert.equal(ui.button('打开平台后台').disabled, false);
+    } finally { await ui.dispose(); }
+  }
+});
+
+test('revoking account management hides backend opening and fences retained handlers and late responses', async () => {
+  const first = deferred(); const second = deferred(); let openings = 0;
+  const ui = await view(url => url.endsWith('/open-backend') ? (++openings === 1 ? first.promise : second.promise) : directory());
+  try {
+    await ui.click('管理');
+    const oldOpen = ui.handler('打开平台后台');
+    await ui.click('打开平台后台');
+    await ui.setPermissions({ canOperate: true, canManageAccounts: false });
+    assert.equal([...ui.document.querySelectorAll('button')].some(button => button.textContent === '打开平台后台'), false);
+    await ui.settle(oldOpen);
+    assert.equal(openings, 1);
+    await ui.setPermissions({ canOperate: true, canManageAccounts: true });
+    await ui.click('打开平台后台');
+    assert.equal(openings, 2);
+    await ui.settle(() => first.resolve({ opened: true, summary: '旧后台响应不得显示。' }));
+    assert.equal(ui.document.body.textContent.includes('旧后台响应不得显示。'), false);
+    assert.equal(ui.button('打开中…').disabled, true);
+    await ui.settle(() => second.resolve({ opened: true, summary: '本次后台已打开。' }));
+    assert.match(ui.document.querySelector('[role="status"]').textContent, /本次后台已打开。/);
+  } finally { await ui.dispose(); }
+});
+
+test('an unmounted account list cannot run retained backend controls or consume a late response', async () => {
+  const pending = deferred();
+  const ui = await view(url => url.endsWith('/open-backend') ? pending.promise : directory());
+  let disposed = false;
+  try {
+    await ui.click('管理');
+    const open = ui.handler('打开平台后台');
+    await ui.click('打开平台后台');
+    await ui.dispose(); disposed = true;
+    await ui.settle(() => { open(); pending.resolve({ opened: true, summary: '晚到后台结果。' }); });
+    assert.equal(ui.calls.filter(call => call.options.method === 'POST').length, 1);
+    assert.equal(ui.document.querySelector('[role="status"]'), null);
+  } finally { if (!disposed) await ui.dispose(); }
 });

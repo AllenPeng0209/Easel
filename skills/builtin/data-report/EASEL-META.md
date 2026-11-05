@@ -1,13 +1,13 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
 | **SKILL 名称** | data-report |
 | **所属层** | produce |
 | **来源类型** | 自研 |
-| **原始来源** | Easel 自研 |
+| **原始来源** | 响芽 自研 |
 | **参考项目** | 无（技术上依赖 pandas + matplotlib 生成报告，均为标准开源库，无外部 SKILL 来源） |
-| **许可** | 随 Easel 项目许可 |
+| **许可** | 随 响芽 项目许可 |
 
 ## 脚本
 
@@ -25,4 +25,4 @@
 ## 致谢
 
 图表渲染基于 matplotlib、数据处理基于 pandas（均为开源库），报告封装脚本
-`scripts/report.py` 为 Easel 侧自研。
+`scripts/report.py` 为 响芽 侧自研。

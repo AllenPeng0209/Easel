@@ -621,6 +621,74 @@ class AccountConnections:
             shutil.rmtree(path)
             path.mkdir(mode=0o700)
 
+    async def revoke_account(self, account_id, *, authorize=None):
+        """Exit one saved account without revoking a different content account.
+
+        A platform-wide generation is changed only for the selected shared
+        session (or its own unfinished login with no shared session). Other
+        account records and their browsers remain owned by their original IDs.
+        """
+        if type(account_id) is not int or account_id < 1:
+            raise HTTPException(404, "账号不存在或不属于当前 IP")
+        async with self._lock:
+            if authorize is not None:
+                authorize()
+            module = self.runtime.module
+            with module.get_session() as db:
+                account = db.get(module.DouyinAccount, account_id)
+                if account is None:
+                    raise HTTPException(404, "账号不存在或不属于当前 IP")
+                platform = "xhs" if account.platform == "xiaohongshu" else account.platform
+                native_subject = {"uid": account.uid, "sec_uid": account.sec_uid}
+            managed = platform in {"douyin", "xhs"}
+            shared = account_sessions.load_session(self.runtime.workspace, platform) if managed else None
+            shared_active = bool(shared and shared.get("account_id") == account_id)
+            if shared_active:
+                from easel.account_directory import matching_subjects, platform_key, subjects
+
+                namespace = platform_key(platform)
+                expected = subjects(namespace, shared.get("identity"), require_verified=True)
+                actual = subjects(namespace, native_subject)
+                if not matching_subjects(expected, actual):
+                    raise HTTPException(409, "账号身份存在冲突或尚未核实，请先检查登录后再退出")
+            pending = []
+            for identifier, record in self._records.items():
+                runner = self._runners.get(identifier)
+                if record["platform"] != platform or runner is None or runner.done():
+                    continue
+                if record.get("account_id") != account_id:
+                    # A fresh login can still reconcile into an existing XHS
+                    # ID. Do not cancel it or clear an account underneath it.
+                    raise HTTPException(409, "该平台有其他账号正在登录，请完成后再退出此账号")
+                pending.append(runner)
+            fence_session = managed and (shared_active or bool(pending and shared is None))
+            if fence_session:
+                account_sessions.begin_generation(self.runtime.workspace, platform)
+            for identifier, record in self._records.items():
+                if record["platform"] != platform or record.get("account_id") != account_id:
+                    continue
+                record.update(
+                    _revoked=True, status="error", stage="canceled",
+                    hint="该账号已退出。", capabilities=_capabilities(),
+                )
+                runner = self._runners.get(identifier)
+                if runner is not None and not runner.done():
+                    runner.cancel()
+            # Persist the revocation before waiting for any browser boundary.
+            with module.get_session() as db:
+                account = db.get(module.DouyinAccount, account_id)
+                if account is not None:
+                    account.status = "invalid"
+                    account.storage_state = account.creator_storage_state = account.cookie = ""
+                    db.add(account)
+                    db.commit()
+            await asyncio.gather(*pending, return_exceptions=True)
+            # begin_generation already removed the selected snapshot before
+            # awaiting the browser. Do not revoke again here: another process
+            # may have committed a newer, different account in the meantime.
+            await self._invalidate(account_id, clear=True)
+            return {"account_id": account_id, "platform": platform, "shared_active": shared_active}
+
     async def revoke(self, platform):
         platform = self._platform(platform)
         async with self._lock:

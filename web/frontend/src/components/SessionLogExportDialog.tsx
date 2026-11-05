@@ -51,7 +51,7 @@ export default function SessionLogExportDialog({ sessionId, sessionTitle, onDown
       aria-label="导出技术日志 ZIP" aria-busy={status === 'downloading'} data-session-log-export-dialog>
       <h2>导出技术日志 ZIP</h2>
       <p>对话「{sessionTitle || '当前对话'}」。仅当前 IP 有运营权限的平台管理员可导出。</p>
-      <p>包含该会话可用的 Easel 执行事件和清单。排除消息正文、工具输入输出、附件文件及引擎本机内部日志。没有可用事件时，ZIP 仅包含清单。</p>
+      <p>包含该会话可用的 响芽 执行事件和清单。排除消息正文、工具输入输出、附件文件及引擎本机内部日志。没有可用事件时，ZIP 仅包含清单。</p>
       {status === 'downloading' && <p role="status">正在准备技术日志…</p>}
       {status === 'success' && <p role="status">已交给浏览器下载。</p>}
       {status === 'error' && <p role="alert">{error}</p>}

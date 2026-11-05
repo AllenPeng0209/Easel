@@ -1,11 +1,11 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
 | **SKILL 名称** | skill-my-account |
 | **所属层** | general（跨切面自查，类似 profile-manager / asset-manager） |
 | **实现** | `../../shared/scripts/account_stats.py`（数据）+ `xhs_publish.py`/`douyin_publish.py`/`web_publisher.py` 的 `whoami`（身份），均 Playwright、headless 可用 |
-| **自研** | ✅ Easel 自研 |
+| **自研** | ✅ 响芽 自研 |
 | **自包含** | 需对应平台登录态（`~/.easel-browser-profiles/<平台>Profile`，Web「账号」页扫码留存）；不依赖画像 |
 | **备注** | 只读登录态与创作数据；不改登录态、不发布、不做深度分析 |
 

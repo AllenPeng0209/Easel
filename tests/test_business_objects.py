@@ -22,7 +22,6 @@ class Host:
         self.roles = {('actor-one', 'ip-one'): 'owner', ('actor-two', 'ip-one'): 'operator',
                       ('viewer', 'ip-one'): 'viewer', ('actor-one', 'ip-two'): 'owner'}
         self.checks = 0
-        self.on_read = None
 
     def _require_operation(self):
         self.checks += 1
@@ -45,12 +44,6 @@ class Host:
         return ChatArtifactStore(self._outputs_dir() / '_sessions' / current_user()['id'],
                                  self._outputs_dir(), self._workspace(), project_id())
 
-    def _read_ideas(self):
-        path = self._outputs_dir() / '_ideas.json'
-        values = json.loads(path.read_text()) if path.exists() else []
-        if self.on_read:
-            self.on_read()
-        return values
 
 
 @pytest.fixture
@@ -59,10 +52,6 @@ def host(tmp_path):
     with actor_context({'id': 'actor-one'}), project_context('ip-one', tmp_path):
         value._outputs_dir().mkdir(parents=True)
         yield value
-
-
-def ideas(host, values):
-    (host._outputs_dir() / '_ideas.json').write_text(json.dumps(values))
 
 
 def draft(host, name='article.md', data=b'first version', *, call='call'):
@@ -74,61 +63,52 @@ def draft(host, name='article.md', data=b'first version', *, call='call'):
 
 
 def workshop(host, **changes):
-    store = WorkshopStore(host._outputs_dir(), strict_canvas_bindings=True)
-    project = store.create({'title': '真实本地工坊', 'brief': '视频brief'}, canvas_creator=lambda _: 'canvas-one')
+    store = WorkshopStore(host._outputs_dir())
+    project = store.create({'title': '真实本地工坊', 'brief': '视频brief'})
     project.update(changes)
     store._write(project)
     return store, project
 
 
-def test_idea_done_is_not_content_or_publish_completion(host):
-    ideas(host, [{'id': 'idea-one', 'title': '选题一', 'note': '采访方向', 'status': 'done', 'created': 123,
-                  'cookie': 'mocked'}])
-    response = service(host).query({'action': 'inspect', 'kind': 'idea', 'id': 'idea-one'})
-    item = response['items'][0]
-    assert response['schemaVersion'] == item['schemaVersion'] == 1
-    assert response['actorId'] == item['actorId'] == 'actor-one'
-    assert response['projectId'] == item['projectId'] == 'ip-one'
-    assert item['status'] == {'code': 'idea_done', 'label': '选题已完成', 'source': 'stored'}
-    assert item['version'] == {'revision': None, 'sha256': None}
-    assert len(item['snapshotHash']) == 64 and type(item['observedAt']) is int
-    assert item['actions'] == [{'kind': 'open', 'target': 'ideas', 'entityId': 'idea-one', 'label': '查看选题'}]
-    assert 'cookie' not in str(item)
+def test_removed_idea_queries_do_not_read_legacy_catalog(host):
+    with pytest.raises(HTTPException) as caught:
+        service(host).query({'action': 'list', 'kind': 'idea'})
+    assert caught.value.status_code == 400
 
 
 def test_snapshot_hash_is_stable_across_time_but_changes_with_source(host, monkeypatch):
-    ideas(host, [{'id': 'one', 'title': 'Original', 'status': 'pending'}])
+    store, project = workshop(host, title='Original')
     module = importlib.import_module('web.business_objects')
     monkeypatch.setattr(module.time, 'time', lambda: 1000)
-    one = service(host).query({'action': 'list', 'kind': 'idea'})['items'][0]
+    one = service(host).query({'action': 'list', 'kind': 'workshop'})['items'][0]
     monkeypatch.setattr(module.time, 'time', lambda: 2000)
-    two = service(host).query({'action': 'list', 'kind': 'idea'})['items'][0]
+    two = service(host).query({'action': 'list', 'kind': 'workshop'})['items'][0]
     assert one['observedAt'] != two['observedAt'] and one['snapshotHash'] == two['snapshotHash']
-    ideas(host, [{'id': 'one', 'title': 'Edited', 'status': 'pending'}])
-    assert service(host).query({'action': 'list', 'kind': 'idea'})['items'][0]['snapshotHash'] != one['snapshotHash']
+    store.update(project['id'], project['revision'], {'title': 'Edited'})
+    assert service(host).query({'action': 'list', 'kind': 'workshop'})['items'][0]['snapshotHash'] != one['snapshotHash']
 
 
 def test_twenty_item_pages_can_traverse_every_record_and_filter(host):
-    ideas(host, [{'id': f'idea-{index:03}', 'title': f'Topic {index}', 'status': 'pending'} for index in range(47)])
-    first = service(host).query({'action': 'list', 'kind': 'idea', 'cursor': '', 'query': ''})
+    projects = [workshop(host, title=f'Topic {index}')[1] for index in range(47)]
+    first = service(host).query({'action': 'list', 'kind': 'workshop', 'cursor': '', 'query': ''})
     assert len(first['items']) == 20 and first['nextCursor']
-    second = service(host).query({'action': 'list', 'kind': 'idea', 'cursor': first['nextCursor']})
-    third = service(host).query({'action': 'list', 'kind': 'idea', 'cursor': second['nextCursor']})
+    second = service(host).query({'action': 'list', 'kind': 'workshop', 'cursor': first['nextCursor']})
+    third = service(host).query({'action': 'list', 'kind': 'workshop', 'cursor': second['nextCursor']})
     assert [len(second['items']), len(third['items'])] == [20, 7]
     assert third['nextCursor'] is None
     assert len({item['id'] for page in (first, second, third) for item in page['items']}) == 47
-    assert [item['id'] for item in service(host).query({'action': 'list', 'kind': 'idea', 'query': 'TOPIC 46'})['items']] == ['idea-046']
+    assert [item['id'] for item in service(host).query({'action': 'list', 'kind': 'workshop', 'query': 'TOPIC 46'})['items']] == [projects[-1]['id']]
 
 
 @pytest.mark.parametrize('payload', [
-    {'action': 'delete', 'kind': 'idea'}, {'action': 'list', 'kind': 'account'},
-    {'action': 'inspect', 'kind': 'idea'}, {'action': 'inspect', 'kind': 'idea', 'id': '../one'},
-    *[{'action': 'list', 'kind': 'idea', key: 'another'} for key in ('actorId', 'projectId', 'url', 'path', 'limit')],
-    {'action': 'inspect', 'kind': 'idea', 'id': 'one', 'cursor': ''},
-    {'action': 'inspect', 'kind': 'idea', 'id': 'one', 'query': ''},
-    {'action': 'list', 'kind': 'idea', 'query': 'bad\nquery'},
-    {'action': 'list', 'kind': 'idea', 'query': 'x' * 501},
-    {'action': 'list', 'kind': 'idea', 'cursor': 'x' * 2049},
+    {'action': 'delete', 'kind': 'workshop'}, {'action': 'list', 'kind': 'account'},
+    {'action': 'inspect', 'kind': 'workshop'}, {'action': 'inspect', 'kind': 'workshop', 'id': '../one'},
+    *[{'action': 'list', 'kind': 'workshop', key: 'another'} for key in ('actorId', 'projectId', 'url', 'path', 'limit')],
+    {'action': 'inspect', 'kind': 'workshop', 'id': 'a' * 32, 'cursor': ''},
+    {'action': 'inspect', 'kind': 'workshop', 'id': 'a' * 32, 'query': ''},
+    {'action': 'list', 'kind': 'workshop', 'query': 'bad\nquery'},
+    {'action': 'list', 'kind': 'workshop', 'query': 'x' * 501},
+    {'action': 'list', 'kind': 'workshop', 'cursor': 'x' * 2049},
 ])
 def test_strict_request_rejects_writes_paths_scope_overrides_and_extra_fields(host, payload):
     with pytest.raises(HTTPException) as caught:
@@ -140,28 +120,33 @@ def test_strict_request_rejects_writes_paths_scope_overrides_and_extra_fields(ho
 def test_viewer_unknown_member_and_anonymous_cannot_query(host, actor, expected):
     with actor_context({'id': actor} if actor else None):
         with pytest.raises(HTTPException) as caught:
-            service(host).query({'action': 'list', 'kind': 'idea'})
+            service(host).query({'action': 'list', 'kind': 'workshop'})
         assert caught.value.status_code == expected
 
 
-def test_fresh_membership_check_after_read_blocks_revoked_access(host):
-    ideas(host, [{'id': 'one', 'title': 'Must not return', 'status': 'pending'}])
-    host.on_read = lambda: host.roles.update({('actor-one', 'ip-one'): 'viewer'})
+def test_fresh_membership_check_after_read_blocks_revoked_access(host, monkeypatch):
+    workshop(host)
+    original = WorkshopStore.list
+    def revoke_after_read(store):
+        values = original(store)
+        host.roles[('actor-one', 'ip-one')] = 'viewer'
+        return values
+    monkeypatch.setattr(WorkshopStore, 'list', revoke_after_read)
     with pytest.raises(HTTPException) as caught:
-        service(host).query({'action': 'list', 'kind': 'idea'})
+        service(host).query({'action': 'list', 'kind': 'workshop'})
     assert caught.value.status_code == 403 and host.checks == 2
 
 
 def test_cursor_binds_actor_ip_and_filter_and_current_ip_selects_source(host):
-    ideas(host, [{'id': f'{number:03}', 'title': 'IP1', 'status': 'pending'} for number in range(25)])
-    first = service(host).query({'action': 'list', 'kind': 'idea'})
+    for _ in range(25): workshop(host)
+    first = service(host).query({'action': 'list', 'kind': 'workshop'})
     for actor, ip, query in [('actor-two', 'ip-one', ''), ('actor-one', 'ip-two', ''), ('actor-one', 'ip-one', 'changed')]:
         with actor_context({'id': actor}), project_context(ip, host.PROJECT_ROOT):
             with pytest.raises(HTTPException) as caught:
-                service(host).query({'action': 'list', 'kind': 'idea', 'query': query, 'cursor': first['nextCursor']})
+                service(host).query({'action': 'list', 'kind': 'workshop', 'query': query, 'cursor': first['nextCursor']})
             assert caught.value.status_code == 400
     with project_context('ip-two', host.PROJECT_ROOT):
-        assert service(host).query({'action': 'list', 'kind': 'idea'})['items'] == []
+        assert service(host).query({'action': 'list', 'kind': 'workshop'})['items'] == []
 
 
 def test_drafts_are_private_text_snapshots_with_fixed_old_revision(host):
@@ -235,7 +220,6 @@ def test_successful_render_without_collect_is_not_a_delivery_or_review(host):
     assert item['version'] == {'revision': 1, 'sha256': None}
     assert item['details']['project']['renders'][0]['status'] == 'succeeded'
     assert item['details']['project']['deliverables'] == []
-    assert item['details']['engineVerification'] == 'not_checked'
     assert item['details']['publishEligibility'] == 'unverified'
 
 
@@ -254,7 +238,6 @@ def test_saved_reviews_cannot_claim_current_publish_eligibility(host, review_kin
     assert item['status']['code'] == expected
     assert item['version'] == {'revision': 2, 'sha256': digest}
     assert item['details']['deliveryVerification'] == 'current_file_verified'
-    assert item['details']['engineVerification'] == 'not_checked'
     assert item['details']['publishEligibility'] == 'unverified'
     assert 'actorId' not in item['details']['project']['reviews'][0]
     assert 'cookie' not in str(item) and 'runtime_url' not in str(item) and 'local-canvas' not in str(item)
@@ -278,7 +261,7 @@ def test_historical_human_review_cannot_hide_stale_or_missing_delivery(host, mut
     assert item['details']['publishEligibility'] == 'unverified'
 
 
-@pytest.mark.parametrize('kind', ['idea', 'draft', 'workshop'])
+@pytest.mark.parametrize('kind', ['draft', 'workshop'])
 def test_missing_or_deleted_object_is_404(host, kind):
     with pytest.raises(HTTPException) as caught:
         service(host).query({'action': 'inspect', 'kind': kind, 'id': 'f' * 32})
@@ -286,9 +269,6 @@ def test_missing_or_deleted_object_is_404(host, kind):
 
 
 def test_unknown_source_state_does_not_become_done(host):
-    ideas(host, [{'id': 'one', 'title': 'Legacy', 'status': 'mystery'}])
-    idea = service(host).query({'action': 'list', 'kind': 'idea'})['items'][0]
-    assert idea['status']['source'] == 'unknown' and idea['status']['code'] == 'unknown'
     _, project = workshop(host, stage='future-stage')
     item = service(host).query({'action': 'inspect', 'kind': 'workshop', 'id': project['id']})['items'][0]
     assert item['status']['source'] == 'unknown' and item['status']['code'] == 'unknown'
@@ -323,13 +303,11 @@ def test_legacy_current_artifacts_and_unpresented_files_are_not_new_draft_record
     assert caught.value.status_code == 404
 
 
-def test_ip_shared_ideas_and_workshop_keep_current_query_actor_without_inventing_authorship(host):
-    ideas(host, [{'id': 'one', 'title': 'Shared in IP', 'status': 'pending'}])
+def test_ip_shared_workshop_keeps_current_query_actor_without_inventing_authorship(host):
     _, project = workshop(host)
     with actor_context({'id': 'actor-two'}):
-        for kind, identifier in [('idea', 'one'), ('workshop', project['id'])]:
-            item = service(host).query({'action': 'inspect', 'kind': kind, 'id': identifier})['items'][0]
-            assert item['actorId'] == 'actor-two' and item['projectId'] == 'ip-one'
+        item = service(host).query({'action': 'inspect', 'kind': 'workshop', 'id': project['id']})['items'][0]
+        assert item['actorId'] == 'actor-two' and item['projectId'] == 'ip-one'
     with project_context('ip-two', host.PROJECT_ROOT):
         with pytest.raises(HTTPException) as caught:
             service(host).query({'action': 'inspect', 'kind': 'workshop', 'id': project['id']})

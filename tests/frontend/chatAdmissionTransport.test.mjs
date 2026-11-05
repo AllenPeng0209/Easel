@@ -27,7 +27,7 @@ async function scenario(responses, { requireAdmission = true, resumeOnly = false
     token => observed.push(['token', token]), (_sessionKey, outcome) => { observed.push(['done', outcome]); finish(); },
     error => { observed.push(['error', error.status, error.message]); finish(); }, undefined, undefined,
     undefined, 'exact-turn', resumeOnly, undefined, attachments, undefined, undefined, undefined, undefined,
-    undefined, undefined, receipt => observed.push(['admitted', receipt.turnId, receipt.sessionId]), requireAdmission, references, sessionReferences, command);
+    undefined, receipt => observed.push(['admitted', receipt.turnId, receipt.sessionId]), requireAdmission, references, sessionReferences, command);
   let deadline;
   try {
     await Promise.race([terminal, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('No terminal event')), 250); })]);

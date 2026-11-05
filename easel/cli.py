@@ -1,11 +1,11 @@
-"""Easel CLI — 社媒内容工作流整合层。
+"""响芽 CLI — 社媒内容工作流整合层。
 
 用法：
-    easel chat                              # 新会话（选画像后进入）
-    easel doctor                            # 检查环境
-    easel gateway {start|stop|status}       # 管理 gateway
-    easel ping                              # 连通性测试
-    easel skill <name> -i "..." -p <画像>   # 运行 SKILL
+    xiangya chat                              # 新会话（选画像后进入）
+    xiangya doctor                            # 检查环境
+    xiangya gateway {start|stop|status}       # 管理 gateway
+    xiangya ping                              # 连通性测试
+    xiangya skill <name> -i "..." -p <画像>   # 运行 SKILL
 """
 
 from __future__ import annotations
@@ -57,13 +57,13 @@ NC = "\033[0m"
 
 
 def _build_chat_cmd(session_key: str, message_prefix: str = "") -> list[str]:
-    """组装 `easel chat` 的 openclaw tui 命令行。
+    """组装 `xiangya chat` 的 openclaw tui 命令行。
 
     必须用 openclaw_base_cmd() 解析启动方式，不能写死字面量 "openclaw"：Windows 上
     PATH 里的 openclaw 是 .cmd shim，CreateProcess 跑不了（见 easel/openclaw_cmd.py）。
     必须用 tui 子命令——`chat`/`terminal` 是 tui 的别名，会强制本地模式
     （openclaw dist/tui-cli-*.js: invokedSubcommand === "chat" → isLocal = true），
-    而 --local 要求独占 state 目录，与 Easel 自启的 gateway 冲突，只会打印
+    而 --local 要求独占 state 目录，与 响芽 自启的 gateway 冲突，只会打印
     "A Gateway is running for this state directory" 后退出。
     """
     cmd = openclaw_base_cmd() + [
@@ -83,10 +83,10 @@ def _build_chat_cmd(session_key: str, message_prefix: str = "") -> list[str]:
 
 
 def cmd_chat(_args) -> int:
-    """启动 Easel 交互对话（每次新会话）。"""
+    """启动 响芽 交互对话（每次新会话）。"""
 
     print()
-    print(f"  {CYAN}Easel{NC} — 社媒内容工作流")
+    print(f"  {CYAN}响芽{NC} — 社媒内容工作流")
     print()
 
     # ---- 选择画像 ----
@@ -198,7 +198,7 @@ def cmd_chat(_args) -> int:
         result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=_proxy_env())
     except FileNotFoundError:
         print(f"{RED}未找到 openclaw{NC} — 请先安装：npm i -g openclaw，"
-              f"或运行 `python -m easel doctor` 检查环境。", file=sys.stderr)
+              f"或运行 `python -m xiangya doctor` 检查环境。", file=sys.stderr)
         return 1
 
     return result.returncode
@@ -244,7 +244,7 @@ def _warn_stale_frontend() -> None:
 def _warn_unwritable_profiles_dir(profiles_dir: Path | None = None) -> None:
     """浏览器登录态目录不可写时启动前警告。
 
-    从受限沙箱/代理工具里启动 easel web 时，工作区外写入会被拒（EPERM），
+    从受限沙箱/代理工具里启动 xiangya web 时，工作区外写入会被拒（EPERM），
     所有登录 runner 在 profile.mkdir 处崩溃（退出码 1），扫码/窗口登录全挂。
     探针：真实建删一个临时文件，等价于登录 runner 要做的最小写操作。
     """
@@ -257,7 +257,7 @@ def _warn_unwritable_profiles_dir(profiles_dir: Path | None = None) -> None:
     except OSError:
         print(f"{RED}⚠ 浏览器登录态目录不可写：{d}{NC}\n"
               f"{RED}  各平台扫码/窗口登录会全部失败（子进程 EPERM）。请在终端里直接运行"
-              f" easel web，不要从受限沙箱或文件权限受限的工具里启动。{NC}",
+              f" xiangya web，不要从受限沙箱或文件权限受限的工具里启动。{NC}",
               file=sys.stderr)
 
 
@@ -287,8 +287,8 @@ def cmd_web(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="easel",
-        description="Easel — 社媒内容工作流整合层 CLI",
+        prog="xiangya",
+        description="响芽 Xiangya — AI 自媒体自动化运营平台",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

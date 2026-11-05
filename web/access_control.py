@@ -113,7 +113,7 @@ def _output_allowed(role: str, resource: str, request: Request) -> bool:
 
 
 def _is_global(resource: str) -> bool:
-    return (resource in {"env", "clipper", "skill", "workshop/status", "trends/manage"}
+    return (resource in {"env", "clipper", "skill"}
             or resource.startswith(("settings/", "env/", "gateway/")))
 
 
@@ -140,7 +140,17 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return "operate" if read or method == "POST" else None
     if re.fullmatch(r"chat/plans/[^/]+/approve", resource):
         return "operate" if method == "POST" else None
-    if re.fullmatch(r"workshop/projects/[a-f0-9]{32}/renders/[a-f0-9]{32}/cancel", resource):
+    if re.fullmatch(r'workshop/projects/[a-f0-9]{32}/engine/open', resource):
+        return 'view' if method == 'POST' else None
+    if re.fullmatch(r'workshop/projects/[a-f0-9]{32}/actions', resource):
+        return 'operate' if read else None
+    if re.fullmatch(r'workshop/projects/[a-f0-9]{32}/engine/(?:api/v1|static)/.+', resource):
+        if read: return 'view'
+        if re.search(r'/api/v1/(?:ai-configs|settings|skills|prompts)', resource): return 'manage_accounts'
+        return 'operate'
+    if re.fullmatch(r"workshop/projects/[a-f0-9]{32}/production", resource):
+        return "operate" if method == "PUT" else None
+    if re.fullmatch(r"workshop/projects/[a-f0-9]{32}/(?:shots/[A-Za-z0-9_-]{1,80}/(?:candidates|select)|publish/prepare|assets/upload)", resource):
         return "operate" if method == "POST" else None
     if re.fullmatch(r"chat/subagents/[^/]+/[^/]+", resource):
         return "operate" if read else None
@@ -161,6 +171,10 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
     if resource == 'chat/artifact-related' or re.fullmatch(
             r"chat/artifacts/[a-f0-9]{32}(?:/(?:content|related|versions|compare|archive|office-preview)|/archive/[0-9]+/(?:content|related))?", resource):
         return "operate" if read else None
+    if resource == 'accounts/directory':
+        return 'view' if read else None
+    if re.fullmatch(r'accounts/directory/(?:native:[1-9][0-9]*|legacy:[a-z0-9_-]{1,80})(?::[a-f0-9]{20})?/(?:verify|logout|open-backend)', resource):
+        return 'manage_accounts' if method == 'POST' else None
     if (resource.startswith(("login/", "logout/"))
             or re.fullmatch(r"accounts/[^/]+/(?:credentials|mp-login(?:/status)?)", resource)
             or (not read and re.fullmatch(r"interactions/channels(?:/[^/]+)?", resource))):
@@ -170,7 +184,7 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
             return "operate"
         if resource in {"status", "personas", "skills", "outputs", "artifacts/archive", "accounts",
                         "analytics/platforms", "publishing-policy", "upload/limits", "schedule",
-                        "schedule/context", "ideas", "trends", "trends/sources", "interactions/bootstrap", "workshop/projects", "workshop/jobs"}:
+                        "schedule/context", "interactions/bootstrap", "workshop/projects", "workshop/jobs", "workshop/status"}:
             return "view"
         if (re.fullmatch(r"persona/[^/]+(?:/files)?", resource)
                 or re.fullmatch(r"skill/[^/]+", resource)
@@ -185,11 +199,11 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         # Authenticated same-origin preflights have no business mutation.
         return "view"
     if (resource in {"chat", "chat/stream", "chat/stop", "chat/steer", "chat/question/answer", "chat/question/status",
-                     "upload", "upload/local", "profile/build", "schedule", "ideas", "workshop/projects"}
+                     "upload", "upload/local", "profile/build", "schedule", "workshop/projects"}
             or re.fullmatch(r"persona/[^/]+(?:/file)?|session/[^/]+", resource)
-            or re.fullmatch(r"schedule/[^/]+|ideas/[^/]+|publish/[^/]+(?:/sms)?|manual-publish/[^/]+/export", resource)
+            or re.fullmatch(r"schedule/[^/]+|publish/[^/]+(?:/sms)?|manual-publish/[^/]+/export", resource)
             or resource.startswith("output/")
-            or re.fullmatch(r"workshop/projects/[^/]+(?:/(?:comments|canvas|reviews|archive|publications|deliverables|renders)(?:/[^/]+/collect)?)?", resource)
+            or re.fullmatch(r"workshop/projects/[^/]+(?:/(?:comments|reviews|archive|publications|deliverables|renders)(?:/[^/]+/collect)?)?", resource)
             or re.fullmatch(r"interactions/(?:clients|channels|channels/[^/]+(?:/sync)?|simulation|conversations/[^/]+/(?:draft|action)|drafts/[^/]+(?:/(?:approve|send))?|knowledge(?:/[^/]+)?|rules|automation/run)", resource)):
         return "operate"
     return None
@@ -271,7 +285,7 @@ class AccessControlMiddleware:
         elif _is_global(resource):
             if not is_admin:
                 return await reject(403, "只有平台管理员可以操作平台设置或本机工具")
-            if resource in {"clipper", "skill", "workshop/status"}:
+            if resource in {"clipper", "skill"}:
                 role = store.role(user["id"], project)
                 if role not in {"owner", "operator", "viewer"}:
                     return await reject(403, "你不是该 IP 的成员")

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title">
+  <title id="title">响芽 Xiangya</title>
+  <defs><linearGradient id="leaf" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#06b6b0"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+  <rect x="5" y="5" width="230" height="230" rx="58" fill="#f0fdfa"/>
+  <g fill="none" stroke="url(#leaf)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M119 190v-76M119 140C61 140 49 101 52 67c43-2 74 17 67 73ZM119 113c0-54 26-79 72-81 4 47-18 78-72 81Z"/>
+    <path d="M54 169c-14-13-21-30-21-49M185 140c14-13 21-30 21-49" stroke-width="8"/>
+  </g>
+</svg>

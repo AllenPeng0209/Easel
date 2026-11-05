@@ -1,18 +1,18 @@
 # 微信公众号（WeChat OA）接入 —— 架构与使用说明
 
-> 本文件说明把「微信公众号」作为一个发布/数据平台接进 Easel 的**账号页 / 发布中心 / 数据中心**的实现。
+> 本文件说明把「微信公众号」作为一个发布/数据平台接进 响芽 的**账号页 / 发布中心 / 数据中心**的实现。
 > 默认走「公众号后台扫码会话」，**免 AppID/AppSecret、免 IP 白名单**；官方开发者 API 作为可选回退。
 
 ---
 
 ## 0. 一句话总览
 
-公众号能力已端到端接进 Easel，**默认走「公众号后台扫码会话」**（管理员级会话，Playwright 驱动 `mp.weixin.qq.com`）：
+公众号能力已端到端接进 响芽，**默认走「公众号后台扫码会话」**（管理员级会话，Playwright 驱动 `mp.weixin.qq.com`）：
 
 - **免 AppID/AppSecret、免 IP 白名单**，未认证号也能用；
 - 官方开发者 API（AppID/AppSecret + 出口 IP 白名单）保留为 `--official-api` 回退，前端 UI 默认隐藏。
 
-平台标识 `wechat-oa`，web 默认 `:7860`，OpenClaw gateway 端口由 OpenClaw 自行分配（`easel` profile → `37289`，非 `18789`），Easel 自动解析。
+平台标识 `wechat-oa`，web 默认 `:7860`，OpenClaw gateway 端口由 OpenClaw 自行分配（`easel` profile → `37289`，非 `18789`），响芽 自动解析。
 
 ---
 
@@ -93,7 +93,7 @@
 
 ```bash
 # web（受限网络时按需 export EASEL_PROXY / https_proxy）
-easel web --port 7860
+xiangya web --port 7860
 
 # gateway
 bash scripts/gateway.sh restart

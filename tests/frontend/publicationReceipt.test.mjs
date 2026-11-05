@@ -305,6 +305,15 @@ test('refresh rejects foreign actor/IP/hash/operation and rewritten frozen subje
   }
 });
 
+test('readonly refresh cannot rewrite the frozen AI declaration under the same approval hash', async () => {
+  const initial = record({ subject: subject({ aiGenerated: true }), result: result('unknown') });
+  await cardDOM({ record: initial, onRefresh: async () => record({ subject: subject({ aiGenerated: false }) }) }, async ({ window, refresh, card }) => {
+    await React.act(async () => refresh().click());
+    assert.equal(card().getAttribute('data-state'), 'unknown');
+    assert.ok(window.document.querySelector('[role="alert"]'));
+  });
+});
+
 test('a late read cannot roll back a newer Host result for the same approval id and hash',async()=>{
   let finish;
   const onRefresh=()=>new Promise(resolve=>{finish=resolve;});

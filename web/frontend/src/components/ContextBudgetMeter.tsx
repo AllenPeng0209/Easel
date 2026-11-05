@@ -1,7 +1,7 @@
 /**
  * Context meter ring adapted from DeepSeek Harness
  * ui-conversation/src/client/skeleton/ContextMeter.tsx @ ce7073d (MIT).
- * Easel displays observed provider counts and independent unknowns.
+ * 响芽 displays observed provider counts and independent unknowns.
  */
 import type { ContextBudget } from '../lib/contextBudget';
 

@@ -1,7 +1,7 @@
 /**
  * Turn-positioned failure feedback adapted from DeepSeek Harness
  * ui-chat/src/client/chat/MessageItem.tsx @ ce7073d (MIT).
- * Easel projects only allowlisted Host classification fields into fixed copy.
+ * 响芽 projects only allowlisted Host classification fields into fixed copy.
  */
 import { useRef, useState } from 'react';
 import type { ChatFailure } from '../lib/store';

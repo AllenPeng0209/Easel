@@ -1,4 +1,4 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
@@ -28,4 +28,4 @@
 | chubbyguan/chubbyskills | https://github.com/chubbyguan/chubbyskills | 中文全渠道（抖音/B站/小红书/公众号/X）平台覆盖范围参考 |
 | vivy-yi/xiaohongshu-skills | https://github.com/vivy-yi/xiaohongshu-skills | 小红书运营技能分类体系（内容创作/平台规则/违禁词） |
 
-> 说明：本次仅参考上述项目的平台规范与方法论思路，未直接复制其代码或文案，Easel 侧 references 为独立编写。
+> 说明：本次仅参考上述项目的平台规范与方法论思路，未直接复制其代码或文案，响芽 侧 references 为独立编写。

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <!-- 预览页必须能跑脚本（右上角「复制到公众号」走 execCommand），所以内容库的 iframe 给了
      sandbox="allow-scripts"。但正文是生成内容，可能混进外部来源的片段，里面的脚本会跟着一起
-     执行；而 Easel 的 web 是 CORS 全放开（app.py 的 allow_origins=["*"]）且无鉴权，光靠
+     执行；而 响芽 的 web 是 CORS 全放开（app.py 的 allow_origins=["*"]）且无鉴权，光靠
      opaque origin 拦不住 —— 实测带 Origin: null 一样拿得到 access-control-allow-origin: *，
      脚本能调本站接口并读到响应。这条 CSP 才是真正的闸：connect-src 'none' 掐掉 fetch/XHR/
      WebSocket/sendBeacon，正文里的脚本就算跑起来也读不到任何接口、发不出去。

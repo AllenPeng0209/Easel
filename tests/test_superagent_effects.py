@@ -79,11 +79,14 @@ def test_changed_payload_and_reused_grant_fail_closed(tmp_path):
         effects.reserve('ticket-1', 'changed', approvals=approvals, **SCOPE)
 
 
-def test_workflow_dispatch_uses_frozen_subject_and_recovery_only_reads(tmp_path):
+@pytest.mark.parametrize('ai_generated', [None, False, True])
+def test_workflow_dispatch_uses_frozen_subject_and_recovery_only_reads(tmp_path, ai_generated):
     from easel.superagent_effects import execute_publication_effect
 
     approvals = PublicationApprovalStore(tmp_path)
     subject = {**SUBJECT, 'tags': 'tag', 'persona': 'profile', 'media': [{'artifactId': 'a' * 32}]}
+    if ai_generated is not None:
+        subject['aiGenerated'] = ai_generated
     approval = approvals.create(subject, **SCOPE)
     approve(approvals, approval)
     calls = []
@@ -113,6 +116,7 @@ def test_workflow_dispatch_uses_frozen_subject_and_recovery_only_reads(tmp_path)
                                                    'ticket-1', 'publish', approval['id'], check_lease=lambda: None))
     assert result['state'] == 'uncertain'
     assert calls == [('douyin', {'title': 'Review me', 'body': 'Version one', 'tags': 'tag', 'persona': 'profile',
+                                 'aiGenerated': ai_generated is True,
                                  'artifactIds': ['a' * 32], 'approvalId': approval['id'],
                                  'payloadHash': approval['payloadHash']})]
 

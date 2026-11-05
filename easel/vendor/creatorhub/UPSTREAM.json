@@ -135,7 +135,7 @@
     "model_base.py": "63df382dd4d7002986671afdfcf472fa9b59cb1e5e83fbdf841bc461fee31189",
     "db.py": "dfc8da4c62a44b2cc40cdaac8747cecf77c7329a9d7b928c94c849f1440a87dc",
     "account_merge.py": "1ab20aafcffdaec9d2f0daafe6e8508134f462c30647bd6a9104f70a684e0969",
-    "main.py": "e5d8312a86d18ce124f59916aa3b689d2a939a5f9b874f2f530c6833b4c389b2",
+    "main.py": "38bfcdc3fda2abb42490141ca17d8701a106efe50750632de8c170a845d14da9",
     "platforms/xhs/creator_sign.py": "94d24282c36cce161315e9cd27f172c68ca5a6eaf52b79ff40d436a1b7bb84fe",
     "engine/monitor.py": "22b1dc9465dbf2084b27686611a3a76862cf0c79f6a0941dcd51e2a7373df10e"
   }

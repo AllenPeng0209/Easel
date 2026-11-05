@@ -3,7 +3,7 @@
  * Adapted from packages/client/ui-approval/src/client/ApprovalCard.tsx and
  * packages/client/ui-primitives/src/Modal.tsx @
  * ce7073d51254c26cd63b22a60835b8f948deb447.
- * Easel supplies the publication subject, Host decision callbacks and palette.
+ * 响芽 supplies the publication subject, Host decision callbacks and palette.
  * Bare Enter never grants a public action; Escape only dismisses the modal.
  * Original notice: integrations/deepseek-harness/LICENSE.
  */
@@ -47,6 +47,7 @@ export function PublicationSubjectView({ subject }: { subject: PublicationApprov
       <div className="publication-subject__account"><dt>真实发布账号</dt><dd><strong>{text(subject.account?.name)}</strong><code>账号 ID：{text(subject.account?.id, '未提供真实账号 ID')}</code></dd></div>
       <div><dt>执行动作</dt><dd>{publicationActionLabel(subject)}</dd></div>
       <div><dt>受众</dt><dd>{audience}</dd></div>
+      <div><dt>AI生成内容</dt><dd>{subject.aiGenerated === true ? '是' : '否'}</dd></div>
       {subject.mode === 'scheduled' && <div><dt>计划时间</dt><dd>{time(subject.scheduledAt)}<code>{text(subject.scheduledAt, '未指定')}</code></dd></div>}
       <div><dt>创作画像</dt><dd>{text(subject.persona, '通用模式')}</dd></div>
     </dl>

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Easel are documented in this file.
+All notable changes to Xiangya are documented in this file.
 
 ## [0.3.0] - 2026-10-12
 
@@ -24,7 +24,7 @@ All notable changes to Easel are documented in this file.
 - Improved QR capture, retry freshness, navigation-timeout handling, and terminal login-state polling for Xiaohongshu, Zhihu, and WeChat Channels.
 - Improved account verification and nickname/avatar extraction; stale verification responses no longer overwrite newly logged-in accounts.
 - Fixed UTF-8 handling and Windows installation PATH preservation, and improved installer idempotency and configuration validation.
-- Fixed runtime version drift: package metadata and harness protocol handshakes now report the same Easel version.
+- Fixed runtime version drift: package metadata and harness protocol handshakes now report the same Xiangya version.
 - Fixed Python 3.10 compatibility when stopping Agent execution, including repeated-stop protection during process cleanup.
 
 ### Upgrade Notes
@@ -54,7 +54,7 @@ All notable changes to Easel are documented in this file.
 - Fixed workspace resolution: `sync.sh`, `setup.ps1`, `doctor` and the video pipeline each hard-coded a different workspace path, so on the other OpenClaw layout they wrote to a directory the agent never reads — while still reporting success. All four now ask OpenClaw itself for its runtime `workspaceDir` (issue #19).
 - Fixed a placeholder API key in `.env.example` silently disabling the whole OpenAI-compatible branch of `setup.sh`, which produced a config with no provider while `doctor` still reported all green. `doctor` now verifies that the primary model's provider actually has credentials.
 - Fixed the HTML preview in the content library: the built-in「复制到公众号」button now works inside the preview drawer, and the preview always renders the latest version instead of a heuristically cached one.
-- Fixed images breaking after pasting into WeChat: local images referenced by a preview are inlined as base64 data-URIs, so the bytes travel with the clipboard instead of requiring WeChat to fetch a local Easel URL.
+- Fixed images breaking after pasting into WeChat: local images referenced by a preview are inlined as base64 data-URIs, so the bytes travel with the clipboard instead of requiring WeChat to fetch a local Xiangya URL.
 - Fixed `install_tool.py` crashing under non-UTF-8 locales on Windows, which left the install endpoint with an empty id allowlist and made the 环境安装 page reject every tool.
 - Fixed domestic-platform publishing to fall back to a direct connection (Chromium-level `--no-proxy-server`), so it works with a VPN enabled.
 - Fixed `scripts/gateway.ps1` missing its UTF-8 BOM — the only Chinese-containing `.ps1` without one, which PowerShell 5.1 decoded using the system ANSI code page.
@@ -73,7 +73,7 @@ All notable changes to Easel are documented in this file.
 
 - Added the `video-production` Skill: an end-to-end video pipeline (probe → transcribe → scenes → design table → scaffold → verify → preview → render → deliver) with two human confirmation gates and quality gates (five-piece manifest, loudness, transitions). The upstream `video-pipeline-sdk` (MIT) is now vendored into the repo so the pipeline is self-contained, reproducible, and editable. Skill count is now 114.
 - Added three-tier transcription with automatic fallback: SRT/VTT subtitles first, then SiliconFlow ASR API, then local whisper as a last resort — so a run no longer requires downloading the 3GB model when a transcript or API key is available.
-- Added a **「笔」capability menu** to the workbench input area: click to browse everything Easel can do ("能做的都在这"); selecting an item prefills the prompt.
+- Added a **「笔」capability menu** to the workbench input area: click to browse everything 响芽 can do ("能做的都在这"); selecting an item prefills the prompt.
 - Added a ffmpeg-based slideshow renderer for image-storyboard voiceover dramas (Ken Burns, differentiated transitions, libass dynamic captions, light whoosh SFX, loudnorm).
 
 ### Improved
@@ -106,14 +106,14 @@ All notable changes to Easel are documented in this file.
 
 ### Fixed
 
-- Fixed OpenClaw version detection in `easel doctor` on Windows (the `.cmd` shim cannot be invoked bare).
+- Fixed OpenClaw version detection in `xiangya doctor` on Windows (the `.cmd` shim cannot be invoked bare).
 - Fixed cross-platform gateway/launcher robustness and Xiaohongshu login navigation races.
 
 [0.1.1]: https://github.com/ZJU-REAL/Easel/releases/tag/v0.1.1
 
 ## [0.1.0] - 2026-08-31
 
-Easel's first public release, jointly developed by REAL Lab and OpenDCAI Lab.
+Xiangya's first public release, jointly developed by REAL Lab and OpenDCAI Lab.
 
 ### Highlights
 

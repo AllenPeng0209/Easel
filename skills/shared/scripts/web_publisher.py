@@ -1745,7 +1745,7 @@ def cmd_login_qr(a) -> int:
             if window_mode and cfg.get("login_mode") == "window":
                 login_state.write_status(
                     sf, "window_login",
-                    f"请在运行 Easel 的电脑弹出的浏览器窗口里登录 {cfg['name']}，完成后窗口会自动关闭。该方式需要图形桌面。")
+                    f"请在运行 响芽 的电脑弹出的浏览器窗口里登录 {cfg['name']}，完成后窗口会自动关闭。该方式需要图形桌面。")
                 print(f"🪟 {cfg['name']} 请在弹出的浏览器窗口完成登录…", file=sys.stderr)
                 deadline = time.time() + timeout_s
                 while time.time() < deadline:

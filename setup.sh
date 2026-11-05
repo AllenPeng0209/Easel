@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # ============================================================
-# Easel 一键安装
-# 用法: git clone <repo> && cd Easel && bash setup.sh [--api]
+# 响芽 一键安装
+# 用法: git clone <repo> && cd 响芽 && bash setup.sh [--api]
 #
 # 环境隔离：所有 OpenClaw 配置存在 ~/.openclaw-easel/
 # 不影响用户本机已有的 OpenClaw 配置
@@ -50,7 +50,7 @@ MAGENTA='\033[0;35m'
 DIM='\033[2m'
 NC='\033[0m'
 
-info()  { echo -e "${CYAN}[easel]${NC} $*"; }
+info()  { echo -e "${CYAN}[xiangya]${NC} $*"; }
 ok()    { echo -e "${GREEN}  ✓${NC} $*"; }
 warn()  { echo -e "${YELLOW}  ⚠${NC} $*"; }
 ask()   { if [ -t 0 ]; then printf "${CYAN}  ?${NC} %s " "$1" >&2; read -r REPLY; printf '%s' "$REPLY"; else printf ''; fi; }
@@ -276,19 +276,19 @@ for key, value in updates.items():
     print(f"skills.limits.{key}={value}")
 PY
 )"; then
-        warn_collect '技能目录预算' '配置或环境覆盖不可解析；保留现状，不盲写' 'easel doctor'
+        warn_collect '技能目录预算' '配置或环境覆盖不可解析；保留现状，不盲写' 'xiangya doctor'
         return 0
     fi
     while IFS='=' read -r key value; do
         [ -n "$key" ] || continue
         if ! oc_try "$key" "$value" --json; then
-            warn_collect '技能目录预算' "当前 OpenClaw 不接受 ${key}；保留该项现状（可能版本不支持）" 'easel doctor'
+            warn_collect '技能目录预算' "当前 OpenClaw 不接受 ${key}；保留该项现状（可能版本不支持）" 'xiangya doctor'
         fi
     done <<< "$plan"
 }
 
 # ---- 安装报告 ----
-# 把本次安装的遗留问题落盘，供 `easel doctor` 复述。这样「装完还差什么」不依赖用户
+# 把本次安装的遗留问题落盘，供 `xiangya doctor` 复述。这样「装完还差什么」不依赖用户
 # 记住十几分钟前滚过去的终端输出。
 INSTALL_REPORT="$PROJECT_ROOT/outputs/_install/last-install.json"
 write_install_report() {   # [$1 fatal 原因]
@@ -328,9 +328,9 @@ print_summary() {
     n=${#WARN_LABELS[@]}
     echo ""
     if [ "$n" -eq 0 ]; then
-        echo -e "${GREEN}  ✓ Easel 安装完成${NC}"
+        echo -e "${GREEN}  ✓ 响芽 安装完成${NC}"
     else
-        echo -e "${YELLOW}  ✓ Easel 安装完成（有 ${n} 项降级）${NC}"
+        echo -e "${YELLOW}  ✓ 响芽 安装完成（有 ${n} 项降级）${NC}"
     fi
     if [ "$n" -gt 0 ]; then
         echo ""
@@ -347,7 +347,7 @@ print_summary() {
             done
         done
         echo ""
-        echo -e "${DIM}  以上均不影响已装好的部分；逐项修完可用 easel doctor 复检。${NC}"
+        echo -e "${DIM}  以上均不影响已装好的部分；逐项修完可用 xiangya doctor 复检。${NC}"
         echo -e "${DIM}  若希望这些问题直接让安装失败（CI/自动化场景）：EASEL_SETUP_STRICT=1 bash setup.sh${NC}"
     fi
 }
@@ -355,7 +355,7 @@ print_summary() {
 
 clear 2>/dev/null || true
 echo -e "\n${CYAN}╭────────────────────────────────────────────────────╮${NC}"
-echo -e "${CYAN}│${NC}  ${MAGENTA}Easel${NC} · 社媒内容工作台安装向导                 ${CYAN}│${NC}"
+echo -e "${CYAN}│${NC}  ${MAGENTA}响芽${NC} · 社媒内容工作台安装向导                 ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC}  ${DIM}多 Agent 执行引擎 · Linux / macOS${NC}               ${CYAN}│${NC}"
 echo -e "${CYAN}╰────────────────────────────────────────────────────╯${NC}"
 if [ "$INSTALL_CHOICE" = false ] && [ "$SETUP_MODE" != check ] && [ -t 0 ]; then
@@ -366,12 +366,12 @@ if [ "$INSTALL_CHOICE" = false ] && [ "$SETUP_MODE" != check ] && [ -t 0 ]; then
     esac
 fi
 if [ "$SKIP_OPENCLAW" = true ]; then
-    echo -e "\n${DIM}  只安装 Easel 与 Web 依赖，不安装、配置或启动 OpenClaw。${NC}"
+    echo -e "\n${DIM}  只安装 响芽 与 Web 依赖，不安装、配置或启动 OpenClaw。${NC}"
     echo -e "${DIM}  已保存的底座不变；新用户进入 Web 后选择已有 Agent，或配置仅聊天模式。${NC}\n"
 elif [ "$CHAT_MODE" = "api" ]; then
     echo -e "\n${DIM}  API 直连模式，不安装 OpenClaw，不启动 Gateway。${NC}\n"
 else
-    echo -e "\n${DIM}  Easel 会使用独立 profile ~/.openclaw-${PROFILE}/，不会覆盖已有 OpenClaw。${NC}\n"
+    echo -e "\n${DIM}  响芽 会使用独立 profile ~/.openclaw-${PROFILE}/，不会覆盖已有 OpenClaw。${NC}\n"
 fi
 
 # ---- 1. Node.js >= 24.16 ----
@@ -479,7 +479,7 @@ if command -v python3 >/dev/null 2>&1; then
         exit 1
     fi
 else
-    echo "未找到 python3；Easel 需要 Python 3.10+。" >&2
+    echo "未找到 python3；响芽 需要 Python 3.10+。" >&2
     exit 1
 fi
 if [ -t 0 ]; then
@@ -595,9 +595,9 @@ else
     ok "OpenClaw 已安装：$("$OPENCLAW_BIN" --version 2>&1 | head -1)"
 fi
 
-# ---- 4. 初始化 Easel 专属 OpenClaw profile ----
-step "4/8" "初始化 Easel profile" "独立配置、独立 workspace、独立 Gateway"
-info "初始化 Easel profile (--profile $PROFILE)..."
+# ---- 4. 初始化 响芽 专属 OpenClaw profile ----
+step "4/8" "初始化 响芽 profile" "独立配置、独立 workspace、独立 Gateway"
+info "初始化 响芽 profile (--profile $PROFILE)..."
 if [ -f "$HOME/.openclaw-${PROFILE}/openclaw.json" ]; then
     ok "Profile 已存在"
 else
@@ -630,9 +630,9 @@ else
     ok "跳过 OpenClaw 安装和 profile 初始化；Web 工作台照常安装"
 fi
 
-# ---- 5. 安装 easel CLI ----
-step "5/8" "安装 Easel 运行依赖" "Web · 媒体 · 浏览器发布"
-info "[1/2] 安装 Python 依赖与 easel CLI..."
+# ---- 5. 安装 xiangya CLI ----
+step "5/8" "安装 响芽 运行依赖" "Web · 媒体 · 浏览器发布"
+info "[1/2] 安装 Python 依赖与 xiangya CLI..."
 # pip 镜像：EASEL_PIP_INDEX 显式指定 > 官方源连通性探测 > 默认官方源（同 npm 逻辑）。
 # 国内直连 pypi.org 装依赖（fastapi/playwright 等）经常超时；探测失败自动回落清华源。
 PIP_INDEX="${EASEL_PIP_INDEX:-}"
@@ -662,14 +662,14 @@ if [ "$(id -u)" -eq 0 ]; then
     warn "当前以 root 安装；生产服务器建议使用虚拟环境"
 fi
 run_step 'pip install' run_with_progress "Python 依赖安装" python3 -m pip "${PIP_ARGS[@]}"
-# check 模式下 pip 安装被跳过，easel 自然不会出现 —— 这里不能当成失败，否则 check
+# check 模式下 pip 安装被跳过，xiangya 自然不会出现 —— 这里不能当成失败，否则 check
 # 模式必然在第 5 步中断，整个「不下载依赖也能验证安装逻辑」的用途就没了。
-if [ "$SETUP_MODE" != check ] && ! command -v easel >/dev/null 2>&1; then
-    fatal "easel 命令未找到；请检查 Python 环境和 PATH（重试：bash setup.sh）"
+if [ "$SETUP_MODE" != check ] && ! command -v xiangya >/dev/null 2>&1; then
+    fatal "xiangya 命令未找到；请检查 Python 环境和 PATH（重试：bash setup.sh）"
 fi
-ok "[2/2] easel 命令可用"
+ok "[2/2] xiangya 命令可用"
 
-# ---- 6. 构建 Web 前端（Node 已装 → easel web 直接出真 UI，无需手动构建） ----
+# ---- 6. 构建 Web 前端（Node 已装 → xiangya web 直接出真 UI，无需手动构建） ----
 step "6/8" "构建 Web 工作台" "React production bundle"
 info "构建 Web 前端..."
 if [ -d "$PROJECT_ROOT/web/frontend" ]; then
@@ -729,7 +729,7 @@ if [ "$CHAT_MODE" = "api" ]; then
     fi
 else
 # ---- 8. 同步 skills + workspace ----
-info "同步 Easel skills..."
+info "同步 响芽 skills..."
 # 不要把 stderr 并进管道：sync.sh 解析不出 workspace 时那条警告只走 stderr，且不含 ✓/→，
 # 一并 grep 就被整条吃掉 —— 装完什么都没说，技能却同步到了 agent 不读的目录（issue #19
 # 的失败模式在这一层原样重建）。stdout 照旧过滤噪音，stderr 直通用户。
@@ -744,7 +744,7 @@ if [ "$SYNC_RC" -ne 0 ]; then
 fi
 oc_configure_skills_budget
 
-# ---- 9. 认证信息写入 Easel 专属 OpenClaw config ----
+# ---- 9. 认证信息写入 响芽 专属 OpenClaw config ----
 info "同步认证到 OpenClaw profile..."
 source "$PROJECT_ROOT/.env" 2>/dev/null || true
 
@@ -861,7 +861,7 @@ fi
 #   - 安装过程变成全程非交互，CI 与自动化不需要再喂 stdin。
 if [ "$MODEL_CONFIGURED" = false ]; then
     warn_collect '模型配置' '还没有可用的 API Key，对话功能尚不可用' \
-        'easel web → 设置 → 模型配置 → 填 Key → 保存' high
+        'xiangya web → 设置 → 模型配置 → 填 Key → 保存' high
 fi
 
 DEFAULT_PRIMARY_MODEL="anthropic/claude-sonnet-4-6"
@@ -1082,8 +1082,8 @@ else
 fi
 # 整个 agent run 的总时长上限。制作层任务（OpenClaw 自执行短剧/长稿/多镜）很久 → 给足。
 oc_set 'agent 总超时' agents.defaults.timeoutSeconds 7200
-# Easel 使用 profiles/<当前画像>/memory.md；关闭 OpenClaw 全局记忆索引，避免旧索引跨画像召回。
-# Easel 使用 profiles/<当前画像>/memory.md；向量记忆必须使用单独的 embedding API。
+# 响芽 使用 profiles/<当前画像>/memory.md；关闭 OpenClaw 全局记忆索引，避免旧索引跨画像召回。
+# 响芽 使用 profiles/<当前画像>/memory.md；向量记忆必须使用单独的 embedding API。
 # 否则 OpenClaw 会默认请求 text-embedding-3-small，很多聊天 MaaS 并不提供该模型。
 EMBEDDING_API_KEY="${EASEL_EMBEDDING_API_KEY:-${EASEL_EMBEDDINGS_API_KEY:-${OPENAI_EMBEDDING_API_KEY:-${EMBEDDING_API_KEY:-${EMBEDDINGS_API_KEY:-}}}}}"
 EMBEDDING_BASE_URL="${EASEL_EMBEDDING_BASE_URL:-${EASEL_EMBEDDINGS_BASE_URL:-${OPENAI_EMBEDDING_BASE_URL:-${EMBEDDING_BASE_URL:-${EMBEDDINGS_BASE_URL:-}}}}}"
@@ -1162,7 +1162,7 @@ fi
 
 # ---- 11. 启动 gateway ----
 step "8/8" "启动并验证" "配置校验 · Chromium · Gateway health"
-info "启动 Easel gateway..."
+info "启动 响芽 gateway..."
 # 降级而非中断：gateway 随时可以重启，没理由让一次十几分钟的安装在这最后一步作废。
 if ! run_step 'gateway start' bash "$PROJECT_ROOT/scripts/gateway.sh" start; then
     warn_collect 'Gateway' '启动失败' 'bash scripts/gateway.sh start（日志：/tmp/easel-gateway.log）' high
@@ -1172,7 +1172,7 @@ fi
 # Playwright is a runtime dependency for browser login/publishing.
 if [ "$SETUP_MODE" = check ]; then
     # check 模式跳过了 pip 安装，playwright 模块自然不在。这里不能当成失败，否则
-    # check 模式必然在最后一步中断 —— 与上面 easel 命令那处同理。
+    # check 模式必然在最后一步中断 —— 与上面 xiangya 命令那处同理。
     emit_action run_step 'playwright chromium' 'python3 -m playwright install chromium'
 elif python3 -c 'import playwright' >/dev/null 2>&1; then
     # 降级而非中断：这是个 ~300MB 的下载，弱网下失败很常见，而它只影响浏览器登录/发布。
@@ -1202,36 +1202,36 @@ fi
 write_install_report
 print_summary
 if [ "$SKIP_OPENCLAW" = true ]; then
-    echo -e "\n  ${CYAN}下一步：easel web → 设置 → Agent 底座 → 执行引擎${NC}"
+    echo -e "\n  ${CYAN}下一步：xiangya web → 设置 → Agent 底座 → 执行引擎${NC}"
     echo -e "  ${DIM}选择检测到的 Codex / OpenCode 并保存，再新建对话；原生认证由对应 CLI 管理。${NC}"
     echo -e "  ${DIM}新安装默认仅聊天模式，配置模型 API 后可聊天；不会自动执行文件或浏览器工具。${NC}"
     echo -e "  ${DIM}以后需要 OpenClaw，可运行 bash setup.sh --openclaw，再在 Web 设置切换。${NC}"
 elif [ "${MODEL_CONFIGURED:-false}" = false ]; then
     echo ""
     echo -e "  ${YELLOW}下一步：在浏览器里配置模型${NC}"
-    if [ -x "$PROJECT_ROOT/.venv/bin/easel" ]; then
-        echo -e "    1. ${CYAN}source .venv/bin/activate && easel web${NC}"
+    if [ -x "$PROJECT_ROOT/.venv/bin/xiangya" ]; then
+        echo -e "    1. ${CYAN}source .venv/bin/activate && xiangya web${NC}"
     else
-        echo -e "    1. ${CYAN}easel web${NC}"
+        echo -e "    1. ${CYAN}xiangya web${NC}"
     fi
     echo -e "    2. 打开 ${CYAN}http://localhost:7860${NC}"
     echo -e "    3. 左下角${CYAN}设置${NC} → ${CYAN}模型配置${NC} → 填 API Key → 保存"
     if [ "$CHAT_MODE" != api ]; then
-        echo -e "  ${DIM}保存后 Easel 会自动写好 OpenClaw 配置并重启网关，不用再跑 setup.sh。${NC}"
+        echo -e "  ${DIM}保存后 响芽 会自动写好 OpenClaw 配置并重启网关，不用再跑 setup.sh。${NC}"
     fi
-    echo -e "  ${DIM}也可以直接编辑 .env 填 key，然后运行 easel doctor 复检。${NC}"
+    echo -e "  ${DIM}也可以直接编辑 .env 填 key，然后运行 xiangya doctor 复检。${NC}"
 fi
 echo -e "\n  ${CYAN}开始使用：${NC}"
-if [ -x "$PROJECT_ROOT/.venv/bin/easel" ]; then
-    echo -e "    ${CYAN}source .venv/bin/activate${NC}    # 先激活虚拟环境，easel 命令才可用"
-    echo -e "    ${DIM}# 新开终端都要先激活；或不激活直接用 .venv/bin/easel <命令>${NC}"
+if [ -x "$PROJECT_ROOT/.venv/bin/xiangya" ]; then
+    echo -e "    ${CYAN}source .venv/bin/activate${NC}    # 先激活虚拟环境，xiangya 命令才可用"
+    echo -e "    ${DIM}# 新开终端都要先激活；或不激活直接用 .venv/bin/xiangya <命令>${NC}"
 fi
-echo "    easel web                    # 启动 Web 工作台"
-echo "    easel chat                   # 终端对话"
-echo "    easel doctor                 # 检查环境"
-echo "    easel ping                   # 当前模式连通性"
+echo "    xiangya web                    # 启动 Web 工作台"
+echo "    xiangya chat                   # 终端对话"
+echo "    xiangya doctor                 # 检查环境"
+echo "    xiangya ping                   # 当前模式连通性"
 if [ "$CHAT_MODE" != "api" ]; then
-    echo -e "\n  ${DIM}Easel profile：~/.openclaw-${PROFILE}/${NC}"
+    echo -e "\n  ${DIM}Xiangya profile：~/.openclaw-${PROFILE}/${NC}"
 fi
 echo -e "  ${DIM}项目目录：$PROJECT_ROOT${NC}\n"
 if [ "$CHAT_MODE" != "api" ]; then

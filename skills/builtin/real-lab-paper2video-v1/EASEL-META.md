@@ -3,12 +3,12 @@
 ## Original skill
 
 - Author and copyright holder: [hongxingli319](https://github.com/hongxingli319).
-- Origin: original author-created skill, supplied by the author as `real-lab-paper2video-v1.zip`. There is no separate upstream repository; the Easel contribution is its first public source distribution.
+- Origin: original author-created skill, supplied by the author as `real-lab-paper2video-v1.zip`. There is no separate upstream repository; the Xiangya contribution is its first public source distribution.
 - Original archive snapshot: 2026-10-31; SHA-256 `5de2a58e029ef161fd7836926de8d4b6ced4c043cbdc1eec979a1b43091dfe34`.
 - Initial public source revision: [`65f657f4b0755295226f942fc117794e7f2bcea5`](https://github.com/hongxingli319/Easel/tree/65f657f4b0755295226f942fc117794e7f2bcea5/skills/builtin/real-lab-paper2video-v1). This records the original submission before the licensing metadata was completed.
-- License: **Apache-2.0** for the original code, documentation, project templates, and Easel integration. The author confirmed authorship for this contribution and releases these materials under the repository's Apache-2.0 license.
+- License: **Apache-2.0** for the original code, documentation, project templates, and Xiangya integration. The author confirmed authorship for this contribution and releases these materials under the repository's Apache-2.0 license.
 - Full license text: [LICENSE](LICENSE). Copyright and attribution: [NOTICE](NOTICE).
-- Easel adaptation: skill routing, constrained project output paths, persona preferences, and content-library metadata.
+- Xiangya adaptation: skill routing, constrained project output paths, persona preferences, and content-library metadata.
 
 ## Vendored paper2assets
 

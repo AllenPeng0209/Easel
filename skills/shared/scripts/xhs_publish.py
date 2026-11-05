@@ -20,6 +20,7 @@ xpzouying/xiaohongshu-mcp（Go/go-rod，成熟稳定）。确定性 IO 固化在
   plan           离线打印发布步骤与选择器（不启浏览器）
   publish        图文发布（--images 逗号分隔）
   publish-video  视频发布（--video）
+  refresh-receipt 仅查询原 Host ACK 的公开回执，不上传或再次发布
   selftest       离线自检（选择器字典 / 参数解析 / 标题长度算法）
 
 真实发布需：playwright + chromium 内核 + 已扫码登录 + 外网可达（默认走项目代理）。
@@ -86,6 +87,16 @@ SELECTORS = {
     "publish_btn_new": "xhs-publish-btn",
     "publish_btn_old": ".publish-page-publish-btn button.bg-red",
 }
+
+# Official Creator client static contract (2026-11-05): publisher b5ab4235,
+# CustomSelect 764c4525 and delight 57c30e68. The caller really spells `lass`.
+# This is a custom single Select, not a native select/ARIA combobox. A missing
+# or changed DOM contract blocks submission; menu text alone is never readback.
+AI_DECLARATION_LABEL = "笔记含AI合成内容"
+AI_DECLARATION_TRIGGER = '.d-select-wrapper.custom-select-44[lass="declaration-wrapper"]'
+AI_DECLARATION_MENU = '.d-popover.custom-dropdown-44.declaration-drop-down'
+AI_DECLARATION_OPTION = '.d-option-content:not(.disabled) .d-option-name'
+PUBLIC_PERMISSION_TRIGGER = '.permission-card-wrapper .d-select-wrapper.custom-select-44.permission-card-select'
 
 PROFILE_NAME = "XiaohongshuProfile"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -266,7 +277,7 @@ def _login_error(page) -> str:
         if code == "300012" or "IP存在风险" in re.sub(r"\s+", "", text).upper():
             detail = f"（错误码 {code}）" if code else ""
             return (f"小红书返回 IP 风险限制{detail}，二维码无法获取。"
-                    "请在可信网络重试；服务器/机房出口可能被平台限制，Easel 无法保证解除风控。")
+                    "请在可信网络重试；服务器/机房出口可能被平台限制，响芽 无法保证解除风控。")
         detail = f"（错误码 {code}）" if code else ""
         return f"小红书登录被平台拦截{detail}，不一定是 IP 问题。请检查网络，或使用 --headed 查看平台提示。"
     except Exception:
@@ -997,6 +1008,210 @@ def _normalize_content(text: str) -> str:
     return text.strip("\n")
 
 
+def _visible_ai_menus(page):
+    return [node for node in page.query_selector_all(AI_DECLARATION_MENU) if node.is_visible()]
+
+
+def _ai_declaration_state(page, trigger=None):
+    candidates = [node for node in page.query_selector_all(AI_DECLARATION_TRIGGER) if node.is_visible()]
+    if len(candidates) != 1:
+        raise RuntimeError("小红书 AI 声明控件缺失或不唯一，已阻止后续发布点击")
+    trigger = trigger if trigger is not None else candidates[0]
+    # Retain the original handle. A rerender/replacement must not silently bind
+    # the final verification to a different declaration control.
+    classes = set((trigger.get_attribute('class') or '').split())
+    if (not trigger.is_visible() or trigger.get_attribute('lass') != 'declaration-wrapper'
+            or not {'d-select-wrapper', 'custom-select-44'} <= classes
+            or trigger.get_attribute('disabled') is not None
+            or trigger.get_attribute('readonly') is not None
+            or trigger.query_selector_all('.d-select.disabled, .d-select.readonly')):
+        raise RuntimeError("小红书 AI 声明控件不可用，已阻止后续发布点击")
+    descriptions = trigger.query_selector_all('.d-select-content .d-select-description')
+    placeholders = trigger.query_selector_all('.d-select-placeholder')
+    if len(descriptions) != 1 or len(placeholders) != 1:
+        raise RuntimeError("小红书 AI 声明读回结构不明确，已阻止后续发布点击")
+    return trigger, (descriptions[0].inner_text() or '').strip(), (placeholders[0].inner_text() or '').strip()
+
+
+def _verify_ai_content(page, trigger):
+    """Read only; never repairs/reselects an approval-critical declaration."""
+    _, selected, placeholder = _ai_declaration_state(page, trigger)
+    descriptions = trigger.query_selector_all('.d-select-content .d-select-description')
+    if (len(descriptions) != 1 or not descriptions[0].is_visible()
+            or selected != AI_DECLARATION_LABEL or placeholder or _visible_ai_menus(page)):
+        raise RuntimeError("小红书原生 AI 声明未选中或未关闭，已阻止后续发布点击")
+
+
+def _declare_ai_content(page):
+    trigger, selected, placeholder = _ai_declaration_state(page)
+    if _visible_ai_menus(page):
+        raise RuntimeError("小红书 AI 声明菜单已展开，已阻止后续发布点击")
+    if selected == AI_DECLARATION_LABEL:
+        _verify_ai_content(page, trigger)
+        return trigger
+    if selected or placeholder != '添加内容类型声明':
+        raise RuntimeError("小红书已有其他声明或声明占位不匹配，未更改声明并阻止后续发布点击")
+    trigger.click()
+    for _ in range(25):
+        menus = _visible_ai_menus(page)
+        if len(menus) > 1:
+            raise RuntimeError("小红书 AI 声明菜单不唯一，已阻止后续发布点击")
+        if menus:
+            break
+        page.wait_for_timeout(200)
+    else:
+        raise RuntimeError("小红书 AI 声明菜单未出现，已阻止后续发布点击")
+    options = [node for node in menus[0].query_selector_all(AI_DECLARATION_OPTION)
+               if node.is_visible() and (node.inner_text() or '').strip() == AI_DECLARATION_LABEL]
+    if len(options) != 1:
+        raise RuntimeError("小红书 AI 声明选项缺失、禁用或不唯一，已阻止后续发布点击")
+    options[0].click()  # One selection attempt; no force click or fallback.
+    for _ in range(25):
+        try:
+            _verify_ai_content(page, trigger)
+            return trigger
+        except RuntimeError:
+            page.wait_for_timeout(200)
+    raise RuntimeError("小红书 AI 声明未通过选中读回，已阻止后续发布点击")
+
+
+def _require_public_content(page):
+    """Read the new-post form's current audience; never changes privacy.
+
+    Official publisher b5ab4235: permission-card-select binds its model to the
+    Public option labelled 公开可见. It has no placeholder or custom selected
+    slot. The default placeholder node may therefore be absent or empty.
+    """
+    triggers = [node for node in page.query_selector_all(PUBLIC_PERMISSION_TRIGGER) if node.is_visible()]
+    if len(triggers) != 1:
+        raise RuntimeError('小红书投稿可见范围控件缺失或不唯一，已阻止后续发布点击')
+    trigger = triggers[0]
+    selected = trigger.query_selector_all('.d-select-content .d-select-description')
+    placeholders = trigger.query_selector_all('.d-select-placeholder')
+    if (trigger.query_selector_all('.d-select.disabled, .d-select.readonly, .d-select.focus')
+            or len(selected) != 1 or not selected[0].is_visible()
+            or (selected[0].inner_text() or '').strip() != '公开可见'
+            or len(placeholders) > 1 or any((node.inner_text() or '').strip() for node in placeholders)
+            or any(node.is_visible() for node in page.query_selector_all('.d-popover.custom-dropdown-44'))):
+        raise RuntimeError('小红书投稿表单未明确选择公开可见或控件未关闭，已阻止后续发布点击')
+
+
+class _XhsSubmitAck:
+    """Observe the exact creator POST without issuing a request or inferring public state.
+
+    Payload/ACK field references: vendored platforms/xhs/creator_api.py's
+    post_note and _image_note_data/_video_note_data. Unknown page-native shapes
+    remain unacknowledged; signed URLs, cookies and raw responses are not saved.
+    """
+    def __init__(self, page, *, title, content, tags, kind, on_ack, on_ambiguous=None):
+        self.page, self.title, self.kind, self.on_ack = page, title, kind, on_ack
+        self.on_ambiguous = on_ambiguous
+        self.account = self.seen_exact_request = self.request = self._ack = None
+        self.active = True
+        self.ambiguous = False
+        base = _normalize_content(content)
+        names = [tag.lstrip('#') for tag in tags]
+        if names:
+            plain = ' '.join('#' + name for name in names)
+            linked = ''.join(' #' + name + '[话题]# ' for name in names)
+            self.descriptions = {_normalize_content(base + linked)}
+            for separator in (' ', '\n'):
+                for tail in ('', ' '):
+                    self.descriptions.add(_normalize_content(base + separator + plain + tail))
+        else:
+            self.descriptions = {base}
+        self.handlers = (('request', self._request), ('response', self._response))
+        self.attached = callable(getattr(page, 'on', None))
+        if self.attached:
+            try:
+                for event, callback in self.handlers:
+                    page.on(event, callback)
+            except Exception:
+                self.close()
+                raise
+
+    @property
+    def ack(self):
+        return None if self.ambiguous else self._ack
+
+    def arm(self, account):
+        if (not isinstance(account, dict) or account.get('authenticated') is not True
+                or not isinstance(account.get('id'), str) or not account['id']):
+            raise RuntimeError('小红书提交账号尚未核实')
+        self.account = dict(account)
+
+    def _request(self, request):
+        if not self.active or self.account is None or self.ambiguous:
+            return
+        try:
+            url = urlparse(request.url)
+            if (request.method != 'POST' or url.scheme != 'https' or url.netloc != 'edith.xiaohongshu.com'
+                    or url.path != '/web_api/sns/v2/note'):
+                return
+            # Count every distinct exact create POST before inspecting its body.
+            # A malformed/different-copy second create still destroys uniqueness.
+            if self.seen_exact_request is not None and self.seen_exact_request is not request:
+                self.ambiguous = True
+                if self.on_ambiguous is not None:
+                    self.on_ambiguous()
+                return
+            self.seen_exact_request = request
+            payload = request.post_data_json
+            common = payload.get('common') if isinstance(payload, dict) else None
+            if (not isinstance(common, dict) or common.get('title') != self.title
+                    or common.get('type') != ('normal' if self.kind == 'image' else 'video')
+                    or common.get('note_id') != '' or not isinstance(common.get('desc'), str)
+                    or _normalize_content(common['desc']) not in self.descriptions):
+                return
+            self.request = request
+        except Exception:
+            return
+
+    def _response(self, response):
+        if not self.active or self.ambiguous or self.request is None or self._ack is not None:
+            return
+        try:
+            if response.request is not self.request or not 200 <= response.status < 300:
+                return
+            payload = response.json()
+            if not isinstance(payload, dict):
+                return
+            raw_code = payload.get('code', payload.get('result'))
+            code = None
+            if raw_code is not None:
+                if isinstance(raw_code, bool) or not isinstance(raw_code, (int, str)):
+                    return
+                code = int(raw_code)
+            success = payload.get('success')
+            if (('success' in payload and type(success) is not bool) or success is False
+                    or code is not None and code != 0 or success is not True and code != 0):
+                return
+            data = payload.get('data')
+            if not isinstance(data, dict):
+                return
+            identifiers = {data[key] for key in ('id', 'note_id') if data.get(key) not in (None, '')}
+            if len(identifiers) != 1:
+                return
+            identifier = identifiers.pop()
+            if (not isinstance(identifier, str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+=-]{0,255}', identifier) is None
+                    or re.fullmatch(r'0+', identifier) is not None):
+                return
+            ack = {'kind': 'post', 'accepted': True, 'source': 'provider_response', 'id': identifier, 'state': 'submitted'}
+            self.on_ack(self.account, ack)
+            self._ack = ack
+        except Exception:
+            return
+
+    def close(self):
+        self.active = False
+        if self.attached:
+            for event, callback in self.handlers:
+                try:
+                    self.page.remove_listener(event, callback)
+                except Exception:
+                    pass
+
+
 def _fill_and_submit(page, title, content, tags, before_submit=None, before_confirm=None):
     """标题→正文→话题→长度校验→发布→成功校验。"""
     content = _normalize_content(content)         # 修连续空行导致的发布失败
@@ -1227,7 +1442,7 @@ def cmd_login(a) -> int:
                     else:
                         login_state.write_status(sf, "qr_ready", "二维码已就绪，请扫码", qr=str(qr_out))
                     print(f"📱 二维码已保存：{qr_out}")
-                    print("   用小红书 App 扫码登录。若走 Easel Web UI，可在 outputs 里查看这张图。")
+                    print("   用小红书 App 扫码登录。若走 响芽 Web UI，可在 outputs 里查看这张图。")
                     print("   （二维码有时效，约几分钟；过期请重跑 login）")
                 print(f"⏳ 等待扫码确认（最长 {timeout_s}s）...", file=sys.stderr)
 
@@ -1372,15 +1587,24 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
     if not a.exec:
         reporter.record("not_started", reason="dry_run")
         print("dry-run（加 --exec 真正发布）：\n")
+        if getattr(a, 'ai_generated', False):
+            print('真实执行将选择原生 AI 声明并在每次发布点击前读回复核；控件核验失败不会点击发布。此处未验证现场控件。')
+        if getattr(a, 'require_public', False):
+            print('Host 公开发布要求真实发前基线与投稿表单公开可见核验；dry-run 不读取平台或确认公开。')
         for ln in _plan_lines(kind, a.title, a.content or "", media, tags):
             print(ln)
         return 0
+
+    require_public = bool(getattr(a, 'require_public', False))
+    if require_public and not reporter.enabled:
+        _die('--require-public 需要 Host 私有发布上下文，未启动发布', 4)
 
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
     except Exception as e:
         _die(f"需要 playwright：{e}", 3)
     lock = _ProfileLock(_profile_dir(a.profile_base))
+    receipt_reader = readback_api = baseline = host_context = None
     try:
         lock.acquire(90)
     except TimeoutError:
@@ -1390,6 +1614,9 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
             ctx = _launch(p, headed=a.headed, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             page.set_default_timeout(300000)
+            observer = None
+            ai_generated = bool(getattr(a, 'ai_generated', False))
+            ai_trigger = None
             try:
                 page.goto(PUBLISH_URL, wait_until="domcontentloaded")
                 page.wait_for_timeout(1500)
@@ -1404,7 +1631,7 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
                 if not logged and "login" in page.url.lower():
                     _die("未登录，请先 `login` 扫码")
                 def require_account():
-                    if not reporter.enabled:
+                    if not reporter.enabled and not ai_generated:
                         return
                     # The creator endpoint owns this publishing session. A
                     # consumer-web profile can be authenticated as another user.
@@ -1413,10 +1640,13 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
                     if binding["accountIdentityStatus"] == "verified":
                         account = {"id": f"{binding['accountIdKind']}:{binding['accountId']}",
                                    "authenticated": True}
-                    reporter.require_approved_account(account)
+                    if reporter.enabled:
+                        reporter.require_approved_account(account)
+                    elif account is None or state['account'] is not None and state['account'] != account:
+                        raise RuntimeError('小红书发布账号未核实或已经改变')
                     state["account"] = account
 
-                if reporter.enabled:
+                if reporter.enabled or ai_generated:
                     require_account()
                     reporter.record('not_started', account=state['account'])
 
@@ -1424,9 +1654,32 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
                     reporter.record('submit_attempted', account=state['account'])
                     state['phase'] = 'submit_attempted'
 
-                def before_submit():
+                def before_click():
                     require_account()
+                    if require_public:
+                        if baseline is None:
+                            raise RuntimeError('小红书真实发前基线尚未完成，已阻止后续发布点击')
+                        _require_public_content(page)
+                    if ai_generated:
+                        _verify_ai_content(page, ai_trigger)
+
+                def before_submit():
+                    before_click()
                     mark_attempt()
+                    if observer is not None:
+                        observer.arm(state['account'])
+
+                if reporter.enabled:
+                    def observed_ack(account, ack):
+                        proof = (readback_api.ack_baseline_evidence(baseline, ack, host_context)
+                                 if require_public else None)
+                        # The new-ID baseline proof and provider ACK enter the
+                        # same durable revision; no interim ACK gains refresh authority.
+                        reporter.record('platform_ack', account=account, ack=ack, readback=proof)
+                        state.update(phase='platform_ack', account=account)
+
+                    observer = _XhsSubmitAck(page, title=a.title, content=a.content or '', tags=tags, kind=kind,
+                        on_ack=observed_ack, on_ambiguous=reporter.mark_submission_ambiguous)
 
                 _click_publish_tab(page, "上传图文" if kind == "image" else "上传视频")
                 page.wait_for_timeout(1000)
@@ -1440,17 +1693,59 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
                 else:
                     _upload_video(page, media[0])
                 require_account()  # Upload can outlive the creator login.
+                if ai_generated:
+                    ai_trigger = _declare_ai_content(page)
+                if require_public:
+                    _require_public_content(page)
+                    if str(PROJECT_ROOT) not in sys.path:
+                        sys.path.insert(0, str(PROJECT_ROOT))
+                    from easel import xhs_publication_readback as readback_api
+                    current = reporter.snapshot()
+                    host_context = {key: current[key] for key in
+                        ('operationId', 'payloadHash', 'platform', 'mode', 'approvedAccountId')}
+                    receipt_reader = readback_api.ReadOnlyClient.from_storage_state(
+                        ctx.storage_state(), proxy=_proxy(a.proxy, a.no_proxy) or '')
+                    baseline = readback_api.capture_baseline(receipt_reader, host_context)
+                    if baseline is None:
+                        raise RuntimeError('小红书真实发前基线尚未完成，已阻止后续发布点击')
+                    reporter.record('submit_attempted', account=state['account'],
+                        readback=readback_api.baseline_evidence(baseline, host_context))
                 _fill_and_submit(page, a.title, a.content or "", tags, before_submit=before_submit,
-                                 before_confirm=require_account if reporter.enabled else None)
+                                 before_confirm=before_click if reporter.enabled or ai_generated else None)
             except PWTimeout as e:
                 _die(f"步骤超时（选择器可能已失效，检查 SELECTORS）：{e}")
             finally:
-                if not a.keep_open:
-                    ctx.close()
+                try:
+                    if require_public and observer is not None and observer.ack is not None:
+                        # UI success/timeout does not decide publication. Only the
+                        # exact same ACK may be queried, and an ambiguous POST has no ACK.
+                        try:
+                            observation = readback_api.verify_ack(receipt_reader, host_context, reporter.snapshot())
+                        except Exception:
+                            reporter.record('platform_ack', account=state['account'], reason='readback_error')
+                        else:
+                            reporter.record('readback', account=state['account'], readback=observation)
+                            state['phase'] = 'readback'
+                finally:
+                    if observer is not None:
+                        observer.close()
+                    if not a.keep_open:
+                        ctx.close()
     finally:
+        if receipt_reader is not None:
+            try:
+                receipt_reader.close()
+            except Exception:
+                pass
         lock.release()
     # A navigation/toast is only a UI signal, never a native post receipt.
-    reporter.record('submit_attempted', account=state['account'], reason='ui_signal_only')
+    if state['phase'] == 'readback':
+        pass
+    elif observer is not None and observer.ack is not None:
+        reporter.record('platform_ack', account=state['account'], ack=observer.ack)
+    else:
+        reporter.record('submit_attempted' if state['phase'] != 'platform_ack' else 'platform_ack',
+            account=state['account'], reason='ui_signal_only')
     state['settled'] = True
     return 0
 
@@ -1461,6 +1756,32 @@ def cmd_publish(a) -> int:
 
 def cmd_publish_video(a) -> int:
     return _publish(a, "video")
+
+
+def cmd_refresh_receipt(a) -> int:
+    """GET-only verification of the original private ACK; never creates a baseline."""
+    from publication_receipt import PublicationReceiptReporter
+    reporter = PublicationReceiptReporter.from_args(a, 'xiaohongshu')
+    previous = reporter.snapshot()
+    if not isinstance(previous, dict):
+        _die('小红书回执刷新需要原 Host 私有发布上下文', 4)
+    context = {key: previous.get(key) for key in
+        ('operationId', 'payloadHash', 'platform', 'mode', 'approvedAccountId')}
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from easel import xhs_publication_readback
+    if not xhs_publication_readback.refresh_evidence_ready(context, previous):
+        _die('原小红书操作缺少有效 ACK、账号及基线证明，不能刷新或重新发布', 4)
+    reader = xhs_publication_readback.ReadOnlyClient.from_current_session(
+        Path(os.environ.get('EASEL_ROOT') or Path.cwd()),
+        proxy=_proxy(None, a.no_proxy) or '')
+    try:
+        proof = xhs_publication_readback.verify_ack(reader, context, previous)
+        reporter.record('readback', account=previous['account'], readback=proof)
+    finally:
+        reader.close()
+    print('已只读刷新原小红书操作回执；未上传或再次提交，最终状态由 Host 核验')
+    return 0
 
 
 def _account_binding(account: dict | None) -> dict:
@@ -1604,6 +1925,8 @@ def main() -> int:
         p.add_argument("--keep-open", action="store_true", help="发布后不关浏览器")
         p.add_argument("--receipt-context", help="Host 提供的机器回执上下文文件")
         p.add_argument("--receipt-file", help="机器回执输出文件")
+        p.add_argument('--ai-generated', action='store_true', help='显式 AI 生成声明；真实执行须通过原生声明选中读回，否则不点击发布')
+        p.add_argument('--require-public', action='store_true', help='Host 公开发布：真实基线及投稿表单公开可见硬核验；不自动修改隐私')
 
     sub.add_parser("check", help="检查 playwright/内核").set_defaults(func=cmd_check)
 
@@ -1626,6 +1949,12 @@ def main() -> int:
     p = sub.add_parser("publish-video", help="视频发布")
     add_common(p); add_content(p)
     p.set_defaults(func=cmd_publish_video)
+
+    p = sub.add_parser('refresh-receipt', help='只读刷新原 Host ACK，不上传或再次发布')
+    p.add_argument('--no-proxy', action='store_true', help='禁用代理')
+    p.add_argument('--receipt-context', help='原 Host 私有机器回执上下文')
+    p.add_argument('--receipt-file', help='原机器回执文件')
+    p.set_defaults(func=cmd_refresh_receipt)
 
     p = sub.add_parser("whoami", help="真校验登录态 + 读昵称/头像（输出 JSON）")
     add_common(p)

@@ -3,8 +3,11 @@ import { fetchPublishingPolicy } from '../lib/api';
 import type { PublishingPolicy } from '../lib/api';
 import AutomatedPublishPage from './PublishPage';
 import ManualPublishPage from './ManualPublishPage';
+import type { PublicationHandoff } from '../lib/publicationHandoff';
 
-export default function PublishingPage({ persona }: { persona: string }) {
+export default function PublishingPage({ persona, handoff, onHandoffConsumed }: {
+  persona: string; handoff?: PublicationHandoff | null; onHandoffConsumed?: () => void;
+}) {
   const [policy, setPolicy] = useState<PublishingPolicy | null>(null);
   const [mode, setMode] = useState<PublishingPolicy['mode']>('automated');
   const [error, setError] = useState('');
@@ -45,7 +48,7 @@ export default function PublishingPage({ persona }: { persona: string }) {
           : '保留原有账号检查、预检、确认及自动提交流程。'}</span>
     </div>
     <div className="publishing-mode-content">
-      {manual ? <ManualPublishPage persona={persona} /> : <AutomatedPublishPage persona={persona} />}
+      {manual ? <ManualPublishPage persona={persona} /> : <AutomatedPublishPage persona={persona} handoff={handoff} onHandoffConsumed={onHandoffConsumed} />}
     </div>
   </div>;
 }

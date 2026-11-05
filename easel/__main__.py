@@ -1,4 +1,4 @@
-"""python -m easel 入口"""
+"""python -m xiangya 入口"""
 
 from easel.cli import main
 

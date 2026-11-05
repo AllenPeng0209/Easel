@@ -1,7 +1,7 @@
 """C17 technical session ZIP, adapted from Harness session-log-export.
 
 Read the committed scoped journal in order and serialize a canonical JSONL
-projection. Easel journals are distinct from native engine and readable logs.
+projection. Xiangya journals are distinct from native engine and readable logs.
 """
 from __future__ import annotations
 
@@ -337,7 +337,7 @@ def create_router(directory_provider, *, require_admin) -> APIRouter:
         if not valid_session_reference_id(session_id):
             raise HTTPException(404, "会话不存在或无权访问")
         name = _ref(session_id, "download", session_id)[:16]
-        headers = {"Content-Disposition": f'attachment; filename="easel-session-{name}.zip"',
+        headers = {"Content-Disposition": f'attachment; filename="xiangya-session-{name}.zip"',
                    "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
         file = None
         try:

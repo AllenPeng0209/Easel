@@ -252,7 +252,7 @@ def test_failed_preflight_rechecks_identical_concurrent_claim(artifact_http_envi
     prompts = install_runner(monkeypatch, 'api')
 
     def concurrent(req, catalog):
-        payload = req.model_dump(exclude={'topicRef', 'workshopRef', 'references', 'command', 'planRef', 'modelOverride'})
+        payload = req.model_dump(exclude={'workshopRef', 'references', 'command', 'planRef', 'modelOverride'})
         payload['sessionReferences'] = [item.model_dump(exclude_none=True) for item in req.sessionReferences]
         digest = hashlib.sha256(json.dumps({'request': payload, 'runtime': 'api'},
             ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()

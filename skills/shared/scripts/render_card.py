@@ -146,7 +146,7 @@ async def _selftest() -> int:
         ".card{width:400px;height:225px;display:flex;align-items:center;"
         "justify-content:center;background:#1a1a2e;color:#fff;"
         "font:600 28px sans-serif;}</style></head>"
-        "<body><div class='card'>Easel 渲染自检 OK</div></body></html>"
+        "<body><div class='card'>响芽 渲染自检 OK</div></body></html>"
     )
     with tempfile.TemporaryDirectory() as d:
         hp = Path(d) / "t.html"

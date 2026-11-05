@@ -1,6 +1,6 @@
 # 内置论文资产模块
 
-`vendor/paper2assets/scripts/` 包含完整的paper2assets脚本与utils，`UPSTREAM.json` 保存来源快照和文件哈希。在 Easel 中通过 `scripts/easel_video.py assets` 调用；它已适配本skill和独立视频工程的目录结构。
+`vendor/paper2assets/scripts/` 包含完整的paper2assets脚本与utils，`UPSTREAM.json` 保存来源快照和文件哈希。在 响芽 中通过 `scripts/easel_video.py assets` 调用；它已适配本skill和独立视频工程的目录结构。
 
 ## 准备环境
 

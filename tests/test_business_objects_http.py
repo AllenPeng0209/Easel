@@ -15,16 +15,13 @@ ROUTE = '/api/chat/business-objects'
 @pytest.fixture
 def business_http(artifact_http_environment, monkeypatch):
     root, owner, members, client, _ = artifact_http_environment
-    monkeypatch.setattr(web, 'IDEAS_FILE', root / 'outputs/_ideas.json')
-    item = owner.post('/api/ideas', json={'title':'真实保存的选题','note':'选题笔记','source':'用户调研','status':'doing'})
-    assert item.status_code == 200
     from easel.video_workshop import WorkshopStore
-    project = WorkshopStore(root / 'outputs', strict_canvas_bindings=True).create(
+    project = WorkshopStore(root / 'outputs').create(
         {'title':'真实工坊项目','brief':'明确的创作要求','reference_url':'','aspect_ratio':'9:16'})
     with actor_context(owner.get('/api/auth/me').json()), project_context('default', root):
         artifact = web._chat_artifact_store().present([{'path':'outputs/topic/report.txt','description':'固定稿件文件'}],
             session_id='d25-files',turn_id='one',call_id='one')[0]
-    return root, owner, members, client, item.json(), project, artifact
+    return root, owner, members, client, project, artifact
 
 
 def query(client, kind, identifier=None, **extra):
@@ -33,24 +30,24 @@ def query(client, kind, identifier=None, **extra):
     return client.get(ROUTE,params=params)
 
 
-def test_business_reads_real_ids_and_does_not_invent_idea_versions(business_http):
-    _, owner, members, client, idea, *_ = business_http
-    response=query(owner,'idea',idea['id'])
+def test_business_reads_real_workshop_ids_with_scoped_permissions(business_http):
+    _, owner, members, client, project, *_ = business_http
+    response=query(owner,'workshop',project['id'])
     assert response.status_code==200,response.text
     result=response.json();card=result['items'][0]
-    assert card['id']==idea['id'] and card['title']==idea['title']
+    assert card['id']==project['id'] and card['title']==project['title']
     assert card['actorId']==owner.get('/api/auth/me').json()['id']
     assert card['projectId']=='default'
-    assert card['version']=={'revision':None,'sha256':None}
+    assert card['version']=={'revision':project['revision'],'sha256':None}
     assert len(card['snapshotHash'])==64
-    assert query(members['operator'],'idea',idea['id']).status_code==200
-    assert query(members['viewer'],'idea',idea['id']).status_code==403
-    assert query(client(),'idea',idea['id']).status_code==401
-    assert owner.post(ROUTE,json={'action':'inspect','kind':'idea','id':idea['id']}).status_code in (403,405)
+    assert query(members['operator'],'workshop',project['id']).status_code==200
+    assert query(members['viewer'],'workshop',project['id']).status_code==403
+    assert query(client(),'workshop',project['id']).status_code==401
+    assert owner.post(ROUTE,json={'action':'inspect','kind':'workshop','id':project['id']}).status_code in (403,405)
 
 
 def test_draft_snapshot_keeps_artifact_identity_and_actor_isolation(business_http):
-    root, owner, members, _, _, _, artifact=business_http
+    root, owner, members, _, _, artifact=business_http
     response=query(owner,'draft',artifact['artifactId'])
     assert response.status_code==200,response.text
     card=response.json()['items'][0]
@@ -66,10 +63,10 @@ def test_draft_snapshot_keeps_artifact_identity_and_actor_isolation(business_htt
 
 
 def test_workshop_lookup_uses_real_project_and_query_never_renders_or_reviews(business_http,monkeypatch):
-    _, owner, _, _, _, project, _=business_http
+    _, owner, _, _, project, _=business_http
     def forbidden(*args,**kwargs):pytest.fail('Business inspection must not start/collect/render/review')
     from easel.video_workshop import WorkshopStore
-    for method in ('start_render','collect_render','review','publication','attach_canvas'):
+    for method in ('start_render','collect_render','review','publication','production'):
         monkeypatch.setattr(WorkshopStore,method,forbidden)
     response=query(owner,'workshop',project['id'])
     assert response.status_code==200,response.text
@@ -82,20 +79,20 @@ def test_workshop_lookup_uses_real_project_and_query_never_renders_or_reviews(bu
 @pytest.mark.parametrize('extra',[{'actorId':'forged'},{'projectId':'other'},{'href':'https://example.invalid'},{'status':'approved'}])
 def test_business_query_cannot_supply_identity_or_status(business_http,extra):
     _,owner,*_=business_http
-    assert query(owner,'idea',**extra).status_code in (400,422)
+    assert query(owner,'workshop',**extra).status_code in (400,422)
 
 
 def test_business_native_callback_emits_typed_entity_and_survives_snapshot(business_http,monkeypatch):
-    _,owner,_,_,idea,*_=business_http
+    _,owner,_,_,project,*_=business_http
     monkeypatch.setattr(web,'_chat_backend',lambda _: 'codex')
     monkeypatch.setattr(web,'_harness_settings',lambda:{'runtime':'codex','models':{},'sandbox':'read-only'})
     class Adapter:
         async def run(self,request,emit,ask,bind):
             bind('native-business-fixture')
             assert request.business_objects is not None
-            value=await request.business_objects({'action':'inspect','kind':'idea','id':idea['id']},'actual-business-call')
-            assert value['items'][0]['id']==idea['id']
-            emit('token','已读取真实选题。')
+            value=await request.business_objects({'action':'inspect','kind':'workshop','id':project['id']},'actual-business-call')
+            assert value['items'][0]['id']==project['id']
+            emit('token','已读取真实工坊。')
     monkeypatch.setattr(web.harnesses,'adapter',lambda _:Adapter())
     response=owner.post('/api/chat/stream',json={'message':'查看真实业务对象','sessionId':'business-chat','turnId':'business-turn'})
     assert response.status_code==200,response.text
@@ -106,12 +103,12 @@ def test_business_native_callback_emits_typed_entity_and_survives_snapshot(busin
             value=json.loads(line[6:])
             if value.get('kind')=='business':events.append(value)
     assert len(events)==1,response.text
-    assert events[0]['business']['id']==idea['id']
+    assert events[0]['business']['id']==project['id']
     assert events[0]['callId']=='actual-business-call'
     assert events[0]['name']=='easel_business_objects'
     snapshot=owner.get('/api/chat/last/business-chat')
     assert snapshot.status_code==200,snapshot.text
-    assert any(event.get('business',{}).get('id')==idea['id'] for event in snapshot.json().get('events',[]))
+    assert any(event.get('business',{}).get('id')==project['id'] for event in snapshot.json().get('events',[]))
 
 
 def test_publication_queries_keep_distinct_tool_receipts_after_snapshot(business_http, monkeypatch):
@@ -119,7 +116,11 @@ def test_publication_queries_keep_distinct_tool_receipts_after_snapshot(business
 
     _, owner, *_ = business_http
     record = {'id': 'a' * 32, 'state': 'rejected'}
-    monkeypatch.setattr(web, '_publication_workflow', lambda: SimpleNamespace(get=lambda _: record))
+    async def refresh(identifier, *, before_refresh=None):
+        if before_refresh is not None:
+            before_refresh()
+        return record
+    monkeypatch.setattr(web, '_publication_workflow', lambda: SimpleNamespace(get=lambda _: record, refresh=refresh))
     monkeypatch.setattr(web, '_chat_backend', lambda _: 'codex')
     monkeypatch.setattr(web, '_harness_settings', lambda: {'runtime': 'codex', 'models': {}, 'sandbox': 'read-only'})
 
@@ -146,14 +147,13 @@ def test_publication_queries_keep_distinct_tool_receipts_after_snapshot(business
 @pytest.mark.parametrize('channel',['http','native'])
 def test_business_projection_redacts_known_configuration_before_every_delivery(business_http,monkeypatch,channel):
     import secrets
-    root,owner,_,_,idea,*_=business_http
+    root,owner,_,_,project,*_=business_http
     canary=secrets.token_urlsafe(24)
     (root/'.env').write_text('BUSINESS_TEST_TOKEN='+canary+'\n')
-    updated=owner.put('/api/ideas/'+idea['id'],json={'title':idea['title'],'note':'普通笔记 '+canary,
-        'source':'用户调研','status':'doing'})
-    assert updated.status_code==200
+    from easel.video_workshop import WorkshopStore
+    WorkshopStore(root/'outputs').update(project['id'], project['revision'], {'brief': '普通笔记 '+canary})
     if channel=='http':
-        response=query(owner,'idea',idea['id']);assert response.status_code==200
+        response=query(owner,'workshop',project['id']);assert response.status_code==200
         dto=response.json()
     else:
         seen=[]
@@ -162,10 +162,10 @@ def test_business_projection_redacts_known_configuration_before_every_delivery(b
         class Adapter:
             async def run(self,request,emit,ask,bind):
                 bind('native-business-redaction-fixture')
-                seen.append(await request.business_objects({'action':'inspect','kind':'idea','id':idea['id']},'redaction-call'))
+                seen.append(await request.business_objects({'action':'inspect','kind':'workshop','id':project['id']},'redaction-call'))
                 emit('token','已读取。')
         monkeypatch.setattr(web.harnesses,'adapter',lambda _:Adapter())
-        response=owner.post('/api/chat/stream',json={'message':'查看选题','sessionId':'redaction-chat','turnId':'redaction-turn'})
+        response=owner.post('/api/chat/stream',json={'message':'查看工坊','sessionId':'redaction-chat','turnId':'redaction-turn'})
         assert response.status_code==200
         assert len(seen)==1
         dto=seen[0]

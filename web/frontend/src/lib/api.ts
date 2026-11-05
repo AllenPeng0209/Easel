@@ -207,85 +207,6 @@ export function deletePersona(name: string): Promise<{ ok: boolean; deleted: str
   return request(`/api/persona/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
-// ---- 热点雷达 ----
-import { parseTrends, parseTrendSources, parseTrendManagement } from './trendValidation';
-
-async function trendRequest(url: string, options: RequestInit = {}, timeout = 10000): Promise<unknown> {
-  try {
-    const response = await fetch(`${BASE}${url}`, { cache: 'no-store', ...options, signal: AbortSignal.timeout(timeout) });
-    if (!response.body) throw new Error('热点接口未返回数据。');
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > 4 * 1024 * 1024) { await reader.cancel(); throw new Error('热点接口响应过大，已停止加载。'); }
-        chunks.push(value);
-      }
-    } finally { reader.releaseLock(); }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    let data: unknown;
-    try {
-      const raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-      let depth = 0, quoted = false, escaped = false;
-      for (const char of raw) {
-        if (quoted) {
-          if (escaped) escaped = false;
-          else if (char === '\\') escaped = true;
-          else if (char === '"') quoted = false;
-        } else if (char === '"') quoted = true;
-        else if (char === '{' || char === '[') { if (++depth > 24) throw new Error(); }
-        else if (char === '}' || char === ']') depth--;
-      }
-      data = JSON.parse(raw);
-    } catch { throw new Error('热点接口响应格式异常，请稍后重试。'); }
-    if (!response.ok) {
-      const detail = data && typeof data === 'object' && 'detail' in data ? data.detail : null;
-      throw new Error(typeof detail === 'string' ? detail.slice(0, 240) : `热点请求失败（${response.status}）`);
-    }
-    return data;
-  } catch (error: unknown) {
-    if (error instanceof DOMException && ['TimeoutError', 'AbortError'].includes(error.name)) throw new Error('热点请求超时，请稍后重试。');
-    throw error instanceof Error ? error : new Error('热点请求失败，请稍后重试。');
-  }
-}
-export interface TrendItem {
-  id: string; title: string; hot: string; url: string; published_at: string | null;
-  heat: { value: number | null; text: string; unit: string };
-}
-export interface TrendGroup {
-  platform: string; label: string; items: TrendItem[]; ok: boolean;
-  status: 'fresh' | 'stale' | 'error'; stale: boolean; fetched_at: string | null;
-  last_attempt_at: number; error: { code: string; message: string } | null;
-}
-export interface TrendSource {
-  id: string; label: string; type: 'python' | 'http' | 'rss'; default: boolean; refresh_seconds: number;
-}
-export function fetchTrendSources() {
-  return trendRequest('/api/trends/sources').then(parseTrendSources);
-}
-export function fetchTrends(platforms?: string, limit = 12) {
-  return trendRequest(`/api/trends?limit=${limit}${platforms === undefined ? '' : `&platforms=${encodeURIComponent(platforms)}`}`, {}, 130000).then(parseTrends);
-}
-export interface TrendManagedSource {
-  id: string; label: string; type: TrendSource['type'] | 'unknown'; enabled: boolean; default: boolean; builtin: boolean;
-}
-export function fetchTrendManagement() {
-  return trendRequest('/api/trends/manage').then(parseTrendManagement);
-}
-export async function updateTrendSource(value: Record<string, unknown>): Promise<{ id: string }> {
-  const result = await trendRequest('/api/trends/manage', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
-  }, 15000);
-  if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true || !('id' in result) || typeof result.id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(result.id)) throw new Error('保存结果异常，请刷新数据源列表确认。');
-  return { id: result.id };
-}
-
 // ---- 内容排期 ----
 export interface ScheduleItem {
   id: string; title: string; date: string; platform: string;
@@ -322,24 +243,6 @@ export function updateSchedule(id: string, item: ScheduleInput): Promise<Schedul
 }
 export function deleteSchedule(id: string): Promise<{ ok: boolean }> {
   return request(`/api/schedule/${encodeURIComponent(id)}`, { method: 'DELETE' });
-}
-
-// ---- 选题库 ----
-export interface Idea {
-  id: string; title: string; note: string; source: string; status: string; created: number;
-  provenance?: { platform: string; url: string; collectedAt: number };
-}
-export type IdeaInput = { title: string; note?: string; source?: string; status?: string;
-  provenance?: { platform: string; url: string; collectedAt: number } };
-export function fetchIdeas(): Promise<Idea[]> { return request('/api/ideas'); }
-export function createIdea(item: IdeaInput): Promise<Idea> {
-  return request('/api/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
-}
-export function updateIdea(id: string, item: IdeaInput): Promise<Idea> {
-  return request(`/api/ideas/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
-}
-export function deleteIdea(id: string): Promise<{ ok: boolean }> {
-  return request(`/api/ideas/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export function fetchSkills(): Promise<SkillItem[]> {
@@ -545,6 +448,30 @@ export interface AccountItem {
   loginMode?: 'qr' | 'browser';
 }
 
+export type AccountCapabilityState = 'verified' | 'needs_verification' | 'unavailable';
+export interface AccountDirectoryItem {
+  key: string;
+  platform: string;
+  platformName: string;
+  name: string;
+  avatar: string;
+  loggedIn: boolean;
+  status: 'logged_in' | 'needs_login' | 'unknown';
+  nativeAccountId: number | null;
+  current: boolean;
+  identityVerified: boolean;
+  capabilities: Record<string, AccountCapabilityState>;
+}
+export interface AccountDirectory {
+  project_id: string;
+  platforms: AccountItem[];
+  accounts: AccountDirectoryItem[];
+}
+
+export function fetchAccountDirectory(signal?: AbortSignal): Promise<AccountDirectory> {
+  return request<AccountDirectory>('/api/accounts/directory', { signal });
+}
+
 export interface LoginStart {
   mode: 'qr' | 'browser' | 'terminal' | 'credentials';
   state?: string;       // starting | qr_ready | success | expired | error | unknown
@@ -650,7 +577,7 @@ export function exportManualPackage(platform: string, payload: {
 /** Host preparation freezes the exact account/content/media subject; it does not dispatch. */
 export interface PublicationInput {
   title: string; body: string; media: string[]; tags?: string; persona?: string;
-  draft?: boolean; artifactIds?: string[]; approvalId?: string; payloadHash?: string;
+  draft?: boolean; aiGenerated?: boolean; artifactIds?: string[]; approvalId?: string; payloadHash?: string;
 }
 
 export function preparePublication(platform: string, payload: PublicationInput): Promise<import('./publicationApproval').PublicationApprovalRecord> {
@@ -662,6 +589,16 @@ export function preparePublication(platform: string, payload: PublicationInput):
 export function fetchPublicationApproval(id: string): Promise<import('./publicationApproval').PublicationApprovalRecord & {
   runnerStatus?: { state: string; message: string };
 }> { return request(`/api/publication-approvals/${encodeURIComponent(id)}`); }
+
+/** Explicitly request a same-operation platform receipt readback; never resubmit publication. */
+export function refreshPublicationApproval(id: string): Promise<import('./publicationApproval').PublicationApprovalRecord> {
+  return request(`/api/publication-approvals/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
+}
+
+/** Read the current actor/IP-owned immutable declaration; never infer identity from a path. */
+export function fetchPublicationArtifact(id: string): Promise<import('./agentEvents').AgentArtifact> {
+  return request(`/api/chat/artifacts/${encodeURIComponent(id)}`);
+}
 
 export function decidePublication(id: string, approved: boolean, payloadHash: string): Promise<import('./publicationApproval').PublicationApprovalRecord> {
   return request(`/api/publication-approvals/${encodeURIComponent(id)}/decision`, {
@@ -817,7 +754,6 @@ export function streamChat(
   onHeartbeat?: (note: string) => void,
   onQuestionClosed?: (q: ChatQuestionClosed) => void,
   onAgentEvent?: (event: AgentEvent) => void,
-  topicRef?: { id: string; snapshotHash: string },
   workshopRef?: import('./workshop').WorkshopReference,
   onAdmitted?: (receipt: { turnId: string; sessionId: string }) => void,
   requireAdmission = false,
@@ -984,7 +920,7 @@ export function streamChat(
         const res: Response = first
           ? await projectFetch(projectUrl(`${BASE}/api/chat/stream`), {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, topicRef, workshopRef,
+              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, workshopRef,
                 ...(references?.length ? { references } : {}),
                 ...(sessionReferences?.length ? { sessionReferences } : {}),
                 ...(command ? { command } : {}), ...(planRef ? { planRef } : {}),
@@ -1160,8 +1096,8 @@ export async function fetchSessionLogZip(sessionId: string, signal: AbortSignal)
     throw new Error('服务器没有返回 ZIP 导出文件。');
   }
   const disposition = response.headers.get('Content-Disposition') || '';
-  const filename = /^attachment;\s*filename="?((?:easel-session-)[a-z0-9_-]{1,128}\.zip)"?(?:;|$)/i.exec(disposition)?.[1]
-    ?? 'easel-session-logs.zip';
+  const filename = /^attachment;\s*filename="?((?:(?:xiangya|easel)-session-)[a-z0-9_-]{1,128}\.zip)"?(?:;|$)/i.exec(disposition)?.[1]
+    ?? 'xiangya-session-logs.zip';
   return { blob: await response.blob(), filename };
 }
 

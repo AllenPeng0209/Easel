@@ -20,10 +20,11 @@ const { outputText } = ts.transpileModule(
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } });
 
 test('a failed old avatar does not prevent a newly verified avatar from rendering', () => {
-  const avatar = parsed.statements.find(node =>
+  const directorySource = ts.createSourceFile('InteractionAccounts.tsx', readFileSync(new URL('../../web/frontend/src/components/InteractionAccounts.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const avatar = directorySource.statements.find(node =>
     ts.isFunctionDeclaration(node) && node.name?.text === 'Avatar');
   const { outputText: compiled } = ts.transpileModule(
-    avatar.getText(parsed) + '\nAvatar;',
+    avatar.getText(directorySource) + '\nAvatar;',
     { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
       jsx: ts.JsxEmit.ReactJSX } },
   );
@@ -42,59 +43,44 @@ test('a failed old avatar does not prevent a newly verified avatar from renderin
   assert.equal(current.props.src, 'https://self.test/current');
 });
 
-test('manual account verification updates the card and identity from the same result', async () => {
+test('post-login verification refreshes the one directory only after an authoritative result', async () => {
   const declaration = component.body.statements.find(node =>
     ts.isVariableStatement(node) && node.declarationList.declarations.some(variable =>
       variable.name.getText(parsed) === 'runWhoami'));
-  const { outputText: compiled } = ts.transpileModule(
-    declaration.getText(parsed) + '\nrunWhoami;',
-    { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
-  );
-  let accounts = [{ platform: 'wechat-oa', loggedIn: true }];
-  let identity = {};
+  const { outputText: compiled } = ts.transpileModule(declaration.getText(parsed) + '\nrunWhoami;',
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } });
+  const writes = []; let refreshes = 0;
   const verify = runInNewContext(compiled, {
-    useCallback: callback => callback,
-    whoamiRequests: { current: {} },
-    aliveRef: { current: true },
-    setWhoami: callback => { identity = callback(identity); },
-    setAccounts: callback => { accounts = callback(accounts); },
-    setWhoamiCache: () => {},
+    useCallback: callback => callback, whoamiRequests: { current: {} }, aliveRef: { current: true },
+    accountPermission: { current: true }, load: () => { refreshes++; },
+    setWhoamiCache: (platform, value) => writes.push({ platform, value }),
     accountWhoami: async (platform, force) => {
-      assert.equal(platform, 'wechat-oa');
-      assert.equal(force, true);
+      assert.equal(platform, 'wechat-oa'); assert.equal(force, true);
       return { loggedIn: false, name: '', avatar: '' };
     },
   });
   verify('wechat-oa');
+  assert.equal(refreshes, 0);
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(accounts[0].loggedIn, false);
-  assert.equal(identity['wechat-oa'].loggedIn, false);
+  assert.equal(refreshes, 1);
+  assert.equal(writes[0].value.loggedIn, false);
 });
 
-test('failed account verification preserves the last verified nickname and avatar', async () => {
+test('failed post-login verification preserves verified identity and does not invent directory changes', async () => {
   const declaration = component.body.statements.find(node =>
     ts.isVariableStatement(node) && node.declarationList.declarations.some(variable =>
       variable.name.getText(parsed) === 'runWhoami'));
-  const { outputText: compiled } = ts.transpileModule(
-    declaration.getText(parsed) + '\nrunWhoami;',
-    { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
-  );
-  const cached = { loggedIn: true, name: 'Own channel', avatar: 'https://self.test/channel.png' };
-  let identity = { 'weixin-channels': cached };
+  const { outputText: compiled } = ts.transpileModule(declaration.getText(parsed) + '\nrunWhoami;',
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } });
   const verify = runInNewContext(compiled, {
-    useCallback: callback => callback,
-    whoamiRequests: { current: {} },
-    aliveRef: { current: true },
-    setWhoami: callback => { identity = callback(identity); },
-    getWhoamiCache: () => ({ 'weixin-channels': cached }),
-    setAccounts: () => assert.fail('unknown identity cannot update login state'),
-    setWhoamiCache: () => assert.fail('unknown identity cannot be cached'),
+    useCallback: callback => callback, whoamiRequests: { current: {} }, aliveRef: { current: true },
+    accountPermission: { current: true },
+    load: () => assert.fail('Unknown identity must not rewrite the displayed directory'),
+    setWhoamiCache: () => assert.fail('Unknown identity cannot replace the verified cache'),
     accountWhoami: async () => { throw new Error('identity endpoint not ready'); },
   });
   verify('weixin-channels');
-  assert.equal(identity['weixin-channels'], 'loading');
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(identity['weixin-channels'], cached);
 });
 
 function setup() {

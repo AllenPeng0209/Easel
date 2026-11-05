@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""social_stats — Easel 归因层公共计算模块.
+"""social_stats — 响芽 归因层公共计算模块.
 
 纯函数集合，供各归因层 SKILL 的脚本 import，把 LLM 心算/手改 JSON 的
 不可靠环节固化为确定性代码。只用标准库，保证可移植。

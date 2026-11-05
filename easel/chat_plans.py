@@ -1,6 +1,6 @@
 """Durable review gate for exact, versioned chat plans.
 
-The lifecycle follows DeepSeek Harness plan review (MIT, ce7073d). Easel
+The lifecycle follows DeepSeek Harness plan review (MIT, ce7073d). Xiangya
 binds each plan and its one-shot execution claim to the authenticated scope.
 """
 from __future__ import annotations

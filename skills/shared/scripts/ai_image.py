@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ai_image.py — 通用 AI 文生图 / 图生图 / 图像变体（纯标准库，无第三方依赖）。
 
-复用 Easel 已验证的 ecom-details-image/scripts/generate_image.py 约定：
+复用 响芽 已验证的 ecom-details-image/scripts/generate_image.py 约定：
   - OpenAI 兼容同步 API（/images/generations、/images/edits、/images/variations）
   - Agnes AI（base_url 主机名含 agnes）：无 /images/edits、/images/variations，
     文生图 / 图生图 / 变体统一打 /images/generations，输入图放 extra_body.image，

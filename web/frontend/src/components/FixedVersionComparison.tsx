@@ -14,7 +14,6 @@ type Generation = {
   renderId: string;
   taskId: string;
   contentRevision: number;
-  engineRevision: number;
 };
 
 type BoundPair = { identical: boolean; before: ChatDeliverable; after: ChatDeliverable };
@@ -32,14 +31,13 @@ function comparisonMode(file: ChatDeliverable): ComparisonMode | undefined {
 
 function readGeneration(value: unknown): Generation | null {
   if (!value || typeof value !== 'object') return null;
-  const { source, workshopProjectId, renderId, taskId, contentRevision, engineRevision } = value as Record<string, unknown>;
-  if (source !== 'beeftv_workshop'
+  const { source, workshopProjectId, renderId, taskId, contentRevision } = value as Record<string, unknown>;
+  if (source !== 'native_workshop'
       || typeof workshopProjectId !== 'string' || !/^[a-f0-9]{32}$/.test(workshopProjectId)
       || typeof renderId !== 'string' || !/^[a-f0-9]{32}$/.test(renderId)
       || typeof taskId !== 'string' || !/^[A-Za-z0-9:_-]{1,160}$/.test(taskId)
-      || typeof contentRevision !== 'number' || !Number.isSafeInteger(contentRevision) || contentRevision < 0
-      || typeof engineRevision !== 'number' || !Number.isSafeInteger(engineRevision) || engineRevision < 0) return null;
-  return { workshopProjectId, renderId, taskId, contentRevision, engineRevision };
+      || typeof contentRevision !== 'number' || !Number.isSafeInteger(contentRevision) || contentRevision < 0) return null;
+  return { workshopProjectId, renderId, taskId, contentRevision };
 }
 
 function matchesVersion(value: unknown, file: ChatDeliverable): boolean {
@@ -182,9 +180,8 @@ function FixedMedia({ file, mode, side, generation }: {
           onError={() => setFailed(true)} />
       : <p role="status">该固定版本暂无法预览，可下载查看。</p>}
     {generation ? <dl className={css.generation} data-fixed-media-generation>
-      <dt>来源</dt><dd>BeefTV 工坊渲染回执</dd>
+      <dt>来源</dt><dd>原生工坊合成回执</dd>
       <dt>工程版本</dt><dd>V{generation.contentRevision}</dd>
-      <dt>引擎版本</dt><dd>V{generation.engineRevision}</dd>
       <dt>工坊工程</dt><dd>{generation.workshopProjectId}</dd>
       <dt>渲染回执</dt><dd>{generation.renderId}</dd>
       <dt>任务编号</dt><dd>{generation.taskId}</dd>

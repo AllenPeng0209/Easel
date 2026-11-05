@@ -45,7 +45,7 @@ async function flow(options, verify) {
   const requests = []; const unexpected = [];
   const intervals = new Map(); const timeouts = new Map(); let timerId = 0;
   const draft = { title: '页面未批准的标题', body: '页面未批准的母版', platforms: [platform], overrides: { [platform]: '页面未批准的平台文案' }, tags: '页面标签,原样' };
-  const storageValues = new Map([['easel_publish_draft', JSON.stringify(draft)]]);
+  const storageValues = options.storageValues || new Map([[options.user ? `easel_user:${options.user}:easel_publish_draft` : 'easel_publish_draft', JSON.stringify(draft)]]);
   const routes = new Map([
     ['GET /api/accounts', () => json([{ platform, name: platforms[platform], backend: 'web', supported: true, loggedIn: true, note: '' }])],
     ['GET /api/outputs', () => json([{ type: 'file', name: platform === 'wechat-oa' ? 'cover.png' : 'input.mp4', path: platform === 'wechat-oa' ? 'drafts/cover.png' : 'drafts/input.mp4', kind: platform === 'wechat-oa' ? 'image' : 'video', mtime: 100 },
@@ -54,7 +54,9 @@ async function flow(options, verify) {
     [`POST /api/publication-approvals/${approvalId}/decision`, options.decision || (() => json(record(platform, { state: 'approved' })))],
     [`POST /api/publish/${platform}`, options.execute || (() => json(record(platform, { state: 'approved', operationId: 'operation-one', result: { status: 'submitted' } })))],
     [`GET /api/publication-approvals/${approvalId}`, options.status || (() => json(record(platform, { state: 'approved', operationId: 'operation-one', result: { status: 'confirmed' } })))],
+    [`POST /api/publication-approvals/${approvalId}/refresh`, options.refresh || (() => json(record(platform, { state: 'approved', operationId: 'operation-one', result: { status: 'unknown' } })))],
     [`POST /api/publish/${platform}/sms?approvalId=${approvalId}`, options.sms || (() => json({ ok: true }))],
+    [`GET /api/chat/artifacts/${mediaId}`, options.artifact || (() => json(snapshot()))],
   ]);
   const fetch = async (value, init = {}) => {
     const url = new URL(String(value), window.location.origin);
@@ -66,14 +68,14 @@ async function flow(options, verify) {
     return handler(request, requests);
   };
   try {
-    const Page = componentModule('components/PublishPage.tsx', { storageValues, externals: { dompurify: require('dompurify')(window) },
+    const Page = componentModule('components/PublishPage.tsx', { user: options.user, storageValues, externals: { dompurify: require('dompurify')(window) },
       globals: { window, document: window.document, HTMLElement: window.HTMLElement, navigator: { userAgent: 'test', platform: 'MacIntel', maxTouchPoints: 0 },
         crypto, fetch, Headers, Response,
         setInterval: callback => { const id = ++timerId; intervals.set(id, callback); return id; }, clearInterval: id => intervals.delete(id),
         setTimeout: callback => { const id = ++timerId; timeouts.set(id, callback); return id; }, clearTimeout: id => timeouts.delete(id),
       },
     }).default;
-    await React.act(async () => root.render(React.createElement(Page, { persona: 'persona-one' })));
+    await React.act(async () => root.render(React.createElement(Page, { persona: 'persona-one', handoff: options.handoff })));
     const click = async text => {
       const button = Array.from(window.document.querySelectorAll('button')).find(node => node.textContent.trim() === text);
       assert.ok(button, `button: ${text}`); await React.act(async () => button.click()); return button;
@@ -96,7 +98,7 @@ async function flow(options, verify) {
     };
     const tick = async () => React.act(async () => { for (const callback of [...intervals.values()]) await callback(); });
     const approve = async () => { const button = window.document.querySelector('[data-decision="approve"]'); assert.ok(button); await React.act(async () => button.click()); };
-    await verify({ window, root, requests, unexpected, click, selectMedia, input, tick, approve, draft });
+    await verify({ window, root, requests, unexpected, click, selectMedia, input, tick, approve, draft, storageValues });
     assert.deepEqual(unexpected, [], 'all network must be explicitly whitelisted');
   } finally {
     await React.act(async () => root.unmount());
@@ -109,18 +111,149 @@ async function flow(options, verify) {
 
 const writes = requests => requests.filter(request => request.method === 'POST');
 
+function snapshot(overrides = {}) {
+  return { artifactId: mediaId, projectId: 'default', sessionId: 'cat-chat', turnId: 'cat-turn', path: 'cat/final.mp4', name: 'final.mp4',
+    mime: 'video/mp4', size: 12, status: 'available', createdAt: Date.now(), storageMode: 'snapshot', revision: 2,
+    sha256: 'c'.repeat(64), bundleSha256: null, url: `/api/chat/artifacts/${mediaId}/content`, ...overrides };
+}
+function handoff(kind = 'media', overrides = {}) {
+  const now = Date.now();
+  const scope = { schemaVersion: 1, actorId: 'operator-one', projectId: 'default', createdAt: now, expiresAt: now + 60000 };
+  return kind === 'approval' ? { ...scope, kind, approvalId, payloadHash, ...overrides }
+    : { ...scope, kind, copy: { title: '猫咪打工日记', body: '认真伸懒腰，再认真吃罐罐。', tags: '猫咪,AI创作', platform: 'douyin' },
+      media: [{ ...snapshot(), actorId: 'operator-one', selectedAt: now, expiresAt: now + 60000 }], ...overrides };
+}
+
+test('chat snapshot and copy arrive together, persist scoped IDs and prepare exact immutable media rather than raw paths', async () => {
+  await flow({ user: 'operator-one', handoff: handoff() }, async ({ window, requests, click, storageValues }) => {
+    assert.match(window.document.body.textContent, /final.mp4/);
+    assert.equal(window.document.querySelector('input.field').value, '猫咪打工日记');
+    await click('核对并发布');
+    assert.ok(requests.some(item => item.key === `GET /api/chat/artifacts/${mediaId}`));
+    const prepared = writes(requests).filter(item => item.key.endsWith('/prepare'));
+    assert.equal(prepared.length, 1);
+    assert.equal(prepared[0].body.title, '猫咪打工日记');
+    assert.equal(prepared[0].body.body, '认真伸懒腰，再认真吃罐罐。');
+    assert.deepEqual(prepared[0].body.media, []); assert.deepEqual(prepared[0].body.artifactIds, [mediaId]);
+    const draft = JSON.parse(storageValues.get('easel_user:operator-one:easel_publish_draft'));
+    assert.equal(draft.mediaReferences[0].artifactId, mediaId); assert.equal(draft.mediaReferences[0].sha256, 'c'.repeat(64));
+  });
+});
+
+test('changed or unavailable imported bytes block prepare and cannot fall back to a similarly named library path', async () => {
+  await flow({ user: 'operator-one', handoff: handoff(), artifact: () => json(snapshot({ sha256: 'f'.repeat(64) })) }, async ({ window, requests, click }) => {
+    await click('核对并发布');
+    assert.ok(requests.some(item => item.key === `GET /api/chat/artifacts/${mediaId}`), 'the imported ID must be read before prepare');
+    assert.deepEqual(writes(requests), []);
+    assert.match(window.document.body.textContent, /固定版本|媒体版本|已失效/);
+  });
+});
+
+test('prepared AI publication opens the same approval and explicit approval never creates a second prepare', async () => {
+  await flow({ user: 'operator-one', handoff: handoff('approval'), status: () => json(record()) }, async ({ window, requests, approve }) => {
+    assert.match(window.document.body.textContent, /Host 冻结标题/);
+    assert.equal(requests.filter(item => item.key.endsWith('/prepare')).length, 0);
+    await approve();
+    assert.deepEqual(writes(requests).map(item => item.key), [`POST /api/publication-approvals/${approvalId}/decision`, 'POST /api/publish/douyin']);
+    assert.equal(writes(requests)[1].body.approvalId, approvalId); assert.equal(writes(requests)[1].body.payloadHash, payloadHash);
+  });
+});
+
+test('completed AI publication handoff is read only, without preparing or replaying dispatch', async () => {
+  await flow({ user: 'operator-one', handoff: handoff('approval') }, async ({ window, requests }) => {
+    assert.match(window.document.body.textContent, /Host 冻结标题/);
+    assert.deepEqual(writes(requests), []);
+    assert.equal(window.document.querySelector('[data-decision="approve"]'), null);
+  });
+});
+
+test('the publishing-center explicit receipt refresh posts the original approval while loading remains a GET', async () => {
+  const current = record('douyin', { state: 'approved', operationId: 'd'.repeat(32), result: { status: 'unknown' } });
+  await flow({ user: 'operator-one', handoff: handoff('approval'), status: () => json(current), refresh: () => json(current) }, async ({ window, requests }) => {
+    assert.equal(requests.filter(item => item.key === `GET /api/publication-approvals/${approvalId}`).length, 1);
+    assert.deepEqual(writes(requests), []);
+    await React.act(async () => window.document.querySelector('[aria-label="关闭发布确认"]').click());
+    const refresh = window.document.querySelector('[aria-label="刷新发布回执"]');
+    assert.ok(refresh);
+    await React.act(async () => refresh.click());
+    assert.deepEqual(writes(requests).map(item => item.key), [`POST /api/publication-approvals/${approvalId}/refresh`]);
+    assert.equal(requests.filter(item => item.key === `GET /api/publication-approvals/${approvalId}`).length, 1);
+  });
+});
+
+test('ordinary execution polling stays a GET and never starts an explicit receipt refresh', async () => {
+  await flow({ execute: () => json(record('douyin', { state: 'approved', operationId: 'd'.repeat(32), result: { status: 'executing' } })) }, async ({ requests, selectMedia, click, approve, tick }) => {
+    await selectMedia(); await click('核对并发布'); await approve(); await tick();
+    assert.ok(requests.some(item => item.key === `GET /api/publication-approvals/${approvalId}`));
+    assert.equal(requests.some(item => item.key.endsWith('/refresh')), false);
+  });
+});
+
+test('an AI-generated native approval keeps its declaration in the fixed UI and the same dispatch payload', async () => {
+  const current = record('douyin', { subject: { ...record().subject, aiGenerated: true } });
+  await flow({ user: 'operator-one', handoff: handoff('approval'), status: () => json(current) }, async ({ window, requests, approve }) => {
+    const declaration = [...window.document.querySelectorAll('dt')].find(node => node.textContent === 'AI生成内容');
+    assert.ok(declaration, 'approval must expose its frozen AI declaration');
+    assert.equal(declaration.nextElementSibling.textContent, '是');
+    await approve();
+    const execute = writes(requests).find(item => item.key === 'POST /api/publish/douyin');
+    assert.equal(execute.body.aiGenerated, true);
+    assert.equal(execute.body.approvalId, approvalId); assert.equal(execute.body.payloadHash, payloadHash);
+    assert.equal(requests.filter(item => item.key.endsWith('/prepare')).length, 0);
+  });
+});
+
+test('the editor restores its explicit AI declaration and freezes that exact boolean when preparing', async () => {
+  const values = new Map([['easel_user:operator-one:easel_publish_draft', JSON.stringify({
+    title: '猫咪视频', body: '认真伸懒腰', tags: '猫咪', platforms: ['douyin'], overrides: {}, aiGenerated: true,
+  })]]);
+  await flow({ user: 'operator-one', storageValues: values }, async ({ window, requests, selectMedia, click, storageValues }) => {
+    const declaration = window.document.querySelector('[aria-label="AI生成内容"]');
+    assert.ok(declaration, 'editor needs an explicit AI declaration control');
+    assert.equal(declaration.checked, true);
+    await selectMedia(); await click('核对并发布');
+    assert.equal(writes(requests)[0].body.aiGenerated, true);
+    assert.equal(JSON.parse(storageValues.get('easel_user:operator-one:easel_publish_draft')).aiGenerated, true);
+  });
+});
+
+test('refreshing a saved chat draft retains its scoped snapshot instead of reverting to library paths', async () => {
+  const selected = handoff();
+  const values = new Map([['easel_user:operator-one:easel_publish_draft', JSON.stringify({
+    title: selected.copy.title, body: selected.copy.body, tags: selected.copy.tags, platforms: ['douyin'], overrides: {},
+    mediaReferences: selected.media,
+  })]]);
+  await flow({ user: 'operator-one', storageValues: values }, async ({ window, requests, click }) => {
+    assert.match(window.document.body.textContent, /final.mp4 · V2/);
+    await click('核对并发布');
+    assert.deepEqual(writes(requests)[0].body.artifactIds, [mediaId]); assert.deepEqual(writes(requests)[0].body.media, []);
+  });
+});
+
+test('a saved prepared request reloads the original approval; scope or payload substitution never exposes approval controls', async () => {
+  const selected = handoff('approval');
+  const values = new Map([['easel_user:operator-one:easel_publish_draft', JSON.stringify({
+    title: '', body: '', tags: '', platforms: [], overrides: {}, approvalReference: selected,
+  })]]);
+  await flow({ user: 'operator-one', storageValues: values, status: () => json(record('douyin', { actorId: 'another-operator' })) }, async ({ window, requests }) => {
+    assert.match(window.document.body.textContent, /确认对象或固定版本已变化/);
+    assert.equal(window.document.querySelector('[data-decision="approve"]'), null);
+    assert.deepEqual(writes(requests), []);
+  });
+});
+
 test('review prepares a subject without dispatch; explicit approval executes the same frozen id/hash/body/artifact IDs', async () => {
   await flow({}, async ({ window, requests, click, selectMedia, approve, draft }) => {
     await selectMedia(); await click('核对并发布');
     assert.deepEqual(writes(requests).map(item => item.key), ['POST /api/publish/douyin/prepare']);
-    assert.deepEqual(writes(requests)[0].body, { title: draft.title, body: draft.overrides.douyin, media: ['drafts/input.mp4'], tags: draft.tags, persona: 'persona-one' });
+    assert.deepEqual(writes(requests)[0].body, { title: draft.title, body: draft.overrides.douyin, media: ['drafts/input.mp4'], tags: draft.tags, persona: 'persona-one', aiGenerated: false });
     assert.match(window.document.body.textContent, /Host 冻结正文 V1/);
     await approve();
     assert.deepEqual(writes(requests).map(item => item.key), ['POST /api/publish/douyin/prepare', `POST /api/publication-approvals/${approvalId}/decision`, 'POST /api/publish/douyin']);
     assert.deepEqual(writes(requests)[1].body, { approved: true, payloadHash });
     const subject = record().subject;
     assert.deepEqual(writes(requests)[2].body, { title: subject.title, body: subject.body, tags: subject.tags, persona: subject.persona,
-      media: [], artifactIds: [mediaId], approvalId, payloadHash });
+      media: [], artifactIds: [mediaId], approvalId, payloadHash, aiGenerated: false });
   });
 });
 

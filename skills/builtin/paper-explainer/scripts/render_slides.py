@@ -777,7 +777,7 @@ def _sample_plan() -> dict[str, Any]:
         "title": "Paper Slides Selftest",
         "style": "editorial",
         "size": "1920x1080",
-        "source": "Easel selftest",
+        "source": "Xiangya selftest",
         "slides": [
             {"type": "cover", "title": "论文解读不该只是把文字塞进卡片",
              "claim": "先确定一页的中心结论，再让版式服务证据。"},

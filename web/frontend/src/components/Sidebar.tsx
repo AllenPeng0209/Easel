@@ -6,7 +6,7 @@ import type { ComponentType } from 'react';
 import {
   IconChat, IconSkills, IconOutputs, IconAccounts, IconProfile,
   IconNewChat, IconEdit, IconArchive, IconUnarchive, IconTrash, IconChevron,
-  IconDashboard, IconVideo, IconInteractions, IconIdea, IconCalendar, IconPublish,
+  IconDashboard, IconVideo, IconInteractions, IconCalendar, IconPublish,
 } from './icons';
 import { IconGear } from './settingsIcons';
 import ThemeToggle from './ThemeToggle';
@@ -18,7 +18,7 @@ import { useModalLayer } from '../vendor/deepseek-harness/navigation/useModalLay
 import '../styles/sidebar.css';
 import '../styles/session-navigation.css';
 
-export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'outputs' | 'accounts' | 'profile' | 'workshop' | 'interactions';
+export type Page = 'dashboard' | 'chat' | 'calendar' | 'publish' | 'skills' | 'outputs' | 'accounts' | 'profile' | 'workshop' | 'interactions';
 
 interface SidebarProps {
   currentPage: Page;
@@ -42,7 +42,6 @@ interface NavigationItem { page: Page; Icon: ComponentType<{ size?: number }>; l
 
 const PRODUCTION_NAV: NavigationItem[] = [
   { page: 'profile', Icon: IconProfile, label: '创作画像' },
-  { page: 'ideas', Icon: IconIdea, label: '选题策划' },
   { page: 'workshop', Icon: IconVideo, label: '视频工坊' },
   { page: 'outputs', Icon: IconOutputs, label: '内容库' },
   { page: 'skills', Icon: IconSkills, label: '技能库' },
@@ -189,7 +188,7 @@ export default function Sidebar({
   };
 
   const renderNavigation = ({ page, Icon, label }: NavigationItem) => {
-    const selected = currentPage === page || (page === 'ideas' && ['trends', 'breakdown'].includes(currentPage));
+    const selected = currentPage === page;
     return <button key={page} className={`nav-item ${selected ? 'active' : ''}`}
       aria-current={selected ? 'page' : undefined}
       onClick={() => {
@@ -280,8 +279,8 @@ export default function Sidebar({
       </div> : <>
       <div className="sidebar-header">
         <div className="sidebar-logo">
-          <img className="sidebar-logo-icon" src="./static/easel-icon-transparent.png" alt="" />
-          <h1>Easel</h1>
+          <img className="sidebar-logo-icon" src="./static/xiangya-icon.svg" alt="" />
+          <h1>响芽</h1>
           <ThemeToggle />
           <button className="sidebar-shell-toggle" aria-label={drawer ? '关闭导航' : '收起侧栏'} title={drawer ? '关闭导航' : '收起侧栏'}
             data-sidebar-toggle data-modal-autofocus={drawer || undefined} onClick={() => drawer ? closeDrawer() : toggleRail()}>{drawer ? '×' : '‹'}</button>

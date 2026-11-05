@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Easel 模板库 — 内容模板的确定性 CRUD + 变量提取 / 替换。
+"""响芽 模板库 — 内容模板的确定性 CRUD + 变量提取 / 替换。
 
 把模板文件读写、INDEX.json 维护、usage_count 自增、{{var}} 提取替换
 从 LLM 手动操作固化为代码。LLM 只做意图路由与内容分析。
@@ -335,7 +335,7 @@ def cmd_use(args):
 def build_parser():
     p = argparse.ArgumentParser(
         prog="templates.py",
-        description="Easel 模板库：save/list/get/edit/delete/use。",
+        description="响芽 模板库：save/list/get/edit/delete/use。",
     )
     p.add_argument("--root", default="templates", help="模板根目录（默认 templates）")
     sub = p.add_subparsers(dest="cmd", required=True)

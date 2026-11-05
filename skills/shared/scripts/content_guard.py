@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """content_guard.py — 出站内容安全闸门（确定性扫描）.
 
-Easel 的 agent 会把生成的文案 / 评论 / 回答**真实发布到公开平台**。从 agent
+响芽 的 agent 会把生成的文案 / 评论 / 回答**真实发布到公开平台**。从 agent
 生成文本到 `--exec` 真发之间，过去没有任何安全过滤：一旦 agent 把内部设置误写进
 内容（API key、内部 URL、代理 IP、绝对路径、模型名、env 变量名、"由 AI 生成 /
 OpenClaw / Claude Code" 之类自曝措辞），就会**公开泄露且删不掉**。
@@ -81,7 +81,7 @@ SECRET_PATTERNS: list[tuple[str, str, "re.Pattern[str]", str]] = [
     ("env-name", "med", _p(r"\b(?:IMG_API_KEY[A-Z_]*|IMG_BASE_URL|DASHSCOPE_API_KEY|"
                            r"XHS_MAAS_API_KEY|MINERU_API_TOKEN|ARK_API_KEY|KLING_ACCESS_KEY|"
                            r"VIDEO_API_KEY|MUSIC_API_KEY|FISH_API_KEY|MINIMAX_API_KEY|"
-                           r"EASEL_PROXY|EASEL_ROOT)\b"), "Easel env 变量名"),
+                           r"EASEL_PROXY|EASEL_ROOT)\b"), "响芽 env 变量名"),
     # ── 模型 / 供应商内部名 ──
     ("model-name", "low", _p(r"\bclaude-[a-z0-9][a-z0-9.\-\[\]]*\b", re.I), "Claude 模型 ID"),
     ("model-name", "low", _p(r"\banthropic/claude\S*", re.I), "anthropic/claude 模型引用"),

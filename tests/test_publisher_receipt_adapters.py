@@ -39,6 +39,9 @@ class Reporter:
             self.records.append(item)
             self.events.append(('receipt', phase))
 
+    def mark_submission_ambiguous(self):
+        self.events.append(('ambiguous-submission',))
+
 
 @pytest.fixture
 def harness(monkeypatch, tmp_path):
@@ -131,6 +134,9 @@ def _douyin_self(uid='observed-dy'):
 def douyin(h, result, *, response=_douyin_self(), click_failure=None, stay_in_editor=False):
     module = h.load('douyin_publish')
     def evaluate(_script, request):
+        if request[0].startswith(module.platform_readback.DOUYIN_WORK_LIST_URL + '?'):
+            h.events.append(('baseline-request', tuple(request)))
+            return {'httpStatus': 200, 'body': {'status_code': 0, 'data': {'work_list': []}}}
         h.events.append(('account-probe',))
         h.events.append(('account-request', tuple(request)))
         return response() if callable(response) else response

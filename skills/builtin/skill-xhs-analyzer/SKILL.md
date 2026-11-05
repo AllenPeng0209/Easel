@@ -22,7 +22,7 @@ metadata:
 
 # Redbook — 小红书内容分析 CLI
 
-用 `redbook` CLI 搜索笔记、读内容、分析创作者、提取爆款规律、研究选题。**OpenClaw 用户：** `clawhub install redbook` 或 `npm install -g @lucasygu/redbook --ignore-scripts`。Easel 环境里推荐 `--ignore-scripts`，避免上游 postinstall 额外写入带发布/评论能力的技能。
+用 `redbook` CLI 搜索笔记、读内容、分析创作者、提取爆款规律、研究选题。**OpenClaw 用户：** `clawhub install redbook` 或 `npm install -g @lucasygu/redbook --ignore-scripts`。响芽 环境里推荐 `--ignore-scripts`，避免上游 postinstall 额外写入带发布/评论能力的技能。
 
 ## ⚠️ 环境依赖
 

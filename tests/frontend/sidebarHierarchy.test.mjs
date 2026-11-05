@@ -68,16 +68,19 @@ test('production and operations entries route to the existing pages in the corre
   const production = nodes.find(node => node.type === 'section' && node.props['aria-label'] === '内容生产');
   const operations = nodes.find(node => node.type === 'section' && node.props['aria-label'] === '运营管理');
   assert.ok(production && operations);
-  for (const label of ['创作画像', '选题策划', '视频工坊', '内容库', '技能库']) findButton(descendants(production), label).props.onClick();
+  for (const label of ['创作画像', '视频工坊', '内容库', '技能库']) findButton(descendants(production), label).props.onClick();
   for (const label of ['运营总览', '账号管理', '发布中心', '内容日历', '互动中心']) findButton(descendants(operations), label).props.onClick();
-  assert.deepEqual(ui.events.map(event => event[1]), ['profile', 'ideas', 'workshop', 'outputs', 'skills', 'dashboard', 'accounts', 'publish', 'calendar', 'interactions']);
+  assert.deepEqual(ui.events.map(event => event[1]), ['profile', 'workshop', 'outputs', 'skills', 'dashboard', 'accounts', 'publish', 'calendar', 'interactions']);
 });
 
-test('discovery, ideas and breakdown share the planning navigation selection', () => {
+test('retired planning routes expose no navigation entry', () => {
   const ui = sidebar();
-  for (const currentPage of ['trends', 'ideas', 'breakdown']) {
+  for (const currentPage of ['trends', 'ideas', 'breakdown', 'workshop']) {
     const { nodes } = ui.render({ currentPage });
-    assert.equal(findButton(nodes, '选题策划')?.props['aria-current'], 'page');
+    assert.equal(findButton(nodes, '选题策划'), undefined);
+    assert.equal(findButton(nodes, '热点雷达'), undefined);
+    assert.equal(findButton(nodes, '爆款拆解'), undefined);
+    assert.ok(findButton(nodes, '视频工坊'));
   }
 });
 

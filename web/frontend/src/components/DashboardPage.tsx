@@ -1,19 +1,18 @@
 import { projectStorageKey } from '../lib/projectScope';
 import { useState, useEffect, useRef } from 'react';
 import {
-  fetchTrends, fetchSchedule, fetchOutputs, fetchAccounts, fetchIdeas,
+  fetchSchedule, fetchOutputs, fetchAccounts,
   fetchAnalyticsPlatforms, fetchAccountAnalytics,
 } from '../lib/api';
 import type {
-  TrendGroup, ScheduleItem, OutputNode, AccountItem, Idea,
+  ScheduleItem, OutputNode, AccountItem,
   AnalyticsPlatform, AccountAnalytics, AccountWhoami,
 } from '../lib/api';
 import type { Page } from './Sidebar';
 import { getWhoamiCache, verifyStale } from '../lib/whoami';
 import { useIpPermissions } from './ProjectSpace';
 import {
-  IconFire, IconCalendar, IconOutputs, IconChat, IconSkills, IconAccounts,
-  IconIdea, IconPublish,
+  IconCalendar, IconOutputs, IconChat, IconVideo, IconAccounts, IconPublish,
 } from './icons';
 
 /** 大数格式化：12000 → 1.2万。 */
@@ -37,23 +36,19 @@ interface DashboardProps {
   apiDirect: boolean;
   agentRuntime: string;
   onNavigate: (page: Page) => void;
-  onUseTopic: (title: string) => void;
-  onUseSavedIdea: (id: string) => void;
 }
 
 const STATUS_LABEL: Record<string, string> = { idea: '选题', draft: '草稿', scheduled: '待发', published: '已发' };
 
-export default function DashboardPage({ persona, gatewayStatus, apiDirect, agentRuntime, onNavigate, onUseTopic, onUseSavedIdea }: DashboardProps) {
+export default function DashboardPage({ persona, gatewayStatus, apiDirect, agentRuntime, onNavigate }: DashboardProps) {
   const { canOperate, canManageAccounts } = useIpPermissions();
   const accountPermission = useRef(canManageAccounts);
   accountPermission.current = canManageAccounts;
   const operationPermission = useRef(canOperate);
   operationPermission.current = canOperate;
-  const [trends, setTrends] = useState<TrendGroup[]>([]);
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [outputs, setOutputs] = useState<OutputNode[]>([]);
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
-  const [ideas, setIdeas] = useState<Idea[]>([]);
   // 归因层：账号创作数据
   const [anaPlats, setAnaPlats] = useState<AnalyticsPlatform[]>([]);
   const [anaSel, setAnaSel] = useState('');
@@ -78,11 +73,9 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
   }, []);
 
   useEffect(() => {
-    fetchTrends(undefined, 6).then((d) => setTrends(d.trends)).catch(() => {});
     fetchSchedule().then(setSchedule).catch(() => {});
     fetchOutputs().then(setOutputs).catch(() => {});
     fetchAccounts().then(setAccounts).catch(() => {});
-    fetchIdeas().then(setIdeas).catch(() => {});
     fetchAnalyticsPlatforms().then((ps) => {
       setAnaPlats(ps);
       const cache = getWhoamiCache();
@@ -133,20 +126,17 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
     .filter((s) => s.date >= todayStr && s.status !== 'published')
     .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 5);
   const recent = outputs.slice(0, 5);
-  const pendingIdeas = ideas.filter((i) => i.status === 'pending');
   const loggedIn = accounts.filter((a) => a.loggedIn).length;
 
   const quick: { label: string; page: Page; Icon: typeof IconChat }[] = [
     { label: '开始对话', page: 'chat', Icon: IconChat },
-    { label: '看热点', page: 'trends', Icon: IconFire },
-    { label: '拆爆款', page: 'breakdown', Icon: IconSkills },
-    { label: '记选题', page: 'ideas', Icon: IconIdea },
+    { label: '视频工坊', page: 'workshop', Icon: IconVideo },
+    { label: '内容库', page: 'outputs', Icon: IconOutputs },
     { label: '排日历', page: 'calendar', Icon: IconCalendar },
     { label: '去发布', page: 'publish', Icon: IconPublish },
   ];
 
   const stats: { label: string; value: string; page: Page; Icon: typeof IconChat }[] = [
-    { label: '待做选题', value: String(pendingIdeas.length), page: 'ideas', Icon: IconIdea },
     { label: '待发排期', value: String(upcoming.length), page: 'calendar', Icon: IconCalendar },
     { label: '内容项目', value: String(outputs.length), page: 'outputs', Icon: IconOutputs },
     { label: '已登录账号', value: `${loggedIn}/${accounts.length}`, page: 'accounts', Icon: IconAccounts },
@@ -163,14 +153,14 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
             : `请先在服务器安装并配置 ${agentRuntime} CLI。`)
             : gatewayStatus === 'connected' ? '一切就绪。' : '⚠ 网关未连接。'}
           {persona ? ` 当前画像「${persona}」。` : ' 通用模式——指定画像效果更好。'}
-          从热点到发布，一站式搞定今天的内容。
+          从 AI 对话到发布，完成今天的内容。
         </p>
         <div className="dash-quick">
-          {quick.filter((q) => canOperate || !['chat', 'breakdown', 'publish'].includes(q.page)).map((q) => (
+          {quick.filter((q) => canOperate || !['chat', 'publish'].includes(q.page)).map((q) => (
             <button key={q.page} className="dash-quick-btn" onClick={() => {
-              if (operationPermission.current || !['chat', 'breakdown', 'publish'].includes(q.page)) onNavigate(q.page);
+              if (operationPermission.current || !['chat', 'publish'].includes(q.page)) onNavigate(q.page);
             }}>
-              <q.Icon size={16} /><span>{!canOperate && q.page === 'ideas' ? '看选题' : !canOperate && q.page === 'calendar' ? '看日历' : q.label}</span>
+              <q.Icon size={16} /><span>{!canOperate && q.page === 'calendar' ? '看日历' : q.label}</span>
             </button>
           ))}
         </div>
@@ -188,42 +178,6 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
       </div>
 
       <div className="dash-grid">
-        {/* 今日热点 */}
-        <div className="card dash-card">
-          <div className="dash-card-head">
-            <span><IconFire size={16} /> 今日热点</span>
-            <button className="dash-more" onClick={() => onNavigate('trends')}>热点雷达 →</button>
-          </div>
-          {trends.length === 0 && <div className="dash-empty">暂无热点，请到热点雷达查看数据源状态。</div>}
-          {trends.map((g) => (
-            <div key={g.platform} className="dash-trend-group">
-              <div className="dash-trend-plat">{g.label}{g.stale ? ' · 过期缓存' : ''}</div>
-              {g.error && <div className="dash-empty">{g.error.message}</div>}
-              {g.ok && g.items.length === 0 && <div className="dash-empty">采集成功，暂无热点</div>}
-              {g.items.slice(0, 3).map((it, i) => (
-                <div key={i} className="dash-trend-item" title={canOperate ? `${it.title}（点击做成内容）` : it.title}>
-                  <span className="dash-trend-title" onClick={canOperate ? () => { if (operationPermission.current) onUseTopic(it.title); } : undefined}>{it.title}</span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-
-        {/* 选题库 */}
-        <div className="card dash-card">
-          <div className="dash-card-head">
-            <span><IconIdea size={16} /> 选题库 · 待做</span>
-            <button className="dash-more" onClick={() => onNavigate('ideas')}>全部 →</button>
-          </div>
-          {pendingIdeas.length === 0 && <div className="dash-empty">还没攒选题，去热点雷达收藏几个吧</div>}
-          {pendingIdeas.slice(0, 5).map((it) => (
-            <div key={it.id} className="dash-idea" onClick={canOperate ? () => { if (operationPermission.current) onUseSavedIdea(it.id); } : undefined} title={canOperate ? '点击做成内容' : '已保存选题'}>
-              <span className="dash-idea-title">{it.title}</span>
-              {it.source && <span className="badge">{it.source}</span>}
-            </div>
-          ))}
-        </div>
-
         {/* 近期排期 */}
         <div className="card dash-card">
           <div className="dash-card-head">

@@ -180,7 +180,7 @@ export default function AuthGate({ children, onAuthenticated }: {
   </AuthContext.Provider>;
 
   return <main className="auth-screen">
-    <div className="auth-brand"><span>E</span><strong>Easel</strong></div>
+    <div className="auth-brand"><span>芽</span><strong>响芽</strong></div>
     <section className="auth-card" aria-labelledby="auth-title">
       <div className="access-eyebrow">CREATOR WORKSPACE</div>
       <h1 id="auth-title">{phase === 'loading' ? '正在验证身份…' : phase === 'setup' ? '创建平台管理员' : '登录工作空间'}</h1>

@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 DeepSeek. MIT License.
  * Header/summary/detail-field layout adapted from packages/client/ui-tool/src/client/tool/components/ToolRow.module.css,
  * ToolDetails.module.css and the existing ui-primitives DisclosureRow @ ce7073d51254c26cd63b22a60835b8f948deb447.
- * Easel changes: scoped business DTO fields and read-only local navigation.
+ * Xiangya changes: scoped business DTO fields and read-only local navigation.
  * Notice: integrations/deepseek-harness/LICENSE.
  */
 .business-object { width: 100%; min-width: 0; color: var(--dsw-alias-label-secondary, var(--text-secondary)); }

@@ -375,7 +375,7 @@ def _work(value):
     return result
 
 
-def _readback(value):
+def _readback(value, *, platform=None):
     if not isinstance(value, dict):
         converter = getattr(value, 'as_dict', None)
         if not callable(converter):
@@ -405,11 +405,60 @@ def _readback(value):
         identity = _account(evidence.get('account'), strict=False)
         if identity is not None:
             result['evidence']['account'] = identity
+        if platform == 'xiaohongshu':
+            # The XHS adapter binds its original baseline to the unified login
+            # snapshot. These are fingerprints/integers, never session secrets.
+            generation, account_id = evidence.get('xhsSessionGeneration'), evidence.get('xhsNativeAccountId')
+            fingerprint = evidence.get('xhsSessionHash')
+            if (type(generation) is int and 0 < generation <= 2**53 - 1
+                    and type(account_id) is int and 0 < account_id <= 2**53 - 1
+                    and isinstance(fingerprint, str) and re.fullmatch(r'[a-f0-9]{64}', fingerprint)):
+                result['evidence'].update(xhsSessionGeneration=generation,
+                    xhsNativeAccountId=account_id, xhsSessionHash=fingerprint)
     return result
+
+
+def _xhs_baseline(readback):
+    evidence = readback.get('evidence') if isinstance(readback, dict) else None
+    fields = ('sinceMs', 'xhsSessionGeneration', 'xhsNativeAccountId', 'xhsSessionHash')
+    if (not isinstance(evidence, dict)
+            or any(type(evidence.get(key)) is not int or not 0 < evidence[key] <= 2**53 - 1
+                   for key in fields[:3])
+            or not isinstance(evidence.get(fields[3]), str)
+            or not re.fullmatch(r'[a-f0-9]{64}', evidence[fields[3]])):
+        return None
+    return tuple(evidence[key] for key in fields)
+
+
+def _check_xhs_baseline(previous, following, *, phase, ack):
+    """A real pre-click capture cannot be seeded/rebound after a provider ACK."""
+    old, new = _xhs_baseline(previous.get('readback')), _xhs_baseline(following.get('readback'))
+    if old is None and new is None:
+        return
+    old_proof = (previous.get('readback') or {}).get('evidence') or {}
+    new_proof = (following.get('readback') or {}).get('evidence') or {}
+    if old is None:
+        if (previous.get('ack') is not None or phase != 'submit_attempted'
+                or new_proof.get('baselineCaptured') is not False):
+            _fail(409)
+        return
+    if old != new:
+        _fail(409)
+    if old_proof.get('baselineCaptured') is not new_proof.get('baselineCaptured'):
+        if not (old_proof.get('baselineCaptured') is False
+                and new_proof.get('baselineCaptured') is True
+                and previous.get('ack') is None and ack is not None and phase == 'platform_ack'):
+            _fail(409)
 
 
 class _NullReporter:
     enabled = False
+
+    def snapshot(self):
+        return None
+
+    def mark_submission_ambiguous(self):
+        return None
 
     def record(self, phase, *, account=None, ack=None, readback=None, reason=None):
         return None
@@ -461,9 +510,14 @@ class PublicationReceiptReporter:
             if value.get('ack') is not None:
                 self._value['ack'] = _ack(value['ack'])
             if value.get('readback') is not None:
-                self._value['readback'] = _readback(value['readback'])
+                self._value['readback'] = _readback(value['readback'], platform=self._base['platform'])
             if value.get('reason') in _REASONS:
                 self._value['reason'] = value['reason']
+            if 'submissionAmbiguous' in value:
+                if type(value['submissionAmbiguous']) is not bool:
+                    _fail()
+                if value['submissionAmbiguous']:
+                    self._value['submissionAmbiguous'] = True
 
     def _check_context(self):
         with self._source_root.open() as directory:
@@ -484,6 +538,31 @@ class PublicationReceiptReporter:
                 if identity is None or identity['id'] != self._base['approvedAccountId']:
                     _fail()
                 self._check_context()
+        except PublicationReceiptError:
+            raise
+        except Exception:
+            _fail()
+
+    def snapshot(self):
+        """Return only the validated original receipt, pinned to its Host context."""
+        try:
+            with self._lock:
+                self._check_context()
+                return json.loads(json.dumps(self._value, allow_nan=False))
+        except PublicationReceiptError:
+            raise
+        except Exception:
+            _fail()
+
+    def mark_submission_ambiguous(self):
+        """A second observed create can never regain refresh/confirmation authority."""
+        try:
+            with self._lock:
+                if self._value.get('phase') not in ('submit_attempted', 'platform_ack', 'readback'):
+                    _fail()
+                value = dict(self._value, submissionAmbiguous=True)
+                self._write(value)
+                self._value = value
         except PublicationReceiptError:
             raise
         except Exception:
@@ -517,7 +596,9 @@ class PublicationReceiptReporter:
                         _fail()
                     value['ack'] = observation
                 if readback is not None:
-                    value['readback'] = _readback(readback)
+                    value['readback'] = _readback(readback, platform=self._base['platform'])
+                    if self._base['platform'] == 'xiaohongshu':
+                        _check_xhs_baseline(self._value, value, phase=phase, ack=ack)
                 value.pop('reason', None)
                 if reason is not None:
                     value['reason'] = reason

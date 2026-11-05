@@ -5,7 +5,7 @@ ce7073d51254c26cd63b22a60835b8f948deb447. Copyright (c) 2026 DeepSeek.
 The original notice is retained in integrations/deepseek-harness/LICENSE.
 
 Validate the complete files batch, then atomically record successful declarations.
-Unlike the generic upstream Host, Easel accepts only the selected IP's approved
+Unlike the generic upstream Host, Xiangya accepts only the selected IP's approved
 outputs. D08 snapshots new declarations; migrated D01 records explicitly retain
 their legacy-current semantics without inventing historical bytes or approval.
 """

@@ -6,6 +6,8 @@ import type { ChatCommand } from './chatCommands';
 import type { AgentEvent } from './agentEvents';
 import type { AgentTimelineObservation } from './agentTimeline';
 import type { WorkshopReference } from './workshop';
+import { validPublicationMediaReference, validPublicationApprovalReference,
+  type PublicationMediaReference, type PublicationApprovalReference } from './publicationHandoff';
 
 export interface QueuedMessage {
   id: string;
@@ -51,7 +53,6 @@ export interface ChatMessage {
   sessionReferences?: ChatSessionReference[];
   command?: ChatCommand;
   planRef?: ChatPlanRef;
-  topicRef?: { id: string; snapshotHash: string };
   workshopRef?: WorkshopReference;
   reasoningSummary?: ReasoningSummary;
   answerCompletion?: AnswerCompletion;
@@ -122,6 +123,9 @@ export interface PublishDraft {
   platforms: string[];
   overrides: Record<string, string>;
   tags: string;   // 话题标签，逗号分隔（小红书绑话题；其它平台按需写入）
+  aiGenerated?: boolean;
+  mediaReferences?: PublicationMediaReference[];
+  approvalReference?: PublicationApprovalReference;
 }
 const PUBLISH_KEY = projectStorageKey('easel_publish_draft');
 const PREVIOUS_BRAND = ['post', 'craft'].join('');
@@ -140,13 +144,17 @@ function readMigratedLocalValue(key: string, suffix: string): string | null {
 }
 
 const PUBLISH_DEFAULT: PublishDraft = {
-  title: '', body: '', platforms: ['xiaohongshu', 'douyin'], overrides: {}, tags: '',
+  title: '', body: '', platforms: ['xiaohongshu', 'douyin'], overrides: {}, tags: '', aiGenerated: false, mediaReferences: [],
 };
 export function loadPublishDraft(): PublishDraft {
   try {
     const raw = readMigratedLocalValue(PUBLISH_KEY, 'publish_draft');
     if (!raw) return { ...PUBLISH_DEFAULT };
-    return { ...PUBLISH_DEFAULT, ...(JSON.parse(raw) as PublishDraft) };
+    const saved = JSON.parse(raw) as PublishDraft;
+    return { ...PUBLISH_DEFAULT, ...saved,
+      aiGenerated: saved.aiGenerated === true,
+      mediaReferences: Array.isArray(saved.mediaReferences) ? saved.mediaReferences.filter(item => validPublicationMediaReference(item)) : [],
+      approvalReference: validPublicationApprovalReference(saved.approvalReference) ? saved.approvalReference : undefined };
   } catch {
     return { ...PUBLISH_DEFAULT };
   }

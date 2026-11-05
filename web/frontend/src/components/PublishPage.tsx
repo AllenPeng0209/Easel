@@ -1,24 +1,31 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   createSchedule, executeSkill, runAgent, streamChat,
-  fetchAccounts, publishNow, preparePublication, fetchPublicationApproval, decidePublication, submitPublishSms, fetchOutputs, mediaUrl,
+  fetchAccounts, publishNow, preparePublication, fetchPublicationApproval, refreshPublicationApproval, fetchPublicationArtifact, decidePublication, submitPublishSms, fetchOutputs, mediaUrl,
 } from '../lib/api';
 import type { AccountItem, OutputFile } from '../lib/api';
 import type { PublicationApprovalRecord } from '../lib/publicationApproval';
-import PublicationApprovalDialog from './PublicationApprovalDialog';
+import PublicationApprovalDialog, { PublicationSubjectView } from './PublicationApprovalDialog';
+import PublicationReceiptCard from './PublicationReceiptCard';
+import { publicationReceiptInScope } from '../lib/publicationReceipt';
+import { normalizePublicationHandoff, publicationMediaReferenceMatches, validPublicationMediaReference,
+  validPublicationApprovalReference, type PublicationHandoff, type PublicationMediaReference,
+  type PublicationApprovalReference } from '../lib/publicationHandoff';
 import { loadPublishDraft, savePublishDraft } from '../lib/store';
 import { renderMarkdown } from '../lib/sanitize';
 import { IconPublish, IconCopy, IconCheck, IconCalendar, IconSkills, IconEdit, IconStop, IconTrash } from './icons';
 
 interface PublishPageProps {
   persona: string;
+  handoff?: PublicationHandoff | null;
+  onHandoffConsumed?: () => void;
 }
 
 // 平台列表须与后端 LOGIN_RUNNERS 对齐（有登录/发布链路的才列）
 // draft: true = 该平台支持「存草稿」（落后台草稿箱，不公开发布）
 const PLATFORMS: { key: string; label: string; titleLimit?: number; bodyLimit: number; hint: string; draft?: boolean }[] = [
   { key: 'xiaohongshu', label: '小红书', titleLimit: 20, bodyLimit: 1000, hint: '标题≤20，正文≤1000，重情绪+话题标签' },
-  { key: 'douyin', label: '抖音', titleLimit: 55, bodyLimit: 55, hint: '文案≤55，前几字是钩子' },
+  { key: 'douyin', label: '抖音', titleLimit: 30, bodyLimit: 1000, hint: '标题≤30，正文建议简短' },
   { key: 'kuaishou', label: '快手', titleLimit: 30, bodyLimit: 1000, hint: '视频或图片(图文)，标题≤30，需附媒体' },
   { key: 'weixin-channels', label: '视频号', bodyLimit: 1000, hint: '需附视频，短描述+话题标签，微信扫码登录' },
   { key: 'zhihu', label: '知乎', bodyLimit: 5000, hint: '长文/回答，讲清逻辑' },
@@ -26,7 +33,7 @@ const PLATFORMS: { key: string; label: string; titleLimit?: number; bodyLimit: n
   { key: 'bilibili', label: 'B站', titleLimit: 80, bodyLimit: 2000, hint: '需附视频，标题≤80、简介≤2000，默认投「知识」分区' },
   { key: 'toutiao', label: '今日头条', titleLimit: 30, bodyLimit: 10000, draft: true, hint: '图文长文，标题≤30 字，话题≤5 个；附件图片插进正文，可存草稿' },
   { key: 'wechat-oa', label: '公众号', titleLimit: 64, bodyLimit: 20000, hint: '图文文章，正文用 Markdown，首图作封面，发到草稿箱；需先在账号页「登录公众号后台」扫码' },
-  { key: 'twitter-x', label: '推特 X', bodyLimit: 280, hint: '标题与正文合并，最终长度以 X 校验为准；可附 1 图或 1 视频；窗口登录需要运行 Easel 的电脑有图形桌面及外网连接' },
+  { key: 'twitter-x', label: '推特 X', bodyLimit: 280, hint: '标题与正文合并，最终长度以 X 校验为准；可附 1 图或 1 视频；窗口登录需要运行 响芽 的电脑有图形桌面及外网连接' },
 ];
 const LABEL2KEY = Object.fromEntries(PLATFORMS.map((p) => [p.label, p.key]));
 
@@ -47,13 +54,14 @@ function parseSections(text: string): Record<string, string> {
 
 type PubState = { status: 'publishing' | 'ok' | 'fail' | 'pending'; msg: string };
 
-export default function PublishPage({ persona }: PublishPageProps) {
+export default function PublishPage({ persona, handoff, onHandoffConsumed }: PublishPageProps) {
   const draft0 = loadPublishDraft();
   const [title, setTitle] = useState(draft0.title);
   const [body, setBody] = useState(draft0.body);
   const [platforms, setPlatforms] = useState<string[]>(draft0.platforms);
   const [overrides, setOverrides] = useState<Record<string, string>>(draft0.overrides);
   const [tags, setTags] = useState(draft0.tags || '');
+  const [aiGenerated, setAiGenerated] = useState(draft0.aiGenerated === true);
   // 存草稿模式：只对声明了 draft 能力的平台（今日头条）生效，其余平台仍真发布
   const [asDraft, setAsDraft] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -71,13 +79,17 @@ export default function PublishPage({ persona }: PublishPageProps) {
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [mediaFiles, setMediaFiles] = useState<OutputFile[]>([]);
   const [selectedMedia, setSelectedMedia] = useState<string[]>([]);
+  const [selectedArtifacts, setSelectedArtifacts] = useState<PublicationMediaReference[]>(draft0.mediaReferences || []);
+  const [approvalReference, setApprovalReference] = useState<PublicationApprovalReference | undefined>(draft0.approvalReference);
+  const [linkedApproval, setLinkedApproval] = useState<PublicationApprovalRecord | null>(null);
+  const [handoffError, setHandoffError] = useState('');
   const [showPicker, setShowPicker] = useState(false);
   const [pub, setPub] = useState<Record<string, PubState>>({});
   const [publishing, setPublishing] = useState(false);
   const [approvals, setApprovals] = useState<PublicationApprovalRecord[]>([]);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalError, setApprovalError] = useState('');
-  const draftKey = JSON.stringify({ title, body, platforms, overrides, tags, persona, selectedMedia, asDraft });
+  const draftKey = JSON.stringify({ title, body, platforms, overrides, tags, persona, selectedMedia, selectedArtifacts, asDraft, aiGenerated });
   const draftKeyRef = useRef(draftKey);
   draftKeyRef.current = draftKey;
   useEffect(() => { setApprovals([]); setApprovalError(''); }, [draftKey]);
@@ -88,8 +100,46 @@ export default function PublishPage({ persona }: PublishPageProps) {
 
   // 草稿持久化：任何改动即写 localStorage，切页/刷新回来都在
   useEffect(() => {
-    savePublishDraft({ title, body, platforms, overrides, tags });
-  }, [title, body, platforms, overrides, tags]);
+    savePublishDraft({ title, body, platforms, overrides, tags, aiGenerated, mediaReferences: selectedArtifacts, approvalReference });
+  }, [title, body, platforms, overrides, tags, aiGenerated, selectedArtifacts, approvalReference]);
+
+  useEffect(() => {
+    if (!handoff) return;
+    const accepted = normalizePublicationHandoff(handoff);
+    if (!accepted) { setHandoffError('此发布入口已过期或不属于当前用户 / IP，请回原对话重新选择。'); onHandoffConsumed?.(); return; }
+    setHandoffError(''); setApprovals([]); setPub({});
+    if (accepted.kind === 'approval') {
+      setApprovalReference({ actorId: accepted.actorId, projectId: accepted.projectId,
+        approvalId: accepted.approvalId, payloadHash: accepted.payloadHash });
+      onHandoffConsumed?.();
+      return;
+    }
+    setApprovalReference(undefined); setLinkedApproval(null);
+    setSelectedMedia([]); setSelectedArtifacts(accepted.media);
+    setTitle(accepted.copy.title || ''); setBody(accepted.copy.body || ''); setTags(accepted.copy.tags || '');
+    setOverrides({}); setAsDraft(false); setAiGenerated(false); setCheckResult('');
+    // A media card cannot silently choose either an account or another platform.
+    setPlatforms(accepted.copy.platform && PUBLISHABLE.has(accepted.copy.platform) ? [accepted.copy.platform] : []);
+    onHandoffConsumed?.();
+  }, [handoff, onHandoffConsumed]);
+
+  useEffect(() => {
+    if (!approvalReference) return;
+    let active = true;
+    setLinkedApproval(null); setApprovalBusy(true); setHandoffError('');
+    if (!validPublicationApprovalReference(approvalReference)) {
+      setHandoffError('此确认不属于当前用户 / IP。'); setApprovalBusy(false); return;
+    }
+    fetchPublicationApproval(approvalReference.approvalId).then(record => {
+      if (!active) return;
+      if (!publicationReceiptInScope(record) || record.id !== approvalReference.approvalId
+          || record.payloadHash !== approvalReference.payloadHash) throw new Error('确认对象或固定版本已变化，不能复用此入口。');
+      setLinkedApproval(record); setApprovals([record]);
+    }).catch(error => {
+      if (active) setHandoffError(error instanceof Error ? error.message : '无法读取此确认。');
+    }).finally(() => { if (active) setApprovalBusy(false); });
+    return () => { active = false; };
+  }, [approvalReference]);
 
   const cleanupPublishActivity = useCallback(() => {
     // 卸载：中止流 + 停掉所有发布状态轮询（否则在后台空转最长 15 分钟）
@@ -129,6 +179,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
   const isVideoPath = (p: string) => /\.(mp4|mov|flv|mkv|avi|webm|m4v|wmv|ts|mpe?g)$/i.test(p);
   const toggleMedia = (path: string) =>
     setSelectedMedia((prev) => {
+      if (selectedArtifacts.length) { showToast('请先移除对话中的固定媒体版本，再选择内容库媒体'); return prev; }
       if (prev.includes(path)) return prev.filter((x) => x !== path);
       // 通用规则：图片和视频不能同时；视频一次只发一个
       if (isVideoPath(path)) {
@@ -204,6 +255,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
 
   // Review Host-captured immutable subjects before any external dispatch.
   const publishAll = async () => {
+    if (approvalReference) return; // Existing AI preparations are never prepared again.
     if (empty || publishing || checking || approvalBusy) return;
     const targets = PLATFORMS.filter(p => platforms.includes(p.key) && PUBLISHABLE.has(p.key));
     if (!targets.length) { showToast('请选择支持发布的平台'); return; }
@@ -213,9 +265,17 @@ export default function PublishPage({ persona }: PublishPageProps) {
     for (const target of targets) {
       try {
         if (!loginOf(target.key)) throw new Error('未登录，请先在账号页登录并校验');
-        if (MEDIA_REQUIRED.has(target.key) && !selectedMedia.length) throw new Error('需附带图片或视频');
-        if (VIDEO_ONLY.has(target.key) && !selectedMedia.some(path => VIDEO_RE.test(path))) throw new Error('此平台需要一个视频');
-        const record = await preparePublication(target.key, { title, body: effective(target.key), media: selectedMedia, tags, persona,
+        if (MEDIA_REQUIRED.has(target.key) && !selectedMedia.length && !selectedArtifacts.length) throw new Error('需附带图片或视频');
+        if (VIDEO_ONLY.has(target.key) && !(selectedArtifacts.some(item => item.mime.startsWith('video/'))
+            || selectedMedia.some(path => VIDEO_RE.test(path)))) throw new Error('此平台需要一个视频');
+        for (const reference of selectedArtifacts) {
+          if (!validPublicationMediaReference(reference)) throw new Error('固定媒体版本已过期或不属于当前用户 / IP，请回原对话重新选择。');
+          const metadata = await fetchPublicationArtifact(reference.artifactId);
+          if (!publicationMediaReferenceMatches(reference, metadata)) throw new Error('固定媒体版本已失效或字节发生变化，请回原对话重新选择。');
+        }
+        if (!aliveRef.current || draftKeyRef.current !== key) break;
+        const record = await preparePublication(target.key, { title, body: effective(target.key), media: selectedMedia, tags, persona, aiGenerated,
+          ...(selectedArtifacts.length ? { artifactIds: selectedArtifacts.map(item => item.artifactId) } : {}),
           ...(target.draft && asDraft ? { draft: true } : {}) });
         if (!aliveRef.current || draftKeyRef.current !== key) break;
         prepared.push(record);
@@ -257,6 +317,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
         const current = await fetchPublicationApproval(record.id);
         if (!aliveRef.current) return;
         setApprovals(previous => previous.map(item => item.id === current.id ? current : item));
+        setLinkedApproval(previous => previous?.id === current.id ? current : previous);
         if (current.runnerStatus?.state === 'sms_required' || current.runnerStatus?.state === 'verifying') {
           setPubSms({ platform: current.subject.platform.id, name: current.subject.platform.name,
             state: current.runnerStatus.state, message: current.runnerStatus.message, approvalId: current.id });
@@ -274,11 +335,12 @@ export default function PublishPage({ persona }: PublishPageProps) {
     setPublishing(true);
       const subject = record.subject;
       const started = await publishNow(subject.platform.id, { title: subject.title, body: subject.body,
-        tags: subject.tags, persona: subject.persona, media: [], artifactIds: subject.media.map(item => item.artifactId),
+        tags: subject.tags, persona: subject.persona, aiGenerated: subject.aiGenerated ?? false, media: [], artifactIds: subject.media.map(item => item.artifactId),
         approvalId: record.id, payloadHash: record.payloadHash,
         ...(subject.platform.id === 'toutiao' && subject.mode === 'create_draft' ? { draft: true } : {}) });
       if (!aliveRef.current) return;
       setApprovals(previous => previous.map(item => item.id === record.id ? started : item));
+      setLinkedApproval(previous => previous?.id === record.id ? started : previous);
       if (started.result?.status === 'executing') {
         setPub(previous => ({ ...previous, [subject.platform.id]: { status: 'publishing', msg: '正在执行此批准版本…' } }));
         void pollApprovedPublication(started).finally(() => { if (aliveRef.current) setPublishing(false); });
@@ -294,6 +356,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
       const decision = await decidePublication(id, approved, hash);
       if (!aliveRef.current || draftKeyRef.current !== key) return;
       setApprovals(previous => previous.map(item => item.id === id ? decision : item));
+      setLinkedApproval(previous => previous?.id === id ? decision : previous);
       if (!approved) return;
       await startApproved(record);
     } catch (error) {
@@ -311,6 +374,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
       if (!aliveRef.current || key !== draftKeyRef.current) return;
       if (current.id !== id || current.payloadHash !== hash || current.state !== 'approved') throw new Error('批准状态已变化，请重新核对');
       setApprovals(previous => previous.map(item => item.id === id ? current : item));
+      setLinkedApproval(previous => previous?.id === id ? current : previous);
       if (current.operationId) {
         if (current.result?.status === 'executing') {
           setPublishing(true);
@@ -362,9 +426,24 @@ export default function PublishPage({ persona }: PublishPageProps) {
 
   return (
     <div className="publish-page">
-      <div className="publish-editor">
+      {approvalReference ? <div className="publish-editor">
+        <h1 className="page-title"><IconPublish size={21} /> 发布中心</h1>
+        <p className="page-subtitle">已载入 AI 对话中的同一次发布确认。账号、文案和媒体版本保持固定。</p>
+        {approvalBusy && !linkedApproval && <p role="status">正在读取此固定版本…</p>}
+        {handoffError && <p className="publication-approval-error" role="alert">{handoffError}</p>}
+        {linkedApproval && <>
+          <PublicationSubjectView subject={linkedApproval.subject} />
+          <PublicationReceiptCard record={linkedApproval} onRefresh={refreshPublicationApproval} />
+          <button className="btn btn-primary" disabled={approvalBusy || publishing}
+            onClick={() => setApprovals([linkedApproval])}>核对此固定版本</button>
+        </>}
+        <button className="btn btn-sm" disabled={approvalBusy || publishing} onClick={() => {
+          setApprovalReference(undefined); setLinkedApproval(null); setApprovals([]); setApprovalError(''); setHandoffError('');
+        }}>返回编辑草稿</button>
+      </div> : <div className="publish-editor">
         <h1 className="page-title"><IconPublish size={21} /> 发布中心</h1>
         <p className="page-subtitle">编辑文案与媒体，核对实际账号和固定版本后提交；发布结果以平台回执为准。</p>
+        {handoffError && <p className="publication-approval-error" role="alert">{handoffError}</p>}
 
         <label className="field-label">标题</label>
         <input className="field" value={title} placeholder="标题（部分平台需要）"
@@ -385,6 +464,10 @@ export default function PublishPage({ persona }: PublishPageProps) {
               onClick={() => toggle(p.key)}>{p.label}</button>
           ))}
         </div>
+        <label className="draft-toggle">
+          <input type="checkbox" aria-label="AI生成内容" checked={aiGenerated} onChange={(e) => setAiGenerated(e.target.checked)} />
+          <span>AI生成内容（将作为此版本的发布声明）</span>
+        </label>
         {draftCapable.length > 0 && (
           <label className="draft-toggle">
             <input type="checkbox" checked={asDraft} onChange={(e) => setAsDraft(e.target.checked)} />
@@ -393,13 +476,20 @@ export default function PublishPage({ persona }: PublishPageProps) {
         )}
 
         <label className="field-label" style={{ marginTop: 14 }}>
-          媒体附件 {selectedMedia.length > 0 && <span className="pv-badge">{selectedMedia.length} 个</span>}
+          媒体附件 {selectedMedia.length + selectedArtifacts.length > 0 && <span className="pv-badge">{selectedMedia.length + selectedArtifacts.length} 个</span>}
           <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: 12 }}>（小红书/抖音/快手/微信视频号/B站必需，从内容库选；抖音、视频号、B站须为视频；今日头条选中的图会插进正文）</span>
         </label>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <button className="btn btn-sm" onClick={() => setShowPicker((v) => !v)}>
             <IconSkills size={13} /> {showPicker ? '收起' : '选择媒体'}
           </button>
+          {selectedArtifacts.map(reference => <div key={reference.artifactId} className="media-chip"
+            style={{ width: 'auto', padding: 8, gap: 8 }} title={`固定版本 V${reference.revision} · SHA-256 ${reference.sha256}`}>
+            <span>{reference.name} · V{reference.revision}</span>
+            <a href={reference.url} target="_blank" rel="noopener noreferrer">预览</a>
+            <button type="button" className="btn btn-sm btn-ghost" aria-label={`移除 ${reference.name}`}
+              onClick={() => setSelectedArtifacts(previous => previous.filter(item => item.artifactId !== reference.artifactId))}>×</button>
+          </div>)}
           {selectedMedia.map((path) => (
             <div key={path} className="media-chip" onClick={() => toggleMedia(path)} title="点击移除">
               {mediaFiles.find((f) => f.path === path)?.kind === 'image'
@@ -456,9 +546,9 @@ export default function PublishPage({ persona }: PublishPageProps) {
             <div className="skill-body-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(checkResult) }} />
           </div>
         )}
-      </div>
+      </div>}
 
-      <div className="publish-previews">
+      {!approvalReference && <div className="publish-previews">
         {platforms.length === 0 && <div className="dash-empty">选择至少一个平台查看预览</div>}
         {PLATFORMS.filter((p) => platforms.includes(p.key)).map((p) => {
           const text = effective(p.key);
@@ -509,7 +599,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
             </div>
           );
         })}
-      </div>
+      </div>}
 
       {toast && <div className="toast ok"><span className="toast-icon">✓</span>{toast}</div>}
 

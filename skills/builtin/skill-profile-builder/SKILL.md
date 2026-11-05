@@ -6,7 +6,7 @@ layer: general
 
 # Profile 构建器（首次引导）
 
-> 把"空白/半空的画像"变成"可用的 6 维 Profile"。用户首次使用 Easel 时先跑这个：收集社媒链接 + 运营意图 → 分析已发内容/收藏喜好 → 生成 `profiles/<名>/` 下 6 个维度文件。生成后交给 [account-diagnosis](../skill-account-diagnosis/SKILL.md) 做起号诊断。
+> 把"空白/半空的画像"变成"可用的 6 维 Profile"。用户首次使用 响芽 时先跑这个：收集社媒链接 + 运营意图 → 分析已发内容/收藏喜好 → 生成 `profiles/<名>/` 下 6 个维度文件。生成后交给 [account-diagnosis](../skill-account-diagnosis/SKILL.md) 做起号诊断。
 
 ## 与 profile-manager 的区别
 

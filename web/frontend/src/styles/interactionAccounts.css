@@ -10,8 +10,8 @@
 .connected-account-person { display:flex; align-items:center; gap:12px; min-width:0; }
 .connected-account-person > div { min-width:0; }
 .connected-account-person strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:550; }
-.connected-account-person small { display:block; margin-top:5px; color:var(--text-tertiary); font-size:11px; }
-.connected-account-avatar { display:grid; place-items:center; flex-shrink:0; width:40px; height:40px; border-radius:12px; background:var(--accent-soft); color:var(--accent-end); font-size:16px; }
+.connected-account-person small { display:block; margin-top:5px; color:var(--text-tertiary); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.connected-account-avatar { display:grid; place-items:center; flex-shrink:0; width:40px; height:40px; border-radius:12px; background:var(--accent-soft); color:var(--accent-end); font-size:16px; object-fit:cover; }
 .connected-account-state { display:flex; align-items:center; gap:7px; color:var(--text-tertiary); font-size:12px; white-space:nowrap; }
 .connected-account-state i { width:6px; height:6px; flex-shrink:0; background:currentColor; border-radius:50%; }
 .connected-account-state.ready { color:var(--green); }
@@ -24,16 +24,6 @@
 .connected-account-empty p { font-size:12px; color:var(--text-tertiary); margin-top:8px; }
 .account-feedback { padding:10px 12px; border-radius:8px; background:var(--accent-soft); color:var(--text-secondary); font-size:12px; margin:12px 0; }
 .account-feedback.error { background:var(--red-soft); color:var(--red); }
-.account-other-platforms { margin-top:28px; border-top:1px solid var(--border); padding-top:20px; container:legacy-accounts / inline-size; min-width:0; }
-.account-other-platforms > summary { cursor:pointer; color:var(--text-secondary); font-size:13px; }
-.accounts-list { margin-top:16px; border:1px solid var(--border); border-radius:12px; overflow:hidden; }
-.accounts-list .account-card { display:grid; grid-template-columns:minmax(100px,.7fr) minmax(160px,1fr) minmax(160px,1fr); align-items:center; gap:16px; border:0; border-radius:0; padding:16px 20px; box-shadow:none; }
-.accounts-list .account-card + .account-card { border-top:1px solid var(--border); }
-.accounts-list .account-card-head { gap:10px; }
-.accounts-list .account-card-name { font-size:13px; }
-.accounts-list .account-card-note { min-height:0; font-size:11px; }
-.accounts-list .account-identity { margin:0; }
-.accounts-list .account-card > div:last-child { justify-self:end; }
 .account-connect-backdrop { position:fixed; inset:0; z-index:1600; background:rgba(0,0,0,.5); backdrop-filter:blur(3px); display:grid; place-items:center; padding:20px; }
 .account-connect-dialog { width:min(420px,100%); max-height:calc(100dvh - 40px); overflow-y:auto; border:1px solid var(--border); border-radius:16px; background:var(--surface); padding:24px; box-shadow:var(--shadow-lg); }
 .account-connect-dialog > div { display:flex; align-items:center; justify-content:space-between; }
@@ -43,7 +33,6 @@
 .account-connect-dialog label { display:block; font-size:12px; }
 .account-connect-dialog select { margin:8px 0 20px; }
 @container interaction-accounts (max-width:620px) { .connected-account-labels,.connected-account-row { grid-template-columns:minmax(0,1.5fr) 60px 82px 56px; gap:10px; padding:14px; } .connected-account-detail { padding:0 14px 18px; display:block; } .connected-account-detail > div { margin-top:12px; flex-wrap:wrap; } }
-@container legacy-accounts (max-width:620px) { .accounts-list .account-card { grid-template-columns:minmax(0,1fr); } .accounts-list .account-card > div:last-child { justify-self:stretch; } }
-.accounts-page > div:first-child,.connected-accounts,.account-other-platforms { max-width:1100px; }
+.accounts-page > div:first-child,.connected-accounts { max-width:1100px; }
 @media(max-width:720px) { .accounts-page { padding:22px 18px 40px; } }
 @container interaction-accounts (max-width:420px) { .connected-account-labels,.connected-account-row { grid-template-columns:minmax(0,1fr) 80px 52px; gap:8px; padding:14px 10px; } .connected-account-labels > :nth-child(2),.connected-account-row > :nth-child(2) { display:none; } .connected-accounts-heading { gap:8px; } .connected-accounts-heading h2 { font-size:14px; } .connected-account-person { gap:8px; } .connected-account-avatar { width:32px; height:32px; border-radius:10px; } }

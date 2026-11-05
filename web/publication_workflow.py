@@ -1,8 +1,8 @@
-"""Authenticated publication subject/approval adapter for Easel's existing runners.
+"""Authenticated publication subject/approval adapter for Xiangya's existing runners.
 
 The subject -> explicit decision -> exact request lifecycle follows DeepSeek
 Harness ui-approval/tool-approval at ce7073d (MIT). Durable operation intent and
-unknown-result handling reuse Easel interaction_center; media uses D08 snapshots.
+unknown-result handling reuse Xiangya interaction_center; media uses D08 snapshots.
 This host adapter is not a verbatim upstream Python implementation.
 """
 from __future__ import annotations
@@ -78,6 +78,9 @@ class PublicationWorkflow:
             raise HTTPException(400, '此平台不支持存草稿，请明确选择发布方式')
         title, body = data.get('title', ''), data.get('body', '')
         tags, persona = data.get('tags', ''), data.get('persona', '').strip()
+        ai_generated = data.get('aiGenerated', False)
+        if type(ai_generated) is not bool:
+            raise HTTPException(400, 'AI 生成内容声明必须是明确的布尔值')
         if not title.strip() and not body.strip():
             raise HTTPException(400, '标题/正文不能为空')
         if persona and (not self.host.valid_persona_name(persona) or not self.host.profile_exists(persona)):
@@ -89,7 +92,7 @@ class PublicationWorkflow:
         if platform == 'bilibili':
             title, body = title[:80], body[:2000]
             tags = tags.replace('#', '').replace('，', ',').strip().strip(',') or '日常'
-        return {'title': title, 'body': body, 'tags': tags, 'persona': persona}
+        return {'title': title, 'body': body, 'tags': tags, 'persona': persona, 'aiGenerated': ai_generated}
 
     def validate_media(self, platform, media):
         images = [item for item in media if item['mime'].startswith('image/')]
@@ -168,6 +171,61 @@ class PublicationWorkflow:
                 record['runnerStatus'] = {key: data.get(key, '') for key in ('state', 'message')}
         return record
 
+    async def refresh(self, identifier, *, before_refresh=None):
+        """Explicitly read back an existing ACK; this path never prepares or starts publication."""
+        self.scope()
+        if before_refresh is not None:
+            before_refresh()
+        record = self.get(identifier)
+        result = record.get('result') or {}
+        if (record.get('state') != 'approved' or not record.get('operationId')
+                or record['subject']['platform']['id'] not in {'douyin', 'xiaohongshu'}
+                or result.get('status') in {'executing', 'confirmed'} or result.get('notStarted') is True):
+            return record
+        reservation = self.call('reserve_refresh', identifier, operation_id=record['operationId'],
+                                payload_hash=record['payloadHash'])
+        if not reservation['reserved']:
+            return {**self.get(identifier), 'receiptRefresh': {'status': 'throttled'}}
+        token = reservation['token']
+        cleanup_confirmed = False
+
+        def check_refresh_authority():
+            self.scope()
+            if before_refresh is not None:
+                before_refresh()
+            if not self.call('refresh_owned', identifier, token, operation_id=record['operationId'],
+                             payload_hash=record['payloadHash']):
+                raise HTTPException(409, '此操作的只读回查锁已变化，未启动回查')
+
+        try:
+            check_refresh_authority()
+            observation = await self.host._refresh_publication_receipt(record,
+                before_process_start=check_refresh_authority)
+            cleanup_confirmed = isinstance(observation, dict) and observation.get('cleanupConfirmed') is True
+            if not cleanup_confirmed:
+                raise PublicationProcessCleanupError('回查进程终止尚未确认')
+        except PublicationProcessCleanupError:
+            raise HTTPException(409, '回查进程终止尚未核实，账号仍锁定；未重新发布') from None
+        except (HTTPException, asyncio.CancelledError):
+            # HTTP failures are from the final pre-spawn authority check. The
+            # managed runner raises cancellation only after confirming cleanup.
+            cleanup_confirmed = True
+            raise
+        except Exception:
+            # An unexpected owner failure is not evidence that its process range
+            # has stopped. Keep the durable profile lease for safe recovery.
+            raise HTTPException(409, '无法确认回查进程状态，账号仍锁定；未重新发布') from None
+        finally:
+            self.store().release_refresh(identifier, token, operation_id=record['operationId'],
+                payload_hash=record['payloadHash'], cleanup_confirmed=cleanup_confirmed,
+                actor_id=record['actorId'], project_id=record['projectId'])
+        self.scope()
+        if before_refresh is not None:
+            before_refresh()
+        return {**self.get(identifier), 'receiptRefresh': {
+            'status': 'refreshed' if observation.get('performed') else 'unavailable',
+            'reason': observation.get('reason', 'readback_requested')}}
+
     def decide(self, identifier, approved, payload_hash):
         return self.call('decide', identifier, approved=approved, payload_hash=payload_hash)
 
@@ -177,7 +235,7 @@ class PublicationWorkflow:
     def status_path(self, record):
         return self.operation_dir(record) / 'runner.json'
 
-    async def start(self, platform, data, *, before_claim=None, wait_for_execution=False):
+    async def start(self, platform, data, *, before_claim=None, wait_for_execution=False, on_result=None):
         self.scope()
         self.host._require_automated_publishing()
         self.configuration(platform)
@@ -191,7 +249,12 @@ class PublicationWorkflow:
         if subject['platform']['id'] != platform or record['payloadHash'] != payload_hash:
             raise HTTPException(409, '批准对象不匹配，请重新审核')
         current = copy.deepcopy(subject)
-        current.update(self.fields(platform, data))
+        fields = self.fields(platform, data)
+        # Legacy approvals remain byte-for-byte canonical. Missing meant false;
+        # adding false during execution must not rewrite their existing hash.
+        if 'aiGenerated' not in subject and fields['aiGenerated'] is False:
+            fields.pop('aiGenerated')
+        current.update(fields)
         current['mode'] = 'create_draft' if platform == 'wechat-oa' or data.get('draft') else 'publish_now'
         current['audience'] = 'platform_draft' if current['mode'] == 'create_draft' else 'public'
         requested_ids = data.get('artifactIds') or []
@@ -224,14 +287,14 @@ class PublicationWorkflow:
         if not claimed.get('claimed'):
             return claimed
         if wait_for_execution:
-            await self._execute(claimed, before_dispatch=before_claim)
+            await self._execute(claimed, before_dispatch=before_claim, on_result=on_result)
             return claimed
-        task = asyncio.create_task(self._execute(claimed))
+        task = asyncio.create_task(self._execute(claimed, before_dispatch=before_claim if on_result is not None else None, on_result=on_result))
         _TASKS.add(task)
         task.add_done_callback(_TASKS.discard)
         return claimed
 
-    async def _execute(self, record, *, before_dispatch=None):
+    async def _execute(self, record, *, before_dispatch=None, on_result=None):
         identifier, operation = record['id'], record['operationId']
         subject = record['subject']
         dispatched = False
@@ -265,7 +328,8 @@ class PublicationWorkflow:
             self.scope()
             if account != subject['account']:
                 raise HTTPException(409, '登录账号已变化，未执行旧批准')
-            request = self.host.PublishRequest(**{key: subject[key] for key in ('title', 'body', 'tags', 'persona')})
+            request = self.host.PublishRequest(**{key: subject[key] for key in ('title', 'body', 'tags', 'persona')},
+                                              aiGenerated=subject.get('aiGenerated', False))
             request.draft = subject['platform']['id'] == 'toutiao' and subject['mode'] == 'create_draft'
             if before_dispatch is not None:
                 try:
@@ -317,6 +381,8 @@ class PublicationWorkflow:
             finished = self.store().finish(identifier, operation_id=operation, result=result,
                 actor_id=record['actorId'], project_id=record['projectId'])
             self.host._record_confirmed_publication(finished)
+            if on_result is not None:
+                on_result(finished)
         except PublicationApprovalError:
             pass
 

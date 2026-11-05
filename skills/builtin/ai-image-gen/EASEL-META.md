@@ -1,10 +1,10 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
 | **SKILL 名称** | ai-image-gen |
 | **所属层** | produce |
-| **来源** | Easel 自研 |
+| **来源** | 响芽 自研 |
 | **参考** | OpenAI Images API（/images/generations、/images/edits、/images/variations）；apimart.ai 异步图片任务 API |
 | **功能描述** | 通用 AI 生图：文生图 / 图生图（图像编辑）/ 图像变体，OpenAI 兼容同步 + apimart 异步双模式自动检测 |
 | **核心脚本** | `skills/shared/scripts/ai_image.py`（纯标准库 urllib/http，无第三方依赖） |

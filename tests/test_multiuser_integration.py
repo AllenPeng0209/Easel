@@ -21,7 +21,6 @@ def environment(tmp_path, monkeypatch):
     monkeypatch.setattr(web, 'PROFILES_DIR', tmp_path / 'profiles')
     monkeypatch.setattr(web, 'BROWSER_PROFILES', tmp_path / 'browser')
     monkeypatch.setattr(web, 'SESSIONS_DIR', tmp_path / 'outputs' / '_sessions')
-    monkeypatch.setattr(web, 'IDEAS_FILE', tmp_path / 'outputs' / '_ideas.json')
     monkeypatch.setattr(web, 'SCHEDULE_FILE', tmp_path / 'outputs' / '_schedule.json')
     env = tmp_path / '.env'
     env.write_text('EASEL_CHAT_TRANSPORT=api\nEASEL_DIRECT_API_BASE_URL=http://localhost:9/v1\nEASEL_DIRECT_API_MODEL=test\n')
@@ -47,12 +46,12 @@ def environment(tmp_path, monkeypatch):
 def test_real_roles_filter_ip_list_and_gate_all_default_aliases(environment):
     root, owner, users, make_client = environment
     operator, _ = users['operator']; viewer, _ = users['viewer']
-    assert make_client().get('/api/ideas').status_code == 401
+    assert make_client().get('/api/schedule').status_code == 401
     assert make_client().get('/api/accounts', headers={'X-User-Id': owner.get('/api/auth/me').json()['id'], 'X-Role': 'owner'}).status_code == 401
     assert viewer.get('/api/projects').json()[0]['role'] == 'viewer'
-    assert operator.post('/api/ideas', json={'title': '运营选题'}).status_code == 200
-    assert viewer.get('/api/ideas').json()[0]['title'] == '运营选题'
-    for endpoint, payload in [('/api/ideas', {'title': '不可写'}), ('/api/chat/stream', {'message':'不能运行'}),
+    assert operator.post('/api/schedule', json={'title': '运营排期', 'date': '2026-11-05'}).status_code == 200
+    assert viewer.get('/api/schedule').json()[0]['title'] == '运营排期'
+    for endpoint, payload in [('/api/schedule', {'title': '不可写'}), ('/api/chat/stream', {'message':'不能运行'}),
                               ('/api/upload/local', {}), ('/api/skill', {'skill': 'anything', 'input':'run'})]:
         assert viewer.post(endpoint, json=payload).status_code == 403
     for endpoint in ['/api/login/douyin', '/api/logout/douyin', '/api/accounts/wechat-oa/credentials']:
@@ -63,16 +62,16 @@ def test_real_roles_filter_ip_list_and_gate_all_default_aliases(environment):
     assert operator.post('/api/skill', json={'skill':'anything','input':'run'}).status_code == 403
     private = owner.post('/api/projects', json={'name':'另一个 IP'}).json()
     assert len(operator.get('/api/projects').json()) == 1
-    assert operator.get(f"/api/projects/{private['id']}/ideas").status_code in (403,404)
+    assert operator.get(f"/api/projects/{private['id']}/schedule").status_code in (403,404)
 
 
 def test_role_changes_take_effect_on_next_request_and_last_owner_is_protected(environment):
     root, owner, users, _ = environment
     operator, user = users['operator']
     assert owner.patch(f"/api/projects/default/members/{user['id']}", json={'role':'viewer'}).status_code == 200
-    assert operator.post('/api/ideas', json={'title':'已撤销写权限'}).status_code == 403
+    assert operator.post('/api/schedule', json={'title':'已撤销写权限'}).status_code == 403
     assert owner.delete(f"/api/projects/default/members/{user['id']}").status_code == 200
-    assert operator.get('/api/ideas').status_code in (403,404)
+    assert operator.get('/api/schedule').status_code in (403,404)
     own_id = owner.get('/api/auth/me').json()['id']
     assert owner.patch(f'/api/projects/default/members/{own_id}', json={'role':'viewer'}).status_code == 409
 
@@ -95,7 +94,7 @@ def test_executable_media_is_sandboxed_and_system_files_are_not_readable(environ
     viewer, _ = users['viewer']
     outputs = root / 'outputs'
     (outputs / 'topic').mkdir(parents=True)
-    (outputs / 'topic' / 'page.html').write_text('<script>fetch("/api/ideas")</script>')
+    (outputs / 'topic' / 'page.html').write_text('<script>fetch("/api/schedule")</script>')
     (outputs / '_sessions').mkdir(exist_ok=True)
     (outputs / '_sessions' / 'secret.json').write_text('{"text":"private"}')
     response = viewer.get('/api/media/topic/page.html')

@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <img src="assets/readme/brand.png#gh-light-mode-only" width="640" alt="Easel">
-  <img src="assets/readme/brand-dark.png#gh-dark-mode-only" width="640" alt="Easel">
+  <img src="assets/readme/xiangya-brand.svg#gh-light-mode-only" width="640" alt="Xiangya">
+  <img src="assets/readme/xiangya-brand-dark.svg#gh-dark-mode-only" width="640" alt="Xiangya">
   <br>
   <img src="assets/readme/logos/real_lab_horizontal_readme.png" width="74" alt="REAL Lab">&thinsp;&thinsp;<img src="assets/readme/logos/opendcai_lab_horizontal_readme.png#gh-light-mode-only" width="83" alt="OpenDCAI Lab"><img src="assets/readme/logos/opendcai_lab_horizontal_readme_dark.png#gh-dark-mode-only" width="83" alt="OpenDCAI Lab">
 </p>
@@ -18,12 +18,12 @@
 </p>
 
 <p align="center">
-  Your personal, continuously evolving social media content assistant.<br>
+  <strong>Xiangya (响芽) · AI-powered social media creation and operations.</strong><br>
   Start with an idea, then discover, plan, create, publish, and learn.
 </p>
 
 <p align="center">
-  <a href="https://zju-real.github.io/Easel/"><img src="https://img.shields.io/badge/Easel-Project_Page-F05A3C?style=flat-square&logo=googlechrome&logoColor=white" alt="Easel Project Page"></a>
+  <a href="https://zju-real.github.io/Easel/"><img src="https://img.shields.io/badge/Xiangya-Project_Page-F05A3C?style=flat-square&logo=googlechrome&logoColor=white" alt="Xiangya Project Page"></a>
   <img src="https://img.shields.io/badge/OpenClaw-powered-111827?style=flat-square" alt="Powered by OpenClaw">
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+">
   <a href="docs/skill-function-mapping.md"><img src="https://img.shields.io/badge/Skills-113-0F9D8A?style=flat-square" alt="113 Skills"></a>
@@ -37,13 +37,15 @@
   <a href="https://trendshift.io/repositories/195527?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-195527" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/195527/daily?language=Python" alt="ZJU-REAL%2FEasel | Trendshift" width="250" height="55"/></a> <a href="https://trendshift.io/repositories/195527?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-195527" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/195527/weekly?language=Python" alt="ZJU-REAL%2FEasel | Trendshift" width="250" height="55"/></a>
 </p>
 
-![Easel product poster](assets/readme/poster.png)
+**Xiangya: give your content a voice, and your audience room to grow.**
 
-## 🎨 What Is Easel?
+## 🎨 What Is Xiangya?
 
-Easel is an open-source content workspace for social media creators. It connects an OpenClaw Agent, account profiles, content Skills, and real media tools, enabling the Agent to produce and archive content instead of merely explaining what to do, with direct or on-demand publishing when needed.
+**Xiangya** is the English name of **响芽**. Use `xiangya` or `python -m xiangya` to start the command-line application. Existing settings and data remain compatible; see [branding and compatibility](docs/branding.md).
 
-Think of Easel as a content partner that remembers your positioning, audience, voice, platform constraints, preferences, and past performance. It stays with you from trend discovery through publishing, then carries what it learns into the next creation cycle.
+Xiangya is an open-source content workspace for social media creators. It connects an OpenClaw Agent, account profiles, content Skills, and real media tools, enabling the Agent to produce and archive content instead of merely explaining what to do, with direct or on-demand publishing when needed.
+
+Think of Xiangya as a content partner that remembers your positioning, audience, voice, platform constraints, preferences, and past performance. It stays with you from chat instructions through publishing, then carries what it learns into the next creation cycle.
 
 ### Local OpenAI-Compatible Gateways
 
@@ -64,43 +66,43 @@ Use a base URL including `/v1`, not the full `/chat/completions` URL. Leave the 
 
 These installer options apply to Linux/macOS `setup.sh`. Windows users can configure direct mode in `.env` or Web settings.
 
-Easel promotional demo:
+Xiangya promotional demo:
 
 https://github.com/user-attachments/assets/4dd060dc-53dd-4bb2-99a3-e65ab6f65166
 
-Easel follows five connected workflows: **Discover** relevant trends and opportunities, **Plan** topics, hooks, scripts, and schedules, **Produce** text, audio, and video, **Publish** checked and platform-ready content directly to the appropriate platforms, and **Attribute** performance insights back to the account profile.
+Xiangya follows five connected workflows: **Discover** relevant information and opportunities, **Plan** hooks, scripts, and schedules, **Produce** text, audio, and video, **Publish** checked and platform-ready content directly to the appropriate platforms, and **Attribute** performance insights back to the account profile.
 
 #### 📌 Usage Notes and Research Vision
 
-> - **Use the Web workspace for the complete experience:** it includes conversations, assets, accounts, profiles, a content library, and publishing management beyond the CLI entry points, and it is our recommended way to use Easel; for terminal-only display quirks, see [Known Issues](docs/known-issues_EN.md).
+> - **Use the Web workspace for the complete experience:** it includes conversations, assets, accounts, profiles, a content library, and publishing management beyond the CLI entry points, and it is our recommended way to use Xiangya; for terminal-only display quirks, see [Known Issues](docs/known-issues_EN.md).
 > - **Be cautious with automated Xiaohongshu publishing:** automation may trigger verification, reach restrictions, or account risk. Use preview and preflight checks, and prefer human-confirmed publishing.
-> - **Research applied to real life:** Easel brings our research into real social media workflows. We will continue exploring social intelligence for AI in social media, including a deeper understanding of creators, audiences, and authentic interaction.
+> - **Research applied to real life:** Xiangya brings our research into real social media workflows. We will continue exploring social intelligence for AI in social media, including a deeper understanding of creators, audiences, and authentic interaction.
 
-## ✨ Why Easel?
+## ✨ Why Xiangya?
 
-- **One Agent across the entire workflow:** discover trends, evaluate topics, plan calendars, generate copy and visuals, produce video, publish, and analyze results in one continuous flow.
+- **One Agent across the entire workflow:** research sources, plan calendars, generate copy and visuals, produce video, publish, and analyze results in one continuous flow.
 - **Profile-driven creation:** each account has its own positioning, style, audience, platforms, preferences, boundaries, and long-term memory.
 - **Executable Skills:** image, card, voice-over, subtitle, editing, short-drama, and publishing Skills include runnable tools and save deliverables to `outputs/`.
 - **One source, many platforms:** adapt a single idea into Xiaohongshu cards, short video, a Zhihu article, or a short post while respecting platform conventions.
 - **Project-based outputs:** source material, intermediate files, metadata, and final deliverables stay together for revision, retrying, and publishing.
-- **A publishing and learning loop:** Easel supports login, adaptation, and publishing workflows for Xiaohongshu, Douyin, Kuaishou, Zhihu, Bilibili, WeChat Channels, WeChat Official Accounts, and Toutiao, with performance data feeding back into account profiles.
+- **A publishing and learning loop:** Xiangya supports login, adaptation, and publishing workflows for Xiaohongshu, Douyin, Kuaishou, Zhihu, Bilibili, WeChat Channels, WeChat Official Accounts, and Toutiao, with performance data feeding back into account profiles.
 
 ## 🧭 Five-Layer Content Workflow
 
-1. **Discover:** aggregate trending topics, industry news, competitors, and user conversations to identify relevant opportunities.
-2. **Plan:** turn opportunities into topics, titles, scripts, content series, and calendar entries.
+1. **Discover:** read industry news, competitor updates, and user conversations to identify relevant opportunities.
+2. **Plan:** turn creative requests into titles, scripts, production plans, and calendar entries.
 3. **Produce:** create copy, cards, posters, infographics, audio, video, short dramas, and paper explainers.
 4. **Publish:** adapt titles, copy, aspect ratios, and media for each platform, run preflight checks, and publish through logged-in accounts.
 5. **Attribute:** collect views, engagement, comments, and content performance, then preserve useful patterns in the account profile.
 
 ## 🧰 Implemented Capabilities
 
-The trend radar accepts user-defined Python collectors, HTTP services, and RSS/Atom feeds through a versioned data contract. Its existing six platforms use the same pipeline; adding your own source does not require changing the frontend.
+The standalone Python collection library supports Python collectors, HTTP services, and RSS/Atom feeds through a versioned data contract.
 
 | Layer | Capabilities |
 |---|---|
-| **Discover** | Cross-platform trends, vertical research, content-gap analysis, event calendars, algorithm updates, competitor research, industry news, platform differences, RSS aggregation, and UGC discovery |
-| **Plan** | Positioning, audience profiles, persona and voice, account diagnosis, content matrices, topic scoring, trend adaptation, series planning, hooks, outlines, storyboards, calendars, repurposing, livestreams, campaigns, and collaborations |
+| **Discover** | Vertical research, event calendars, algorithm updates, competitor research, industry news, platform differences, RSS aggregation, and UGC discovery |
+| **Plan** | Positioning, audience profiles, persona and voice, account diagnosis, series planning, hooks, outlines, storyboards, calendars, repurposing, livestreams, campaigns, and collaborations |
 | **Text & Visual** | Social copy, video scripts, Xiaohongshu notes, long-form articles, novels, natural rewriting, style transfer, paper explainers, quote cards, knowledge cards, posters, infographics, charts, mind maps, comparison cards, product images, memes, AI images, enhancement, background removal, and batch processing |
 | **Audio & Video** | Text-to-speech, multi-role dubbing, voice cloning, AI music, denoising, mixing, transcription, audio visualization, AI video, short drama, subtitles, translation, editing, clipping, highlights, format conversion, intros/outros, slideshows, beat sync, green screen, and video-to-article conversion |
 | **Publish & Attribute** | Quality gates, risk checks, search optimization, publishing checklists, platform adaptation, seven-platform publishing workflows, calendar logging, account analytics, comment insights, postmortems, ROI, and profile memory |
@@ -111,18 +113,18 @@ These are four representative examples, not the complete feature set. Explore th
 
 <table>
   <tr>
-    <td width="50%" valign="top"><strong>🧬 Account Profiles</strong><br><sub>Build reusable account context from identity, social links, goals, preferences, and boundaries.</sub><br><br><img src="assets/readme/features/profile.png" width="100%" alt="Easel account profile"></td>
-    <td width="50%" valign="top"><strong>🔥 Trend Radar</strong><br><sub>Aggregate real-time trends across major platforms and identify topics relevant to the current account.</sub><br><br><img src="assets/readme/features/discover.png" width="100%" alt="Easel trend radar"></td>
+    <td width="50%" valign="top"><strong>🧬 Account Profiles</strong><br><sub>Build reusable account context from identity, social links, goals, preferences, and boundaries.</sub><br><br><img src="assets/readme/features/profile.png" width="100%" alt="Xiangya account profile"></td>
+    <td width="50%" valign="top"><strong>🎬 Video Workshop</strong><br><sub>Delegate production in AI chat, manage assets, storyboards, shot revisions, and exports in the original Huobao workbench, then approve the film for automatic publishing.</sub><br><br><a href="docs/video-workshop-usage.md">Video workshop workflow</a></td>
   </tr>
   <tr>
-    <td width="50%" valign="top"><strong>📅 Content Calendar</strong><br><sub>Manage ideas, drafts, scheduled posts, published work, platform events, and daily plans.</sub><br><br><img src="assets/readme/features/calendar.png" width="100%" alt="Easel content calendar"></td>
-    <td width="50%" valign="top"><strong>📣 Publishing Center</strong><br><sub>Generate platform-specific versions from one master asset, preview them, run checks, and publish.</sub><br><br><img src="assets/readme/features/publish.png" width="100%" alt="Easel publishing center"></td>
+    <td width="50%" valign="top"><strong>📅 Content Calendar</strong><br><sub>Manage drafts, scheduled posts, published work, platform events, and daily plans.</sub><br><br><img src="assets/readme/features/calendar.png" width="100%" alt="Xiangya content calendar"></td>
+    <td width="50%" valign="top"><strong>📣 Publishing Center</strong><br><sub>Generate platform-specific versions from one master asset, preview them, run checks, and publish.</sub><br><br><img src="assets/readme/features/publish.png" width="100%" alt="Xiangya publishing center"></td>
   </tr>
 </table>
 
 ## 🖼️ Real Outputs
 
-The following examples were produced by real Easel workflows. README media lives under `assets/readme/`; the project page uses lightweight six-second previews under `web/static/showcase/`.
+The following examples were produced by real Xiangya workflows. README media lives under `assets/readme/`; the project page uses lightweight six-second previews under `web/static/showcase/`.
 
 ### 📚 Paper Explainers and Knowledge Cards
 
@@ -185,48 +187,48 @@ For faster browsing, each cover opens a lightweight preview of up to one minute.
 Requirements: Linux, macOS, or Windows 10/11, Python 3.10+, and Git. The installer checks Node.js 24.16+ (24.x), 26.1+ (26.x), or 27+ (25.x and 26.0 are unsupported), plus FFmpeg and Playwright/Chromium. It provides a platform-specific guide when Node.js is missing.
 
 ```bash
-git clone git@github.com:ZJU-REAL/Easel.git
-cd Easel
+git clone git@github.com:ZJU-REAL/Easel.git Xiangya
+cd Xiangya
 bash setup.sh
 source .venv/bin/activate    # easel is installed in .venv; activate it first (Windows: .venv\Scripts\activate)
-easel web
-# Or: easel chat
+xiangya web
+# Or: xiangya chat
 ```
 
-> If you see `easel: command not found`, the virtual environment is not activated. You can also run it by full path without activating, e.g. `.venv/bin/easel doctor` (Windows: `.venv\Scripts\easel.exe doctor`).
+> If you see `easel: command not found`, the virtual environment is not activated. You can also run it by full path without activating, e.g. `.venv/bin/xiangya doctor` (Windows: `.venv\Scripts\easel.exe doctor`).
 
 For native Windows 10/11, run the following in PowerShell; WSL and Bash are not required:
 
 ```powershell
-git clone https://github.com/ZJU-REAL/Easel.git
-cd Easel
+git clone https://github.com/ZJU-REAL/Easel.git Xiangya
+cd Xiangya
 Set-ExecutionPolicy -Scope Process Bypass
 .\setup.ps1
 .\.venv\Scripts\easel.exe doctor
 .\.venv\Scripts\easel.exe web
 ```
 
-The Windows installer uses `winget` to install missing system tools when available, creates `.venv`, installs Python and frontend dependencies, builds the Web UI, and installs Playwright Chromium. Easel uses an isolated `easel` OpenClaw profile. Windows PowerShell 5.1 is supported. Native installation and the Web/CLI entry points are available; broader Windows compatibility across individual skills and browser publishing is still being improved.
+The Windows installer uses `winget` to install missing system tools when available, creates `.venv`, installs Python and frontend dependencies, builds the Web UI, and installs Playwright Chromium. Xiangya uses an isolated `easel` OpenClaw profile. Windows PowerShell 5.1 is supported. Native installation and the Web/CLI entry points are available; broader Windows compatibility across individual skills and browser publishing is still being improved.
 
 `bash setup.sh` is a rerunnable installer. It detects and reuses an existing local OpenClaw
-installation without touching `~/.openclaw/`; Easel uses its isolated `~/.openclaw-easel/` profile.
+installation without touching `~/.openclaw/`; Xiangya uses its isolated `~/.openclaw-easel/` profile.
 
 **Configure your model API key in the browser — the installer no longer asks for it in the terminal.**
-After installing, run `easel web`; on first open it takes you straight to *Settings → Model config*.
-Enter your key and save, and Easel writes the OpenClaw configuration and restarts the gateway for you
+After installing, run `xiangya web`; on first open it takes you straight to *Settings → Model config*.
+Enter your key and save, and Xiangya writes the OpenClaw configuration and restarts the gateway for you
 — no need to rerun `setup.sh`. The panel can also list a provider's available models and run a
 connectivity self-test, neither of which the old terminal prompt could do. Alternatively, copy
-`.env.example`, fill in a key, and run `easel doctor` to re-check.
+`.env.example`, fill in a key, and run `xiangya doctor` to re-check.
 
 The installer is fully non-interactive apart from one question (whether to create `.venv`, which takes
 its default when stdin is not a TTY), so it is safe for CI. Non-fatal problems — FFmpeg, Chromium,
 gateway startup, missing model config — are collected into a summary at the end and written to
-`outputs/_install/last-install.json` for `easel doctor` to repeat; the install itself still exits 0.
+`outputs/_install/last-install.json` for `xiangya doctor` to repeat; the install itself still exits 0.
 Set `EASEL_SETUP_STRICT=1` to turn those warnings back into hard failures.
 
-Open `http://localhost:7860` for the Web workspace. Run `easel doctor` to check the environment and `easel ping` to verify the gateway and Agent connection.
+Open `http://localhost:7860` for the Web workspace. Run `xiangya doctor` to check the environment and `xiangya ping` to verify the gateway and Agent connection.
 
-When Easel runs on a server accessed through VSCode Remote SSH, forward server port `7860`
+When Xiangya runs on a server accessed through VSCode Remote SSH, forward server port `7860`
 in VSCode's Ports panel and open the displayed local forwarded address; the local port may differ.
 The server's `localhost` is not your computer's. Do not expose an unauthenticated workspace publicly.
 
@@ -276,21 +278,21 @@ Never commit `.env`, cookies, or platform login state. Real publishing can be af
 
 The Publishing Center offers **Automatic publishing / Human-reviewed publishing**, retaining the existing automatic workflow by default. The manual path uses AI formatting, human review, copy/export, and personal submission on the official platform page. Editing the copy, tags, or media invalidates the previous review; copying, exporting, and scheduling never mark a post as published. WeChat Official Accounts support rich-text copy and an HTML preview. Switching paths does not change global publishing permissions; set `EASEL_PUBLISH_MODE=manual` to disable automatic Web submissions on the backend. See [the manual publishing guide](docs/manual-publishing.md) for configuration, browser login boundaries, and exports.
 
-## 🧩 Using Easel
+## 🧩 Using Xiangya
 
 | Command | Purpose |
 |---|---|
-| `easel web [--port 7860]` | Start the Web workspace |
-| `easel chat` | Start a multi-turn terminal conversation and select an account profile |
-| `easel skill <name> -i "..." [-p <profile>]` | Run a Skill directly; input may also be a file path |
-| `easel doctor` | Check Python, Node.js, OpenClaw, and essential configuration |
-| `easel ping` | Check the gateway and Agent connection |
-| `easel gateway start\|stop\|restart\|status\|logs` | Manage the OpenClaw gateway |
+| `xiangya web [--port 7860]` | Start the Web workspace |
+| `xiangya chat` | Start a multi-turn terminal conversation and select an account profile |
+| `xiangya skill <name> -i "..." [-p <profile>]` | Run a Skill directly; input may also be a file path |
+| `xiangya doctor` | Check Python, Node.js, OpenClaw, and essential configuration |
+| `xiangya ping` | Check the gateway and Agent connection |
+| `xiangya gateway start\|stop\|restart\|status\|logs` | Manage the OpenClaw gateway |
 
 ```bash
-easel skill quality-gate -i "Review this social media post"
-easel skill social-content -i "Write a post introducing spatial intelligence"
-easel skill quality-gate -i "Review this draft" -p MyCreatorProfile
+xiangya skill quality-gate -i "Review this social media post"
+xiangya skill social-content -i "Write a post introducing spatial intelligence"
+xiangya skill quality-gate -i "Review this draft" -p MyCreatorProfile
 ```
 
 ## 🧬 Account Profiles
@@ -306,7 +308,7 @@ Profiles can also be created and edited from the Web workspace.
 ## 🏗️ Project Structure
 
 ```text
-Easel/
+Xiangya/
 ├── easel/                    Python CLI
 ├── web/                      FastAPI backend and React workspace
 ├── skills/builtin/           Discover, plan, produce, publish, and attribution Skills
@@ -318,11 +320,11 @@ Easel/
 └── docs/                     Specifications, capability map, and architecture docs
 ```
 
-Easel uses an isolated `easel` OpenClaw profile and does not overwrite an existing OpenClaw setup. The Web workspace defaults to port `7860`; the gateway port is chosen by OpenClaw (non-default profiles get a hashed port — `easel` → `37289`, not `18789`) and is resolved automatically by Easel.
+Xiangya uses an isolated `easel` OpenClaw profile and does not overwrite an existing OpenClaw setup. The Web workspace defaults to port `7860`; the gateway port is chosen by OpenClaw (non-default profiles get a hashed port — `easel` → `37289`, not `18789`) and is resolved automatically by Xiangya.
 
 ## 📑 Documentation
 
-- [Trend collectors: Python scripts / HTTP services / RSS feeds (Chinese)](docs/trend-collectors.md)
+- [Standalone collection library: Python / HTTP / RSS (Chinese)](docs/trend-collectors.md)
 - [Capability map](docs/skill-function-mapping.md)
 - [SKILL interface specification](docs/SKILL-SPEC.md)
 - [Prompt and architecture layers](docs/prompt-stack.md)
@@ -341,14 +343,14 @@ Ordered by priority — contributions welcome; feel free to claim or add items v
 
 ## 🙏 Acknowledgments
 
-Easel's Skill system and workflows benefit from many excellent open-source projects, tools, and content methodologies. We thank their original authors and contributors. See the [full acknowledgments](docs/ACKNOWLEDGMENTS.md) for projects, usage, and license information.
+Xiangya's Skill system and workflows benefit from many excellent open-source projects, tools, and content methodologies. We thank their original authors and contributors. See the [full acknowledgments](docs/ACKNOWLEDGMENTS.md) for projects, usage, and license information.
 
 Contributions and discussion are welcome. If you have ideas, questions, or improvements, feel free to open an Issue or PR — or scan the QR code to join our WeChat group:
 
 <p align="center">
-  <img src="assets/readme/wechat-group.png" width="240" alt="Easel WeChat group QR code">
+  <img src="assets/readme/wechat-group.png" width="240" alt="Xiangya WeChat group QR code">
 </p>
-<p align="center"><sub>Easel WeChat group · the QR code is refreshed periodically; if it has expired, reach us via Issues</sub></p>
+<p align="center"><sub>Xiangya WeChat group · the QR code is refreshed periodically; if it has expired, reach us via Issues</sub></p>
 
 ### 🤝 Contributors
 
@@ -372,6 +374,6 @@ Contributions and discussion are welcome. If you have ideas, questions, or impro
 
 <p align="center">
   <a href="https://star-history.com/#ZJU-REAL/Easel&Date">
-    <img src="https://api.star-history.com/svg?repos=ZJU-REAL/Easel&type=Date" width="720" alt="Easel Star History Chart">
+    <img src="https://api.star-history.com/svg?repos=ZJU-REAL/Easel&type=Date" width="720" alt="Xiangya Star History Chart">
   </a>
 </p>

@@ -344,36 +344,3 @@ def test_example_http_service_runs_through_transport(tmp_path, monkeypatch):
         server.shutdown()
         server.server_close()
         thread.join()
-
-
-def test_web_discovery_registered_sources_and_failure_isolation(tmp_path, monkeypatch, http_server):
-    import app as web
-    from fastapi.testclient import TestClient
-
-    base, calls = http_server
-    source = python_source(tmp_path, "print('invalid')", env={"KEY": "do-not-expose"})
-    remote = http_source(tmp_path, base + "/ok")
-    monkeypatch.setattr(web, "_trend_registry", lambda: ([source, remote], dict(os.environ), []))
-    monkeypatch.setattr(web, "_TREND_SERVICE", TrendService())
-    with TestClient(web.app, base_url="http://127.0.0.1:7860", client=("127.0.0.1", 50000)) as client:
-        discovery = client.get("/api/trends/sources")
-        assert discovery.status_code == 200
-        assert {s["id"] for s in discovery.json()["sources"]} == {"local", "remote"}
-        assert "do-not-expose" not in discovery.text and "collector with spaces" not in discovery.text
-        result = client.get("/api/trends?platforms=local,remote,remote,https://unregistered.example&limit=100").json()
-        assert len(result["trends"]) == 2 and len(calls) == 1
-        assert result["trends"][0]["status"] == "error" and result["trends"][1]["status"] == "fresh"
-        assert client.get("/api/trends?platforms=").json()["trends"] == []
-        assert len(client.get("/api/trends").json()["trends"]) == 2
-
-
-def test_web_reports_invalid_configuration(tmp_path, monkeypatch):
-    import app as web
-    from fastapi.testclient import TestClient
-
-    monkeypatch.setattr(web, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(web, "ENV_FILE", tmp_path / ".env")
-    monkeypatch.setenv("EASEL_TREND_SOURCES_CONFIG", "missing.json")
-    with TestClient(web.app, base_url="http://127.0.0.1:7860", client=("127.0.0.1", 50000)) as client:
-        assert client.get("/api/trends/sources").json()["warnings"]
-        assert client.get("/api/trends").json()["trends"] == []

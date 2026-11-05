@@ -1,7 +1,7 @@
 /**
  * Request-local destructive confirmation adapted from the pinned DeepSeek
  * Harness ui-workspace session actions @ ce7073d (MIT).
- * Easel closes only after the current delete or archive action is confirmed.
+ * 响芽 closes only after the current delete or archive action is confirmed.
  */
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -53,19 +53,19 @@ export default function DeleteChatDialog({ sessionTitle, onDelete, onArchive, on
     if (event.target === event.currentTarget) dismiss();
   }}>
     <section ref={dialog} className="delete-chat-dialog" role="dialog" aria-modal="true" tabIndex={-1}
-      aria-label="删除 Easel 对话" aria-busy={pending !== undefined} data-delete-chat-dialog>
-      <h2>删除 Easel 对话</h2>
+      aria-label="删除 响芽 对话" aria-busy={pending !== undefined} data-delete-chat-dialog>
+      <h2>删除 响芽 对话</h2>
       <p>确认删除「{sessionTitle || '此对话'}」。如有运行中的回合，将先等待停止确认。</p>
       <dl>
         <dt>浏览器列表</dt>
         <dd>服务器确认后，从列表移除此对话。</dd>
-        <dt>Easel 记录</dt>
+        <dt>响芽 记录</dt>
         <dd>清除此对话的消息正文和目录记录，保留删除标记。</dd>
         <dt>引擎原生历史与交付</dt>
         <dd>引擎原生历史、任务日志、回执和交付文件会保留，按各自的访问权限查看。</dd>
       </dl>
       {pending && <p role="status" data-delete-chat-pending>
-        {pending === 'delete' ? '正在等待 Easel 删除确认…' : '正在提交归档…'}
+        {pending === 'delete' ? '正在等待 响芽 删除确认…' : '正在提交归档…'}
       </p>}
       {failure && <p role="alert" data-delete-chat-error>
         {failure === 'delete' ? '删除结果未确认，已保留列表中的对话。' : '归档结果未确认，已保留此对话。'}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """persona_gate.py — 发布前人设提醒（确定性判定 + 落账）.
 
-Easel 编排在执行任一发布层 SKILL 前，先由 `skill-persona-check`（LLM）比对
+响芽 编排在执行任一发布层 SKILL 前，先由 `skill-persona-check`（LLM）比对
 待发内容与画像，得到一致性评分与偏离点；本脚本只做两件确定性的事：
   1) check  —— 按阈值把评分判成 pass/warn；所有分数都允许继续发布；
   2) record —— 把人设校验结论结构化写进 `outputs/<主题>/.easel.json`（层间 manifest）。

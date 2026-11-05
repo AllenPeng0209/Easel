@@ -1,4 +1,4 @@
-"""Easel 自定义 Python 采集器：UTF-8 标准输出只输出一份 JSON，日志写标准错误。"""
+"""响芽 自定义 Python 采集器：UTF-8 标准输出只输出一份 JSON，日志写标准错误。"""
 from __future__ import annotations
 
 import json

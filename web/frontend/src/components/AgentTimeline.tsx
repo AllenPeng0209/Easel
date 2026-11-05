@@ -1,7 +1,7 @@
 /**
  * Chronological overview adapted from DeepSeek Harness
  * ui-trajectory/src/client/TrajectoryTimeline.tsx @ ce7073d (MIT).
- * Easel uses recorded transport order and exposes timestamps only when supplied.
+ * 响芽 uses recorded transport order and exposes timestamps only when supplied.
  */
 import { useMemo, useState } from 'react';
 import type { AgentTimelineObservation } from '../lib/agentTimeline';
@@ -25,6 +25,7 @@ const statusLabels: Record<string, string> = {
 };
 
 function observationTitle(event: AgentTimelineObservation): string {
+  if (event.kind === 'decision' && event.resolvedBy === 'publication_host') return '发布中心的决定已同步';
   if (event.kind === 'decision' && event.status === 'pending') return '等待答复';
   if (event.kind === 'decision' && (event.status === 'resolved' || event.status === 'answered')) {
     if (event.resolvedBy === 'human') return '用户答复已记录';

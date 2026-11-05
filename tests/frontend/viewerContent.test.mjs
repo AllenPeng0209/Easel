@@ -23,9 +23,9 @@ function page(name, role = 'viewer', fixtures = {}) {
     useEffect(fn,deps) {const id=effectIndex++;const old=effects[id];if(!old||!same(old.deps,deps))pending.push(()=>{old?.cleanup?.();effects[id]={deps,cleanup:fn()};});},
   };
   const jsx=(type,props)=>({type,props});
-  const api={fetchIdeas:async()=>fixtures.ideas||[],fetchSchedule:async()=>fixtures.schedule||[],fetchScheduleContext:async()=>({suggestions:[]}),
+  const api={fetchSchedule:async()=>fixtures.schedule||[],fetchScheduleContext:async()=>({suggestions:[]}),
     fetchOutputs:async()=>fixtures.outputs||[],fetchOutputContent:async()=>({content:'read-only text',isBinary:false}),mediaUrl:path=>`/api/media/${path}`};
-  for(const method of ['createIdea','updateIdea','deleteIdea','createSchedule','updateSchedule','deleteSchedule','deleteOutput']) {
+  for(const method of ['createSchedule','updateSchedule','deleteSchedule','deleteOutput']) {
     api[method]=async(...args)=>{writes.push({method,args});return {};};
   }
   const module={};
@@ -39,30 +39,6 @@ function page(name, role = 'viewer', fixtures = {}) {
   return {render,writes,permissions};
 }
 const text=node=>typeof node==='string'?node:[node?.props?.children].flat(Infinity).map(child=>typeof child==='string'?child:child?text(child):'').join('');
-
-test('viewer ideas remain readable without creation, editing, scheduling or AI actions', async()=>{
-  const ui=page('IdeasPage','viewer',{ideas:[{id:'idea',title:'可读选题',note:'备注',status:'pending',source:'已有内容'}]});
-  const topics=[];ui.render({onUseTopic:title=>topics.push(title)});await settle();
-  const nodes=ui.render({onUseTopic:title=>topics.push(title)});
-  assert.ok(nodes.some(node=>node.props?.className==='idea-title'&&text(node)==='可读选题'));
-  assert.ok(!nodes.some(node=>node.type==='button'&&(/新建选题|做内容|排期|推进状态/.test(text(node))||['编辑','删除','推进状态'].includes(node.props.title))));
-  assert.equal(ui.writes.length,0);assert.equal(topics.length,0);
-});
-
-test('operator can create an idea and a subsequent viewer render discards the writable form', async()=>{
-  const ui=page('IdeasPage','operator');ui.render({onUseTopic(){}});await settle();
-  let nodes=ui.render({onUseTopic(){}});
-  nodes.find(node=>node.type==='button'&&text(node).includes('新建选题')).props.onClick();
-  nodes=ui.render({onUseTopic(){}});
-  nodes.find(node=>node.type==='input'&&node.props.placeholder==='想做的内容 / 角度').props.onChange({target:{value:'运营新增'}});
-  nodes=ui.render({onUseTopic(){}});
-  await nodes.find(node=>node.type==='button'&&text(node)==='保存').props.onClick();
-  assert.equal(ui.writes[0].method,'createIdea');assert.equal(ui.writes[0].args[0].title,'运营新增');
-  nodes=ui.render({onUseTopic(){}});
-  nodes.find(node=>node.type==='button'&&text(node).includes('新建选题')).props.onClick();
-  ui.permissions.role='viewer';ui.permissions.canOperate=false;
-  assert.ok(!ui.render({onUseTopic(){}}).some(node=>node.type==='input'||node.type==='textarea'));
-});
 
 test('viewer calendar opens existing item details and an empty day never opens an editor', async()=>{
   const now=new Date();const date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
@@ -103,8 +79,8 @@ test('viewer mutation handlers reject direct invocation even when writable form 
     EMPTY:{},NEXT:{pending:'doing'},filter:'all',load(){},setSaving(){},setForm(){},setEditing(){},setEditId(){},setDayView(){},setViewing(){},showToast(){},
     useCallback:fn=>fn,window:{confirm(){writes.push('confirmation');return true;}},
   };
-  for(const name of ['createIdea','updateIdea','deleteIdea','createSchedule','updateSchedule','deleteSchedule','deleteOutput'])base[name]=async()=>{writes.push(name);};
-  for(const [file,names] of [['IdeasPage',['save','advance','remove','schedule']],['CalendarPage',['save','remove']],['OutputsPage',['remove']]]) {
+  for(const name of ['createSchedule','updateSchedule','deleteSchedule','deleteOutput'])base[name]=async()=>{writes.push(name);};
+  for(const [file,names] of [['CalendarPage',['save','remove']],['OutputsPage',['remove']]]) {
     const source=readFileSync(new URL(`../../web/frontend/src/components/${file}.tsx`,import.meta.url),'utf8');
     const parsed=ts.createSourceFile(`${file}.tsx`,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
     const declarations=new Map();

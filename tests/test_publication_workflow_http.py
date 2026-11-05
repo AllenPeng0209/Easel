@@ -23,8 +23,10 @@ def publication_environment(artifact_http_environment, monkeypatch):
     monkeypatch.setattr(web, '_publication_account', identity, raising=False)
     sent = []
     async def dispatch(platform, req, *, media_paths=None, operation_id=None, expected_account=None,
-                       approved_article=None, approved_media=None, payload_hash=None):
+                       approved_article=None, approved_media=None, payload_hash=None, before_process_start=None):
         from pathlib import Path
+        if before_process_start is not None:
+            before_process_start()
         sent.append({'platform': platform, 'title': req.title, 'body': req.body,
             'media': [Path(path).read_bytes() for path in media_paths or []], 'operationId': operation_id,
             'draft': req.draft})

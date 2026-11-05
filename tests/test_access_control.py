@@ -43,7 +43,7 @@ def boundary(root: Path, *, auth_routes: bool = False, during_stream=None):
 
 def test_loopback_and_forged_user_headers_do_not_replace_login(tmp_path):
     client = boundary(tmp_path)
-    response = client.get("/api/ideas", headers={"X-Easel-User": "owner", "X-Easel-Role": "owner"})
+    response = client.get("/api/schedule", headers={"X-Easel-User": "owner", "X-Easel-Role": "owner"})
     assert response.status_code == 401
     assert "detail" in response.json()
 
@@ -77,9 +77,9 @@ def users(tmp_path):
 
 
 @pytest.mark.parametrize("path", [
-    "/api/projects/aaaaaaaaaaaaaaaa/ideas",
+    "/api/projects/aaaaaaaaaaaaaaaa/schedule",
     "/api/projects/aaaaaaaaaaaaaaaa/accounts",
-    "/api/projects/aaaaaaaaaaaaaaaa/trends/sources",
+    "/api/projects/aaaaaaaaaaaaaaaa/schedule/context",
     "/api/projects/aaaaaaaaaaaaaaaa/chat/last/same-id",
     "/api/projects/aaaaaaaaaaaaaaaa/media/topic/report.txt",
 ])
@@ -92,13 +92,13 @@ def test_membership_is_required_for_each_ip_including_read_apis(users, path):
 
 def test_legacy_default_alias_requires_its_own_membership(users):
     clients, _ = users
-    assert clients["viewer"].get("/api/ideas").status_code == 403
-    assert clients["viewer"].get("/api/projects/default/ideas").status_code == 403
-    assert clients["admin"].get("/api/ideas").status_code == 200
+    assert clients["viewer"].get("/api/schedule").status_code == 403
+    assert clients["viewer"].get("/api/projects/default/schedule").status_code == 403
+    assert clients["admin"].get("/api/schedule").status_code == 200
 
 
 @pytest.mark.parametrize("method,path", [
-    ("POST", "ideas"), ("PUT", "schedule/existing"), ("DELETE", "output/topic/report.txt"),
+    ("POST", "schedule"), ("PUT", "schedule/existing"), ("DELETE", "output/topic/report.txt"),
     ("POST", "chat/stream"), ("POST", "chat/stop"), ("POST", "upload"), ("POST", "upload/local"),
     ("POST", "publish/douyin"), ("POST", "manual-publish/douyin/export"),
     ("PATCH", "interactions/drafts/existing"), ("POST", "workshop/projects"),
@@ -112,7 +112,7 @@ def test_viewer_cannot_execute_mutations_or_side_effecting_gets(users, method, p
 
 
 @pytest.mark.parametrize("method,path", [
-    ("POST", "ideas"), ("PUT", "schedule/existing"), ("POST", "chat/stream"),
+    ("POST", "schedule"), ("PUT", "schedule/existing"), ("POST", "chat/stream"),
     ("POST", "publish/douyin"), ("GET", "analytics/douyin"), ("POST", "upload/local"),
 ])
 def test_operator_can_perform_content_operations(users, method, path):
@@ -135,7 +135,6 @@ def test_account_connection_is_owner_only(users, method, path):
 
 @pytest.mark.parametrize("method,path", [
     ("GET", "/api/settings/models"), ("POST", "/api/settings/models/save"),
-    ("GET", "/api/trends/manage"), ("POST", "/api/trends/manage"),
     ("POST", "/api/gateway/restart"), ("POST", "/api/env/install"),
     ("GET", "/api/projects/aaaaaaaaaaaaaaaa/env/tools"),
     ("POST", "/api/projects/aaaaaaaaaaaaaaaa/skill"),
@@ -148,7 +147,7 @@ def test_ip_owner_is_not_a_platform_administrator(users, method, path):
 
 def test_revocation_and_stale_tab_identity_take_effect_on_the_next_request(users):
     clients, people = users
-    target = "/api/projects/aaaaaaaaaaaaaaaa/ideas"
+    target = "/api/projects/aaaaaaaaaaaaaaaa/schedule"
     client = clients["operator"]
     assert client.get(target, headers={"X-Easel-User": people["operator"]["id"]}).status_code == 200
     assert client.get(target, headers={"X-Easel-User": people["viewer"]["id"]}).status_code == 401
@@ -169,7 +168,7 @@ def test_viewer_cannot_read_system_files_through_encoded_paths(users, path):
 
 def test_authenticated_writes_require_same_origin_and_do_not_trust_identity_headers(users):
     clients, _ = users
-    target = "/api/projects/aaaaaaaaaaaaaaaa/ideas"
+    target = "/api/projects/aaaaaaaaaaaaaaaa/schedule"
     assert clients["owner"].post(target, headers={"Origin": "https://evil.example"}).status_code == 403
     assert clients["owner"].post(target, headers={"Origin": "null"}).status_code == 403
     assert clients["owner"].post(target, headers={"Origin": "http://localhost:7860", "Sec-Fetch-Site": "cross-site"}).status_code == 403

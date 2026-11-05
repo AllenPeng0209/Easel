@@ -39,7 +39,7 @@ layer: publish
 # 飞书群
 python <skill>/scripts/notify.py send --channel feishu \
   --webhook "https://open.feishu.cn/open-apis/bot/v2/hook/xxx" \
-  --title "Easel 发布成功" --text "《本期主题》已发布到 抖音+小红书\n链接：..."
+  --title "响芽 发布成功" --text "《本期主题》已发布到 抖音+小红书\n链接：..."
 
 # 钉钉（加签）
 python <skill>/scripts/notify.py send --channel dingtalk \

@@ -1,4 +1,4 @@
-"""Snapshot a locally installed CreatorHub into an owned Easel runtime."""
+"""Snapshot a locally installed CreatorHub into an owned Xiangya runtime."""
 
 from __future__ import annotations
 

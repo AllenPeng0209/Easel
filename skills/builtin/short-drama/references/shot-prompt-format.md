@@ -1,7 +1,7 @@
 # 分镜时间轴 Prompt 格式（剧本 → 逐镜生成指令）
 
 > 把单集剧本拆成 5–6 个定时镜头，每镜写成一条「生成就绪」的 prompt。
-> 格式借鉴 Seedance2-Storyboard-Generator 的时间轴写法，适配 Easel 的 ai-image-gen / ai-video-gen。
+> 格式借鉴 Seedance2-Storyboard-Generator 的时间轴写法，适配 响芽 的 ai-image-gen / ai-video-gen。
 > 落盘为 `episodes/epNN/shots.json`，写完用 `drama_ops.py shots validate` 校验。
 
 ## shots.json 结构

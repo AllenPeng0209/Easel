@@ -6,11 +6,11 @@ const require=createRequire(new URL('../../web/frontend/package.json',import.met
 const React=require('react');
 const {renderToStaticMarkup}=require('react-dom/server');
 const user='event-actor';
-const card=(at=10,title='真实选题')=>({schemaVersion:1,actorId:user,projectId:'default',kind:'idea',id:'1'.repeat(12),
- title,summary:'真实保存的内容',status:{code:'doing',label:'选题进行中',source:'stored'},
+const card=(at=10,title='真实工程')=>({schemaVersion:1,actorId:user,projectId:'default',kind:'workshop',id:'1'.repeat(32),
+ title,summary:'真实保存的内容',status:{code:'doing',label:'制作进行中',source:'stored'},
  version:{revision:null,sha256:null},snapshotHash:'a'.repeat(64),observedAt:at,
- details:{idea:{id:'1'.repeat(12),title,note:'真实保存的内容',source:'用户调研',status:'doing',created:1}},
- actions:[{kind:'open',target:'ideas',entityId:'1'.repeat(12),label:'查看选题'}]});
+ details:{project:{id:'1'.repeat(32),title,brief:'真实保存的内容',stage:'producing'}},
+ actions:[{kind:'open',target:'workshop',entityId:'1'.repeat(32),label:'查看工坊'}]});
 const event=(id,at=10,callId='native-call',title)=>({id,kind:'business',name:'easel_business_objects',callId,
  business:card(at,title),completedAt:at});
 const render=events=>{
@@ -23,8 +23,8 @@ test('real business transport reaches its keyed view with the original native ca
  const events=reduceAgentEvents([],event('first'));
  assert.equal(events.length,1);
  const html=render(events);
- assert.match(html,/data-business-object="111111111111"/);
- assert.match(html,/真实选题/);assert.match(html,/选题进行中/);
+ assert.match(html,/data-business-object="11111111111111111111111111111111"/);
+ assert.match(html,/真实工程/);assert.match(html,/制作进行中/);
 });
 
 test('same call/entity replays update once but independent calls retain their own observation',()=>{
@@ -50,9 +50,9 @@ test('denied and incomplete tool calls cannot become successful business cards',
  assert.match(html,/未授权/);
 });
 
-test('the source idea snapshot keeps its historical observation without a live refresh action', () => {
- const html=render([event('source',10,'host:topic:turn')]);
- assert.match(html,/本轮创作的选题快照/);
- assert.match(html,/查看选题/);
+test('the source workshop snapshot keeps its historical observation without a live refresh action', () => {
+ const html=render([event('source',10,'host:workshop:turn')]);
+ assert.match(html,/本轮引用的工坊快照/);
+ assert.match(html,/查看工坊/);
  assert.doesNotMatch(html,/刷新业务对象/);
 });

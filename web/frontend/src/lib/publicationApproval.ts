@@ -18,6 +18,7 @@ export interface PublicationApprovalSubject {
   scheduledAt: string | null;
   audience: 'public' | 'platform_draft' | 'manual';
   title: string; body: string; tags: string; persona: string;
+  aiGenerated?: boolean;
   media: PublicationApprovalMedia[];
 }
 export interface PublicationOperationResult {
@@ -72,6 +73,7 @@ export function validPublicationSubject(subject: PublicationApprovalSubject): bo
       || !cleanId(subject.project?.name) || !cleanId(subject.platform?.id) || !cleanId(subject.platform?.name)
       || !cleanId(subject.account?.id) || !cleanId(subject.account?.name)
       || typeof subject.title !== 'string' || typeof subject.body !== 'string'
+      || subject.aiGenerated !== undefined && typeof subject.aiGenerated !== 'boolean'
       || typeof subject.tags !== 'string' || typeof subject.persona !== 'string' || !Array.isArray(subject.media)) return false;
   const audience = ({ publish_now: 'public', scheduled: 'public', create_draft: 'platform_draft', manual_export: 'manual' } as Record<string, string>)[subject.mode];
   if (!audience || subject.audience !== audience || !subject.title.trim() && !subject.body.trim() && !subject.media.length) return false;

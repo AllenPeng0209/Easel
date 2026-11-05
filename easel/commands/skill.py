@@ -1,13 +1,13 @@
-"""easel skill — 运行 SKILL，统一通过 OpenClaw agent 处理。
+"""xiangya skill — 运行 SKILL，统一通过 OpenClaw agent 处理。
 
 所有 SKILL 请求都发给 OpenClaw agent，由 OpenClaw 根据 AGENTS.md 的规则
 读对应 SKILL 自己执行、并凝练 Profile。
 这样无论从 chat / skill / web 哪个入口进来，逻辑都是一致的。
 
 用法：
-    easel skill check-compliance -i "文案文本"
-    easel skill check-compliance -i "文案" -p 科技数码达人
-    easel skill produce-shortdrama -i "30秒短剧需求"
+    xiangya skill check-compliance -i "文案文本"
+    xiangya skill check-compliance -i "文案" -p 科技数码达人
+    xiangya skill produce-shortdrama -i "30秒短剧需求"
 """
 
 from __future__ import annotations

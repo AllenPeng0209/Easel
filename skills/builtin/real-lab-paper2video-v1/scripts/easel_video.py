@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the portable paper-video tools with Easel output paths and dependencies."""
+"""Run the portable paper-video tools with Xiangya output paths and dependencies."""
 from __future__ import annotations
 
 import argparse

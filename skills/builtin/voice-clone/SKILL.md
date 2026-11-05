@@ -14,7 +14,7 @@ layer: produce
 
 ## 前置：配置 API key
 
-> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 Easel 项目根，确认当前目录有 `.env` 和 `skills/shared/scripts/`，再运行注册表、`check`、`enroll` 或 `clone`。不得改用 workspace 的共享脚本副本，也不得以 `env` / `printenv` 没显示变量为由判断 `VOICE_BASE_URL`/Key 缺失。`check` 支持时显式传 `--env-file .env`。
+> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 响芽 项目根，确认当前目录有 `.env` 和 `skills/shared/scripts/`，再运行注册表、`check`、`enroll` 或 `clone`。不得改用 workspace 的共享脚本副本，也不得以 `env` / `printenv` 没显示变量为由判断 `VOICE_BASE_URL`/Key 缺失。`check` 支持时显式传 `--env-file .env`。
 
 选 provider 并在 `.env` 填 key，再 `check` 离线校验：
 ```bash

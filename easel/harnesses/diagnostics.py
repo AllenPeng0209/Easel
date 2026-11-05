@@ -92,7 +92,7 @@ def classify_provider_failure(error: object) -> tuple[str, str]:
 
     if matches("modelnotfound", "unsupportedmodel", "modelisnotsupported", "modelisnotavailable"):
         return "model_unavailable", ("Codex 执行失败：当前 Codex 版本或账号无法使用所选模型。请先检查 Codex CLI 是否需要更新，"
-                "或在 Easel「设置 → Agent 底座 → 模型覆盖」选择当前账号可用的模型。")
+                "或在 响芽「设置 → Agent 底座 → 模型覆盖」选择当前账号可用的模型。")
     if statuses & {401, 403} or matches(
             "authenticationfailed", "unauthorized", "invalidapikey", "invalidtoken", "tokenexpired", "tokenhasexpired"):
         return "authentication", "Codex 执行失败：登录已失效或当前账号没有访问权限，请在本机运行 codex login 重新登录并确认账号权限。"

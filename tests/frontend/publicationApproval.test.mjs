@@ -58,6 +58,20 @@ test('shared readonly subject exposes exact IP, platform, real account, caption 
   assert.doesNotMatch(html, /\/api\/media\//);
 });
 
+test('the immutable approval visibly declares AI generation and legacy subjects default to no without coercing nonbooleans', () => {
+  const { PublicationSubjectView } = componentModule('components/PublicationApprovalDialog.tsx');
+  const { validPublicationSubject } = componentModule('lib/publicationApproval.ts');
+  for (const [aiGenerated, label] of [[true, '是'], [false, '否'], [undefined, '否']]) {
+    const value = subject(aiGenerated === undefined ? {} : { aiGenerated });
+    const html = renderToStaticMarkup(React.createElement(PublicationSubjectView, { subject: value }));
+    assert.match(html, new RegExp(`<dt>AI生成内容</dt><dd>${label}</dd>`));
+    assert.equal(validPublicationSubject(value), true);
+  }
+  for (const aiGenerated of ['true', 'false', 1, 0, null, [], {}]) {
+    assert.equal(validPublicationSubject(subject({ aiGenerated })), false, String(aiGenerated));
+  }
+});
+
 test('unsafe preview URLs remain visible as subject metadata without loading an external file', () => {
   const { PublicationSubjectView } = componentModule('components/PublicationApprovalDialog.tsx');
   const value = subject(); value.media[0].url = 'https://evil.test/secret.png';

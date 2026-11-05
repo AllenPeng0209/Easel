@@ -3,7 +3,7 @@
  * Business-owned keyed view boundary adapted from deepseek-ai/deepseek-harness
  * packages/client/ui-tool/src/client/tool/ToolCallTree.tsx and src/client/apply.ts
  * @ ce7073d51254c26cd63b22a60835b8f948deb447.
- * Easel changes: validate existing Host business DTOs, scoped observations and navigation.
+ * Xiangya changes: validate existing Host business DTOs, scoped observations and navigation.
  * Notice: integrations/deepseek-harness/LICENSE.
  */
 import { ACTIVE_PROJECT_ID, ACTIVE_USER_ID } from './projectScope';
@@ -11,9 +11,9 @@ import { normalizeDeliverable } from './deliverables';
 import type { ChatDeliverable } from './deliverables';
 import { normalizeWorkshopSubmissionAttempts } from './workshop';
 
-export type BusinessObjectKind = 'idea' | 'draft' | 'workshop';
+export type BusinessObjectKind = 'draft' | 'workshop';
 export interface BusinessObjectAction {
-  kind: 'open'; target: 'ideas' | 'artifact' | 'workshop'; entityId: string; label: string;
+  kind: 'open'; target: 'artifact' | 'workshop'; entityId: string; label: string;
 }
 export interface BusinessObject {
   schemaVersion: 1;
@@ -30,10 +30,10 @@ export const BUSINESS_OBJECT_WIRE_NAME = 'easel_business_objects';
 const HASH = /^[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9_-]{1,160}$/;
 const FIXED_ID = /^[a-f0-9]{32}$/;
-const KINDS = new Set<unknown>(['idea', 'draft', 'workshop']);
+const KINDS = new Set<unknown>(['draft', 'workshop']);
 const STATUS_SOURCES = new Set<unknown>(['stored', 'computed', 'unknown']);
 const TARGETS: Record<BusinessObjectKind, BusinessObjectAction['target']> = {
-  idea: 'ideas', draft: 'artifact', workshop: 'workshop',
+  draft: 'artifact', workshop: 'workshop',
 };
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 function text(value: unknown, maximum = 4000): value is string {
@@ -45,8 +45,8 @@ function text(value: unknown, maximum = 4000): value is string {
   });
 }
 const id = (value: unknown): value is string => typeof value === 'string' && ID.test(value);
-const entityId = (kind: BusinessObjectKind, value: unknown): value is string => typeof value === 'string'
-  && (kind === 'idea' ? ID : FIXED_ID).test(value);
+const entityId = (_kind: BusinessObjectKind, value: unknown): value is string => typeof value === 'string'
+  && FIXED_ID.test(value);
 const nonempty = (value: unknown, maximum = 160): value is string => text(value, maximum) && !!value.trim();
 
 /** Current-user markers select presentation scope; Host authorization remains mandatory. */
@@ -66,21 +66,19 @@ function fields(value: unknown, keys: readonly string[]): Record<string, unknown
   return result;
 }
 
-const IDEA_FIELDS = ['id', 'title', 'note', 'source', 'status', 'created', 'createdAt', 'updatedAt', 'updated_at', 'platform', 'topicId', 'url', 'collectedAt'];
 const ARTIFACT_FIELDS = ['artifactId', 'projectId', 'sessionId', 'turnId', 'path', 'name', 'mime', 'size', 'description',
   'status', 'createdAt', 'url', 'storageMode', 'revision', 'sha256', 'bundleSha256', 'reviewStatus'];
 const PROJECT_FIELDS = ['id', 'title', 'brief', 'aspect_ratio', 'revision', 'stage', 'archived_at', 'created_at', 'updated_at'];
-const DELIVERABLE_FIELDS = ['id', 'name', 'path', 'revision', 'engine_revision', 'sha256', 'render_id', 'created_at'];
+const DELIVERABLE_FIELDS = ['id', 'name', 'path', 'revision', 'sha256', 'render_id', 'created_at'];
 const REVIEW_FIELDS = ['id', 'revision', 'artifact_id', 'artifact_sha256', 'kind', 'decision', 'notes', 'created_at',
   'actorId', 'actor_id', 'reviewerId', 'reviewer_id', 'reviewer'];
-const RENDER_FIELDS = ['id', 'operation_id', 'task_id', 'content_revision', 'engine_revision', 'status', 'submission_state', 'progress', 'progress_known', 'artifact_id',
+const RENDER_FIELDS = ['id', 'operation_id', 'task_id', 'content_revision', 'status', 'submission_state', 'progress', 'progress_known', 'artifact_id',
   'collected_revision', 'created_at', 'updated_at', 'collected_at'];
 const PUBLICATION_FIELDS = ['id', 'revision', 'artifact_id', 'artifact_sha256', 'platform', 'created_at', 'published_at', 'source', 'kind'];
-const VERIFICATION_FIELDS = ['engineVerification', 'publishEligibility', 'deliveryVerification', 'publicationEvidence', 'canvasBinding'];
+const VERIFICATION_FIELDS = ['publishEligibility', 'deliveryVerification', 'publicationEvidence'];
 
 function details(kind: BusinessObjectKind, value: unknown): Record<string, unknown> {
   if (!isRecord(value)) return {};
-  if (kind === 'idea') return { ...fields(value, IDEA_FIELDS), ...(isRecord(value.idea) ? { idea: fields(value.idea, IDEA_FIELDS) } : {}) };
   if (kind === 'draft') return isRecord(value.artifact) ? { artifact: fields(value.artifact, ARTIFACT_FIELDS) } : {};
   if (!isRecord(value.project)) return {};
   const project = fields(value.project, PROJECT_FIELDS);
@@ -96,7 +94,7 @@ function details(kind: BusinessObjectKind, value: unknown): Record<string, unkno
   }
   return { project, ...fields(value, VERIFICATION_FIELDS),
     ...(isRecord(value.handoff) ? { handoff: fields(value.handoff,
-      ['revision', 'engineRevision', 'artifactId', 'artifactSha256', 'artifactRevision', 'artifactEngineRevision']) } : {}) };
+      ['revision', 'shotId', 'artifactId', 'artifactSha256', 'artifactRevision']) } : {}) };
 }
 
 export function normalizeBusinessObject(value: unknown): BusinessObject | null {
@@ -114,8 +112,7 @@ export function normalizeBusinessObject(value: unknown): BusinessObject | null {
   const revision = value.version.revision;
   const sha256 = value.version.sha256;
   if (revision !== null && (!Number.isSafeInteger(revision) || (revision as number) < 0)
-      || sha256 !== null && (typeof sha256 !== 'string' || !HASH.test(sha256))
-      || kind === 'idea' && (revision !== null || sha256 !== null)) return null;
+      || sha256 !== null && (typeof sha256 !== 'string' || !HASH.test(sha256))) return null;
   const actions: BusinessObjectAction[] = [];
   const seen = new Set<string>();
   const target = TARGETS[kind];
@@ -149,7 +146,7 @@ export function businessObjectCanRefresh(current: BusinessObject, next: Business
 
 /** Navigation is built locally and never accepts a server href or a different entity. */
 export function businessObjectOpenHref(record: BusinessObject, action: BusinessObjectAction): string | null {
-  if (!businessObjectInScope(record) || record.kind !== 'idea' && record.kind !== 'workshop'
+  if (!businessObjectInScope(record) || record.kind !== 'workshop'
       || !id(record.projectId) || !entityId(record.kind, record.id) || action.kind !== 'open'
       || action.target !== TARGETS[record.kind] || action.entityId !== record.id) return null;
   const selected = record.kind === 'workshop' && isRecord(record.details.handoff) ? record.details.handoff.artifactId : null;

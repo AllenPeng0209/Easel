@@ -1,4 +1,4 @@
-"""easel doctor — 检查开发环境是否就绪。"""
+"""xiangya doctor — 检查开发环境是否就绪。"""
 
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ def _chromium_available() -> bool:
 def _gateway_healthy() -> bool:
     """Check OpenClaw gateway is running via healthz endpoint.
 
-    端口走 easel/gateway_endpoint.py：非默认 profile（Easel 的 ``--profile easel``）
+    端口走 easel/gateway_endpoint.py：非默认 profile（响芽 的 ``--profile easel``）
     不是 18789，写死就会「gateway 活着、doctor 报 FAIL」。
     """
     try:
@@ -289,7 +289,7 @@ def _primary_model_routable() -> tuple[bool, str]:
     if not primary:
         return False, "未设置 agents.defaults.model.primary — 重新跑 setup 脚本"
     if "/" not in primary:
-        # 不是 provider/model 形式，解析不出 provider，交给 `easel ping` 去判，不在这里猜。
+        # 不是 provider/model 形式，解析不出 provider，交给 `xiangya ping` 去判，不在这里猜。
         return True, ""
 
     provider = primary.split("/", 1)[0]
@@ -537,7 +537,7 @@ def _context_budget_policy() -> list[str]:
 
 
 def cmd_doctor(_args) -> int:
-    print("Easel — 环境检查\n")
+    print("响芽 — 环境检查\n")
     all_ok = True
     settings = read_settings(PROJECT_ROOT / ".env")
     from easel import harnesses
@@ -549,7 +549,7 @@ def cmd_doctor(_args) -> int:
     if alternate:
         descriptor = harnesses.describe(runtime)
         all_ok &= _check(f"{runtime} CLI", descriptor["installed"], descriptor["install_hint"])
-        print("  原生认证和模型可用性请运行 easel ping 验证；不读取或迁移凭证")
+        print("  原生认证和模型可用性请运行 xiangya ping 验证；不读取或迁移凭证")
         direct = True
 
     # 1. Runtime prerequisites
@@ -588,7 +588,7 @@ def cmd_doctor(_args) -> int:
 
     for module in ("fastapi", "uvicorn", "sse_starlette", "multipart"):
         all_ok &= _check(f"Python package: {module}", _module_available(module),
-                          "运行 pip install -e . 安装 Easel 运行依赖")
+                          "运行 pip install -e . 安装 响芽 运行依赖")
 
     frontend_ready = (PROJECT_ROOT / "web" / "frontend" / "dist" / "index.html").is_file()
     all_ok &= _check("Web frontend build", frontend_ready,
@@ -640,7 +640,7 @@ def cmd_doctor(_args) -> int:
         # 4. OpenClaw gateway running
         gw_ok = _gateway_healthy()
         all_ok &= _check(f"OpenClaw gateway (localhost:{resolve_gateway_port()})", gw_ok,
-                          f"运行 python -m easel gateway start（端口来自 {port_source()}）")
+                          f"运行 python -m xiangya gateway start（端口来自 {port_source()}）")
 
         # 5. Skills synced
         synced, synced_detail = _skills_synced()
@@ -663,7 +663,7 @@ def cmd_doctor(_args) -> int:
 
     print()
     if all_ok:
-        print(f"{GREEN}✓ 环境就绪{NC} — 运行 python -m easel ping 验证连通性")
+        print(f"{GREEN}✓ 环境就绪{NC} — 运行 python -m xiangya ping 验证连通性")
     else:
         print(f"{YELLOW}⚠ 有未满足项{NC} — 请按上述提示修复后重试")
 

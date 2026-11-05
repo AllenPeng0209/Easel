@@ -24,10 +24,10 @@ from .workspace import harness_instructions
 EASEL_ASK_USER_TOOL = {
     "type": "function", "name": "easel_ask_user", "deferLoading": False,
     "description": (
-        "Ask one to three necessary questions through Easel's visible input cards, then continue the task using "
+        "Ask one to three necessary questions through Xiangya's visible input cards, then continue the task using "
         "the returned answers. Use this tool instead of request_user_input, which may be unavailable in the "
         "current mode. For ordinary reversible preferences supply reasonable defaultAnswers and mark a recommended "
-        "option: Easel may use defaults after its server-side waiting period. Do not ask unnecessary preferences; "
+        "option: Xiangya may use defaults after its server-side waiting period. Do not ask unnecessary preferences; "
         "complete the work autonomously when sufficient information is known. Permissions, public publishing, "
         "deletion and payments still require real human authorization; this tool never grants execution permission. "
         "Never request passwords, API keys, login codes or other secret credentials."
@@ -68,7 +68,7 @@ EASEL_PRESENT_TOOL = {
         "If the user needs to review files earlier, such as before a tool call that waits for their answer, link them in your message instead. "
         "Use it when the user needs a separate file, especially Office documents, spreadsheets, and slide decks; "
         "prefer your final response when that suffices. The user opens the current files; their contents are not copied. "
-        "In Easel, save files under the current IP workspace outputs directory; the host validates access and returns canonical metadata."
+        "In Xiangya, save files under the current IP workspace outputs directory; the host validates access and returns canonical metadata."
     ),
     "inputSchema": {
         "type": "object", "additionalProperties": False, "required": ["files"],
@@ -97,12 +97,16 @@ _PUBLICATION_TEXT_LIMITS = {'title': 1000, 'body': 100000, 'tags': 2000, 'person
 EASEL_PUBLISH_TOOL = {
     'type': 'function', 'name': 'easel_publish', 'deferLoading': False,
     'description': (
-        'Request publication through Easel\'s typed host workflow. The host resolves the current IP account, '
+        'Request publication through Xiangya\'s typed host workflow. The host resolves the current IP account, '
         'freezes the exact content and immutable artifact versions, and requires real human approval before '
         'any external submission. Supply only the listed content fields and artifact IDs returned by present. '
         'Do not provide paths, commands, URLs, account identities or claimed approvals. A pending, rejected or '
         'submitted receipt is not proof that content was published. Never bypass this workflow with shell, '
-        'browser, scripts or generic ask_user approval.'
+        'browser, scripts or generic ask_user approval. Explicitly set aiGenerated=true for AI-generated content; '
+        'this declaration is part of the exact human-reviewed content. Videos produced by this Host\'s '
+        'easel_video_generation H3 pipeline are AI-generated as a production fact: publish those collected '
+        'artifacts with aiGenerated=true and visibly disclose AI创作 in the body. Do not infer AI origin '
+        'for general articles or other assets from arbitrary keywords.'
     ),
     'inputSchema': {
         'type': 'object', 'additionalProperties': False, 'required': ['platform'],
@@ -111,6 +115,7 @@ EASEL_PUBLISH_TOOL = {
             **{name: {'type': 'string', 'maxLength': limit} for name, limit in _PUBLICATION_TEXT_LIMITS.items()},
             'artifactIds': {'type': 'array', 'maxItems': 32, 'uniqueItems': True,
                             'items': {'type': 'string', 'pattern': '^[a-f0-9]{32}$'}},
+            'aiGenerated': {'type': 'boolean'},
         },
         'anyOf': [{'required': [name], 'properties': {name: {'minLength': 1}}} for name in ('title', 'body')],
     },
@@ -122,11 +127,11 @@ EASEL_PUBLISH_TOOL = {
 EASEL_PUBLICATION_STATUS_TOOL = {
     'type': 'function', 'name': 'easel_publication_status', 'deferLoading': False,
     'description': (
-        'Read the current host status of an existing Easel publication approval or operation. '
+        'Read the current host status of an existing Xiangya publication approval or operation. '
         'Supply only its approvalId. This is a read-only lookup: it never approves, retries, '
         'creates or submits a publication. Use it to inspect an existing request instead of '
         'calling easel_publish again. If this tool is absent from an old native thread, '
-        'inspect the existing request in the Easel UI; never create a new publication as a status query.'
+        'inspect the existing request in the Xiangya UI; never create a new publication as a status query.'
     ),
     'inputSchema': {
         'type': 'object', 'additionalProperties': False, 'required': ['approvalId'],
@@ -135,7 +140,7 @@ EASEL_PUBLICATION_STATUS_TOOL = {
 }
 
 
-_BUSINESS_OBJECT_IDS = {'idea': r'[A-Za-z0-9_-]{1,160}', 'draft': r'[a-f0-9]{32}', 'workshop': r'[a-f0-9]{32}'}
+_BUSINESS_OBJECT_IDS = {'draft': r'[a-f0-9]{32}', 'workshop': r'[a-f0-9]{32}'}
 _BUSINESS_TEXT_LIMITS = {'cursor': 2048, 'query': 500}
 _BUSINESS_TEXT_SCHEMA = {
     name: {'type': 'string', 'maxLength': limit,
@@ -145,29 +150,92 @@ _BUSINESS_TEXT_SCHEMA = {
 EASEL_WORKSHOP_DELIVERY_TOOL = {
     'type': 'function', 'name': 'easel_workshop_delivery', 'deferLoading': False,
     'description': (
-        'Plan video episodes in Easel Ideas and Workshop, or render and collect already-mastered videos in BeefTV. '
+        'Plan video episodes in Xiangya Workshop, or register already-mastered videos in the native Workshop. '
         'Use a JSON manifest path relative to the current IP outputs; optionally limit to specific episode IDs. '
         'Plan can precede media creation. Deliver requires real audio/video masters already in outputs. '
-        'Use returned ideaUrl/workshopUrl and artifact receipts. Never pass identities, commands or credentials.'
+        'Update reads {workshopId,expectedRevision,production:{raw_content,script,assets,shots}} from a manifest '
+        'and CAS-updates the existing project while preserving all candidates. Use update for studio edits. '
+        'Use returned workshopUrl and artifact receipts. Never pass identities, commands or credentials.'
     ),
     'inputSchema': {
         'type': 'object', 'additionalProperties': False, 'required': ['action', 'manifestPath'],
         'properties': {
-            'action': {'type': 'string', 'enum': ['plan', 'deliver']},
+            'action': {'type': 'string', 'enum': ['plan', 'deliver', 'update']},
             'manifestPath': {'type': 'string', 'minLength': 1, 'maxLength': 512},
             'episodes': {'type': 'array', 'maxItems': 12, 'uniqueItems': True,
                          'items': {'type': 'string', 'pattern': '^[A-Za-z0-9_-]{1,120}$'}},
         },
     },
 }
+_VIDEO_GENERATION_PROPERTIES = {
+    'action': {'type': 'string', 'enum': ['catalog', 'plan', 'approve_plan', 'plan_status',
+                                        'prepare', 'propose', 'submit', 'status', 'collect']},
+    'workshopId': {'type': 'string', 'pattern': '^[a-f0-9]{32}$'},
+    'clipId': {'type': 'string', 'pattern': '^[A-Za-z0-9_-]{1,80}$'},
+    'shotId': {'type': 'string', 'pattern': '^[A-Za-z0-9_-]{1,80}$'},
+    'modelId': {'type': 'string', 'minLength': 1, 'maxLength': 200},
+    'aspectRatio': {'type': 'string', 'minLength': 1, 'maxLength': 12},
+    'seconds': {'type': 'integer', 'minimum': 1, 'maximum': 60},
+    'prompt': {'type': 'string', 'minLength': 1, 'maxLength': 10000},
+    'resolution': {'type': 'string', 'minLength': 1, 'maxLength': 24},
+    'planId': {'type': 'string', 'pattern': '^[a-f0-9]{32}$'},
+    'manifestPath': {'type': 'string', 'minLength': 1, 'maxLength': 512},
+}
+EASEL_VIDEO_GENERATION_TOOL = {
+    'type': 'function', 'name': 'easel_video_generation', 'deferLoading': False,
+    'description': (
+        'Generate a new audiovisual video through the authenticated current-IP Host, without shell or network tools. '
+        'catalog lists configured models, not a successful-inference guarantee. For a film needing multiple clips '
+        'or references, write a current-IP production manifest and call plan(workshopId,manifestPath), then '
+        'approve_plan(workshopId,planId). Only the Host manual human question can approve this frozen paid scope; '
+        'silence/default answers cannot approve. Use prepare(workshopId,clipId,planId) to load each exact approved '
+        'specification. Never send replacement prompts or references with planId. Each approved clip can be '
+        'submitted once; uncertain submissions are only queried, never purchased again. Planned collect returns '
+        'a production_segment, NOT the complete film or a final workshop delivery. Assemble real segments and '
+        'deliver the complete film through easel_workshop_delivery; preserve the actual soundtrack/subtitles. '
+        'The legacy no-plan prepare(modelId,aspectRatio,seconds,prompt) keeps at most one new video per session. '
+        'propose revalidates the frozen model and references; status observes the original task; collect requires a real '
+        'ready audiovisual file. No identities, credentials, URLs, arbitrary operation IDs, or paths outside '
+        'the current IP outputs are accepted. Never bypass a declined plan through the legacy single-clip path. '
+        'Deliver via easel_workshop_delivery, including publication platform/title/body/tags when known. '
+        'The Host freezes that film and logged-in account for one human review in Workshop, then publishes '
+        'automatically. Do not request a separate chat publication approval for the same Workshop film.'
+    ),
+    'inputSchema': {
+        'type': 'object', 'additionalProperties': False, 'required': ['action'],
+        'properties': _VIDEO_GENERATION_PROPERTIES,
+        'anyOf': [
+            {'type': 'object', 'additionalProperties': False, 'required': ['action'],
+             'properties': {'action': {'enum': ['catalog']}}},
+            {'type': 'object', 'additionalProperties': False,
+             'required': ['action', 'workshopId', 'clipId', 'modelId', 'aspectRatio', 'seconds', 'prompt'],
+             'properties': {**{key: value for key, value in _VIDEO_GENERATION_PROPERTIES.items()
+                               if key not in ('planId', 'manifestPath')}, 'action': {'enum': ['prepare']}}},
+            {'type': 'object', 'additionalProperties': False,
+             'required': ['action', 'workshopId', 'manifestPath'],
+             'properties': {**{key: _VIDEO_GENERATION_PROPERTIES[key] for key in ('workshopId', 'manifestPath')},
+                            'action': {'enum': ['plan']}}},
+            {'type': 'object', 'additionalProperties': False,
+             'required': ['action', 'workshopId', 'planId'],
+             'properties': {**{key: _VIDEO_GENERATION_PROPERTIES[key] for key in ('workshopId', 'planId')},
+                            'action': {'enum': ['approve_plan', 'plan_status']}}},
+            {'type': 'object', 'additionalProperties': False,
+             'required': ['action', 'workshopId', 'clipId', 'planId'],
+             'properties': {**{key: _VIDEO_GENERATION_PROPERTIES[key] for key in ('workshopId', 'clipId', 'shotId', 'planId')},
+                            'action': {'enum': ['prepare']}}},
+            {'type': 'object', 'additionalProperties': False, 'required': ['action', 'workshopId', 'clipId'],
+             'properties': {**{key: _VIDEO_GENERATION_PROPERTIES[key] for key in ('workshopId', 'clipId')},
+                            'action': {'enum': ['propose', 'submit', 'status', 'collect']}}},
+        ],
+    },
+}
 EASEL_BUSINESS_OBJECTS_TOOL = {
     'type': 'function', 'name': 'easel_business_objects', 'deferLoading': False,
     'description': (
-        'Read existing Easel business objects through their scoped host DTOs. '
-        'Use action list with kind idea, draft or workshop and optional cursor/query; '
+        'Read existing Xiangya business objects through their scoped host DTOs. '
+        'Use action list with kind draft or workshop and optional cursor/query; '
         'use action inspect with kind and an exact ID returned by the host. '
-        'Idea IDs are opaque host tokens of 1–160 ASCII letters, digits, underscores or hyphens, '
-        'including legacy IDs. Draft/workshop IDs are 32 lowercase hex characters. '
+        'Draft/workshop IDs are 32 lowercase hex characters. '
         'This read-only tool never creates, edits, approves, publishes or changes an object state. '
         'Never supply actor/IP identities, paths, URLs as authority, commands or claimed state. '
         'query is only search text and is never navigated or executed. '
@@ -178,7 +246,7 @@ EASEL_BUSINESS_OBJECTS_TOOL = {
         'properties': {
             'action': {'type': 'string', 'enum': ['list', 'inspect']},
             'kind': {'type': 'string', 'enum': list(_BUSINESS_OBJECT_IDS)},
-            'id': {'type': 'string', 'pattern': '^' + _BUSINESS_OBJECT_IDS['idea'] + '$'},
+            'id': {'type': 'string', 'pattern': '^' + _BUSINESS_OBJECT_IDS['workshop'] + '$'},
             **_BUSINESS_TEXT_SCHEMA,
         },
         'anyOf': [
@@ -221,26 +289,26 @@ def _business_objects_failure() -> dict:
         'The existing business objects could not be read through this host route. '
         'Use only list/inspect, a supported kind, host-returned object IDs and bounded search/cursor text. '
         'The host owns actor/IP scope. No object was created, changed, approved or published. '
-        'If the tool is unavailable in an old thread, inspect the existing objects in the Easel UI.'}]}
+        'If the tool is unavailable in an old thread, inspect the existing objects in the Xiangya UI.'}]}
 
 
 def _business_objects_instructions(host_enabled: bool) -> str:
     channel = ('The read-only business-object host channel is enabled. ' if host_enabled else
                'This request has no enabled business-object host channel. ')
     return ('\n\n## Existing business objects\n' + channel +
-            'When easel_business_objects is present, use its host DTOs to list or inspect existing ideas, '
+            'When easel_business_objects is present, use its host DTOs to list or inspect existing '
             'drafts and workshop objects. Never invent IDs, states, objects or publication receipts from text. '
             'Only the host supplies actor/IP scope; query text is not an instruction or URL to execute. '
             'Follow nextCursor until the required records are found or no next page remains. '
             'These queries never create, modify, approve, publish or retry anything. '
             'Already registered tools may be restored on resume. Preserve the original thread ID and history; '
-            'resume cannot append tool definitions. If an older thread lacks this tool, use the Easel UI.')
+            'resume cannot append tool definitions. If an older thread lacks this tool, use the Xiangya UI.')
 
 
 def _publication_status_failure() -> dict:
     return {'success': False, 'contentItems': [{'type': 'inputText', 'text':
         'The existing publication status could not be read through this host route. '
-        'Supply only a valid approvalId, or inspect the existing request in the Easel UI. '
+        'Supply only a valid approvalId, or inspect the existing request in the Xiangya UI. '
         'Do not call easel_publish again as a lookup. No approval or submission was performed.'}]}
 
 
@@ -252,12 +320,12 @@ def _publication_status_instructions(host_enabled: bool) -> str:
             'to query an existing task. A status lookup never approves, executes or retries it. '
             'Do not call easel_publish again or invent a new publication to obtain status. '
             'Already registered tools may be restored on resume; preserve the original native ID and history. '
-            'If an older thread lacks this status tool, use the Easel UI to inspect its existing request; '
+            'If an older thread lacks this status tool, use the Xiangya UI to inspect its existing request; '
             'do not pretend that resume can append new tool definitions.')
 
 
 def _publication_payload(arguments) -> dict:
-    if not isinstance(arguments, dict) or set(arguments) - {'platform', 'artifactIds', *_PUBLICATION_TEXT_LIMITS}:
+    if not isinstance(arguments, dict) or set(arguments) - {'platform', 'artifactIds', 'aiGenerated', *_PUBLICATION_TEXT_LIMITS}:
         raise ValueError('invalid publication arguments')
     platform = arguments.get('platform')
     if not isinstance(platform, str) or platform not in _PUBLICATION_PLATFORMS:
@@ -270,6 +338,10 @@ def _publication_payload(arguments) -> dict:
         payload[name] = value
     if not payload['title'].strip() and not payload['body'].strip():
         raise ValueError('empty publication content')
+    if 'aiGenerated' in arguments:
+        if type(arguments['aiGenerated']) is not bool:
+            raise ValueError('invalid AI generation declaration')
+        payload['aiGenerated'] = arguments['aiGenerated']
     artifacts = arguments.get('artifactIds', [])
     if (not isinstance(artifacts, list) or len(artifacts) > 32
             or any(not isinstance(value, str) or not re.fullmatch(r'[a-f0-9]{32}', value) for value in artifacts)
@@ -284,14 +356,14 @@ def _publication_failure(*, unsupported=False) -> dict:
         'Do not substitute shell, browser or generic question approval.'
         if unsupported else
         'The host did not accept this publication request. Supply only a supported platform, title/body, '
-        'tags, persona and immutable artifact IDs using the declared schema. No publication was confirmed.'
+        'tags, persona, an explicit boolean AI declaration and immutable artifact IDs using the declared schema. No publication was confirmed.'
     )
     return {'success': False, 'contentItems': [{'type': 'inputText', 'text': message}]}
 
 
 def _publication_instructions(host_enabled: bool) -> str:
     if host_enabled:
-        return ('\n\n## Easel typed publication workflow\nWhen easel_publish is present in the native tool list, '
+        return ('\n\n## Xiangya typed publication workflow\nWhen easel_publish is present in the native tool list, '
                 'public publication must use it. Codex may restore already registered tools when resuming '
                 'an existing thread; a fresh client connection does not mean those tools are absent. '
                 'Its host owns the exact payload and real human one-shot approval. Shell/browser/script '
@@ -299,10 +371,14 @@ def _publication_instructions(host_enabled: bool) -> str:
                 'use either to replace or bypass this tool. Never invent a publication subject, account '
                 'identity, approval or receipt. A rejection, cancellation or unavailable host stops the '
                 'external action; finish independent preparation without claiming publication. '
+                'This Host\'s easel_video_generation H3 video outputs are AI-generated by pipeline provenance: '
+                'when publishing those collected artifacts, explicitly send aiGenerated=true and include '
+                'visible AI创作 disclosure in the body. For general articles or other media, do not infer '
+                'AI generation from arbitrary keywords. '
                 'If an older native thread never registered easel_publish and its tool list lacks it, '
                 'keep the original thread and history; use a new conversation with the tool enabled '
                 'or an explicit supported migration. Do not claim that resume can append new tool definitions.')
-    return ('\n\n## Easel typed publication workflow\nThis request has no enabled typed publication host channel. '
+    return ('\n\n## Xiangya typed publication workflow\nThis request has no enabled typed publication host channel. '
             'Preserve the existing thread and history; do not publish through shell, browser or scripts, '
             'even if a native tool definition was retained. '
             'Generic ask_user answers never substitute for an exact-content publication approval.')
@@ -394,6 +470,7 @@ class CodexAdapter:
         events = EventProjector(emit, request.env)
         business_calls: dict[str, tuple[str, asyncio.Future]] = {}
         workshop_calls: dict[str, tuple[object, asyncio.Future]] = {}
+        video_calls: dict[str, tuple[object, asyncio.Future]] = {}
         summaries: dict[str, dict[int, str]] = {}
         settled_summaries: set[str] = set()
         summary_limit = 4000
@@ -514,9 +591,41 @@ class CodexAdapter:
                     turn_id and params.get("turnId", turn_id) != turn_id):
                 raise HarnessError("不属于当前会话的请求")
             if method == "item/tool/call":
+                if params.get('tool') == 'easel_video_generation':
+                    failed = {'success': False, 'contentItems': [{'type': 'inputText', 'text':
+                        'The video Host route did not confirm this action. Inspect the original current-IP '
+                        'workshop and task receipt; never replace an unknown submission with a new paid task.'}]}
+                    if (request.video_generation is None or params.get('namespace') not in (None, '')
+                            or not turn_id or params.get('turnId') != turn_id):
+                        return failed
+                    call_id, arguments = params.get('callId'), params.get('arguments')
+                    if (not isinstance(call_id, str) or not call_id.strip() or len(call_id) > 256
+                            or re.search(r'[\x00-\x1f\x7f-\x9f]', call_id)):
+                        return failed
+                    try:
+                        from easel.video_generation import video_generation_payload
+                        payload = video_generation_payload(arguments)
+                    except (TypeError, ValueError):
+                        return failed
+                    previous = video_calls.get(call_id)
+                    if previous is not None:
+                        return await asyncio.shield(previous[1]) if previous[0] == payload else failed
+                    outcome = asyncio.get_running_loop().create_future()
+                    video_calls[call_id] = (payload, outcome)
+                    try:
+                        record = await request.video_generation(payload, call_id)
+                        result = {'success': True, 'contentItems': [{'type': 'inputText',
+                            'text': json.dumps(record, ensure_ascii=False, allow_nan=False)}]}
+                    except asyncio.CancelledError:
+                        outcome.cancel()
+                        raise
+                    except Exception:
+                        result = failed
+                    outcome.set_result(result)
+                    return result
                 if params.get('tool') == 'easel_workshop_delivery':
                     failed = {'success': False, 'contentItems': [{'type': 'inputText', 'text':
-                        'Easel workshop delivery was not confirmed. Verify the current IP manifest and existing workshop receipts.'}]}
+                        'Xiangya workshop delivery was not confirmed. Verify the current IP manifest and existing workshop receipts.'}]}
                     if (request.workshop_delivery is None or params.get('namespace') not in (None, '')
                             or not turn_id or params.get('turnId') != turn_id):
                         return failed
@@ -718,12 +827,75 @@ class CodexAdapter:
                            request.publish is not None) + _publication_status_instructions(
                            bool(request.publication_status_with_call or request.publication_status)) + _business_objects_instructions(
                            request.business_objects is not None)}
+            if request.video_generation is not None:
+                options['developerInstructions'] += (
+                    '\n\n## Host video production\nUse easel_video_generation for configured model discovery and '
+                    'new video preparation, proposal, authorized one-time submission, observation and collection. '
+                    'For an original video from a user idea, write the concept, shot action, sound and publication '
+                    'copy in the current IP outputs, then write outputs/<topic>/series.json containing '
+                    '{"series":"series title","episodes":[{"id":"01","title":"episode title",'
+                    '"brief":"complete production brief","aspectRatio":"9:16","path":"<topic>/planned-master.mp4"}]}. '
+                    'The planned path need not exist for action plan. Call easel_workshop_delivery action plan '
+                    'with manifestPath <topic>/series.json to create an owned Workshop; use its '
+                    'returned workshopId. Do not ask the user for internal tool IDs. Discover catalog first. '
+                    'For a complete film or several production clips, write <topic>/production.json with '
+                    '{"version":1,"title":"film title","modelId":"catalog modelId","aspectRatio":"9:16",'
+                    '"resolution":"720p","clips":[{"clipId":"part-1","seconds":12,"prompt":"complete '
+                    'action and native sound prompt","references":[{"kind":"image","path":"<topic>/refs/mother.png"}]}]}. '
+                    'Reference kind may be image, video or audio; choose actual current-IP files only. Do not '
+                    'provide digests, copied credentials or remote references. Call easel_video_generation plan '
+                    'with workshopId and manifestPath, then approve_plan with its planId. The Host freezes '
+                    'the complete prompt/model/reference scope and asks a real human about fixed generation '
+                    'count and unknown cost. No default answer or model-provided approved boolean can authorize it. '
+                    'After approval, prepare each fixed clip with only workshopId, clipId and planId; propose, '
+                    'submit once, observe the original task, and collect. Each clip has one submission, no '
+                    'automatic retakes. The selected resolution is the local delivery target; use catalog '
+                    'nativeResolution for understanding the source, never claim the provider generated the '
+                    'delivery dimensions. A collected production_segment is source media, not the complete film. '
+                    'Edit the real audiovisual clips, preserve original voices, add requested subtitles in '
+                    'post, and verify the full film. Put the actual edited/subtitled clip paths in series.json '
+                    'episodes[].timeline, its complete master path in episodes[].path, and the original '
+                    'workshopId in that episode. Call easel_workshop_delivery deliver to register '
+                    'the complete owned master. Include episodes[].production with script, assets and shots to preserve '
+                    'named character/scene/prop assets and stable shot IDs. Include episodes[].publication with '
+                    'platform,title,body,tags,aiGenerated:true to prepare the exact film and account for '
+                    'Workshop review; human approval there automatically publishes once. Do not bypass that '
+                    'review with a second easel_publish call. Never present a segment as the whole film. '
+                    'Legacy prepare with explicit model/aspectRatio/seconds/prompt remains for a single '
+                    'authorized clip only and cannot bypass any pending, declined or approved plan. '
+                    'Never use shell, scripts, external network or browser requests to replace this Host channel. '
+                    'A failed or unknown submission is not permission to buy another video. Query the original task. '
+                    'A from-scratch dynamic clip must use actual video generation, never static-image slides; '
+                    'video-production skills requiring an existing source film do not apply to a new idea. '
+                    'The final delivered workspacePath/path is a real file; call present with that path to obtain immutable '
+                    'artifactIds. A Workshop delivery ID is not a publication artifactId. For a Workshop film, '
+                    'continue its prepared Workshop publication and observe the same operation; never create '
+                    'a second publication for that film.')
             if request.model:
                 options["model"] = request.model
+            forked = False
             if thread_id and rpc.native_id == thread_id:
                 result = {"thread": {"id": thread_id}}
             elif thread_id:
-                result = await rpc.call("thread/resume", {**options, "threadId": thread_id})
+                try:
+                    result = await rpc.call("thread/resume", {**options, "threadId": thread_id})
+                except RpcRejected as error:
+                    if (error.method != "thread/resume" or error.active_writer_thread_id != request.native_id
+                            or request.rebind_active_writer is None):
+                        raise
+                    # Stored history and dynamic tools stay native-owned. Only
+                    # this exact refusal permits a single internal fork; the
+                    # Host session, actor/IP and paid budgets never change.
+                    result = await rpc.call("thread/fork", {**options, "threadId": thread_id,
+                        "excludeTurns": True, "deferGoalContinuation": True})
+                    inherited = result.get("thread") or {}
+                    new_id = inherited.get("id")
+                    if (not isinstance(new_id, str) or not new_id.strip() or len(new_id) > 256
+                            or re.search(r'[\x00-\x1f\x7f-\x9f]', new_id) or new_id == thread_id
+                            or inherited.get("forkedFromId") != thread_id):
+                        raise HarnessError("原生历史分叉来源未核实，未继续本轮")
+                    request.rebind_active_writer(thread_id, new_id)
+                    forked = True
             else:
                 tools = [EASEL_ASK_USER_TOOL]
                 if request.present is not None:
@@ -736,9 +908,11 @@ class CodexAdapter:
                     tools.append(EASEL_BUSINESS_OBJECTS_TOOL)
                 if request.workshop_delivery is not None:
                     tools.append(EASEL_WORKSHOP_DELIVERY_TOOL)
+                if request.video_generation is not None:
+                    tools.append(EASEL_VIDEO_GENERATION_TOOL)
                 result = await rpc.call("thread/start", {**options, "dynamicTools": tools})
             resumed_id = (result.get("thread") or {}).get("id", "")
-            if request.native_id and resumed_id != request.native_id:
+            if request.native_id and resumed_id != request.native_id and not forked:
                 raise HarnessError("Codex 返回了不同的原生会话 ID，不会替换已有历史")
             thread_id = resumed_id
             if not thread_id:

@@ -16,7 +16,7 @@ Don't use it to copy someone's actual creative — this extracts the *editing gr
 
 You cannot decompose an edit from a description of it. Get the frames and the timing:
 
-- **Transcript + frames** — get the transcript *and* frames sampled at the cut points, so you can read on-screen text, caption style, and shot changes. In Easel: `video-to-article`/`clipify` (ASR via `asr.py`) for the transcript, plus `skills/shared/scripts/video_ops.py frame` to grab stills at timestamps. This is the primary input.
+- **Transcript + frames** — get the transcript *and* frames sampled at the cut points, so you can read on-screen text, caption style, and shot changes. In Xiangya: `video-to-article`/`clipify` (ASR via `asr.py`) for the transcript, plus `skills/shared/scripts/video_ops.py frame` to grab stills at timestamps. This is the primary input.
 - **WebFetch** — pull the post for the caption, engagement, and the media URL when the reference is a specific tweet/Reel/TikTok.
 - Screenshots of key frames also work if the user supplies them — you need the visual, not just the words.
 

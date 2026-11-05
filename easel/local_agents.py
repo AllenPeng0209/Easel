@@ -1,10 +1,10 @@
-"""探测本机已装的 AI agent CLI，并把「能直接用」的那些接进 Easel。
+"""探测本机已装的 AI agent CLI，并把「能直接用」的那些接进 响芽。
 
-为什么需要：Easel 默认要求用户填一个 LLM API key。但本机常常已经装着 Claude Code、
+为什么需要：响芽 默认要求用户填一个 LLM API key。但本机常常已经装着 Claude Code、
 Gemini CLI、Codex、OpenCode 这类 agent CLI，它们自己维护着登录态 —— 这种情况用户
 完全不需要再配 key。
 
-OpenClaw（Easel 的底座）对其中两类有原生后端，会把 CLI 的登录态直接当成模型来源：
+OpenClaw（响芽 的底座）对其中两类有原生后端，会把 CLI 的登录态直接当成模型来源：
   * ``claude-cli``  ← Claude Code（anthropic 插件）
   * ``google-gemini-cli`` ← Gemini CLI（google 插件）
 其余 CLI（codex / opencode / qwen …）OpenClaw 目前没有内置 provider；探测出来是为了

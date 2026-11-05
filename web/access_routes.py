@@ -60,7 +60,7 @@ def _write_origin(request: Request):
     origin = request.headers.get("origin")
     expected = _origin_tuple(f"{request.url.scheme}://{request.url.netloc}")
     if origin is not None and (_origin_tuple(origin) is None or _origin_tuple(origin) != expected):
-        raise HTTPException(403, "请从当前 Easel 页面提交此操作")
+        raise HTTPException(403, "请从当前 响芽 页面提交此操作")
     if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
         raise HTTPException(403, "不允许跨站提交此操作")
 
@@ -72,7 +72,7 @@ def _local_setup(request: Request):
     except ValueError:
         local = False
     if not local:
-        raise HTTPException(403, "首次管理员初始化需要从服务器本机打开 Easel")
+        raise HTTPException(403, "首次管理员初始化需要从服务器本机打开 响芽")
 
 
 def _actor(request: Request, store: AccessStore, *, admin: bool = False) -> dict:

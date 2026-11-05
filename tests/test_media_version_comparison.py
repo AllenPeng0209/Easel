@@ -48,15 +48,15 @@ def test_video_metadata_joins_only_exact_adopted_workshop_hash_and_render_receip
     path.write_bytes(old_bytes)
     before = declare(artifact_http_environment, 'outputs/topic/clip.mp4', 'video-before')
     with actor_context(owner.get('/api/auth/me').json()), project_context('default', root):
-        workshop = WorkshopStore(web._outputs_dir(), strict_canvas_bindings=True)
-        project = workshop.create({'title': 'Recorded render'}, canvas_creator=lambda _: 'native-canvas')
+        workshop = WorkshopStore(web._outputs_dir())
+        project = workshop.create({'title': 'Recorded render'})
         project.update(revision=2, deliverables=[{
             'id': 'a' * 32, 'render_id': 'b' * 32, 'path': 'topic/clip.mp4',
-            'sha256': hashlib.sha256(old_bytes).hexdigest(), 'revision': 2, 'engine_revision': 5,
+            'sha256': hashlib.sha256(old_bytes).hexdigest(), 'revision': 2,
         }], renders=[{
             'id': 'b' * 32, 'task_id': 'c' * 32, 'artifact_id': 'a' * 32, 'collected_revision': 2,
-            'engine_revision': 5, 'content_revision': 1, 'status': 'succeeded',
-            'submission_state': 'confirmed', 'canvas_id': 'native-canvas',
+            'content_revision': 1, 'status': 'succeeded',
+            'submission_state': 'confirmed',
             'unverifiedPrompt': 'should never be exported',
         }])
         workshop._write(project)
@@ -66,8 +66,8 @@ def test_video_metadata_joins_only_exact_adopted_workshop_hash_and_render_receip
     assert response.status_code == 200, response.text
     result = response.json()
     assert result['before']['generation'] == {
-        'source': 'beeftv_workshop', 'workshopProjectId': project['id'], 'renderId': 'b' * 32,
-        'taskId': 'c' * 32, 'contentRevision': 1, 'engineRevision': 5,
+        'source': 'native_workshop', 'workshopProjectId': project['id'], 'renderId': 'b' * 32,
+        'taskId': 'c' * 32, 'contentRevision': 1,
     }
     assert result['after']['generation'] is None
     assert 'unverifiedPrompt' not in response.text

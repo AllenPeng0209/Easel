@@ -1,6 +1,6 @@
 # 文案框架库（公共源）
 
-> Easel 经典文案框架的**唯一定义源**（copywriting / post-formatter 共用），避免各处重复定义漂移。
+> 响芽 经典文案框架的**唯一定义源**（copywriting / post-formatter 共用），避免各处重复定义漂移。
 > 本文件只给**框架定义 + 选择规则**；各 SKILL 的应用层（copywriting 的文案类型结构模板、post-formatter 的帖子行数分配）留在各自 references 里。
 > 引用方式（CWD=项目根）：`skills/shared/references/copy-frameworks.md`。
 

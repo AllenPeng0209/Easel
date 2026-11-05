@@ -164,7 +164,7 @@ for (const persona of [undefined, '']) {
     assert.equal(ui.requests.length, 1);
     assert.equal(ui.requests[0][1], persona);
     assert.equal(ui.context.sessions[0].messages.length, 0);
-    ui.requests[0][19]();
+    ui.requests[0][18]();
     assert.equal(ui.context.sessions[0].messages[0].content, 'continue the draft');
     assert.notEqual(ui.requests[0][1], 'another-brand-persona');
   });
@@ -175,9 +175,9 @@ test('ordinary composer waits for matching admission before committing one echo'
   const send = ui.callback('handleSendMessage')('ordinary', 'wait for host', []);
   assert.equal(typeof send?.then, 'function');
   assert.equal(ui.context.sessions[0].messages.length, 0);
-  assert.equal(ui.requests[0][20], true);
-  ui.requests[0][19]();
-  ui.requests[0][19]();
+  assert.equal(ui.requests[0][19], true);
+  ui.requests[0][18]();
+  ui.requests[0][18]();
   assert.equal(await send, true);
   assert.equal(ui.context.sessions[0].messages.length, 1);
   assert.equal(ui.context.sessions[0].messages[0].content, 'wait for host');
@@ -207,7 +207,7 @@ test('uncertain send persists exact attachment and turn identity across refresh 
   const retry = refreshed.requests[0];
   assert.deepEqual(plain([retry[0], retry[1], retry[9], retry[12]]),
     plain([first[0], first[1], first[9], first[12]]));
-  retry[19]();
+  retry[18]();
   assert.equal(refreshed.context.sessions[0].messages[0].content, 'frozen text');
   assert.equal(refreshed.context.sessions[0].messages.length, 1);
 });
@@ -221,7 +221,7 @@ test('cold admitted echo does not resend an identical restored composer draft', 
   });
   restored.callback('resumePendingTurn')('s');
   assert.equal(restored.requests[0][10], true);
-  restored.requests[0][19]();
+  restored.requests[0][18]();
   assert.equal(restored.context.sessions[0].messages[0].content, 'already accepted');
   assert.equal(restored.callback('handleSendMessage')('s', 'already accepted', []), true);
   assert.equal(restored.requests.length, 1);
@@ -234,7 +234,7 @@ test('last-turn retry appends after admission and preserves the existing transcr
   ui.callback('handleResend')('s', 0);
   assert.deepEqual(plain(ui.context.sessions[0].messages), transcript);
   ui.context.sessions[0].messages.push({ role: 'assistant', content: 'newer tab reply' });
-  ui.requests[0][19]();
+  ui.requests[0][18]();
   assert.deepEqual(plain(ui.context.sessions[0].messages.map(item => item.content)),
     ['first', 'old reply', 'newer tab reply', 'first']);
 });
@@ -254,7 +254,7 @@ test('a background queued conversation preserves its own explicit persona', () =
   ui.effect('nextQueuedMessage')();
   assert.equal(ui.requests[0][1], 'education-brand');
   assert.equal(ui.context.sessions[0].messages.length, 0);
-  ui.requests[0][19]({ sessionId: 'education', turnId: 'queue-q1' });
+  ui.requests[0][18]({ sessionId: 'education', turnId: 'queue-q1' });
   assert.equal(ui.context.sessions[0].messages[0].content, 'write lesson one');
   assert.equal(ui.context.sessions[0].messages[0].clientTurnId, 'queue-q1');
 });
@@ -263,9 +263,9 @@ test('a queued model stays frozen after the next-turn preference changes', () =>
   const ui = appBoundary([{ id: 's', title: 'Draft', created: 1, messages: [], nextModel: 'new-selection',
     queued: [{ id: 'q1', text: 'queued task', modelOverride: 'old-selection', created: 2 }] }]);
   ui.effect('nextQueuedMessage')();
-  assert.equal(ui.requests[0][26], 'old-selection');
-  assert.equal(ui.requests[0][20], true);
-  ui.requests[0][19]({ sessionId: 's', turnId: 'queue-q1' });
+  assert.equal(ui.requests[0][25], 'old-selection');
+  assert.equal(ui.requests[0][19], true);
+  ui.requests[0][18]({ sessionId: 's', turnId: 'queue-q1' });
   assert.equal(ui.context.streams.s.requestedModel, 'old-selection');
   assert.equal(ui.context.sessions[0].nextModel, 'new-selection');
 });
@@ -286,8 +286,8 @@ test('the same persisted queue entry has one stable transport identity in two br
   assert.equal(first.context.sessions[0].pendingTurnId, 'queue-persisted-q7');
   assert.equal(first.context.sessions[0].queued[0].delivery, 'sending');
   assert.equal(first.context.sessions[0].messages.length, 0);
-  first.requests[0][19]();
-  first.requests[0][19]();
+  first.requests[0][18]();
+  first.requests[0][18]();
   assert.equal(first.context.sessions[0].queued.length, 0);
   assert.equal(first.context.sessions[0].messages.length, 1);
   assert.equal(first.context.sessions[0].messages[0].attachments[0].name, 'source.pdf');
@@ -424,33 +424,6 @@ test('fast server hydration waits for delayed tab ownership before restoring rem
   cleanup?.();
 });
 
-test('saved idea starts a conversation with the exact inspected snapshot and retries with the same reference', async () => {
-  const idea = { id: 'legacy-idea', title: '已保存的选题', snapshotHash: 'a'.repeat(64) };
-  const ui = appBoundary([], {
-    businessNavigation: { current: 0 },
-    setBusinessNotice() {}, setActiveSessionId() {}, setCurrentPage() {},
-    createSession: () => ({ id: 'topic-chat', title: 'New Chat', messages: [], created: 1 }),
-    fetchBusinessObject: async (kind, id) => {
-      assert.equal(kind, 'idea');
-      assert.equal(id, idea.id);
-      return idea;
-    },
-  });
-  await ui.callback('handleUseSavedIdea')(idea.id);
-  const ref = { id: idea.id, snapshotHash: idea.snapshotHash };
-  assert.deepEqual(plain(ui.requests[0][17]), ref);
-  ui.requests[0][19]();
-  assert.deepEqual(plain(ui.saved.at(-1)[0].messages[0].topicRef), ref);
-  assert.equal(ui.context.sessions[0].title, idea.title);
-
-  delete ui.context.sessions[0].pendingTurnId;
-  ui.context.sessionsRef.current = plain(ui.context.sessions);
-  ui.context.streamAcc.current = {};
-  ui.context.streamCtl.current = {};
-  ui.callback('handleResend')('topic-chat', 0, '重新起草');
-  assert.deepEqual(plain(ui.requests[1][17]), ref);
-});
-
 test('workshop handoff sends the selected delivery into its originating chat and keeps it on retry', () => {
   const reference = { id: 'a'.repeat(32), revision: 9, artifactId: 'b'.repeat(32), artifactSha256: 'c'.repeat(64) };
   const notices = [];
@@ -466,8 +439,8 @@ test('workshop handoff sends the selected delivery into its originating chat and
   delete ui.context.sessionsRef.current[0].pendingTurnId;
   handoff(reference, 'origin');
   assert.equal(ui.requests[0][2], 'origin');
-  assert.deepEqual(plain(ui.requests[0][18]), reference);
-  ui.requests[0][19]();
+  assert.deepEqual(plain(ui.requests[0][17]), reference);
+  ui.requests[0][18]();
   assert.deepEqual(plain(ui.saved.at(-1)[0].messages[0].workshopRef), reference);
   assert.deepEqual(plain(ui.saved.at(-1)[1].messages), []);
 
@@ -476,7 +449,7 @@ test('workshop handoff sends the selected delivery into its originating chat and
   ui.context.streamAcc.current = {};
   ui.context.streamCtl.current = {};
   ui.callback('handleResend')('origin', 0, '核对这个版本');
-  assert.deepEqual(plain(ui.requests[1][18]), reference);
+  assert.deepEqual(plain(ui.requests[1][17]), reference);
 });
 
 test('completed results outside the visible chat persist unread without mislabeling failures', () => {
@@ -598,11 +571,11 @@ test('inline references rebase through trimming and persist with the matching us
     [{ start, end: start + 6, attachmentId: 'one' }]);
   const payload = ui.requests[0];
   assert.equal(payload[0], '🖼 @a.txt');
-  assert.deepEqual(plain(payload[21]), [{ start: 3, end: 9, attachmentId: 'one' }]);
+  assert.deepEqual(plain(payload[20]), [{ start: 3, end: 9, attachmentId: 'one' }]);
   assert.equal(ui.context.sessions[0].messages.length, 0);
-  payload[19]();
+  payload[18]();
   assert.equal(await sent, true);
-  assert.deepEqual(plain(ui.context.sessions[0].messages[0].references), plain(payload[21]));
+  assert.deepEqual(plain(ui.context.sessions[0].messages[0].references), plain(payload[20]));
 });
 
 test('mixed draft sends rebased session references without trusting the local label', async () => {
@@ -615,9 +588,9 @@ test('mixed draft sends rebased session references without trusting the local la
   const payload = ui.requests[0];
   assert.equal(payload[0], '🖼 @研究记录');
   const expected = [{ start: 3, end: 8, sessionId: 'source', snapshotHash: 'a'.repeat(64) }];
-  assert.deepEqual(plain(payload[22]), expected);
+  assert.deepEqual(plain(payload[21]), expected);
   assert.equal(ui.context.sessions[0].messages.length, 0);
-  payload[19]();
+  payload[18]();
   assert.equal(await sent, true);
   assert.deepEqual(plain(ui.context.sessions[0].messages[0].sessionReferences), expected);
 });
@@ -628,26 +601,26 @@ test('an explicit command claim follows the accepted turn and ordinary text stay
   const sent = ui.callback('handleSendMessage')('target', '/文案 教育', [], undefined, undefined, command);
   const payload = ui.requests[0];
   assert.equal(payload[0], '/文案 教育');
-  assert.deepEqual(plain(payload[23]), command);
-  payload[19]();
+  assert.deepEqual(plain(payload[22]), command);
+  payload[18]();
   assert.equal(await sent, true);
   assert.deepEqual(plain(ui.context.sessions[0].messages[0].command), command);
   const plainSend = appBoundary([{ id: 'plain', title: 'Chat', created: 1, messages: [] }]);
   plainSend.callback('handleSendMessage')('plain', '/文案 教育');
-  assert.equal(plainSend.requests[0][23], undefined);
+  assert.equal(plainSend.requests[0][22], undefined);
 });
 
 test('live answer receipt updates only the exact active turn and does not finish it', () => {
   const ui = appBoundary([{ id: 's', title: 'Answer', created: 1, messages: [] }]);
   ui.callback('handleSendMessage')('s', 'model answer', []);
   const request = ui.requests[0];
-  request[19]();
-  request[24]({ itemId: 'answer-one' });
+  request[18]();
+  request[23]({ itemId: 'answer-one' });
   assert.equal(ui.context.streams.s.answerCompletion.itemId, 'answer-one');
   assert.ok(ui.context.streamAcc.current.s);
   assert.equal(ui.context.sessions[0].messages.filter(row => row.role === 'assistant').length, 0);
   ui.context.streamAcc.current.s = { turnId: 'next-turn' };
-  request[24]({ itemId: 'late-answer' });
+  request[23]({ itemId: 'late-answer' });
   assert.equal(ui.context.streams.s.answerCompletion.itemId, 'answer-one');
   assert.equal(ui.context.streamAcc.current.s.answerCompletion, undefined);
 });
@@ -686,7 +659,7 @@ test('unsafe failed or unconfirmed turns cannot be replayed, and a safe retry re
   const ui = create('failed', true);
   ui.callback('handleResend')('s', 0, 'original');
   assert.equal(ui.requests.length, 1);
-  ui.requests[0][19]();
+  ui.requests[0][18]();
   assert.deepEqual(plain(ui.context.sessions[0].messages.map(row => row.role)), ['user', 'assistant', 'user']);
   assert.equal(ui.context.sessions[0].messages[1].failure.code, 'network');
 });

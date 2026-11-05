@@ -165,11 +165,11 @@ def _browser_error(error: Exception) -> str:
     if "executable doesn't exist" in detail:
         return "未安装登录浏览器，请运行 playwright install chromium 后重试"
     if "display" in detail or "xserver" in detail:
-        return "海外平台登录需要桌面浏览器，请在运行 Easel 的电脑上启用图形桌面后重试"
+        return "海外平台登录需要桌面浏览器，请在运行 响芽 的电脑上启用图形桌面后重试"
     if "singleton" in detail or "processsingleton" in detail:
         return "该账号浏览器正在使用中，请关闭已有窗口后重试"
     if any(marker in detail for marker in ("net::", "timeout", "proxy", "connection")):
-        return "无法连接平台，请检查运行 Easel 的电脑是否可访问海外网站及代理设置后重试"
+        return "无法连接平台，请检查运行 响芽 的电脑是否可访问海外网站及代理设置后重试"
     return "平台登录浏览器未能完成操作，请关闭窗口后重试"
 
 

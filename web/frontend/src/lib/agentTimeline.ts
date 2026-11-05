@@ -14,7 +14,7 @@ export interface AgentTimelineObservation {
   questionId?: string;
   name?: string;
   status?: string;
-  resolvedBy?: 'human' | 'default' | 'timeout';
+  resolvedBy?: 'human' | 'default' | 'timeout' | 'publication_host';
   observedAt?: number;
   earlierObservationsOmitted?: true;
 }
@@ -59,7 +59,7 @@ export function observeAgentTimeline(previous: AgentTimelineObservation[], value
     ...(questionId ? { questionId } : {}),
     ...(name ? { name } : {}),
     ...(status ? { status } : {}),
-    ...(source === 'human' || source === 'default' || source === 'timeout' ? { resolvedBy: source } : {}),
+    ...(source === 'human' || source === 'default' || source === 'timeout' || source === 'publication_host' ? { resolvedBy: source } : {}),
     ...(typeof time === 'number' && Number.isSafeInteger(time) && time >= 0 ? { observedAt: time } : {}),
   });
 }

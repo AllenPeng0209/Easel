@@ -3,7 +3,7 @@
  * Adapted from packages/client/ui-subagent/src/client/SubagentHeaderLineage.tsx,
  * sidebar-chat/index.tsx and SubagentReadOnlyComposer.tsx at
  * ce7073d51254c26cd63b22a60835b8f948deb447.
- * Easel binds the lineage catalog and abortable child conversation to a scoped
+ * 响芽 binds the lineage catalog and abortable child conversation to a scoped
  * read-only Host route and reuses the shared DisclosureRow primitive.
  */
 import { useEffect, useState } from 'react';

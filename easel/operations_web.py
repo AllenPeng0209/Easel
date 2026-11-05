@@ -1,4 +1,4 @@
-"""Project-scoped in-process API and UI for Easel's embedded social engine."""
+"""Project-scoped in-process API and UI for Xiangya's embedded social engine."""
 
 from __future__ import annotations
 

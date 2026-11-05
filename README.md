@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <img src="assets/readme/brand.png#gh-light-mode-only" width="640" alt="Easel">
-  <img src="assets/readme/brand-dark.png#gh-dark-mode-only" width="640" alt="Easel">
+  <img src="assets/readme/xiangya-brand.svg#gh-light-mode-only" width="640" alt="Xiangya">
+  <img src="assets/readme/xiangya-brand-dark.svg#gh-dark-mode-only" width="640" alt="Xiangya">
   <br>
   <img src="assets/readme/logos/real_lab_horizontal_readme.png" width="74" alt="REAL Lab">&thinsp;&thinsp;<img src="assets/readme/logos/opendcai_lab_horizontal_readme.png#gh-light-mode-only" width="83" alt="OpenDCAI Lab"><img src="assets/readme/logos/opendcai_lab_horizontal_readme_dark.png#gh-dark-mode-only" width="83" alt="OpenDCAI Lab">
 </p>
@@ -18,12 +18,12 @@
 </p>
 
 <p align="center">
-  你的私人、持续进化的社媒运营助手<br>
+  <strong>响芽 Xiangya · AI 自媒体自动化运营平台</strong><br>
   从一个想法开始，完成发现、策划、创作、发布与复盘。
 </p>
 
 <p align="center">
-  <a href="https://zju-real.github.io/Easel/"><img src="https://img.shields.io/badge/Easel-Project_Page-F05A3C?style=flat-square&logo=googlechrome&logoColor=white" alt="Easel Project Page"></a>
+  <a href="https://zju-real.github.io/Easel/"><img src="https://img.shields.io/badge/Xiangya-Project_Page-F05A3C?style=flat-square&logo=googlechrome&logoColor=white" alt="Xiangya Project Page"></a>
   <img src="https://img.shields.io/badge/OpenClaw-powered-111827?style=flat-square" alt="Powered by OpenClaw">
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+">
   <a href="docs/skill-function-mapping.md"><img src="https://img.shields.io/badge/Skills-113-0F9D8A?style=flat-square" alt="113 Skills"></a>
@@ -37,30 +37,32 @@
   <a href="https://trendshift.io/repositories/195527?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-195527" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/195527/daily?language=Python" alt="ZJU-REAL%2FEasel | Trendshift" width="250" height="55"/></a> <a href="https://trendshift.io/repositories/195527?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-195527" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/195527/weekly?language=Python" alt="ZJU-REAL%2FEasel | Trendshift" width="250" height="55"/></a>
 </p>
 
-![Easel 产品宣传海报](assets/readme/poster.png)
+**响芽 Xiangya：让内容发声，让账号生长。**
 
-## 🎨 Easel 是什么
+## 🎨 响芽是什么
 
-Easel 是一个面向社交媒体创作者的开源内容工作台。它把 OpenClaw Agent、账号画像、内容技能和真实的媒体工具接在一起，让 Agent 不只回答“应该怎么做”，而是直接把内容做出来并归档，且可实现直接/按需发布。
+中文品牌名为 **响芽**，英文名为 **Xiangya**。命令入口为 `xiangya`，也可运行 `python -m xiangya`。原有配置与数据沿用，详见[品牌与兼容约定](docs/branding.md)。
 
-你可以把它理解成一个会记住你的内容搭档：它了解账号定位、受众、风格、平台限制和历史表现，从热点发现一直陪你做到发布，再把结果带回下一次创作。
+响芽 是一个面向社交媒体创作者的开源内容工作台。它把 OpenClaw Agent、账号画像、内容技能和真实的媒体工具接在一起，让 Agent 不只回答“应该怎么做”，而是直接把内容做出来并归档，且可实现直接/按需发布。
 
-Easel 宣传演示：
+你可以把它理解成一个会记住你的内容搭档：它了解账号定位、受众、风格、平台限制和历史表现，从对话交办一直陪你做到发布，再把结果带回下一次创作。
+
+响芽 宣传演示：
 
 https://github.com/user-attachments/assets/4dd060dc-53dd-4bb2-99a3-e65ab6f65166
 
-Easel 围绕五个连续工作流展开：**发现**适合账号的热点与机会，**策划**选题、标题、脚本和排期，
+响芽 围绕五个连续工作流展开：**发现**相关资讯与机会，**策划**标题、脚本和排期，
 **创作**图文、音频与视频内容，**发布**经过检查和平台适配的成品直接到对应平台，再通过**归因**分析表现并把有效经验沉淀回账号画像。
 
 #### 📌 使用提示与研究愿景
 
 > - **推荐使用 Web 前端**：前端提供完整的会话、素材、账号、画像、内容库和发布管理能力，体验和功能比单独使用 CLI 更全面，也是我们推荐的使用方式；部分终端专有的显示问题见[已知问题](docs/known-issues.md)。
 > - **谨慎自动发布到小红书**：小红书平台可能检测自动化操作，存在验证、限流或账号风控风险；建议使用预览与发布前检查，并由用户确认后手动发布，其他平台正常。
-> - **从研究走向真实生活**：Easel 是我们将研究成果应用到真实社媒创作场景的一次实践。后续我们会继续研究 AI 在社媒场景中的社交智能，让 Agent 更好地理解创作者、受众与真实互动。
+> - **从研究走向真实生活**：响芽 是我们将研究成果应用到真实社媒创作场景的一次实践。后续我们会继续研究 AI 在社媒场景中的社交智能，让 Agent 更好地理解创作者、受众与真实互动。
 
-## ✨ 为什么是 Easel
+## ✨ 为什么是 响芽
 
-- **一个 Agent 贯穿完整链路**：发现热点、评估选题、规划日历、生成文案与视觉、制作视频、发布和归因在同一个工作流中完成。
+- **一个 Agent 贯穿完整链路**：读取资料、规划日历、生成文案与视觉、制作视频、审核发布和归因在同一个工作流中完成。
 - **画像驱动，而不是一次性生成**：每个账号有独立的定位、风格、受众、平台、偏好和记忆，输出会越来越贴合真实账号。
 - **技能是真执行，不是功能清单**：图片、卡片、配音、字幕、剪辑、短剧和发布技能都配有可运行脚本，成品写入 `outputs/`。
 - **一份素材，多种平台形态**：同一主题可以改写成小红书卡片、短视频、知乎长文或短帖，并遵循不同平台的格式和字数要求。
@@ -70,8 +72,8 @@ Easel 围绕五个连续工作流展开：**发现**适合账号的热点与机�
 
 ## 🧭 五层内容工作流
 
-1. **发现**：聚合热榜、行业新闻、竞品动态和用户讨论，筛选真正适合账号的机会。
-2. **策划**：把机会变成选题、标题、脚本和内容矩阵，写入内容日历。
+1. **发现**：读取行业新闻、竞品动态和用户讨论，筛选真正适合账号的机会。
+2. **策划**：把创作要求变成标题、脚本和制作方案，写入内容日历。
 3. **创作**：生成文案、卡片、海报、信息图、音频、视频、短剧和论文解读等可发布素材。
 4. **发布**：按平台适配标题、正文、画幅和媒体要求，执行发布前检查并发送到已登录账号。
 5. **归因**：读取播放、互动、评论和内容表现，把有效结构和偏好沉淀回账号画像。
@@ -80,15 +82,15 @@ Easel 围绕五个连续工作流展开：**发现**适合账号的热点与机�
 
 | 能力层 | 已实现功能 |
 |---|---|
-| **发现** | 全网热搜聚合、垂类趋势研究、内容缺口分析、节日与事件日历、平台算法动态、竞品分析、行业资讯、跨平台差异、RSS 聚合、UGC 发现 |
-| **策划** | 账号定位分析、受众画像、人设与声音构建、账号诊断、选题矩阵、选题评分、热点结合、系列内容规划、标题与 Hook、文章大纲、分镜脚本、内容日历、跨平台复用、直播策划、营销活动与商单方案 |
+| **发现** | 垂类研究、节日与事件日历、平台算法动态、竞品分析、行业资讯、跨平台差异、RSS 聚合、UGC 发现 |
+| **策划** | 账号定位分析、受众画像、人设与声音构建、账号诊断、系列内容规划、标题与 Hook、文章大纲、分镜脚本、内容日历、跨平台复用、直播策划、营销活动与商单方案 |
 | **文字与视觉** | 社媒文案、短视频与中长视频脚本、小红书笔记、长文、小说、去 AI 感改写、风格迁移、论文解读、金句卡、小红书知识卡、海报、信息图、数据图表、思维导图、对比图、电商详情图、Meme、AI 生图、图片增强、去背景与批处理 |
 | **音频与视频** | 文字转语音、多角色配音、声音克隆、AI 音乐、降噪、混音、语音转文字、音频可视化、AI 视频、AI 短剧、字幕与翻译、视频剪辑、长视频切片、直播高光、横竖版转换、片头片尾、相册视频、音乐卡点、绿幕换背景、视频转图文与章节目录 |
 | **发布与归因** | 发布质量门禁、敏感与版权风险检查、平台搜索优化、发布 Checklist、多平台格式适配；小红书、抖音、快手、知乎、B 站、微信视频号、微信公众号、推特 X、掘金、今日头条登录与发布；内容日历回写、账号数据、评论洞察（掘金走公开 JSON 接口、X 走网页 DOM 采集）、内容复盘、ROI 与画像记忆 |
 
 ## 🖥️ 工作台功能示例
 
-下面只展示 Easel 工作台中的四个代表性功能，并不是完整功能清单。更多发现、策划、创作、发布和归因能力，
+下面只展示 响芽 工作台中的四个代表性功能，并不是完整功能清单。更多发现、策划、创作、发布和归因能力，
 可以在工作台的技能库或[能力地图](docs/skill-function-mapping.md)中查看。
 
 <table>
@@ -96,31 +98,31 @@ Easel 围绕五个连续工作流展开：**发现**适合账号的热点与机�
     <td width="50%" valign="top">
       <strong>🧬 账号画像</strong><br>
       <sub>通过基础信息、社媒链接、运营意图和偏好红线建立账号上下文；一份画像可以跨多个平台和会话持续使用。</sub><br><br>
-      <img src="assets/readme/features/profile.png" width="100%" alt="Easel 账号画像配置">
+      <img src="assets/readme/features/profile.png" width="100%" alt="响芽 账号画像配置">
     </td>
     <td width="50%" valign="top">
-      <strong>🔥 热点雷达</strong><br>
-      <sub>聚合现有平台热榜，并通过标准协议接入你自己的 Python 采集脚本、HTTP 服务或 RSS/Atom 订阅，从更多来源寻找适合账号的选题。</sub><br><br>
-      <img src="assets/readme/features/discover.png" width="100%" alt="Easel 多平台热点雷达">
+      <strong>🎬 视频工坊</strong><br>
+      <sub>在 AI 对话中交办制作，生成后自动进入火宝原版工作台，管理资产、分镜与镜头返工，审核成片后自动发布。</sub><br><br>
+      <a href="docs/video-workshop-usage.md">查看视频工坊流程</a>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <strong>📅 内容日历</strong><br>
-      <sub>统一管理选题、草稿、待发、已发和平台活动，结合节日节点规划内容，并记录每一天的发布安排。</sub><br><br>
-      <img src="assets/readme/features/calendar.png" width="100%" alt="Easel 内容日历">
+      <sub>统一管理草稿、待发、已发和平台活动，结合节日节点规划内容，并记录每一天的发布安排。</sub><br><br>
+      <img src="assets/readme/features/calendar.png" width="100%" alt="响芽 内容日历">
     </td>
     <td width="50%" valign="top">
       <strong>📣 发布中心</strong><br>
       <sub>从一份母版内容生成多平台版本，集中完成格式适配、媒体附件、发布前检查、预览和真实发布。</sub><br><br>
-      <img src="assets/readme/features/publish.png" width="100%" alt="Easel 多平台发布中心">
+      <img src="assets/readme/features/publish.png" width="100%" alt="响芽 多平台发布中心">
     </td>
   </tr>
 </table>
 
 ## 🖼️ 真实产物
 
-这些文件来自 Easel 的实际工作流，主页中也有同一批案例的分类展示。
+这些文件来自 响芽 的实际工作流，主页中也有同一批案例的分类展示。
 README 的品牌图、海报、案例图片和视频统一保存在 `assets/readme/`；产品主页使用独立的
 `web/static/showcase/` 素材，其中视频保持为 6 秒轻量预览。
 
@@ -205,16 +207,16 @@ README 的品牌图、海报、案例图片和视频统一保存在 `assets/read
 环境要求：Linux、macOS 或 Windows 10/11、Python 3.10 及以上、Python `venv` 模块和 `git`。安装向导会检查 Node.js 24.16+（24.x）、26.1+（26.x）或 27+（25.x 与 26.0 不兼容）、FFmpeg、Playwright/Chromium；缺少 Node.js 时会按系统给出安装引导。
 
 ```bash
-git clone https://github.com/ZJU-REAL/Easel.git
-cd Easel
+git clone https://github.com/ZJU-REAL/Easel.git Xiangya
+cd Xiangya
 bash setup.sh
 ```
 
 Windows 原生安装请在 PowerShell 中执行（不需要 WSL）：
 
 ```powershell
-git clone https://github.com/ZJU-REAL/Easel.git
-cd Easel
+git clone https://github.com/ZJU-REAL/Easel.git Xiangya
+cd Xiangya
 Set-ExecutionPolicy -Scope Process Bypass
 .\setup.ps1
 ```
@@ -223,7 +225,7 @@ Windows 安装器会优先通过 `winget` 自动安装缺失的 Python 3.10+、N
 
 安装器支持 Windows 自带的 PowerShell 5.1，安装后可直接运行 `.venv\Scripts\easel.exe web` 启动工作台。原生安装与 Web/CLI 入口已经提供；各技能及浏览器发布的 Windows 全链路兼容仍在持续完善。
 
-`bash setup.sh` 是可重复运行的引导式安装器，直接执行即可，不需要先手动安装 Easel 依赖。安装过程中会：
+`bash setup.sh` 是可重复运行的引导式安装器，直接执行即可，不需要先手动安装 响芽 依赖。安装过程中会：
 
 1. 检查 Python、Python `venv`、Node.js 和 Git；FFmpeg 缺失时会尝试通过系统包管理器安装，装不上只会降级提示（视频/音频类技能不可用），不再中断安装。
 2. 询问是否创建或复用项目虚拟环境 `.venv/`；默认选择 `Y`。如果系统缺少 `venv`，会提示安装对应系统包（例如 Debian/Ubuntu 的 `python3-venv`）。
@@ -231,26 +233,26 @@ Windows 安装器会优先通过 `winget` 自动安装缺失的 Python 3.10+、N
 4. 安装 Python、Web、媒体和浏览器发布依赖，构建 React Web 工作台并安装 Chromium。Python 依赖与前端构建失败会停止；Chromium 下载失败只降级提示（浏览器登录/发布不可用）。
 5. 同步 skills、校验 OpenClaw 配置并启动 gateway。
 
-**模型 API Key 在浏览器里配，安装器不再在终端询问。** 装完运行 `easel web`，首次打开会直接停在「设置 → 模型配置」，填入 Key 保存即可 —— Easel 会自动写好 OpenClaw 配置并重启 gateway，不需要再跑一遍 `setup.sh`。相比终端向导，这里还能拉取可用模型列表、做连通性自测。也可以直接编辑 `.env` 填好 Key，再运行 `easel doctor` 复检。
+**模型 API Key 在浏览器里配，安装器不再在终端询问。** 装完运行 `xiangya web`，首次打开会直接停在「设置 → 模型配置」，填入 Key 保存即可 —— 响芽 会自动写好 OpenClaw 配置并重启 gateway，不需要再跑一遍 `setup.sh`。相比终端向导，这里还能拉取可用模型列表、做连通性自测。也可以直接编辑 `.env` 填好 Key，再运行 `xiangya doctor` 复检。
 
-安装器全程非交互（只有「是否创建 `.venv`」一问，非交互环境下按默认值），适合 CI 与自动化。非致命问题（FFmpeg、Chromium、gateway 启动、模型未配置等）会收集起来在结尾汇总，并写入 `outputs/_install/last-install.json` 供 `easel doctor` 复述，安装本身仍以 0 退出。若希望这些问题直接让安装失败，设 `EASEL_SETUP_STRICT=1`。
+安装器全程非交互（只有「是否创建 `.venv`」一问，非交互环境下按默认值），适合 CI 与自动化。非致命问题（FFmpeg、Chromium、gateway 启动、模型未配置等）会收集起来在结尾汇总，并写入 `outputs/_install/last-install.json` 供 `xiangya doctor` 复述，安装本身仍以 0 退出。若希望这些问题直接让安装失败，设 `EASEL_SETUP_STRICT=1`。
 
 安装完成后，`easel` 命令安装在项目的 `.venv` 中。先激活虚拟环境再运行（每次新开终端都要先激活）：
 
 ```bash
 source .venv/bin/activate    # 激活后 easel 命令才可用（Windows：.venv\Scripts\activate）
-easel doctor                 # 检查运行环境
-easel ping                   # 实际测试 gateway 和 Agent
-easel web                    # 启动 Web 工作台
-# 或：easel chat              # 启动终端对话
+xiangya doctor                 # 检查运行环境
+xiangya ping                   # 实际测试 gateway 和 Agent
+xiangya web                    # 启动 Web 工作台
+# 或：xiangya chat              # 启动终端对话
 ```
 
-> 如果提示 `easel: command not found`，就是虚拟环境没激活。也可以不激活、直接用完整路径运行，例如 `.venv/bin/easel doctor`（Windows：`.venv\Scripts\easel.exe doctor`）。
+> 如果提示 `easel: command not found`，就是虚拟环境没激活。也可以不激活、直接用完整路径运行，例如 `.venv/bin/xiangya doctor`（Windows：`.venv\Scripts\easel.exe doctor`）。
 
-启动 Web 工作台后访问 `http://localhost:7860`。安装完成后可以运行 `easel doctor` 检查环境，
-运行 `easel ping` 检查 gateway 和 Agent 连通性。
+启动 Web 工作台后访问 `http://localhost:7860`。安装完成后可以运行 `xiangya doctor` 检查环境，
+运行 `xiangya ping` 检查 gateway 和 Agent 连通性。
 
-如果 Easel 运行在 VSCode Remote SSH 连接的服务器上，需要在 VSCode 的“端口”面板
+如果 响芽 运行在 VSCode Remote SSH 连接的服务器上，需要在 VSCode 的“端口”面板
 转发服务器端口 `7860`，再打开面板显示的本地转发地址（本地端口可能不同）。
 服务器的 `localhost` 不是你电脑的 `localhost`；不要为了访问而把无认证的工作台暴露到公网。
 
@@ -281,7 +283,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o
 ```
 
-如果聊天 API 不提供向量模型，请单独配置 Embedding API；否则 OpenClaw 会默认请求 `text-embedding-3-small`，可能得到“模型不可用”。不配置独立向量 API 时，Easel 会显式使用关键词记忆检索，不会反复请求聊天端点的 embedding 模型：
+如果聊天 API 不提供向量模型，请单独配置 Embedding API；否则 OpenClaw 会默认请求 `text-embedding-3-small`，可能得到“模型不可用”。不配置独立向量 API 时，响芽 会显式使用关键词记忆检索，不会反复请求聊天端点的 embedding 模型：
 
 ```dotenv
 EASEL_EMBEDDING_API_KEY=你的向量_API_Key
@@ -303,8 +305,8 @@ EASEL_LLM_BASE_URL=https://你的服务地址/v1
 CLAUDE_MODEL=你的模型名
 ```
 
-安装器会把这些标准配置同步到 OpenClaw。OpenClaw 支持但 Easel 没有预设环境变量映射的其他 provider，
-可以按 OpenClaw 自身的 provider/auth 配置方式配置；Easel 不会覆盖这些自定义配置。
+安装器会把这些标准配置同步到 OpenClaw。OpenClaw 支持但 响芽 没有预设环境变量映射的其他 provider，
+可以按 OpenClaw 自身的 provider/auth 配置方式配置；响芽 不会覆盖这些自定义配置。
 
 在 Web 设置的聊天通道中，自定义供应商可勾选“该模型会思考”，保存后会写入模型的
 `reasoning: true`。OpenAI 兼容协议还可选择思考格式（OpenAI、DeepSeek 等），需与上游
@@ -330,7 +332,7 @@ API 直连模式不提供此 OpenClaw 专用开关。
 | 图片与音视频处理 | 无额外模型时也可使用本地工具 | FFmpeg |
 | 浏览器发布 | 在 Web“账号”页面登录目标平台 | Playwright Chromium、有效平台账号 |
 
-## 🧩 使用 Easel
+## 🧩 使用 响芽
 
 发布中心提供“自动发布 / 人工审核发布”两条可选路径，默认保留原有自动发布流程。人工路径采用“AI 排版 → 人工审核 → 复制/导出 → 官方发布页亲自提交”，修改稿件或素材后需重新审核，导出和排期不等于已发布；公众号支持富文本复制和 HTML 预览。页面切换不更改全局发布权限；如需在 Web 后端禁用自动提交，可配置 `EASEL_PUBLISH_MODE=manual`。配置边界、登录状态和导出说明见[人工发布工作流](docs/manual-publishing.md)。
 
@@ -338,19 +340,19 @@ API 直连模式不提供此 OpenClaw 专用开关。
 
 | 命令 | 作用 |
 |---|---|
-| `easel web [--port 7860]` | 启动 Web 工作台 |
-| `easel chat` | 在终端开启多轮对话并选择账号画像 |
-| `easel skill <name> -i "..." [-p <画像>]` | 直接运行指定 Skill；输入也可以是文件路径 |
-| `easel doctor` | 检查 Python、Node.js、OpenClaw 和关键配置 |
-| `easel ping` | 检查 gateway 与 Agent 连通性 |
-| `easel gateway start\|stop\|restart\|status\|logs` | 管理 OpenClaw gateway |
+| `xiangya web [--port 7860]` | 启动 Web 工作台 |
+| `xiangya chat` | 在终端开启多轮对话并选择账号画像 |
+| `xiangya skill <name> -i "..." [-p <画像>]` | 直接运行指定 Skill；输入也可以是文件路径 |
+| `xiangya doctor` | 检查 Python、Node.js、OpenClaw 和关键配置 |
+| `xiangya ping` | 检查 gateway 与 Agent 连通性 |
+| `xiangya gateway start\|stop\|restart\|status\|logs` | 管理 OpenClaw gateway |
 
-所有技能都通过 Easel 的 Agent 执行。Agent 会读取对应 `SKILL.md`，调用脚本和工具，并把产物保存到 `outputs/`。
+所有技能都通过 响芽 的 Agent 执行。Agent 会读取对应 `SKILL.md`，调用脚本和工具，并把产物保存到 `outputs/`。
 
 ```bash
-easel skill quality-gate -i "帮我检查这条小红书文案"
-easel skill social-content -i "写一条介绍空间智能的微博"
-easel skill quality-gate -i "这是一段待发布文案" -p 科技数码达人
+xiangya skill quality-gate -i "帮我检查这条小红书文案"
+xiangya skill social-content -i "写一条介绍空间智能的微博"
+xiangya skill quality-gate -i "这是一段待发布文案" -p 科技数码达人
 ```
 
 Web 工作台提供同样的能力，并额外管理会话、素材、账号、画像、内容库和发布状态。拖入对话框的素材会作为结构化附件传给 Agent，用户消息只显示实际输入的文字。
@@ -368,7 +370,7 @@ cp -r profiles/_template "profiles/我的账号"
 ## 🏗️ 项目结构
 
 ```text
-Easel/
+Xiangya/
 ├── easel/                    Python CLI：chat / web / skill / doctor / ping
 ├── web/                      FastAPI 后端与 React 工作台
 ├── skills/builtin/           发现、策划、制作、发布、归因技能
@@ -380,11 +382,11 @@ Easel/
 └── docs/                     能力规范、能力地图与架构文档
 ```
 
-Easel 使用独立的 `easel` OpenClaw profile，不会覆盖你本机已有的 OpenClaw 配置。Web 默认运行在 `7860`；gateway 端口由 OpenClaw 决定（非默认 profile 会分配哈希端口，如 `easel` → `37289`，不是 `18789`），Easel 会自动解析，无需手配。
+响芽 使用独立的 `easel` OpenClaw profile，不会覆盖你本机已有的 OpenClaw 配置。Web 默认运行在 `7860`；gateway 端口由 OpenClaw 决定（非默认 profile 会分配哈希端口，如 `easel` → `37289`，不是 `18789`），响芽 会自动解析，无需手配。
 
 ## 📑 文档
 
-- [热点数据源接入：Python 脚本 / HTTP 服务 / RSS 订阅](docs/trend-collectors.md)
+- [独立数据采集库：Python 脚本 / HTTP 服务 / RSS 订阅](docs/trend-collectors.md)
 - [渠道平台接入指南](docs/channel-platforms.md)
 - [能力地图](docs/skill-function-mapping.md)
 - [SKILL 接口规范](docs/SKILL-SPEC.md)
@@ -404,15 +406,15 @@ Easel 使用独立的 `easel` OpenClaw profile，不会覆盖你本机已有的 
 
 ## 🙏 致谢
 
-Easel 的技能体系和工作流受益于许多优秀的开源项目、工具与内容方法论。感谢所有原作者和社区贡献者；
+响芽 的技能体系和工作流受益于许多优秀的开源项目、工具与内容方法论。感谢所有原作者和社区贡献者；
 具体项目、用途和许可信息请查看[完整致谢](docs/ACKNOWLEDGMENTS.md)。
 
 欢迎参与贡献与讨论。有想法、问题或改进建议，欢迎提交 Issue 或 PR；也欢迎扫码加入我们的微信交流群：
 
 <p align="center">
-  <img src="assets/readme/wechat-group.png" width="240" alt="Easel 微信交流群二维码">
+  <img src="assets/readme/wechat-group.png" width="240" alt="响芽 微信交流群二维码">
 </p>
-<p align="center"><sub>Easel 交流群 · 二维码定期更新，若已失效请通过 Issue 联系我们</sub></p>
+<p align="center"><sub>响芽 交流群 · 二维码定期更新，若已失效请通过 Issue 联系我们</sub></p>
 
 ### 🤝 Contributors
 
@@ -436,6 +438,6 @@ Easel 的技能体系和工作流受益于许多优秀的开源项目、工具�
 
 <p align="center">
   <a href="https://star-history.com/#ZJU-REAL/Easel&Date">
-    <img src="https://api.star-history.com/svg?repos=ZJU-REAL/Easel&type=Date" width="720" alt="Easel Star History Chart">
+    <img src="https://api.star-history.com/svg?repos=ZJU-REAL/Easel&type=Date" width="720" alt="Xiangya Star History Chart">
   </a>
 </p>

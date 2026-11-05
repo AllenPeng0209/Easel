@@ -176,7 +176,7 @@ export default function ManualPublishPage({ persona }: { persona: string }) {
       <h1 className="page-title"><IconPublish size={21} /> 发布中心 · 人工发布</h1>
       <p className="page-subtitle">AI 排版 → 人工审核 → 复制 / 导出 → 在官方发布页亲自提交。</p>
       <div className="panel" style={{ marginBottom: 16, fontSize: 13 }}>
-        <strong>最终提交由你完成。</strong> 本页不自动登录、上传或点击发布。官方页面的登录与 Easel 账号页相互独立。
+        <strong>最终提交由你完成。</strong> 本页不自动登录、上传或点击发布。官方页面的登录与 响芽 账号页相互独立。
       </div>
       <label className="field-label" htmlFor="manual-title">标题</label>
       <input id="manual-title" className="field" value={title} placeholder="请输入标题" onChange={(e) => setTitle(e.target.value)} />

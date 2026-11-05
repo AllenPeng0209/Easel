@@ -1,6 +1,6 @@
 # 上下文预算诊断
 
-`easel doctor` 会读一遍 OpenClaw 已保存的配置，把**声明的上下文窗口**和它隐含的
+`xiangya doctor` 会读一遍 OpenClaw 已保存的配置，把**声明的上下文窗口**和它隐含的
 **默认参数下的参考压缩阈值**显示出来。诊断是只读的：不改配置、不回显凭证、也不声称运行时已加载。
 
 ```
@@ -63,8 +63,8 @@ Gemini 分支现在同样支持 `GEMINI_CONTEXT_WINDOW` / `GEMINI_MAX_TOKENS`，
 `models.providers.*.models[].contextWindow`）并重启网关：
 
 ```bash
-python -m easel gateway restart
-python -m easel doctor   # 确认新阈值
+python -m xiangya gateway restart
+python -m xiangya doctor   # 确认新阈值
 ```
 
 ## 技能目录预算

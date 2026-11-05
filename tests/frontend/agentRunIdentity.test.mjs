@@ -43,7 +43,7 @@ test('subagent normalization preserves scope and run IDs must be valid strings',
 test('business calls are run scoped while durable publication receipts still merge across runs', () => {
   const { reduceAgentEvents } = componentModule('lib/agentEvents.ts');
   const business = { id: 'business', callId: 'reused', runId: 'one', kind: 'business', name: 'easel_business_objects',
-    business: { id: 'idea', actorId: 'actor', projectId: 'ip', kind: 'idea', observedAt: 1 } };
+    business: { id: 'workshop', actorId: 'actor', projectId: 'ip', kind: 'workshop', observedAt: 1 } };
   const pair = [business, { ...business, runId: 'two' }].reduce(reduceAgentEvents, []);
   assert.equal(pair.length, 2);
   const receipt = { id: 'receipt', runId: 'one', kind: 'publication', completedAt: 1,

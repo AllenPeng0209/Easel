@@ -1,6 +1,6 @@
 # 模型工具协议探测
 
-`scripts/model_tool_probe.py` 是手动启用的 Chat Completions 兼容性探测，不运行 Easel
+`scripts/model_tool_probe.py` 是手动启用的 Chat Completions 兼容性探测，不运行 响芽
 原生 Agent、不发布内容、不执行命令。它补充模型端的工具协议证据，不能替代产品端的恢复和预算测试。
 
 每次最多发送两次非流式请求：第一轮要求模型调用 `lookup_receipt(ticket="probe")`；

@@ -1,7 +1,7 @@
 /**
  * Separate answer and turn indicators adapted from the DeepSeek Harness
  * ui-trajectory request/assistant status presentation @ ce7073d (MIT).
- * Easel uses the Host's explicit completion observation for each state.
+ * 响芽 uses the Host's explicit completion observation for each state.
  */
 import css from './AnswerTurnPhase.module.css';
 

@@ -1,4 +1,4 @@
-/** Easel transport adapter for the DeepSeek Harness tool/trajectory projection.
+/** Xiangya transport adapter for the DeepSeek Harness tool/trajectory projection.
  * Upstream: deepseek-ai/deepseek-harness @ ce7073d (MIT), ui-tool / ui-trajectory.
  * Engine events stay structured across live delivery, replay and persisted chat.
  */
@@ -213,7 +213,7 @@ export function isConfirmedToolStatus(value: unknown): boolean {
   return status !== undefined && status !== 'unconfirmed' && terminal.has(status);
 }
 
-/** DeepSeek ToolRow's preparing/start/result split, using Easel's observed Host statuses. */
+/** DeepSeek ToolRow's preparing/start/result split, using Xiangya's observed Host statuses. */
 export function toolLifecycle(value: unknown, settled: boolean): {
   status: ToolStatus; phase: ToolPhase; awaitingTerminal: boolean;
 } {

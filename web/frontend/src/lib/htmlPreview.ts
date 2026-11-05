@@ -1,4 +1,4 @@
-/** Easel transport/security bridge for the vendored DeepSeek opaque HTML packer. */
+/** Xiangya transport/security bridge for the vendored DeepSeek opaque HTML packer. */
 import type { Artifact } from './artifacts';
 import { previewBaseUrl } from './artifacts';
 import { projectFetch, projectUrl } from './projectScope';

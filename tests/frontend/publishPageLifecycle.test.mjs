@@ -8,6 +8,15 @@ const ts = require('typescript');
 const source = readFileSync(new URL('../../web/frontend/src/components/PublishPage.tsx', import.meta.url), 'utf8');
 const parsed = ts.createSourceFile('PublishPage.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
+test('Douyin editor keeps its conservative 30-character title budget while a 65-character body is below its 1000-character preview budget', () => {
+  const row = source.match(/\{ key: 'douyin',[^\n]+/)[0];
+  assert.equal(Number(/titleLimit: (\d+)/.exec(row)[1]), 30);
+  const bodyLimit = Number(/bodyLimit: (\d+)/.exec(row)[1]);
+  assert.equal(bodyLimit, 1000);
+  assert.equal('猫'.repeat(65).length > bodyLimit, false);
+  assert.match(row, /hint: '标题≤30，正文建议简短'/);
+});
+
 function isUseEffectCall(node) {
   return ts.isCallExpression(node)
     && ts.isIdentifier(node.expression)

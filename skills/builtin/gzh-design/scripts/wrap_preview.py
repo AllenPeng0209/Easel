@@ -22,7 +22,7 @@ from urllib.parse import unquote
 
 # 把正文里引用本地图片的 <img src="xxx.png"> 内联成 base64 data-URI。
 # 复制粘贴进公众号时，图片字节随剪贴板一起走，公众号会把内联图上传到自己 CDN；
-# 否则它要回源抓 src 指向的 Easel 本地/相对地址 → 抓不到 → 图片超时/裂图。
+# 否则它要回源抓 src 指向的 响芽 本地/相对地址 → 抓不到 → 图片超时/裂图。
 _IMG_SRC = re.compile(r'(<img\b[^>]*?\bsrc\s*=\s*)(["\'])(.*?)\2', re.IGNORECASE)
 _INLINE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"}
 

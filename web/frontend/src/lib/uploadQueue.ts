@@ -3,7 +3,7 @@
  * Copyright (c) 2026 DeepSeek. MIT; see integrations/deepseek-harness/LICENSE.
  * Source: packages/client/ui-conversation/src/client/service.ts:378-454
  * Commit: ce7073d51254c26cd63b22a60835b8f948deb447
- * Easel adaptation: per-file REST receipts, ordered placeholders, abort handles.
+ * Xiangya adaptation: per-file REST receipts, ordered placeholders, abort handles.
  */
 import type { UploadedFile } from './api';
 

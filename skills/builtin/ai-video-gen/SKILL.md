@@ -10,7 +10,7 @@ layer: produce
 
 ## 前置：配置 API key
 
-> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 Easel 项目根，确认当前目录有 `.env` 和 `skills/shared/scripts/`，再运行注册表、`check` 或生成命令。不得改用 workspace 的共享脚本副本，也不得以 `env` / `printenv` 没显示变量为由判断未配置。
+> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 响芽 项目根，确认当前目录有 `.env` 和 `skills/shared/scripts/`，再运行注册表、`check` 或生成命令。不得改用 workspace 的共享脚本副本，也不得以 `env` / `printenv` 没显示变量为由判断未配置。
 
 先选 provider 并在 `.env` 填对应 key，然后 `check` 离线校验：
 

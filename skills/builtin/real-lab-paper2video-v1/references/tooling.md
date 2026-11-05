@@ -1,6 +1,6 @@
 # 工程工具
 
-以下 `<skill>` 使用本技能实际目录，`<project>` 使用 `outputs/<论文简称>/assets/paper-video` 的实际路径。从 Easel 项目根执行，Python 使用 `.venv/bin/python`。工作工程与中间文件留在 assets，最终视频、字幕、讲稿和封面交付到 `outputs/<论文简称>/`。
+以下 `<skill>` 使用本技能实际目录，`<project>` 使用 `outputs/<论文简称>/assets/paper-video` 的实际路径。从 响芽 项目根执行，Python 使用 `.venv/bin/python`。工作工程与中间文件留在 assets，最终视频、字幕、讲稿和封面交付到 `outputs/<论文简称>/`。
 
 ## 初始化与依赖
 
@@ -10,7 +10,7 @@ python <skill>/scripts/easel_video.py init <project>
 
 选择一个新目录。初始化器复制8秒演示工程、渲染/验证脚本、内置资产模块及对应的许可与版权声明。分发可编辑工程时保留根目录的 `LICENSE`、`NOTICE` 和 `vendor/paper2assets/LICENSE`、`UPSTREAM.json`。依据选定的开场形式与镜头表编辑页面DOM、文案、图资产与动画，将同一总时长写入 `project.json` 和 `timeline.js`，然后设置 `demo:false`。
 
-使用当前可用的 Node.js、Playwright Chromium、FFmpeg/FFprobe。Python 验证需要 NumPy 和 Pillow，资产提取依赖见[内置资产模块](paper-assets.md)。需要补依赖时安装到项目或隔离环境。Easel 入口优先复用 Python Playwright 内置模块及其 Chromium，也可通过 `PLAYWRIGHT_MODULE` 指定已有模块目录；显式设置 `BROWSER_CHANNEL=chrome` 可使用本机 Chrome。
+使用当前可用的 Node.js、Playwright Chromium、FFmpeg/FFprobe。Python 验证需要 NumPy 和 Pillow，资产提取依赖见[内置资产模块](paper-assets.md)。需要补依赖时安装到项目或隔离环境。响芽 入口优先复用 Python Playwright 内置模块及其 Chromium，也可通过 `PLAYWRIGHT_MODULE` 指定已有模块目录；显式设置 `BROWSER_CHANNEL=chrome` 可使用本机 Chrome。
 
 模板采用1920×1080设计坐标。改变画幅时同步调整CSS、SVG viewBox、缩放方式和字幕安全区。已有工程可沿用其结构，接入需要的助手和规范。
 
@@ -61,4 +61,4 @@ references.json示例：`[{"frame":90,"path":"opening-v1.png"}]`。frame为被�
 
 验证器检查全部帧的解码和PTS，参考图比较默认平均像素误差≤4/255。查看 `technical_pass` 与各项测量结果；按时间点目检 `visual_review_required` 标记。对有意制作的无声工程样片使用 `--allow-silent`。
 
-将检查结果、最终文件哈希和重建参数保存到项目QA。交付当前工程代码、素材、独立音轨及工具，使用包内相对路径。脱离 Easel 使用交付工程时可直接运行工程中的原始 `render.cjs`、`verify_video.py` 和 `paper_assets.py`；自行安装其运行依赖。
+将检查结果、最终文件哈希和重建参数保存到项目QA。交付当前工程代码、素材、独立音轨及工具，使用包内相对路径。脱离 响芽 使用交付工程时可直接运行工程中的原始 `render.cjs`、`verify_video.py` 和 `paper_assets.py`；自行安装其运行依赖。

@@ -1,6 +1,6 @@
 # 致谢 Acknowledgments
 
-Easel 的 SKILL 集合在自研基础上，参考、改编或借鉴了大量优秀的开源项目与方法论。本文汇总所有来源，向原作者致谢。
+响芽 的 SKILL 集合在自研基础上，参考、改编或借鉴了大量优秀的开源项目与方法论。本文汇总所有来源，向原作者致谢。
 
 > 每个 SKILL 的详细来源见其目录下的 `EASEL-META.md`。
 > 标注说明：**移植改编** = 基于该项目适配重写；**参考实现** = 借鉴其设计/方法，未复制代码；商业产品/论文仅作方法论参考。
@@ -29,7 +29,7 @@ Easel 的 SKILL 集合在自研基础上，参考、改编或借鉴了大量优�
 
 | 项目 | 用于 SKILL | 借鉴点 |
 |------|-----------|--------|
-| [hongxingli319 原创技能](https://github.com/hongxingli319/Easel/tree/d94dd0bd9b22c2f9d90521e2c8b4b16ec251c489/skills/builtin/real-lab-paper-promotion) | real-lab-paper-promotion | 原创代码、文档、六篇写作案例与 Easel 适配，由作者按 Apache-2.0 公开。完整来源、版本、许可文本及声明见 [EASEL-META.md](../skills/builtin/real-lab-paper-promotion/EASEL-META.md)。 |
+| [hongxingli319 原创技能](https://github.com/hongxingli319/Easel/tree/d94dd0bd9b22c2f9d90521e2c8b4b16ec251c489/skills/builtin/real-lab-paper-promotion) | real-lab-paper-promotion | 原创代码、文档、六篇写作案例与 响芽 适配，由作者按 Apache-2.0 公开。完整来源、版本、许可文本及声明见 [EASEL-META.md](../skills/builtin/real-lab-paper-promotion/EASEL-META.md)。 |
 | [langgptai/LangGPT](https://github.com/langgptai/LangGPT) | post-formatter | 结构化提示词框架 |
 | [kangarooking/system-prompt-skills](https://github.com/kangarooking/system-prompt-skills) | post-formatter | 中文销售型文案框架 |
 | [MrGeDiao/shuorenhua（说人话）](https://github.com/MrGeDiao/shuorenhua) | post-formatter / text-polisher | 中文去 AI 味改写规则 |
@@ -56,7 +56,7 @@ Easel 的 SKILL 集合在自研基础上，参考、改编或借鉴了大量优�
 
 | 项目 | 用于 SKILL | 借鉴点 |
 |------|-----------|--------|
-| [hongxingli319 原创技能](https://github.com/hongxingli319/Easel/tree/65f657f4b0755295226f942fc117794e7f2bcea5/skills/builtin/real-lab-paper2video-v1) | real-lab-paper2video-v1 | 原创代码、文档、模板与 Easel 适配，Apache-2.0；内置 paper2assets 来自 Microsoft ResearchStudio，固定提交 `664cc8951f4c0e6de8d578993b76f9e0bb035141`，保留 MIT 许可及原版权声明。完整来源、版本、许可文本及声明见 [EASEL-META.md](../skills/builtin/real-lab-paper2video-v1/EASEL-META.md)。 |
+| [hongxingli319 原创技能](https://github.com/hongxingli319/Easel/tree/65f657f4b0755295226f942fc117794e7f2bcea5/skills/builtin/real-lab-paper2video-v1) | real-lab-paper2video-v1 | 原创代码、文档、模板与 响芽 适配，Apache-2.0；内置 paper2assets 来自 Microsoft ResearchStudio，固定提交 `664cc8951f4c0e6de8d578993b76f9e0bb035141`，保留 MIT 许可及原版权声明。完整来源、版本、许可文本及声明见 [EASEL-META.md](../skills/builtin/real-lab-paper2video-v1/EASEL-META.md)。 |
 | [xiph/rnnoise](https://github.com/xiph/rnnoise) | audio-denoise | RNNoise 降噪算法 |
 | [GregorR/rnnoise-models](https://github.com/GregorR/rnnoise-models) | audio-denoise | RNNoise 预训练模型 |
 | [timsainb/noisereduce](https://github.com/timsainb/noisereduce) | audio-denoise | 频谱降噪 |
@@ -71,11 +71,10 @@ Easel 的 SKILL 集合在自研基础上，参考、改编或借鉴了大量优�
 | [jiji262/wechat-publisher](https://github.com/jiji262/wechat-publisher) | skill-wechat-publisher | 原始来源：公众号发布 |
 | [lucasygu/redbook](https://github.com/lucasygu/redbook) | skill-xhs-analyzer | 原始来源：小红书分析 CLI |
 | [white0dew/XiaohongshuSkills](https://github.com/white0dew/XiaohongshuSkills) | skill-xhs-publisher | 主来源（祖先 Angiin/Post-to-xhs） |
-| [NanmiCoder/MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) | competitor-analysis / content-gap-analysis / ugc-discovery / data-tracker / cross-platform-diff | 多平台采集字段、反爬现状、节奏参数 |
+| [NanmiCoder/MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) | competitor-analysis / ugc-discovery / data-tracker / cross-platform-diff | 多平台采集字段、反爬现状、节奏参数 |
 | [cv-cat/Spider_XHS](https://github.com/cv-cat/Spider_XHS) | competitor-analysis | 小红书竞品报表维度 |
 | [ReaJason/xhs](https://github.com/ReaJason/xhs) | competitor-analysis | 小红书笔记公开字段 |
 | [cwjcw/xhs_douyin_content](https://github.com/cwjcw/xhs_douyin_content) | competitor-analysis | 创作者中心数据边界界定 |
-| [54514382/xhs_search_comment_tool](https://github.com/54514382/xhs_search_comment_tool) | content-gap-analysis | 评论区采集字段 |
 | [laiaccc/XiaohongshuAnalysis](https://github.com/laiaccc) | cross-platform-diff | 小红书分析 |
 
 ## 资讯 / RSS 聚合
@@ -111,7 +110,7 @@ Easel 的 SKILL 集合在自研基础上，参考、改编或借鉴了大量优�
 
 ## 方法论 / 商业产品 / 论文（非代码借鉴）
 
-- **理论**：Newsjacking（David Meerman Scott，trend-rider）、Google E-E-A-T（seo-quality）、JTBD、直播电商四段式话术、内容金字塔
+- **理论**：Google E-E-A-T（seo-quality）、JTBD、直播电商四段式话术、内容金字塔
 - **商业产品**（分析维度参考）：Metricool、Iconosquare、SocialBee、SocialBlade、Later、Mention、Brand24、Taskade、ZBrain、新榜/飞瓜/蝉妈妈/千瓜/微播易/克劳锐、巨量/千川
 - **学术**：ACL 2022 文本风格迁移、arXiv 2025 抖音 vs TikTok、WikiProject AI Cleanup
 

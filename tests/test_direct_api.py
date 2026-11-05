@@ -265,7 +265,7 @@ def test_api_installer_skips_openclaw_and_gateway(tmp_path):
     binary = tmp_path / "bin"
     binary.mkdir()
     log = tmp_path / "calls"
-    for command in ("python3", "node", "npm", "easel", "ffmpeg", "openclaw"):
+    for command in ("python3", "node", "npm", "xiangya", "easel", "ffmpeg", "openclaw"):
         script = f"#!/bin/bash\nprintf '%s\\n' {shlex.quote(command)} >> {shlex.quote(str(log))}\n"
         if command == "node":
             script += "echo v24.21.0\n"

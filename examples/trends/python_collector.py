@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 def collect() -> list[dict]:
     # Fetch an API, parse RSS, query a database, or use your own browser here.
     # Return [] only for a successful collection with no results.
-    # Raise on collection failure so Easel can retain the previous good result.
+    # Raise on collection failure so Xiangya can retain the previous good result.
     return [{
         "id": "example-topic-1",
         "title": "示例热点：替换 collect() 即可接入自己的数据",

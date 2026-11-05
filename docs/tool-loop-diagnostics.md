@@ -1,8 +1,8 @@
 # OpenClaw 循环保护诊断
 
-运行 `python -m easel doctor`，在 OpenClaw 对话模式下查看保存的
+运行 `python -m xiangya doctor`，在 OpenClaw 对话模式下查看保存的
 `tools.loopDetection.enabled` 及 Agent 覆盖开关计数。
-读取路径与 Easel 其他配置检查相同，支持 `EASEL_OPENCLAW_STATE_DIR`。
+读取路径与 响芽 其他配置检查相同，支持 `EASEL_OPENCLAW_STATE_DIR`。
 诊断只读，不启用保护、不修改阈值，也不改变环境检查退出码。
 
 开关分为显式开启、显式关闭、未设置、格式异常。字符串 `"false"`、数字和 `null`

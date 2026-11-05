@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Easel — OpenClaw gateway 管理脚本（隔离模式）
+# 响芽 — OpenClaw gateway 管理脚本（隔离模式）
 # 所有操作通过 --profile easel 隔离，不影响用户自己的 OpenClaw
 # 用法: ./scripts/gateway.sh {start|stop|restart|status|logs}
 
@@ -10,7 +10,7 @@ LOGFILE="/tmp/easel-gateway.log"
 ADAPTER_LOGFILE="/tmp/easel-openai-maas-adapter.log"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# ---- gateway 端口：不写死，问 Easel 的解析器 --------------------------------
+# ---- gateway 端口：不写死，问 响芽 的解析器 --------------------------------
 # OpenClaw 对**非默认 profile** 不用 18789：它按 20000 + fnv1a32(profile) % 40000 分配
 # （easel → 37289），并把结果落进 ~/.openclaw-easel/openclaw.json。这里以前写死 18789，
 # 于是 healthz 恒探不通：start 每次 --force 重启一个健康的 gateway，status 永远报未运行。
@@ -24,13 +24,13 @@ GATEWAY_PORT="$(
 # 解析不出来就明着失败，而不是退到一个猜的端口："探错端口"就是这次要根治的病
 # （silent wrong-port → healthz 恒假 → start 反复 --force 重启健康的 gateway）。
 if ! [[ "$GATEWAY_PORT" =~ ^[0-9]+$ ]]; then
-    echo "[easel] 无法解析 gateway 端口（需要 python3，且能 import easel）。" >&2
+    echo "[xiangya] 无法解析 gateway 端口（需要 python3，且能 import easel）。" >&2
     echo "        手动查：PYTHONPATH=\"$PROJECT_ROOT\" python3 -c 'from easel.gateway_endpoint import describe; print(describe())'" >&2
     exit 1
 fi
 
 # 把解析出的端口**无条件**钉给 OpenClaw：gateway 进程只认 OPENCLAW_GATEWAY_PORT。
-# 以前只在 EASEL_GATEWAY_PORT 显式设置时才透传，于是平时「Easel 探的端口」和
+# 以前只在 EASEL_GATEWAY_PORT 显式设置时才透传，于是平时「响芽 探的端口」和
 # 「gateway 实际绑的端口」是两份独立推导（这里走 gateway_endpoint.py，那边走 OpenClaw
 # 自己的 resolveGatewayPort）。两份实现一旦版本错位就错配，而下面 start 带 --force ——
 # 错配的后果不是探不通，而是**杀掉占用那个端口的别人家 gateway**：实测老版 OpenClaw
@@ -114,7 +114,7 @@ start_adapter() {
         curl -sf --max-time 1 "http://127.0.0.1:${port}/health" >/dev/null && return 0
         sleep 0.25
     done
-    echo "[easel] OpenAI MaaS adapter may not be ready — check: $ADAPTER_LOGFILE"
+    echo "[xiangya] OpenAI MaaS adapter may not be ready — check: $ADAPTER_LOGFILE"
 }
 
 stop_adapter() {
@@ -145,16 +145,16 @@ case "${1:-status}" in
         start_adapter
         if gateway_live; then
             PID="$(gateway_pid)"
-            echo "[easel] Gateway already running${PID:+ (PID $PID)}"
+            echo "[xiangya] Gateway already running${PID:+ (PID $PID)}"
             exit 0
         fi
-        echo "[easel] Starting Easel gateway (profile: $PROFILE, port: $GATEWAY_PORT)..."
+        echo "[xiangya] Starting Xiangya gateway (profile: $PROFILE, port: $GATEWAY_PORT)..."
         # healthz 不通但端口被占：下面的 --force 会强杀这个进程。先把它打出来 ——
         # 「静默强杀」正是之前误伤别的 profile 时最难排查的一环。
         OCCUPANT="$(gateway_pid)"
         if [ -n "$OCCUPANT" ]; then
-            echo "[easel] 端口 $GATEWAY_PORT 被 PID $OCCUPANT 占用且 healthz 不通；--force 将强制接管" >&2
-            echo "[easel]   占用进程：$(_cmdline "$OCCUPANT" | cut -c1-120)" >&2
+            echo "[xiangya] 端口 $GATEWAY_PORT 被 PID $OCCUPANT 占用且 healthz 不通；--force 将强制接管" >&2
+            echo "[xiangya]   占用进程：$(_cmdline "$OCCUPANT" | cut -c1-120)" >&2
         fi
         # 原始事件流由 gateway 进程按自己的 env 写到单个共享文件（web/app.py 会 tail 它做流式）。
         # 注意：`openclaw agent` 客户端没有 --raw-stream 标志，在客户端 env 上设这俩变量无效，
@@ -183,17 +183,17 @@ case "${1:-status}" in
         done
         if gateway_live; then
             PID="$(gateway_pid)"
-            echo "[easel] Gateway started${PID:+ (PID $PID)}"
+            echo "[xiangya] Gateway started${PID:+ (PID $PID)}"
         else
-            echo "[easel] Gateway may not be ready yet — check: tail -f $LOGFILE"
+            echo "[xiangya] Gateway may not be ready yet — check: tail -f $LOGFILE"
         fi
         ;;
     stop)
         PID="$(gateway_pid)"
         if [ -n "$PID" ] && kill "$PID" 2>/dev/null; then
-            echo "[easel] Gateway stopped"
+            echo "[xiangya] Gateway stopped"
         else
-            echo "[easel] Gateway was not running"
+            echo "[xiangya] Gateway was not running"
         fi
         stop_adapter
         ;;
@@ -206,10 +206,10 @@ case "${1:-status}" in
         if gateway_live; then
             PID="$(gateway_pid)"
             HEALTH=$(curl -sf "http://localhost:${GATEWAY_PORT}/healthz" 2>&1 || echo '{"ok":false}')
-            echo "[easel] Gateway running${PID:+ (PID $PID)}, profile: $PROFILE, port: $GATEWAY_PORT"
+            echo "[xiangya] Gateway running${PID:+ (PID $PID)}, profile: $PROFILE, port: $GATEWAY_PORT"
             echo "  health: $HEALTH"
         else
-            echo "[easel] Gateway not running (profile: $PROFILE, port: $GATEWAY_PORT)"
+            echo "[xiangya] Gateway not running (profile: $PROFILE, port: $GATEWAY_PORT)"
         fi
         ;;
     logs)

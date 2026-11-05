@@ -1,4 +1,4 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
@@ -19,4 +19,4 @@
 
 ## 致谢
 
-静态模式基于 AntV 开源生态（antvis）的 `@antv/infographic` DSL 渲染引擎，特此致谢。动画 GIF 模式（`scripts/gif_chart.py`）为 Easel 侧自研，基于 matplotlib（Agg 逐帧渲染）+ Pillow（GIF 合成）+ numpy。旧版浏览器 Canvas 实现（`core/` + `templates/`）已移除。
+静态模式基于 AntV 开源生态（antvis）的 `@antv/infographic` DSL 渲染引擎，特此致谢。动画 GIF 模式（`scripts/gif_chart.py`）为 响芽 侧自研，基于 matplotlib（Agg 逐帧渲染）+ Pillow（GIF 合成）+ numpy。旧版浏览器 Canvas 实现（`core/` + `templates/`）已移除。

@@ -14,7 +14,7 @@ def anyio_backend():
 
 def manager(tmp_path):
     path = Path(__file__).parents[1] / "easel" / "operations.py"
-    assert path.is_file(), "Easel has no embedded operations runtime"
+    assert path.is_file(), "Xiangya has no embedded operations runtime"
     return importlib.import_module("easel.operations").OperationsManager(tmp_path)
 
 

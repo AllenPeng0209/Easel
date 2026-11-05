@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate Easel Skill metadata, links, layout, and execution contracts."""
+"""Validate Xiangya Skill metadata, links, layout, and execution contracts."""
 
 from __future__ import annotations
 

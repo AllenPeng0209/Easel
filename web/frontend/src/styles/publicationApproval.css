@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 DeepSeek. MIT License.
  * Directly migrated: ui-approval/ApprovalPanel.module.css and ui-primitives/Modal.module.css
  * @ ce7073d51254c26cd63b22a60835b8f948deb447.
- * Easel adaptations: namespaced selectors, existing palette and full publication subject layout.
+ * Xiangya adaptations: namespaced selectors, existing palette and full publication subject layout.
  * Notice: integrations/deepseek-harness/LICENSE.
  */
 .publication-approval-flow {

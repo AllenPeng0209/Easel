@@ -1,7 +1,7 @@
 /**
  * Split hunk pairing adapted from DeepSeek Harness
  * ui-deliverables/src/client/FileDiff.tsx @ ce7073d (MIT).
- * Easel pairs only validated snapshot diff rows, never mutable file text.
+ * 响芽 pairs only validated snapshot diff rows, never mutable file text.
  */
 import { FileDiff } from '../vendor/deepseek-harness/tool/FileDiff';
 import type { DiffRow, ToolDiffProjection } from '../vendor/deepseek-harness/tool/file-diff';

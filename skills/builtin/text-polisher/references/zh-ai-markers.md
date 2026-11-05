@@ -1,6 +1,6 @@
 # 中文去 AI 感规则（权威源）
 
-本文件是 Easel 全项目**中文**去 AI 感的单一权威定义。
+本文件是 响芽 全项目**中文**去 AI 感的单一权威定义。
 英文侧规则见 `phrases-to-remove.md` / `structures-to-avoid.md`，本文件是它们的中文对应与补充。
 其他 SKILL（如 xhs-note-creator）的去 AI 化步骤应引用本文件，不再自维护副本。
 

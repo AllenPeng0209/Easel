@@ -6390,7 +6390,7 @@
       "reuse_kind": "adapted",
       "verbatim_scope": "selected implementation with necessary dependency/type adapter",
       "body_matches_upstream_after_provenance_header": false,
-      "necessary_changes": "保留上游CSS主体；增加Easel语义颜色token映射和小屏padding。",
+      "necessary_changes": "保留上游CSS主体；增加响芽语义颜色token映射和小屏padding。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
       "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
@@ -6435,7 +6435,7 @@
       "reuse_kind": "adapted",
       "verbatim_scope": "selected implementation with necessary dependency/type adapter",
       "body_matches_upstream_after_provenance_header": false,
-      "necessary_changes": "保留ScrollFollowState及hook逻辑；把TypeScript构造参数属性展开为显式字段，以兼容当前Easel TS配置；新增MIT来源头。",
+      "necessary_changes": "保留ScrollFollowState及hook逻辑；把TypeScript构造参数属性展开为显式字段，以兼容当前响芽 TS配置；新增MIT来源头。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
       "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
@@ -6465,7 +6465,7 @@
       "reuse_kind": "adapted",
       "verbatim_scope": "selected implementation with necessary dependency/type adapter",
       "body_matches_upstream_after_provenance_header": false,
-      "necessary_changes": "用Easel本地bridge替换clsx和图标依赖；为React 19 inert类型提供必要兼容；保留上游展开行结构。",
+      "necessary_changes": "用响芽本地bridge替换clsx和图标依赖；为React 19 inert类型提供必要兼容；保留上游展开行结构。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
       "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
@@ -6600,7 +6600,7 @@
       "reuse_kind": "adapted",
       "verbatim_scope": "selected implementation with necessary dependency/type adapter",
       "body_matches_upstream_after_provenance_header": false,
-      "necessary_changes": "迁移draft-store存储生命周期；改用Easel user/IP范围storage桥接，收束本地问题/草稿类型。",
+      "necessary_changes": "迁移draft-store存储生命周期；改用响芽 user/IP范围storage桥接，收束本地问题/草稿类型。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
       "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
@@ -6766,7 +6766,7 @@
       "reuse_kind": "adapted",
       "verbatim_scope": "selected implementation or types with local Host/dependency adaptation",
       "body_matches_upstream_after_provenance_header": false,
-      "necessary_changes": "保留上游文件卡主体，替换Cordis/Host依赖为本地类型、locale、路径和图标桥接；文件访问仍受Easel认证路由控制。",
+      "necessary_changes": "保留上游文件卡主体，替换Cordis/Host依赖为本地类型、locale、路径和图标桥接；文件访问仍受响芽认证路由控制。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "verified_D02_download_and_preview_are_independent",
       "verification_scope": "D02 fixed-version binary, SRT, JSON and DOCX downloads; JSON preview checked in isolated browser."
@@ -6867,7 +6867,7 @@
       "destination_sha256": "0de08f4e10e27af91ca4653feab536f09c7b06a29db20901ef8a2330bae94e01",
       "reuse_kind": "adapted",
       "body_matches_upstream_after_provenance_header": false,
-      "necessary_changes": "保留上游fetch-once/cache/retry/dispose生命周期；替换Cordis为Easel URL记录bridge、projectFetch以及可擦除TS构造语法。",
+      "necessary_changes": "保留上游fetch-once/cache/retry/dispose生命周期；替换Cordis为响芽 URL记录bridge、projectFetch以及可擦除TS构造语法。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "D08_feature_slice_verified"
     },
@@ -6899,7 +6899,7 @@
       "destination_sha256": "54f12804771603fadafb1c76577b67bbc3cfc4bf3982d63b48a650bde7e6c8b9",
       "reuse_kind": "adapted",
       "body_matches_upstream_after_provenance_header": false,
-      "necessary_changes": "复用ApprovalCard/Modal的requestKey、waiting/active和焦点生命周期及CSS结构；接Easel认证subject/决定/版本媒体/结果，禁止Enter默认授权；同ID恢复属于Easel执行适配。",
+      "necessary_changes": "复用ApprovalCard/Modal的requestKey、waiting/active和焦点生命周期及CSS结构；接响芽认证subject/决定/版本媒体/结果，禁止Enter默认授权；同ID恢复属于响芽执行适配。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "B30_exact_approval_foundation_verified"
     },
@@ -6918,7 +6918,7 @@
       "destination_sha256": "214f32e6f8f64fad84020d481cc1b79148342c6287c51ee6a13854fbe418a043",
       "reuse_kind": "adapted",
       "body_matches_upstream_after_provenance_header": false,
-      "necessary_changes": "复用ApprovalCard/Modal的requestKey、waiting/active和焦点生命周期及CSS结构；接Easel认证subject/决定/版本媒体/结果，禁止Enter默认授权；同ID恢复属于Easel执行适配。",
+      "necessary_changes": "复用ApprovalCard/Modal的requestKey、waiting/active和焦点生命周期及CSS结构；接响芽认证subject/决定/版本媒体/结果，禁止Enter默认授权；同ID恢复属于响芽执行适配。",
       "license_path": "integrations/deepseek-harness/LICENSE",
       "verification_status": "B30_exact_approval_foundation_verified"
     }
@@ -6968,7 +6968,7 @@
       "source_reference": "packages/client/ui-conversation/src/client/service.ts",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "根据beginFileUpload/pumpFileUploads生命周期适配Easel REST、逐文件回执和AbortSignal；不是整文件复制。",
+      "changes": "根据beginFileUpload/pumpFileUploads生命周期适配响芽 REST、逐文件回执和AbortSignal；不是整文件复制。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
       "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
       "feature_id": "BASELINE"
@@ -7001,7 +7001,7 @@
       "source_reference": "packages/client/ui-workspace/src/client/tree.ts",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel会话投影到上游排序函数和Markdown转换器。",
+      "changes": "响芽会话投影到上游排序函数和Markdown转换器。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
       "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
       "feature_id": "BASELINE"
@@ -7012,7 +7012,7 @@
       "source_reference": "packages/api/session-controller/README.md",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel授权目录的客户端合并与服务端同步适配；不是上游逐字代码。",
+      "changes": "响芽授权目录的客户端合并与服务端同步适配；不是上游逐字代码。",
       "verification_status": "included_in_passing_frozen_build_and_regression_suite",
       "verification_scope": "Final whole-repository regression/build evidence reported by root; does not assert individual feature completeness or full real-engine runtime coverage.",
       "feature_id": "BASELINE"
@@ -7099,7 +7099,7 @@
       "source_reference": "packages/deliverables/tool-present/src/index.ts",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel Python当前文件声明store：批次验证、原子保存和严格IP/文件边界；不提供D08不可变快照，非上游Python复制。",
+      "changes": "响芽 Python当前文件声明store：批次验证、原子保存和严格IP/文件边界；不提供D08不可变快照，非上游Python复制。",
       "verification_status": "verified_D01_code_snapshot_and_real_browser",
       "prior_feature_sha256": "ed38501031a8f18541ddf7b95a9b8bf4ff834fd54d2f23098ef8b8232b405506",
       "current_feature": "D08"
@@ -7111,7 +7111,7 @@
       "source_reference": "packages/client/ui-deliverables/src/client/turn-deliverables.ts",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "结构化artifact事件到Easel授权文件卡的映射、路径校验与旧画廊去重。",
+      "changes": "结构化artifact事件到响芽授权文件卡的映射、路径校验与旧画廊去重。",
       "verification_status": "verified_D02_download_and_preview_are_independent",
       "prior_feature_sha256": "d7c5b167463fa61b1e809f4e6b774271f4a832a420601c4533d94a92cdabe367",
       "current_feature": "D02"
@@ -7135,7 +7135,7 @@
       "source_reference": "packages/client/ui-deliverables/src/client/Deliverables.module.css",
       "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel 主题和交付总览列表样式。",
+      "changes": "响芽 主题和交付总览列表样式。",
       "verification_status": "verified_D03_ordered_overview_exact_preview_and_carousel",
       "prior_feature_sha256": "234f179df557f274c554235a0c3701325145359267f373724f92d0c9689ef1e8",
       "current_feature": "D03"
@@ -7145,7 +7145,7 @@
       "destination_path": "web/frontend/src/vendor/deepseek-harness/html/types.ts",
       "destination_sha256": "684358fc764cf4b09902f07fc0ee0741a4b94992b056edd92699ec132bb1748a",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel完整字节类型，替换上游RPC传输类型。",
+      "changes": "响芽完整字节类型，替换上游RPC传输类型。",
       "verification_status": "verified_D01_code_snapshot_and_real_browser"
     },
     {
@@ -7163,7 +7163,7 @@
       "destination_path": "web/frontend/src/vendor/deepseek-harness/deliverables/record-store.ts",
       "destination_sha256": "f76cc30204eb410ef54068bc89da1323fff6e8257dc8ff3899ee63677a2192b5",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "changes": "响芽持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
       "verification_status": "D08_feature_slice_verified"
     },
     {
@@ -7171,7 +7171,7 @@
       "destination_path": "web/frontend/src/lib/snapshotArchive.ts",
       "destination_sha256": "6476d1e62976248146283d991c129f0c8ae375b2c1e8e19a2c6a1273bfa6bc9c",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "changes": "响芽持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
       "verification_status": "D08_feature_slice_verified"
     },
     {
@@ -7179,7 +7179,7 @@
       "destination_path": "web/frontend/src/components/SnapshotArchivePreview.tsx",
       "destination_sha256": "8b806d3a65037e27f188b33bce7eb77eadf0f200213ee45b23d55634322077ef",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "changes": "响芽持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
       "verification_status": "D08_feature_slice_verified"
     },
     {
@@ -7187,7 +7187,7 @@
       "destination_path": "easel/artifact_blobs.py",
       "destination_sha256": "78e6816c72dae5d0b78ae74c97219a4b97797b2868237ce25f0e32fe0146af47",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "changes": "响芽持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
       "verification_status": "D08_feature_slice_verified"
     },
     {
@@ -7195,7 +7195,7 @@
       "destination_path": "easel/artifact_archives.py",
       "destination_sha256": "1a314731726bb252d6b6e09313239492621972903c74ad34215e713649e01ea4",
       "reuse_kind": "easel_integration_adapter",
-      "changes": "Easel持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
+      "changes": "响芽持久化/受控读取或现有UI桥接；不登记为上游原样源码。",
       "verification_status": "D08_feature_slice_verified"
     },
     {
@@ -7267,7 +7267,7 @@
     "destination_path": "web/frontend/src/vendor/deepseek-harness/todo/plan-diff.ts",
     "destination_sha256": "7410efd4492db25c83f028acad4dc99df0ec6a9448ae6f95ccaa88bb3b07bf62",
     "reuse_kind": "adapted",
-    "changes": "保留新增、移除、相对顺序和状态比对，接入逐轮 Easel 计划快照。",
+    "changes": "保留新增、移除、相对顺序和状态比对，接入逐轮 响芽 计划快照。",
     "verification_status": "B24_engine_snapshot_slice_verified"
   },
   {
@@ -7282,7 +7282,7 @@
     "destination_path": "web/frontend/src/components/AgentSubagentLineage.tsx",
     "destination_sha256": "b4f693c421a7f393936b7d60e5e4ce0124c7350cd5b326468838d4fb3c80dfde",
     "reuse_kind": "adapted",
-    "changes": "迁移会话目录、嵌套展示和只读会话行为，适配 Easel 作用域请求及可取消加载。",
+    "changes": "迁移会话目录、嵌套展示和只读会话行为，适配 响芽 作用域请求及可取消加载。",
     "verification_status": "B27_verified_live_codex_and_isolated_browser"
   },
   {
@@ -7296,7 +7296,7 @@
     "destination_path": "web/frontend/src/styles/agentSubagents.css",
     "destination_sha256": "d4912a75795c5807734af92277a0eaed25b12d66e93333fc497206d77e9c257c",
     "reuse_kind": "adapted",
-    "changes": "适配上游层级缩进和会话布局，复用 Easel 主题与共享查看面板。",
+    "changes": "适配上游层级缩进和会话布局，复用 响芽 主题与共享查看面板。",
     "verification_status": "B27_verified_live_codex_and_isolated_browser"
   },
   {
@@ -7310,7 +7310,7 @@
     "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/tool-call-tree.ts",
     "destination_sha256": "b8123c8ac40798e9c0138abda1f6a2b67444bee1bc2de47c5c8259ca8457c5ed",
     "reuse_kind": "adapted",
-    "changes": "适配上游父边检查、深度限制与子树投影，输入来自 Easel 扁平工具事件。",
+    "changes": "适配上游父边检查、深度限制与子树投影，输入来自 响芽 扁平工具事件。",
     "verification_status": "B08_verified_isolated_browser_and_protocol_regressions"
   },
   {
@@ -7322,7 +7322,7 @@
     "destination_path": "web/frontend/src/components/AgentEventPanel.tsx",
     "destination_sha256": "e934a7193bb12364f57c170abd7e81c65147bb13371f84d581e99511538425f0",
     "reuse_kind": "adapted",
-    "changes": "适配上游递归工具调用行与锚点，复用 Easel 工具、计划及业务卡。",
+    "changes": "适配上游递归工具调用行与锚点，复用 响芽 工具、计划及业务卡。",
     "verification_status": "B08_verified_isolated_browser_and_protocol_regressions"
   },
   {
@@ -7334,7 +7334,7 @@
     "destination_path": "web/frontend/src/styles/agent-chat.css",
     "destination_sha256": "e932499219284cf6a5799d506921963027d63769f89a481f8438782445927605",
     "reuse_kind": "adapted",
-    "changes": "适配上游子调用缩进及边线，接入 Easel 主题和窄屏间距。",
+    "changes": "适配上游子调用缩进及边线，接入 响芽 主题和窄屏间距。",
     "verification_status": "B08_verified_isolated_browser_and_protocol_regressions"
   },
   {
@@ -7367,7 +7367,7 @@
     "destination_path": "web/frontend/src/components/ToolValueInspector.tsx",
     "destination_sha256": "6bbfb0e7e3099e5d71086435ad4e6c0ed21a18179737846e568b4fa75d187c60",
     "reuse_kind": "adapted",
-    "changes": "复用上游输入与输出的 JSON、文本及缺失分流，接入 Easel 脱敏投影和剪贴板。",
+    "changes": "复用上游输入与输出的 JSON、文本及缺失分流，接入 响芽 脱敏投影和剪贴板。",
     "verification_status": "B07_verified_isolated_browser_and_frontend_regressions"
   },
   {
@@ -7378,7 +7378,7 @@
     "destination_path": "web/frontend/src/vendor/deepseek-harness/tool/TerminalBlock.tsx",
     "destination_sha256": "69423456163f4b839aef1c347d825624e76e27bf7190e04ac0bbf16a7aafc7e6",
     "reuse_kind": "adapted",
-    "changes": "复用终端命令、输出及长日志展开结构，接入 Easel 脱敏文本。",
+    "changes": "复用终端命令、输出及长日志展开结构，接入 响芽 脱敏文本。",
     "verification_status": "B04_verified_protocol_and_isolated_browser"
   },
   {
@@ -7452,7 +7452,7 @@
     "destination_path": "web/frontend/src/components/StructuredComposerEditor.tsx",
     "destination_sha256": "36af34cbc4d775d746e38815ee778b59f8cba317fa3711d70be7990903cdabfe",
     "reuse_kind": "adapted",
-    "changes": "接入上游编辑器运行、输入法提交及粘贴边界，保留 Easel 草稿和上传生命周期。",
+    "changes": "接入上游编辑器运行、输入法提交及粘贴边界，保留 响芽 草稿和上传生命周期。",
     "verification_status": "A01_file_nodes_verified_in_isolated_browser"
   },
   {
@@ -7474,7 +7474,7 @@
     "destination_path": "web/chat_session_references.py",
     "destination_sha256": "594906145e081457effd02ee6273ccf4a9211c8d52fa3ef47f326cb0b7e94f23",
     "reuse_kind": "adapted",
-    "changes": "适配受限文本投影和不可信参考边界，接入 Easel 认证目录、轮次完成凭据及接纳快照。",
+    "changes": "适配受限文本投影和不可信参考边界，接入 响芽 认证目录、轮次完成凭据及接纳快照。",
     "verification_status": "C31_verified_whole_and_exact_turn_frozen_snapshot"
   },
   {
@@ -7496,7 +7496,7 @@
     "destination_path": "web/frontend/src/components/ComposerCommandMenu.tsx",
     "destination_sha256": "a3f6174d56fa6d9436554d0d8694121f7b757128ba26a9ce65982be085dedbc2",
     "reuse_kind": "adapted",
-    "changes": "复用上游命令发现、键盘候选和选择状态，候选由 Easel 服务端提供。",
+    "changes": "复用上游命令发现、键盘候选和选择状态，候选由 响芽 服务端提供。",
     "verification_status": "A23_verified_command_editor_and_admission"
   },
   {
@@ -7587,7 +7587,7 @@
     "destination_path": "web/frontend/src/components/toolRendererRegistry.ts",
     "destination_sha256": "a396a7c77ba8a05a7247242c567fa0c9ef636ea897c83baeebe490cef7ce3801",
     "reuse_kind": "adapted",
-    "changes": "复用上游 keyed 工具详情分派和通用回退，接入 Easel 原生证据校验。",
+    "changes": "复用上游 keyed 工具详情分派和通用回退，接入 响芽 原生证据校验。",
     "verification_status": "B09_registry_verified_isolated_browser"
   },
   {
@@ -7598,7 +7598,7 @@
     "destination_path": "web/frontend/src/vendor/deepseek-harness/trajectory/timeline.ts",
     "destination_sha256": "effcb28ed71461d613737064a25e24c8d6bcee5b2fd3afab2179ad4f3727837c",
     "reuse_kind": "adapted",
-    "changes": "复用按记录顺序投影的逻辑，以 Easel 原生事件替换上游轨迹表行，添加工具和决策状态摘要。",
+    "changes": "复用按记录顺序投影的逻辑，以 响芽 原生事件替换上游轨迹表行，添加工具和决策状态摘要。",
     "verification_status": "B10_sequence_verified_with_isolated_fixture"
   },
   {
@@ -7608,7 +7608,7 @@
     "source_reference": "packages/client/ui-trajectory/src/client/TrajectoryTimeline.tsx",
     "upstream_commit": "ce7073d51254c26cd63b22a60835b8f948deb447",
     "reuse_kind": "easel_integration_adapter",
-    "changes": "将上游轨迹总览适配为 Easel 对话内的可折叠顺序列表。",
+    "changes": "将上游轨迹总览适配为 响芽 对话内的可折叠顺序列表。",
     "verification_status": "B10_sequence_verified_with_isolated_fixture"
   },
   {
@@ -7651,7 +7651,7 @@
     "destination_path": "web/frontend/src/components/AnswerTurnPhase.tsx",
     "destination_sha256": "409d2723c49b24975205ac648ea22a4cacb6bba1b873a9e898831fe4cec4749f",
     "reuse_kind": "adapted",
-    "changes": "将上游回答节点和轮次结束边界适配为独立状态标识，以 Easel 原生回答与整轮回执为准。",
+    "changes": "将上游回答节点和轮次结束边界适配为独立状态标识，以 响芽 原生回答与整轮回执为准。",
     "verification_status": "B15_separate_receipts_verified_protocol_and_isolated_browser"
   },
   {
@@ -7662,7 +7662,7 @@
     "destination_path": "web/frontend/src/components/WorkshopRenderObservation.tsx",
     "destination_sha256": "b1859fbe162618453c0c568b2d237d0c6eacf56584c6e3ea564f526b24b70d17",
     "reuse_kind": "adapted",
-    "changes": "复用单个可见任务的观察与卸载释放逻辑，接入 Easel 按确切回执查询的工坊接口。",
+    "changes": "复用单个可见任务的观察与卸载释放逻辑，接入 响芽 按确切回执查询的工坊接口。",
     "verification_status": "B15_separate_receipts_verified_protocol_and_isolated_browser"
   },
   {
@@ -7673,7 +7673,7 @@
     "destination_path": "easel/harnesses/diagnostics.py",
     "destination_sha256": "53721892d022ee465b1bbe848798fb867f356653b052aec67dbefc07b70ed25e",
     "reuse_kind": "adapted",
-    "changes": "适配上游认证、额度、限流和服务错误分类，接入 Easel 已有安全诊断并输出固定公开文案。",
+    "changes": "适配上游认证、额度、限流和服务错误分类，接入 响芽 已有安全诊断并输出固定公开文案。",
     "verification_status": "B38_sanitized_errors_verified_protocol_and_isolated_browser"
   },
   {
@@ -7695,7 +7695,7 @@
     "destination_path": "easel/harnesses/events.py",
     "destination_sha256": "c98c623cdff4bef17d0b77e98a54884639a85d728a1d818ca4f861f0720cefb5",
     "reuse_kind": "adapted",
-    "changes": "复用工具调用与终态结果分离的语义，以 Easel 原生调用作用域冻结首次确认结果。",
+    "changes": "复用工具调用与终态结果分离的语义，以 响芽 原生调用作用域冻结首次确认结果。",
     "verification_status": "B39_frozen_result_and_attempt_history_verified"
   },
   {
@@ -7750,7 +7750,7 @@
     "destination_path": "web/frontend/src/components/AnswerQuoteSelection.tsx",
     "destination_sha256": "d5b0c7772e510b9bffec7e8a933b0e057b8f7e1835031752bcf988cfc541d89c",
     "reuse_kind": "adapted",
-    "changes": "适配选区浮层和明确引用动作，接入 Easel 编辑器与选区所有权。",
+    "changes": "适配选区浮层和明确引用动作，接入 响芽 编辑器与选区所有权。",
     "verification_status": "A24_answer_quote_insertion_and_restore_verified"
   },
   {
@@ -7816,7 +7816,7 @@
     "destination_path": "web/frontend/src/components/AnswerQuoteSelection.module.css",
     "destination_sha256": "84fc579e915fece5fa0296018deddaf7b123d08530fb975cc79f93ecbb458024",
     "reuse_kind": "adapted",
-    "changes": "复用 Shiki 变量色板并接入 Easel 浅色和深色主题。",
+    "changes": "复用 Shiki 变量色板并接入 响芽 浅色和深色主题。",
     "verification_status": "A27_syntax_highlight_and_async_chunk_verified"
   },
   {
@@ -7860,7 +7860,7 @@
     "destination_path": "web/frontend/src/lib/chatWorkDetails.ts",
     "destination_sha256": "fe46c571802f9f7faa745e85c5951b83fb8f379aa928f4b0cbdaef29ed51c606",
     "reuse_kind": "adapted",
-    "changes": "复用工作细节模式和独立折叠时机，接入 Easel 用户和 IP 范围的浏览器偏好。",
+    "changes": "复用工作细节模式和独立折叠时机，接入 响芽 用户和 IP 范围的浏览器偏好。",
     "verification_status": "A36_work_details_persistence_and_reading_anchor_verified"
   },
   {
@@ -7893,7 +7893,7 @@
     "destination_path": "web/frontend/src/lib/workshopJobs.ts",
     "destination_sha256": "f641ccea1f807b1f9a2fb8464f6620676d4dd455f688a3cf277953c284ca4083",
     "reuse_kind": "adapted",
-    "changes": "接入 Easel 持久名单与准确任务状态查询，限制每轮观察并保留未知进度。",
+    "changes": "接入 响芽 持久名单与准确任务状态查询，限制每轮观察并保留未知进度。",
     "verification_status": "B19_workshop_roster_progress_and_scope_verified"
   },
   {
@@ -7915,7 +7915,7 @@
     "destination_path": "web/frontend/src/lib/workshopJobs.ts",
     "destination_sha256": "f3a7d936a94706e790da68c5e1adebf1fdc1cdd583384c0dc26004144e01444b",
     "reuse_kind": "adapted",
-    "changes": "适配取消动作的明确请求和精确状态查询，接 Easel 权限及持久回执。",
+    "changes": "适配取消动作的明确请求和精确状态查询，接 响芽 权限及持久回执。",
     "verification_status": "B21_single_bound_task_cancel_and_chat_receipt_verified"
   },
   {
@@ -7937,7 +7937,7 @@
     "destination_path": "web/frontend/src/lib/chatPlans.ts",
     "destination_sha256": "1d850385210258c42cd915cbcb7faf4b8e2d69a77465c47d986f6ac002704704",
     "reuse_kind": "adapted",
-    "changes": "适配计划审核状态和精确版本绑定，读取 Easel 用户/IP/会话的计划历史。",
+    "changes": "适配计划审核状态和精确版本绑定，读取 响芽 用户/IP/会话的计划历史。",
     "verification_status": "B26_exact_plan_review_and_chat_execution_verified"
   },
   {
@@ -7948,7 +7948,7 @@
     "destination_path": "web/frontend/src/components/QuestionCards.tsx",
     "destination_sha256": "8c2d5d0b086729792c446dd48061be06e11a668c4498f3d0fdda1b4aeabfb4b6",
     "reuse_kind": "adapted",
-    "changes": "适配等待提交回执和请求所有权，接入 Easel 授权、过期和确认结果。",
+    "changes": "适配等待提交回执和请求所有权，接入 响芽 授权、过期和确认结果。",
     "verification_status": "B32_scoped_authoritative_approval_receipt_verified"
   },
   {
@@ -7992,7 +7992,7 @@
     "destination_path": "web/chat_session_forks.py",
     "destination_sha256": "281cdd3bca28dd40d77280d65f9afd8a29dc66bf24205f68891bb8e2ca6abbf4",
     "reuse_kind": "adapted",
-    "changes": "适配已完成回合边界和独立分支，冻结当前 Easel 目录中的可见文字及来源信息。",
+    "changes": "适配已完成回合边界和独立分支，冻结当前 响芽 目录中的可见文字及来源信息。",
     "verification_status": "C15_exact_completed_fork_and_native_independence_verified"
   },
   {
@@ -8014,7 +8014,7 @@
     "destination_path": "web/frontend/src/components/MessageBubble.tsx",
     "destination_sha256": "1bd0ae3ac670da77ea19d8bc79ff9227ac49d0171c49c5dddc6a4f85d691a18b",
     "reuse_kind": "adapted",
-    "changes": "适配消息级分支操作和可用性判断，历史修订使用 Easel 的服务端截止点与草稿，重试只追加。",
+    "changes": "适配消息级分支操作和可用性判断，历史修订使用 响芽 的服务端截止点与草稿，重试只追加。",
     "verification_status": "C16_append_only_retry_and_branch_draft_verified"
   },
   {
@@ -8025,7 +8025,7 @@
     "destination_path": "web/chat_session_export.py",
     "destination_sha256": "9213efb30d97eaf88a044aaec034453929d927ef24cb2c47f92773360502ace9",
     "reuse_kind": "adapted",
-    "changes": "适配从持久化记录按序生成 JSONL 和有界 ZIP 下载；Easel 按 IP、用户和会话校验权限、投影安全字段并记录缺口。",
+    "changes": "适配从持久化记录按序生成 JSONL 和有界 ZIP 下载；响芽 按 IP、用户和会话校验权限、投影安全字段并记录缺口。",
     "verification_status": "C17_scoped_markdown_and_redacted_journal_zip_verified"
   },
   {
@@ -8047,7 +8047,7 @@
     "destination_path": "web/chat_history_window.py",
     "destination_sha256": "60ab539140b0e1014015a187600f5e410020265bfd077ccae50e00d53e336db9",
     "reuse_kind": "adapted",
-    "changes": "适配按完整轮次查询历史及向前分页，并以目录快照绑定 Easel 局部写入。",
+    "changes": "适配按完整轮次查询历史及向前分页，并以目录快照绑定 响芽 局部写入。",
     "verification_status": "C23_bounded_turn_window_anchor_and_full_export_verified"
   },
   {
@@ -8058,7 +8058,7 @@
     "destination_path": "web/frontend/src/components/ChatPage.tsx",
     "destination_sha256": "b2323ddeb9437036d69eac6c8051af4a89536e5a864daa643a7c5aa591615f6a",
     "reuse_kind": "adapted",
-    "changes": "适配向上载入、稳定消息定位与分页时暂停跟随，保持 Easel 阅读锚点。",
+    "changes": "适配向上载入、稳定消息定位与分页时暂停跟随，保持 响芽 阅读锚点。",
     "verification_status": "C23_bounded_turn_window_anchor_and_full_export_verified"
   },
   {
@@ -8069,7 +8069,7 @@
     "destination_path": "web/frontend/src/components/SessionModelControl.tsx",
     "destination_sha256": "400e9951efea7842e129c3379bbefb488f529d87741eefa5962f65e48eaa36b9",
     "reuse_kind": "adapted",
-    "changes": "适配会话级输入区模型入口、目录可用性和下一轮选项；Easel 使用原生选择控件并分开标记当前请求模型。",
+    "changes": "适配会话级输入区模型入口、目录可用性和下一轮选项；响芽 使用原生选择控件并分开标记当前请求模型。",
     "verification_status": "C28_scoped_next_turn_model_queue_native_reset_verified"
   },
   {
@@ -8113,7 +8113,7 @@
     "destination_path": "web/output_turn_changes.py",
     "destination_sha256": "e46f4b443ede48d8add83ba432a597f802590d6cfed5e86031b7f99333e0cd51",
     "reuse_kind": "adapted",
-    "changes": "适配回合前后快照与净差异；Easel 仅扫描当前 IP 公共输出并明确共享范围及上限。",
+    "changes": "适配回合前后快照与净差异；响芽 仅扫描当前 IP 公共输出并明确共享范围及上限。",
     "verification_status": "D06_public_output_net_changes_and_browser_recovery_verified"
   },
   {
@@ -8124,7 +8124,7 @@
     "destination_path": "web/frontend/src/components/SnapshotTextDiff.tsx",
     "destination_sha256": "bfb8e893d53ab28b203333e7f174874e6bc4688dfe5ee4419b53a4ec893172ad",
     "reuse_kind": "adapted",
-    "changes": "迁移左右差异行配对，接入 Easel 固定快照的文本投影。",
+    "changes": "迁移左右差异行配对，接入 响芽 固定快照的文本投影。",
     "verification_status": "D07_frozen_turn_diff_and_exact_media_pairs_verified"
   },
   {
@@ -8260,7 +8260,7 @@
     {
       "path": "easel/harnesses/codex.py",
       "sha256": "bcd6a82f7738931a12c0df9d0cebac59497763c5f7b41bdf11915d484495abcc",
-      "role": "Easel native/UI integration code; not a claim of upstream source copying",
+      "role": "Xiangya native/UI integration code; not a claim of upstream source copying",
       "baseline_sha256": "7b62cbf89e723cd0d40db712119688d8f8a883fb452437592e51df87c3866c1c",
       "working_tree_feature": "B30-native-restore",
       "verification_status": "verified_native_resume_and_full_backend"
@@ -8268,7 +8268,7 @@
     {
       "path": "web/frontend/src/components/QuestionCards.tsx",
       "sha256": "930ab0cdfec8400a469dd2bee8c082c6ba159ea299f80ee3e85df3b920ba5fe2",
-      "role": "Easel native/UI integration code; not a claim of upstream source copying",
+      "role": "Xiangya native/UI integration code; not a claim of upstream source copying",
       "baseline_sha256": "d55c7bb003b314ea27711aab45a8e073900c5ed165a738110537e7cb14e291b9",
       "working_tree_feature": "B30",
       "verification_status": "B30_exact_approval_foundation_verified"
@@ -8276,7 +8276,7 @@
     {
       "path": "web/app.py",
       "sha256": "31f0e90e1b6234d0228da86027fcdc07b597c18fe5a52fedc23781704cbba980",
-      "role": "Easel native/UI integration code; not a claim of upstream source copying",
+      "role": "Xiangya native/UI integration code; not a claim of upstream source copying",
       "baseline_sha256": "bdd9009cde83d98ef4420828e2597d6ae284c6411eadead212bdf8be0f7db739",
       "working_tree_feature": "B30",
       "verification_status": "B30_exact_approval_foundation_verified"
@@ -8284,7 +8284,7 @@
     {
       "path": "web/frontend/src/App.tsx",
       "sha256": "e22d0656df56fb593a406e59996de39ec5731ca31c09cb93010137094c2064ff",
-      "role": "Easel native/UI integration code; not a claim of upstream source copying",
+      "role": "Xiangya native/UI integration code; not a claim of upstream source copying",
       "baseline_sha256": "e22d0656df56fb593a406e59996de39ec5731ca31c09cb93010137094c2064ff",
       "working_tree_feature": "D01",
       "verification_status": "included_in_D01_only_verified_snapshot"
@@ -8461,7 +8461,7 @@
         "event_prefix_preserved": true,
         "integrity": "all ok"
       },
-      "source_kind": "Easel storage adapter; upstream writer/idempotency semantics preserved, not verbatim Python copying",
+      "source_kind": "Xiangya storage adapter; upstream writer/idempotency semantics preserved, not verbatim Python copying",
       "commit": "f5118d9"
     },
     "D08": {
@@ -8473,7 +8473,7 @@
         "packages/client/ui-deliverables/src/client/host-read-store.ts",
         "packages/client/ui-deliverables/src/client/ReviewTab.module.css"
       ],
-      "python_notice": "Host adaptation of capture/wx/same-content and existing Easel durable-copy semantics; not a verbatim Python port.",
+      "python_notice": "Host adaptation of capture/wx/same-content and existing Xiangya durable-copy semantics; not a verbatim Python port.",
       "acceptance_record": "docs/agent-feature-acceptance/D08.md",
       "runtime_proof": ".scratch/d08/browser-proof.json",
       "runtime_url": "http://127.0.0.1:7862/",
@@ -8621,7 +8621,7 @@
       "status": "verified_exact_approval_foundation",
       "scope": "Actor/IP/account + exact content/media/article subject, explicit approval, one durable operation and scoped status/SMS; typed native/publication-page integration.",
       "approval_authority_location": "OS host-state outside agent writable workspace; QA uses separate mock state",
-      "source_kind": "Adapted MIT ApprovalCard/Modal UI; Python/native/business services are necessary Easel adapters, not verbatim copies.",
+      "source_kind": "Adapted MIT ApprovalCard/Modal UI; Python/native/business services are necessary Xiangya adapters, not verbatim copies.",
       "acceptance_record": "docs/agent-feature-acceptance/B30.md",
       "runtime_proof": ".scratch/b30/native-browser-proof.json",
       "runtime_url": "http://127.0.0.1:7863/",
@@ -9106,7 +9106,7 @@
       "status": "verified_real_scoped_business_cards",
       "baseline_commit": "8464b4e0712beda5cb1aadc9f7521b4c7a332762",
       "acceptance_record": "docs/agent-feature-acceptance/D25.md",
-      "source_kind": "Adapted fixed ui-tool wire-key specialization and tool row layout; reused vendored DisclosureRow, HostReadStore and D08 fixed artifacts. Python business DTOs and permissions are existing Easel service adaptation, not a new business store.",
+      "source_kind": "Adapted fixed ui-tool wire-key specialization and tool row layout; reused vendored DisclosureRow, HostReadStore and D08 fixed artifacts. Python business DTOs and permissions are existing Xiangya service adaptation, not a new business store.",
       "upstream_sources": [
         {
           "path": "packages/client/ui-tool/src/client/tool/ToolCallTree.tsx",

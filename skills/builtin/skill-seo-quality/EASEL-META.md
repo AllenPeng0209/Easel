@@ -1,11 +1,11 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
 | **SKILL 名称** | skill-seo-quality |
 | **所属层** | publish |
 | **来源类型** | 自研（内部合并 + 本地化重写） |
-| **原始来源** | Easel 内部血缘：合并了原 skill-blog-seo-check（技术 SEO 校验）+ skill-seo-content（E-E-A-T 内容评估）。v0.3.0 本地化重写：从西方 web/blog SEO 重定位为国内平台原生搜索流量优化 |
+| **原始来源** | 响芽 内部血缘：合并了原 skill-blog-seo-check（技术 SEO 校验）+ skill-seo-content（E-E-A-T 内容评估）。v0.3.0 本地化重写：从西方 web/blog SEO 重定位为国内平台原生搜索流量优化 |
 | **参考项目** | 无 GitHub 库/工具。方法论引用：Google E-E-A-T「Who/How/Why」框架（仅保留于可选的网页/博客模式 `references/web-blog-seo.md`） |
 | **许可** | 待核实 |
 

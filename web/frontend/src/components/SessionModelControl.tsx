@@ -1,7 +1,7 @@
 /**
  * Composer model seat adapted from DeepSeek Harness
  * ui-model-selection/src/client/ModelSelect.tsx @ ce7073d (MIT).
- * Easel uses a native select for its Host-authorized model catalog.
+ * 响芽 uses a native select for its Host-authorized model catalog.
  */
 import type { SessionModelCapability } from '../lib/api';
 

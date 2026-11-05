@@ -6,7 +6,7 @@
 「结构化 asset library」骨架 JSON（供 LLM 填提炼内容）。**通俗化提炼与分镜脚本由 LLM 完成**。
 
 解析优先用 MinerU（含公式/图表结构化，需 MINERU_API_TOKEN）；无 token 退化到 pdfplumber（纯文本）。
-联网遵循 Easel 代理约定：先读 http(s)_proxy，其次 EASEL_PROXY，都无则直连。
+联网遵循 响芽 代理约定：先读 http(s)_proxy，其次 EASEL_PROXY，都无则直连。
 
 子命令：
     check      离线自检：依赖是否就位、MinerU token/代理是否配置
@@ -75,7 +75,7 @@ def _prep_out(path: str) -> Path:
     return p
 
 
-# ── 代理（遵循 Easel 约定）──────────────────────────────────────────
+# ── 代理（遵循 响芽 约定）──────────────────────────────────────────
 def _proxies() -> dict:
     for k in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
         v = os.environ.get(k)
@@ -129,7 +129,7 @@ def fetch(paper: str, out: str) -> str:
         return str(dst)
     url = info["pdf_url"]
     dst = _prep_out(out)
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 Easel"})
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 Xiangya"})
     try:
         with _opener().open(req, timeout=60) as r:
             data = r.read()

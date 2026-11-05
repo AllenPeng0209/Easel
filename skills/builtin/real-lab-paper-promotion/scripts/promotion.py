@@ -151,7 +151,7 @@ def check_text(path):
 def load_plan(a):
     fitz = fitz_module()
     work, out = Path(a.work).resolve(), Path(a.out).resolve()
-    # Easel stores working materials under the same topic's assets directory.
+    # Xiangya stores working materials under the same topic's assets directory.
     nested_assets = work != out/'assets' and (out/'assets') in work.parents
     if work == out or work in out.parents or (out in work.parents and not nested_assets):
         raise ValueError('WORK must be separate from OUT or inside OUT/assets/<work-name>')

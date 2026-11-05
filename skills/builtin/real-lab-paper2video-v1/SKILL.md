@@ -8,12 +8,12 @@ layer: produce
 
 制作一支主线清楚、证据直观、阅读轻松的研究视频。默认采用中文、约三分钟、16:9、1920×1080、恒定 30 fps，配中文字幕和轻快器乐。按用户指定的语言、时长、声音和风格调整这些默认值。
 
-## Easel 接入
+## 响芽 接入
 
-- 从项目根运行，Python 使用 `.venv/bin/python`。Easel 中统一经 `scripts/easel_video.py` 调用工具，它校验产物路径并复用 Python Playwright 自带的 Node 模块；原始工具随工程复制后仍可独立使用。
+- 从项目根运行，Python 使用 `.venv/bin/python`。响芽 中统一经 `scripts/easel_video.py` 调用工具，它校验产物路径并复用 Python Playwright 自带的 Node 模块；原始工具随工程复制后仍可独立使用。
 - 一个论文项目使用 `outputs/<论文简称>/`。可编辑工程放 `outputs/<论文简称>/assets/paper-video/`，事实表、素材、音轨、QA 和预览均在工程内；最终 `final.mp4`、`subtitles.srt`、`script.md`、`cover.png` 放主题根目录。
 - 环境检查：`.venv/bin/python skills/builtin/real-lab-paper2video-v1/scripts/easel_video.py assets check`。PDF 依赖见 `requirements.txt`；Poppler 提供 `pdftotext` / `pdftoppm`，渲染复用 Node.js、Playwright Chromium 与 FFmpeg。
-- 配音与配乐可复用 [tts-voiceover](../tts-voiceover/SKILL.md)、[audio-mix](../audio-mix/SKILL.md)，沿用用户在 Easel 配置的声音服务；未配置时按对应技能的本地方案处理。此技能制作视频，不自动发布。
+- 配音与配乐可复用 [tts-voiceover](../tts-voiceover/SKILL.md)、[audio-mix](../audio-mix/SKILL.md)，沿用用户在 响芽 配置的声音服务；未配置时按对应技能的本地方案处理。此技能制作视频，不自动发布。
 
 ## 制作顺序
 
@@ -47,7 +47,7 @@ layer: produce
 
 | 资源 | 用途 |
 |---|---|
-| `scripts/easel_video.py` | Easel 路径校验与工具统一入口 |
+| `scripts/easel_video.py` | 响芽 路径校验与工具统一入口 |
 | `scripts/init_project.py` | 创建独立工程，复制模板及资产模块 |
 | `scripts/paper_assets.py`、`vendor/paper2assets/` | 原图/PDF 提取、素材打包、二维码和 Logo |
 | `assets/project-template/` | 浅色页面、字幕区、确定性动画与转场骨架 |

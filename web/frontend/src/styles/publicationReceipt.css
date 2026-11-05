@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 DeepSeek. MIT License.
  * Header/summary/status layout adapted from packages/client/ui-workflow-run/src/client/WorkflowRunPanel.module.css
  * @ ce7073d51254c26cd63b22a60835b8f948deb447.
- * Easel changes: namespaced receipt fields and readonly refresh accessory.
+ * Xiangya changes: namespaced receipt fields and readonly refresh accessory.
  * Notice: integrations/deepseek-harness/LICENSE.
  */
 .publication-receipt { width: 100%; min-width: 0; color: var(--dsw-alias-label-secondary, var(--text-secondary)); }

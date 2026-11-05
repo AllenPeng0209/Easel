@@ -7,7 +7,7 @@ import type { SessionEvent } from '../vendor/deepseek-harness/navigation/markdow
 export type ArchiveFilter = 'default' | 'show' | 'only';
 type NavigableSession = ChatSession & { pinned?: boolean; updated?: number };
 
-/** Easel's scoped catalog projected onto the upstream recency/pin ordering. */
+/** Xiangya's scoped catalog projected onto the upstream recency/pin ordering. */
 export function navigationSessions(sessions: readonly NavigableSession[], query: string, filter: ArchiveFilter, activeId: string | null): NavigableSession[] {
   const normalized = query.trim().toLowerCase();
   const byId = Object.fromEntries(sessions.map(session => [session.id, session]));

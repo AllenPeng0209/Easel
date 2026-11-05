@@ -1,5 +1,5 @@
 /** Session-owned snapshots, matching Harness draft persistence ownership.
- * Integration adapter for Easel's user/IP storage scope and REST attachment refs.
+ * Integration adapter for Xiangya's user/IP storage scope and REST attachment refs.
  * Upstream: packages/client/ui-conversation/src/client/draft.ts, MIT,
  * ce7073d51254c26cd63b22a60835b8f948deb447. Raw File bytes are never persisted.
  */

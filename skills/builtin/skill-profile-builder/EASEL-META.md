@@ -1,11 +1,11 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
 | **SKILL 名称** | skill-profile-builder |
 | **所属层** | general |
 | **来源类型** | 自研 |
-| **原始来源** | Easel 自研 |
+| **原始来源** | 响芽 自研 |
 | **参考项目** | prateekjain98/social-media-manager-skills（persona 多维度文件夹结构）；charlie947/social-media-skills（Profile optimizer：结构化优化主页字段的思路） |
 | **许可** | 待核实 |
 

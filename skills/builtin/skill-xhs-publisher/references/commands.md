@@ -14,7 +14,7 @@ python skills/shared/scripts/xhs_publish.py check
 
 ```bash
 python skills/shared/scripts/xhs_publish.py login
-# 把登录二维码抠成 PNG → 默认 outputs/_login/xhs-login-qrcode.png（可在 Easel Web UI 的 outputs 查看）
+# 把登录二维码抠成 PNG → 默认 outputs/_login/xhs-login-qrcode.png（可在 响芽 Web UI 的 outputs 查看）
 # 用小红书 App 扫这张图 → 脚本轮询到登录成功后持久化 cookie（下次免登）
 #   --qr-out <path>   自定义二维码输出路径
 #   --timeout <秒>    等待扫码超时（默认 180）

@@ -52,6 +52,8 @@ function ui(file, permissions, { delivered = false } = {}) {
     window:{location:{pathname:'/'},setInterval(fn){const id=timers.size+1;timers.set(id,fn);return id;},clearInterval(id){timers.delete(id);},
       setTimeout(fn){const id=timers.size+1;timers.set(id,fn);return id;},clearTimeout(id){timers.delete(id);},addEventListener(){},removeEventListener(){}},
     document:{visibilityState:'visible',getElementById:()=>null}};
+  environment.setInterval = environment.window.setInterval;
+  environment.clearInterval = environment.window.clearInterval;
   const scope={};runInNewContext(compile('../../web/frontend/src/lib/projectScope.ts'),{...environment,exports:scope});
   const library={};const libraryName=file==='VideoWorkshopPage'?'workshop':'interactions';
   runInNewContext(compile(`../../web/frontend/src/lib/${libraryName}.ts`),{...environment,exports:library,require:()=>scope});
@@ -77,41 +79,6 @@ function ui(file, permissions, { delivered = false } = {}) {
     async flush(){for(let count=0;count<35;count++){if(dirty){dirty=false;tree=renderComponent(module.default,{},'root');}pendingEffects.splice(0).forEach(fn=>fn());await new Promise(resolve=>setImmediate(resolve));if(!dirty&&!pendingEffects.length)return;}throw new Error('UI did not settle');},
     rerender(){dirty=true;},dispose(){for(const frame of frames.values())frame.slots.forEach(slot=>slot?.cleanup?.());timers.clear();}};
 }
-
-test('viewer can read studio lists and delivery history without loading runtime or mutable controls', async () => {
-  const view=ui('VideoWorkshopPage',{role:'viewer',canOperate:false,canManageAccounts:false,isPlatformAdmin:false},{delivered:true});
-  await view.flush();
-  assert.equal(view.calls.some(call=>call.url.includes('/workshop/status')),false);
-  assert.ok(!view.button('+ 新建视频项目'));
-  view.button('进入项目：汽车视频').props.onClick();await view.flush();
-  assert.equal(view.all().filter(node=>node.type==='iframe').length,0);
-  assert.ok(!view.button('归档项目'));
-  assert.ok(!view.button('导出当前成片'));
-  assert.ok(!view.all().some(node=>node.type==='form'));
-  assert.ok(view.all().some(node=>node.type==='video'));
-  assert.ok(view.all().some(node=>view.text(node)==='已有修改意见'));
-  assert.ok(view.calls.every(call=>call.method==='GET'));view.dispose();
-});
-
-test('non-admin operator can use controlled production but never loads the shared raw editor', async () => {
-  const view=ui('VideoWorkshopPage',{role:'operator',canOperate:true,canManageAccounts:false,isPlatformAdmin:false});
-  await view.flush();assert.ok(view.button('+ 新建视频项目'));
-  assert.equal(view.calls.some(call=>call.url.includes('/workshop/status')),false);
-  view.button('进入项目：汽车视频').props.onClick();await view.flush();
-  assert.equal(view.all().filter(node=>node.type==='iframe').length,0);
-  assert.ok(view.button('导出当前成片'));assert.equal(view.button('导出当前成片').props.disabled,false);assert.ok(!view.button('画布创作'));
-  view.button('导出当前成片').props.onClick();await view.flush();
-  assert.ok(view.calls.some(call=>call.method==='POST'&&call.url.endsWith('/renders')));view.dispose();
-});
-
-test('losing editor privileges removes an already mounted editor immediately', async () => {
-  const permissions={...ownerPermissions};const view=ui('VideoWorkshopPage',permissions);
-  await view.flush();view.button('进入项目：汽车视频').props.onClick();await view.flush();
-  assert.equal(view.all().filter(node=>node.type==='iframe').length,1);
-  Object.assign(permissions,{role:'viewer',canOperate:false,canManageAccounts:false,isPlatformAdmin:false});view.rerender();await view.flush();
-  assert.equal(view.all().filter(node=>node.type==='iframe').length,0);
-  assert.ok(!view.all().some(node=>node.type==='form'));view.dispose();
-});
 
 test('viewer interaction view retains records but has no sending, automation, or channel-write actions', async () => {
   const view=ui('InteractionCenterPage',{role:'viewer',canOperate:false,canManageAccounts:false,isPlatformAdmin:false});

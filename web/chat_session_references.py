@@ -1,7 +1,7 @@
 """Scoped, bounded user-message snapshots adapted from Harness session-reference.
 
 Upstream: packages/context/session-reference/README.md, MIT, ce7073d.
-The Easel catalog supplies visible text only. A frozen context stays untrusted
+The Xiangya catalog supplies visible text only. A frozen context stays untrusted
 user-level data and is never obtained from the browser's submitted sidecar.
 """
 from __future__ import annotations

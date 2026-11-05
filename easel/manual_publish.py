@@ -58,7 +58,7 @@ def build_package(outputs: Path, platform: str, title: str, body: str,
         raise ValueError("素材超过 2GB，请分批导出")
     destination = root / "_publish" / "manual"
     destination.mkdir(parents=True, exist_ok=True)
-    package = destination / f"easel-{platform}-{uuid.uuid4().hex[:12]}.zip"
+    package = destination / f"xiangya-{platform}-{uuid.uuid4().hex[:12]}.zip"
     label, url = PLATFORMS[platform]
     metadata = {"platform": platform, "title": title, "tags": tags,
                 "reviewed": True, "exportedAt": datetime.now(timezone.utc).isoformat(),
@@ -72,7 +72,7 @@ def build_package(outputs: Path, platform: str, title: str, body: str,
                                    f"{label} · 人工发布包\n\n1. 解压此文件。\n2. 打开 {url}\n"
                                    "3. 在官方页面登录、粘贴标题正文、上传 media 中的素材，并核对话题。\n"
                                    "4. 检查预览，按平台要求标注 AI 辅助创作，再亲自点击发布。\n"
-                                   "5. 到 Easel 填写作品链接，人工记录发布结果。\n\n"
+                                   "5. 到 响芽 填写作品链接，人工记录发布结果。\n\n"
                                    "导出不等于上传或发布；此包不包含登录凭证。\n")}.items():
                 archive.writestr(name, text, compress_type=zipfile.ZIP_DEFLATED)
             for index, path in enumerate(files, 1):

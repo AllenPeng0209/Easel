@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""视频产线 · Easel 薄壳（只转发，不做业务逻辑）
+"""视频产线 · 响芽 薄壳（只转发，不做业务逻辑）
 
-把宿主（Easel）与视频产线 SDK（独立接口）焊在一起的最小转发器：
+把宿主（响芽）与视频产线 SDK（独立接口）焊在一起的最小转发器：
 - 调用 SDK 的 pipeline/run.py（唯一入口，契约见 SDK 的 INTERFACE.md）
 - 运行态统一放 <base>/<时间戳>/（默认 <工作区>/outputs/视频产线）
 - 退出码透传：0 完成 ｜ 2 门失败 ｜ 3 待作答/待审批 ｜ 1 异常
@@ -41,7 +41,7 @@ def find_sdk(args) -> Path:
         cands.append(args.sdk)
     if os.environ.get("VIDEO_PIPELINE_SDK"):
         cands.append(os.environ["VIDEO_PIPELINE_SDK"])
-    # 内置 SDK（随 Easel 进仓，默认自包含）：本脚本在 .../video-production/scripts/，
+    # 内置 SDK（随 响芽 进仓，默认自包含）：本脚本在 .../video-production/scripts/，
     # SDK 在 .../video-production/vendor/video-pipeline-sdk/。作 --sdk/env 之后的首选。
     cands.append(str(Path(__file__).resolve().parent.parent / "vendor" / "video-pipeline-sdk"))
     cands += [
@@ -63,7 +63,7 @@ def _workspace_root() -> Path:
     不能写死：OpenClaw 的默认布局变过（2026.6.x 是 ~/.openclaw/workspace-easel，2026.9.x 起是
     ~/.openclaw-easel/workspace）。写死其一，在另一个版本上产物就落进 agent 不读的目录，而
     mkdir 照样成功、这里照样报路径 —— 用户只会发现「内容库里没有」（issue #19 的技能层版本）。
-    优先走 Easel 的统一解析器；本文件也会被同步进 workspace 单独跑，那时 import 不到，
+    优先走 响芽 的统一解析器；本文件也会被同步进 workspace 单独跑，那时 import 不到，
     退化成「两套布局里挑一个已经有东西的」，再不行才按新布局。
     """
     if os.environ.get("EASEL_AGENT_RUNTIME", "").strip().lower() in ("codex", "opencode", "acp"):
@@ -181,7 +181,7 @@ def post_deliver(base: Path, rd: Path):
 # ---------------------------------------------------------------- commands --
 
 def report_transcription_tiers(sdk: Path) -> None:
-    """打印三级转录策略可用性（Easel 内置改造）。"""
+    """打印三级转录策略可用性（响芽 内置改造）。"""
     print("转录三级策略（优先级从上到下）：")
     print("  tier1 现成稿  ：start 时给 --transcript（.srt/.vtt 自动转段级，.json 直接用）— 有则最省")
     key_on = bool(os.environ.get("SILICONFLOW_API_KEY", "").strip())
@@ -323,7 +323,7 @@ def cmd_status(args) -> int:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="视频产线 Easel 薄壳（转发 run.py）")
+    ap = argparse.ArgumentParser(description="视频产线 响芽 薄壳（转发 run.py）")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--sdk", help="视频产线 SDK 路径")
     common.add_argument("--base", help="运行态根目录")

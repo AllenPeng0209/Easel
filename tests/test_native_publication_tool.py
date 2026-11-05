@@ -107,11 +107,16 @@ def test_only_a_host_callback_advertises_the_eager_typed_publication_tool(tmp_pa
         assert publication['type'] == 'function' and publication['deferLoading'] is False
         schema = publication['inputSchema']
         assert schema['additionalProperties'] is False
-        assert set(schema['properties']) == {'platform', 'title', 'body', 'tags', 'persona', 'artifactIds'}
+        assert set(schema['properties']) == {'platform', 'title', 'body', 'tags', 'persona', 'artifactIds', 'aiGenerated'}
+        assert schema['properties']['aiGenerated']['type'] == 'boolean'
         assert set(schema['properties']['platform']['enum']) == PLATFORMS
         assert schema['properties']['artifactIds']['items']['pattern'] == '^[a-f0-9]{32}$'
         assert 'easel_publish' in start['developerInstructions']
         assert 'shell' in start['developerInstructions'].lower()
+        for text in [publication['description'], start['developerInstructions']]:
+            assert 'easel_video_generation' in text and 'H3' in text
+            assert 'aiGenerated=true' in text and 'AI创作' in text
+            assert 'keywords' in text
 
 
 @pytest.mark.parametrize('platform', sorted(PLATFORMS))
@@ -141,6 +146,18 @@ def test_missing_optional_fields_are_normalized_without_inventing_content_or_acc
                      'tags':'', 'persona':'', 'artifactIds':[]}]
 
 
+@pytest.mark.parametrize('ai_generated', [True, False])
+def test_explicit_ai_generation_declaration_reaches_only_the_typed_host_unchanged(tmp_path, ai_generated):
+    seen = []
+    async def publish(payload, call_id):
+        seen.append(payload)
+        return RECEIPT
+    result = run_tool(tmp_path, {**PAYLOAD, 'aiGenerated': ai_generated}, publish)
+    assert result['error'] is None
+    assert seen == [{**PAYLOAD, 'aiGenerated': ai_generated}]
+    assert tool_result(result)['success'] is True
+
+
 @pytest.mark.parametrize('invalid', [
     {}, None, [], 'publish now', {'platform':'unknown', 'title':'Title'},
     {'platform':'zhihu'}, {'platform':'zhihu', 'title':'   ', 'body':'\n\t'},
@@ -155,6 +172,7 @@ def test_missing_optional_fields_are_normalized_without_inventing_content_or_acc
     {**PAYLOAD, 'approved':True}, {**PAYLOAD, 'approvalId':'forged-grant'},
     {**PAYLOAD, 'title':'x' * 1001}, {**PAYLOAD, 'body':'x' * 100001},
     {**PAYLOAD, 'tags':'x' * 2001}, {**PAYLOAD, 'persona':'x' * 121},
+    *[{**PAYLOAD, 'aiGenerated': value} for value in [None, 0, 1, 'true', 'false', [], {}]],
 ])
 def test_untrusted_tool_arguments_never_reach_the_publication_host(tmp_path, invalid):
     seen = []

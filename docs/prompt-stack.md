@@ -1,6 +1,6 @@
-# Easel Prompt Stack
+# Xiangya Prompt Stack
 
-> Easel Agent 的 prompt 由多层文件组合而成，与所选执行引擎解耦，每层职责明确、互不干扰。
+> 响芽 Agent 的 prompt 由多层文件组合而成，与所选执行引擎解耦，每层职责明确、互不干扰。
 
 ## 组合顺序
 
@@ -13,14 +13,14 @@ Layer 4: SKILL           被触发时加载 SKILL.md + 按需读取 references/ 
 
 > **画像（Profile）如何进入 prompt**：不再写全局 USER.md（会有并发竞态）。CLI 与 Web 统一把画像**作为消息内联**传入，由当前 Agent 按 AGENTS.md 自行读取 `profiles/<X>/` 并凝练。每个请求自包含，无全局文件污染。
 > - **Web / skill**（单轮）：每条消息前缀 `我当前使用的画像是「X」。`（`easel/persona.py:persona_prefix`）。
-> - **CLI `easel chat`**（多轮交互）：选画像后通过所选底座的原有消息通道注入同一前缀，画像随原生 session 历史留存供后续 turn 沿用（超长会话被压缩后可能丢，属已知取舍）。
+> - **CLI `xiangya chat`**（多轮交互）：选画像后通过所选底座的原有消息通道注入同一前缀，画像随原生 session 历史留存供后续 turn 沿用（超长会话被压缩后可能丢，属已知取舍）。
 > - 三入口的画像逻辑统一收敛到 `easel/persona.py`（`list_personas` / `load_profile_text` / `persona_prefix`）。
 
-> **记忆作用域**：Easel 不使用任何引擎工作区的全局 `MEMORY.md` 承载账号知识；OpenClaw 的该文件由同步脚本保持为空。账号长期记忆只存放在 `profiles/<当前画像>/memory.md`，每个会话按自身绑定的画像直接读取。通用模式不读取任何画像记忆，也不通过动态改写全局文件切换画像。
+> **记忆作用域**：响芽 不使用任何引擎工作区的全局 `MEMORY.md` 承载账号知识；OpenClaw 的该文件由同步脚本保持为空。账号长期记忆只存放在 `profiles/<当前画像>/memory.md`，每个会话按自身绑定的画像直接读取。通用模式不读取任何画像记忆，也不通过动态改写全局文件切换画像。
 
 共享源文件位于 `agents/workspace/`。OpenClaw 沿用 `bash agents/sync.sh` 同步到它的隔离工作区；
 Codex 沿用 `developerInstructions`，OpenCode / 通用 ACP 沿用消息前缀注入方式，加载同一组 Markdown。
-各适配器追加当前引擎、实际 Easel 根目录与权限说明，不将 OpenClaw 的能力假定为其它引擎的能力。
+各适配器追加当前引擎、实际 响芽 根目录与权限说明，不将 OpenClaw 的能力假定为其它引擎的能力。
 原生进程复用期间共享说明变更会使缓存失效，下一轮重新加载说明并续接原有会话。
 
 ## 各层说明
@@ -35,7 +35,7 @@ Codex 沿用 `developerInstructions`，OpenCode / 通用 ACP 沿用消息前缀�
 
 ### Layer 3 — 运行时说明（半静态）
 OpenClaw 由 `agents/sync.sh` 生成运行时项目根和 CONTEXT.md，换机器后重新同步。
-Codex / OpenCode / ACP 每次从请求构建同源运行时说明，并以实际 Easel 根目录启动原生进程。
+Codex / OpenCode / ACP 每次从请求构建同源运行时说明，并以实际 响芽 根目录启动原生进程。
 所有引擎跑项目脚本前都从这里确认项目根路径，**先 `cd` 到该目录再跑脚本**。
 
 ### Layer 4 — SKILL（按需）

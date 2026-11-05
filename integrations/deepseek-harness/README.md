@@ -1,6 +1,6 @@
 # DeepSeek Harness migration source
 
-Easel uses selected code and contracts from the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) under its MIT license.
+Xiangya uses selected code and contracts from the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) under its MIT license.
 
 - Fixed commit: `ce7073d51254c26cd63b22a60835b8f948deb447`.
 - Package version: `0.2.2-alpha.2`.
@@ -12,9 +12,9 @@ Easel uses selected code and contracts from the official [DeepSeek Harness](http
 
 See [the migration notes](../../docs/deepseek-harness-migration.md) and [the complete product backlog](../../docs/agent-workbench-backlog.md).
 
-Do not expose this source checkout as a user workspace or copy user credentials into it. Easel's existing IP/account/member permissions and business services remain the integration boundary.
+Do not expose this source checkout as a user workspace or copy user credentials into it. Xiangya's existing IP/account/member permissions and business services remain the integration boundary.
 
-Final tranche verification (2026-11-03): 22 upstream source migrations (10 original bodies verbatim, 12 adapted), with 14 Easel integration adapters recorded separately. Frozen regression/build and a bounded Codex/queue/refresh/navigation runtime path passed; see the manifest verification scope and backlog for incomplete requirements. This is not completion of all 144 comparison items.
+Final tranche verification (2026-11-03): 22 upstream source migrations (10 original bodies verbatim, 12 adapted), with 14 Xiangya integration adapters recorded separately. Frozen regression/build and a bounded Codex/queue/refresh/navigation runtime path passed; see the manifest verification scope and backlog for incomplete requirements. This is not completion of all 144 comparison items.
 
 Final native-input acceptance: a new Codex thread called the registered `easel_ask_user` tool, showed the style card, received no manual answer, adopted the professional default after 25.0 seconds, and continued a real shell command successfully. Older unregistered native threads must start a new conversation because `thread/resume` cannot append dynamic tools; their IDs and history remain intact. Final whole-suite counts are 2032 backend passed/17 skipped and 356 frontend passed; build/lint/diff-check passed.
 

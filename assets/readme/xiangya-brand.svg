@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="240" viewBox="0 0 960 240" role="img" aria-labelledby="title desc">
+  <title id="title">响芽 Xiangya</title>
+  <desc id="desc">AI 自媒体自动化运营平台</desc>
+  <defs><linearGradient id="leaf" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#06b6b0"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+  <g fill="none" stroke="url(#leaf)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M112 190v-76M112 140C54 140 42 101 45 67c43-2 74 17 67 73ZM112 113c0-54 26-79 72-81 4 47-18 78-72 81Z"/>
+    <path d="M47 169c-14-13-21-30-21-49M178 140c14-13 21-30 21-49" stroke-width="8"/>
+  </g>
+  <text x="244" y="126" fill="#17233b" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,sans-serif" font-size="94" font-weight="650" letter-spacing="8">响芽</text>
+  <text x="479" y="124" fill="#34435e" font-family="Inter,Manrope,Arial,sans-serif" font-size="66" font-weight="600" letter-spacing="1">Xiangya</text>
+  <text x="247" y="183" fill="#64748b" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,sans-serif" font-size="25" letter-spacing="5">AI 自媒体自动化运营</text>
+</svg>

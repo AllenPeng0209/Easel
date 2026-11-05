@@ -49,7 +49,7 @@ test('external URLs, commands, converted links and traversal targets remain unch
 });
 
 test('Windows paths and encoded file names resolve without corrupting their destination', () => {
-  assert.equal(linkifyOutputs('[报告](C:\\Easel\\outputs\\demo\\report.md)'), '[报告](#/outputs/demo/report.md)');
+  assert.equal(linkifyOutputs('[报告](C:\\响芽\\outputs\\demo\\report.md)'), '[报告](#/outputs/demo/report.md)');
   assert.equal(linkifyOutputs('[报告](outputs/demo/a%20b.md)'), '[报告](#/outputs/demo/a%20b.md)');
   assert.equal(linkifyOutputs('[目录](outputs/demo/)'), '[目录](#/outputs/demo)');
 });

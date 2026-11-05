@@ -31,7 +31,7 @@ function nestedScrollConsumes(target: EventTarget, scrollport: HTMLElement, dire
   return false;
 }
 
-/** Easel binding for the upstream follow controller; only reader intent releases the tail. */
+/** Xiangya binding for the upstream follow controller; only reader intent releases the tail. */
 export function useChatReading(sessionId: string, messages: readonly ChatMessage[], stream: StreamState | undefined, enabled: boolean, historyStart = 0) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);

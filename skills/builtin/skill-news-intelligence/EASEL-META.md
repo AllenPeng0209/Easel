@@ -1,9 +1,9 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 ## 移植来源（诚实标注）
 
 本 SKILL 由一个**通用极客/科技新闻聚合工具移植改造**而来，原始工具面向个人开发者，
-聚合 40+ 中英文信息源（含大量西方开发者/科技源与国际新闻）。Easel 将其
+聚合 40+ 中英文信息源（含大量西方开发者/科技源与国际新闻）。响芽 将其
 **方向重构为"服务中文社媒创作者的行业资讯情报"**：保留 RSS/API 抓取内核，
 裁掉西方开发者源与无关 profile，换成对中文创作者有价值的行业媒体与垂类资讯源。
 
@@ -15,7 +15,7 @@
 | **原始地址** | https://github.com/cclank/news-aggregator-skill |
 | **原始定位** | 全网新闻聚合 skill，多源 + Playwright 绕过 Cloudflare + 场景化早报（综合/财经/科技/吃瓜/AI 深度）|
 | **回溯依据** | 原 SKILL/脚本的 profile 命名（general/finance/tech/social/ai_daily）、源清单（HN/GitHub/PH/微博/华尔街见闻）、Playwright 反爬逻辑与 cclank 仓库描述高度一致 |
-| **Easel 改造** | 裁剪西方开发者源（HN/arXiv/BBC/Guardian/Paul Graham/Lex Fridman/Lobsters/Dev.to 等）；删 Windows cp936 处理、OPML 订阅、播客/专栏聚合；换成中文行业媒体源；profile 改为 creator/tech_digital/business/ai/topics；明确与 skill-trending-topics 分工（不抓热搜）|
+| **响芽 改造** | 裁剪西方开发者源（HN/arXiv/BBC/Guardian/Paul Graham/Lex Fridman/Lobsters/Dev.to 等）；删 Windows cp936 处理、OPML 订阅、播客/专栏聚合；换成中文行业媒体源；profile 改为 creator/tech_digital/business/ai/topics；聚焦日级行业资讯|
 | **保留内核** | `rss_parser.py`（通用 RSS/Atom 解析）、`fetch_news.py` 抓取/关键词过滤/深度正文/smart-fill 框架、36氪/华尔街见闻/腾讯专用抓取器 |
 | **SKILL.md 行数** | 150 |
 

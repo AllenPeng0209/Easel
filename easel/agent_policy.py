@@ -1,9 +1,9 @@
-"""Easel policy adapter for DeepSeek Harness-style timed human input.
+"""Xiangya policy adapter for DeepSeek Harness-style timed human input.
 
 The attached question, timed continuation and recorded-answer separation follows
 DeepSeek Harness ui-user-questions (MIT), commit
 ce7073d51254c26cd63b22a60835b8f948deb447. The server timer and conservative business
-approval policy adapt that lifecycle to Easel's Python/native-engine boundary.
+approval policy adapt that lifecycle to Xiangya's Python/native-engine boundary.
 See integrations/deepseek-harness/LICENSE for the upstream notice.
 """
 from __future__ import annotations

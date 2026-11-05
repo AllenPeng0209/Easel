@@ -12,7 +12,7 @@ $Venv = Join-Path $Root '.venv'
 $Python = Join-Path $Venv 'Scripts\python.exe'
 $env:PYTHONUTF8 = '1'
 
-function Info($Message) { Write-Host "[easel] $Message" -ForegroundColor Cyan }
+function Info($Message) { Write-Host "[xiangya] $Message" -ForegroundColor Cyan }
 function Ok($Message) { Write-Host "  [OK] $Message" -ForegroundColor Green }
 function Warn($Message) { Write-Host "  [!] $Message" -ForegroundColor Yellow }
 # 用 [OK] / [!] 这种 ASCII 标记而不是 ✓ / ⚠：cmd.exe 与较老的终端代码页并不可靠地
@@ -68,8 +68,8 @@ function Invoke-WithProgress([string]$Label, [string]$Exe, [string[]]$Arguments,
 function Show-Summary {
     $n = $script:Warnings.Count
     Write-Host ''
-    if ($n -eq 0) { Write-Host '  [OK] Easel 安装完成' -ForegroundColor Green }
-    else { Write-Host "  [OK] Easel 安装完成（有 $n 项降级）" -ForegroundColor Yellow }
+    if ($n -eq 0) { Write-Host '  [OK] 响芽 安装完成' -ForegroundColor Green }
+    else { Write-Host "  [OK] 响芽 安装完成（有 $n 项降级）" -ForegroundColor Yellow }
     if ($n -gt 0) {
         Write-Host ''
         Write-Host "  需要处理（$n）：" -ForegroundColor Yellow
@@ -81,7 +81,7 @@ function Show-Summary {
             }
         }
         Write-Host ''
-        Write-Host '  以上均不影响已装好的部分；逐项修完可用 easel doctor 复检。' -ForegroundColor DarkGray
+        Write-Host '  以上均不影响已装好的部分；逐项修完可用 xiangya doctor 复检。' -ForegroundColor DarkGray
         Write-Host '  若希望这些问题直接让安装失败（CI/自动化场景）：$env:EASEL_SETUP_STRICT=1' -ForegroundColor DarkGray
     }
 }
@@ -205,7 +205,7 @@ for key, value in updates.items():
 '@
     $plan = $code | & $Python - $Root
     if ($LASTEXITCODE -ne 0) {
-        Add-Warning '技能目录预算' '配置或环境覆盖不可解析；保留现状，不盲写' 'easel doctor'
+        Add-Warning '技能目录预算' '配置或环境覆盖不可解析；保留现状，不盲写' 'xiangya doctor'
         return
     }
     foreach ($line in $plan) {
@@ -292,7 +292,7 @@ print(json.dumps(p))
     Set-OpenClawConfigBatch @(@{ path = 'models.providers.anthropic'; value = ($seed | ConvertFrom-Json) })
 }
 
-Write-Host "`nEasel · Windows 安装向导" -ForegroundColor Magenta
+Write-Host "`n响芽 Xiangya · Windows 安装向导" -ForegroundColor Magenta
 if (-not $SkipOpenClaw -and -not $OpenClaw -and -not $NonInteractive -and
     [Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
     Info '默认安装或复用 OpenClaw；也可以跳过，进入 Web 后选择已安装的 Codex / OpenCode。'
@@ -300,7 +300,7 @@ if (-not $SkipOpenClaw -and -not $OpenClaw -and -not $NonInteractive -and
     if ($installAnswer.Trim() -match '^(n|no|0)$') { $SkipOpenClaw = $true }
 }
 if ($SkipOpenClaw) {
-    Info '只安装 Easel 与 Web 依赖，不安装、配置或启动 OpenClaw；已有底座与凭证保留。'
+    Info '只安装 响芽 与 Web 依赖，不安装、配置或启动 OpenClaw；已有底座与凭证保留。'
 }
 Step '1/8' '检查系统环境' 'Python · Node.js · Git · FFmpeg'
 Info '检查系统环境...'
@@ -334,12 +334,12 @@ Info '安装 OpenClaw...'
 if (-not (Get-Command openclaw -ErrorAction SilentlyContinue)) { & npm install -g openclaw@latest --loglevel warn; if ($LASTEXITCODE -ne 0) { Fail 'OpenClaw 安装失败。' } }
 Assert-Command 'openclaw' '请确认 npm 全局 bin 已加入 PATH。'
 }
-Step '3/8' '安装 Easel 运行依赖' 'Web · 媒体 · 浏览器发布'
-Info '安装 Easel Python 依赖...'
+Step '3/8' '安装 响芽 运行依赖' 'Web · 媒体 · 浏览器发布'
+Info '安装 响芽 Python 依赖...'
 & $Python -m pip install --upgrade pip --progress-bar on
 if ($LASTEXITCODE -ne 0) { Fail 'pip 升级失败。' }
 & $Python -m pip install -e $Root --prefer-binary --progress-bar on
-if ($LASTEXITCODE -ne 0) { Fail 'Easel Python 依赖安装失败。' }
+if ($LASTEXITCODE -ne 0) { Fail '响芽 Python 依赖安装失败。' }
 Step '4/8' '构建 Web 工作台' 'React production bundle'
 Info '构建 Web 前端...'
 $Frontend = Join-Path $Root 'web\frontend'
@@ -368,8 +368,8 @@ if ($SkipOpenClaw) {
     & $Python -m easel.installation $Root api
     if ($LASTEXITCODE -ne 0) { Fail '执行引擎设置初始化失败；已有配置未覆盖，请检查文件后重试。' }
 } else {
-Step '6/8' '初始化 Easel profile' '独立配置、独立 workspace、独立 Gateway'
-Info '准备 Easel OpenClaw profile...'
+Step '6/8' '初始化 响芽 profile' '独立配置、独立 workspace、独立 Gateway'
+Info '准备 响芽 OpenClaw profile...'
 $onboardHelp = (Invoke-NativeCapture 'openclaw' @('onboard','--help')).Output
 $onboardArgs = @('--profile','easel','onboard','--non-interactive','--mode','local','--accept-risk')
 foreach ($flag in @('--skip-health','--skip-channels','--skip-skills','--skip-ui','--skip-hooks','--skip-search','--skip-daemon')) {
@@ -432,7 +432,7 @@ Copy-Item (Join-Path $Root 'agents\workspace\*.md') $workspace -Force -ErrorActi
 ## 运行时项目根与执行引擎
 
 当前执行引擎：OpenClaw。使用当前引擎实际提供的工具和权限，不冒充其它引擎。
-Easel 项目根绝对路径：$Root
+响芽 项目根绝对路径：$Root
 运行项目脚本前先切换到该目录，使用项目的 .venv Python 和 skills/shared/scripts/；
 Python 绝对路径：$(Join-Path $Root '.venv\Scripts\python.exe')
 内置技能源：$(Join-Path $Root 'skills\builtin')
@@ -442,7 +442,7 @@ Python 绝对路径：$(Join-Path $Root '.venv\Scripts\python.exe')
 "@ | Add-Content -Path (Join-Path $workspace 'AGENTS.md') -Encoding UTF8
 $context = Join-Path $workspace 'CONTEXT.md'
 @"
-# Easel 项目路径
+# 响芽 项目路径
 
 项目根目录：$Root
 产物输出到：$(Join-Path $Root 'outputs')
@@ -591,7 +591,7 @@ if (-not (Set-OpenClawConfigQuiet 'gateway.http.endpoints.chatCompletions.enable
 if (Test-OpenClawSupport @('config') 'validate') {
     $v = Invoke-OpenClawRaw @('--profile','easel','config','validate')
     if ($v.Ok) { Ok 'OpenClaw 配置校验通过' }
-    else { Add-Warning 'OpenClaw 配置校验' '整体校验未通过（多为旧版本遗留的配置键）' 'openclaw --profile easel doctor --fix' 'high' }
+    else { Add-Warning 'OpenClaw 配置校验' '整体校验未通过（多为旧版本遗留的配置键）' 'openclaw --profile xiangya doctor --fix' 'high' }
 } else {
     Add-Warning 'OpenClaw 配置校验' '当前 OpenClaw 不支持 config validate，已跳过整体校验'
 }
@@ -616,14 +616,14 @@ if ($SkipOpenClaw) {
     -not (Test-UsableKey $envValues['EASEL_LLM_API_KEY'])) {
     Write-Host ''
     Write-Host '  下一步：在浏览器里配置模型' -ForegroundColor Yellow
-    Write-Host "    1. $Venv\Scripts\easel.exe web" -ForegroundColor Cyan
+    Write-Host "    1. $Venv\Scripts\xiangya.exe web" -ForegroundColor Cyan
     Write-Host '    2. 打开 http://localhost:7860' -ForegroundColor Cyan
     Write-Host '    3. 左下角设置 -> 模型配置 -> 填 API Key -> 保存' -ForegroundColor Cyan
-    Write-Host '  保存后 Easel 会自动写好 openclaw 配置并重启网关，不用再跑 setup.ps1。' -ForegroundColor DarkGray
+    Write-Host '  保存后 响芽 会自动写好 openclaw 配置并重启网关，不用再跑 setup.ps1。' -ForegroundColor DarkGray
 }
 Write-Host ''
-Write-Host "  启动 Web：$Venv\Scripts\easel.exe web" -ForegroundColor Cyan
-Write-Host "  检查环境：$Venv\Scripts\easel.exe doctor" -ForegroundColor Cyan
+Write-Host "  启动 Web：$Venv\Scripts\xiangya.exe web" -ForegroundColor Cyan
+Write-Host "  检查环境：$Venv\Scripts\xiangya.exe doctor" -ForegroundColor Cyan
 if (-not $SkipOpenClaw) {
     Write-Host '  默认执行引擎：OpenClaw；Web 设置可切换到已安装的 Codex、OpenCode 或其它 ACP 引擎。' -ForegroundColor DarkGray
 }

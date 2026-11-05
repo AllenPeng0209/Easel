@@ -28,6 +28,9 @@ PublicationStatusWithCall = Callable[[str, str], Awaitable[dict]]
 # Typed, read-only business queries; actor/IP scope and DTOs remain host-owned.
 BusinessObjects = Callable[[dict, str], Awaitable[dict]]
 WorkshopDelivery = Callable[[dict], Awaitable[list[dict]]]
+VideoGeneration = Callable[[dict, str], Awaitable[dict]]
+# Host-only compare-and-swap after an exact native active-writer fork.
+RebindActiveWriter = Callable[[str, str], None]
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,8 @@ class RunRequest:
     publication_status_with_call: PublicationStatusWithCall | None = None
     auto_allow_tools: bool = False
     workshop_delivery: WorkshopDelivery | None = None
+    video_generation: VideoGeneration | None = None
+    rebind_active_writer: RebindActiveWriter | None = None
 
 
 class Adapter(Protocol):

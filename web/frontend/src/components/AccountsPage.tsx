@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  fetchAccounts, startLogin, loginStatus, mediaUrl,
-  accountWhoami, logoutAccount, submitLoginSms,
+  startLogin, loginStatus, mediaUrl,
+  accountWhoami, submitLoginSms,
   saveCredentials, getCredentials, startMpLogin, mpLoginStatus,
 } from '../lib/api';
-import type { AccountItem, AccountWhoami } from '../lib/api';
-import { getWhoamiCache, setWhoamiCache, verifyStale } from '../lib/whoami';
+import type { AccountItem } from '../lib/api';
+import { setWhoamiCache } from '../lib/whoami';
 import { useIpPermissions } from './ProjectSpace';
 import InteractionAccounts from './InteractionAccounts';
 
@@ -32,34 +32,19 @@ const STATE_LABEL: Record<string, string> = {
   unknown: '等待中…',
 };
 
-/** 头像：有 URL 就显示图（加载失败退回首字），否则显示昵称/平台名首字。 */
-function Avatar({ url, name }: { url?: string; name: string }) {
-  const [broken, setBroken] = useState('');
-  const initial = (name || '?').trim().charAt(0);
-  if (url && broken !== url) {
-    return <img className="account-avatar" src={url} alt={name}
-      referrerPolicy="no-referrer" onError={() => setBroken(url)} />;
-  }
-  return <div className="account-avatar account-avatar-fallback">{initial}</div>;
-}
-
 export default function AccountsPage() {
   const { canManageAccounts } = useIpPermissions();
   const accountPermission = useRef(canManageAccounts);
   accountPermission.current = canManageAccounts;
   const [refreshToken, setRefreshToken] = useState(0);
-  const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [err, setErr] = useState('');
   const [qr, setQr] = useState<QRState | null>(null);
   const [qrNonce, setQrNonce] = useState(0);   // 每次登录 +1，稳定缓存 key，避免每次轮询 img 闪烁
   const [terminalMsg, setTerminalMsg] = useState('');
-  const [busy, setBusy] = useState('');
-  const [logoutBusy, setLogoutBusy] = useState('');
+  const [, setBusy] = useState('');
   const [smsCode, setSmsCode] = useState('');
   const [smsBusy, setSmsBusy] = useState(false);
   const [smsErr, setSmsErr] = useState('');
-  // whoami 结果缓存到 localStorage：打开页面秒显示昵称/头像，不必每次都起浏览器校验
-  const [whoami, setWhoami] = useState<Record<string, AccountWhoami | 'loading'>>(() => getWhoamiCache());
   // 凭证式登录（微信公众号 AppID/AppSecret）
   const [cred, setCred] = useState<{ platform: string; name: string } | null>(null);
   const [credForm, setCredForm] = useState({ appId: '', appSecret: '', author: '' });
@@ -77,69 +62,19 @@ export default function AccountsPage() {
     return () => { aliveRef.current = false; qrRequest.current += 1; };
   }, []);
 
-  // 真校验某平台登录态 + 拉昵称/头像（后端起浏览器，数秒）；手动「校验账号」或登录成功后调
+  // The directory owns visible account state; protocols only refresh it.
+  const load = useCallback(() => { setRefreshToken(value => value + 1); }, []);
   const runWhoami = useCallback((platform: string) => {
+    if (!accountPermission.current) return;
     const sequence = (whoamiRequests.current[platform] || 0) + 1;
     whoamiRequests.current[platform] = sequence;
-    setWhoami((w) => ({ ...w, [platform]: 'loading' }));
-    accountWhoami(platform, true)
-      .then((r) => {
-        if (aliveRef.current && whoamiRequests.current[platform] === sequence) {
-          setWhoami((w) => ({ ...w, [platform]: r }));
-          setWhoamiCache(platform, r);
-          setAccounts((list) => list.map((account) =>
-            account.platform === platform ? { ...account, loggedIn: r.loggedIn } : account));
-        }
-      })
-      .catch(() => {
-        if (aliveRef.current && whoamiRequests.current[platform] === sequence) {
-          setWhoami((previous) => {
-            const updated = { ...previous };
-            const cached = getWhoamiCache()[platform];
-            if (cached) updated[platform] = cached;
-            else delete updated[platform];
-            return updated;
-          });
-        }
-      });
-  }, []);
-
-  // 打开页面：拉「快」状态（读 status.json，不起浏览器），随后后台自愈——对缓存缺失/过期的
-  // 浏览器平台逐个真校验（whoami），结果到了刷新 UI，并令陈旧的假阴性缓存被真值覆盖。
-  const load = useCallback(() => {
-    setErr('');
-    fetchAccounts()
-      .then((list) => {
-        if (!aliveRef.current) return;
-        setAccounts(list);
-        const targets = list
-          .filter((a) => a.supported && a.backend !== 'biliup')
-          .map((a) => a.platform);
-        for (const account of list) {
-          const cached = getWhoamiCache()[account.platform];
-          if (cached && cached.loggedIn !== account.loggedIn) {
-            setWhoamiCache(account.platform, null);
-            setWhoami((previous) => {
-              const updated = { ...previous };
-              delete updated[account.platform];
-              return updated;
-            });
-          }
-        }
-        if (!accountPermission.current) return;
-        verifyStale(targets, {
-          alive: () => aliveRef.current && accountPermission.current,
-          onUpdate: (platform, r) => {
-            setWhoami((w) => ({ ...w, [platform]: r }));
-            setAccounts((current) => current.map((account) =>
-              account.platform === platform ? { ...account, loggedIn: r.loggedIn } : account));
-          },
-        });
-      })
-      .catch(() => setErr('加载账号状态失败'));
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
+    void accountWhoami(platform, true).then(result => {
+      if (aliveRef.current && accountPermission.current && whoamiRequests.current[platform] === sequence) {
+        setWhoamiCache(platform, result);
+        load();
+      }
+    }).catch(() => { /* Failed identity checks do not replace verified data. */ });
+  }, [load]);
 
   // 切回本标签页 / 窗口重新获得焦点时自动重拉账号态——登录/退出后即使漏了一次刷新，切回来也是最新的，
   // 用户无需手动刷新页面。（登录中弹着二维码时不打扰，避免打断轮询。）
@@ -278,8 +213,7 @@ export default function AccountsPage() {
             finished = true;
             stopPoll();
             if (s.state === 'success') {
-              setAccounts((list) => list.map((account) =>
-                account.platform === a.platform ? { ...account, loggedIn: true } : account));
+              load();
               setWhoamiCache(a.platform, null);
               runWhoami(a.platform);
             }
@@ -304,7 +238,7 @@ export default function AccountsPage() {
     } finally {
       if (aliveRef.current && qrRequest.current === sequence) setBusy('');
     }
-  }, [stopPoll, runWhoami, openCred]);
+  }, [stopPoll, runWhoami, openCred, load]);
 
   // 公众号后台扫码登录（数据中心取数用，独立于 AppID 凭证）
   const handleMpLogin = useCallback(async (a: AccountItem) => {
@@ -345,10 +279,7 @@ export default function AccountsPage() {
             finished = true;
             stopPoll();
             if (s.state === 'success') {
-              // 像快手一样“内存态立即翻”：wechat-oa 的 effLoggedIn 只看 a.loggedIn，这里直接把它乐观置 true，
-              // 卡片瞬间变「已登录」，不必等 load() 那趟网络往返（后面 load() 再对账兜底）。
-              setAccounts((list) => list.map((x) => x.platform === a.platform ? { ...x, loggedIn: true } : x));
-              setWhoami((w) => { const n = { ...w }; delete n[a.platform]; return n; });
+              // Refresh the one directory while identity details are verified.
               setWhoamiCache(a.platform, null);
               runWhoami(a.platform);
               load();
@@ -376,48 +307,17 @@ export default function AccountsPage() {
     }
   }, [stopPoll, runWhoami, load]);
 
-  const handleLogout = useCallback(async (a: AccountItem) => {
-    if (!window.confirm(`确定退出「${a.name}」的登录？登录态将被清除，下次使用需重新登录。`)) return;
-    setLogoutBusy(a.platform);
-    try {
-      await logoutAccount(a.platform);
-      // 内存态立即翻未登录（同登录路径），不等 load() 回来
-      setAccounts((list) => list.map((x) => x.platform === a.platform ? { ...x, loggedIn: false } : x));
-      setWhoami((w) => { const n = { ...w }; delete n[a.platform]; return n; });
-      setWhoamiCache(a.platform, null);
-      load();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '退出登录失败');
-    } finally {
-      setLogoutBusy('');
-    }
-  }, [load]);
-
-  // 卡片真实登录态：whoami 权威（已返回则以它为准，自愈假阳性），否则用后端 last-known。
-  const effLoggedIn = (a: AccountItem): boolean => {
-    const w = whoami[a.platform];
-    if (w && w !== 'loading') return w.loggedIn;
-    return a.loggedIn;
-  };
-
-  const badge = (a: AccountItem) => {
-    if (!a.supported) return <span className="badge">待重写</span>;
-    if (whoami[a.platform] === 'loading') return <span className="badge">校验中…</span>;
-    if (effLoggedIn(a)) return <span className="badge badge-ok">✓ 已登录</span>;
-    return <span className="badge">未登录</span>;
-  };
-
   return (
     <div className="accounts-page">
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div>
           <h1 className="page-title">账号管理</h1>
           <p className="page-subtitle">
-            {canManageAccounts ? '连接和管理 Easel 的各平台账号。'
+            {canManageAccounts ? '连接和管理 响芽 的各平台账号。'
               : '当前为只读查看，平台账号连接由当前 IP 的负责人管理。'}
           </p>
         </div>
-        <button className="btn btn-sm" onClick={() => { load(); setRefreshToken(value => value + 1); }}>⟳ 刷新</button>
+        <button className="btn btn-sm" onClick={load}>⟳ 刷新</button>
       </div>
 
       {err && <div style={{ color: 'var(--red)', fontSize: 13, marginTop: 12 }}>{err}</div>}
@@ -425,63 +325,10 @@ export default function AccountsPage() {
         <div className="card" style={{ padding: 13, fontSize: 13, marginTop: 14 }}>{terminalMsg}</div>
       )}
 
-      <InteractionAccounts refreshToken={refreshToken} platforms={accounts} onConnected={load} onPlatformLogin={account => {
+      <InteractionAccounts refreshToken={refreshToken} onPlatformLogin={account => {
         if (!accountPermission.current || !account.supported) return;
         return account.backend === 'wechat-oa' ? handleMpLogin(account) : handleLogin(account);
       }} />
-      <details className="account-other-platforms"><summary>全部平台账号{accounts.length ? ` · ${accounts.length} 个平台` : ''}</summary>
-      <div className="accounts-list">
-        {accounts.map((a) => {
-          const w = whoami[a.platform];
-          const info = w && w !== 'loading' ? w : null;
-          const logged = effLoggedIn(a);
-          return (
-            <div key={a.platform} className="card account-card" style={{ opacity: a.supported ? 1 : 0.6 }}>
-              <div className="account-card-head">
-                <span className="account-card-name">{a.name}</span>
-                {badge(a)}
-              </div>
-
-              {logged && info && (
-                <div className="account-identity">
-                  <Avatar url={info.avatar} name={info.name || a.name} />
-                  <span className="account-nick">{info.name || '（已登录）'}</span>
-                </div>
-              )}
-              {!logged && (
-                <div className="account-card-note">{a.note ? a.note : '连接平台账号后可使用相关内容功能'}</div>
-              )}
-
-              {canManageAccounts ? <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
-                {logged ? (
-                  <>
-                    <button className="btn btn-sm" style={{ flex: 1 }}
-                      disabled={busy === a.platform || busy === a.platform + ':mp' || w === 'loading'}
-                      onClick={() => { if (accountPermission.current) runWhoami(a.platform); }}>
-                      {w === 'loading' ? '校验中…' : '校验账号'}
-                    </button>
-                    <button className="btn btn-sm btn-ghost" style={{ flex: 1 }}
-                      disabled={logoutBusy === a.platform}
-                      onClick={() => { if (accountPermission.current) return handleLogout(a); }}>
-                      {logoutBusy === a.platform ? '退出中…' : '退出登录'}
-                    </button>
-                  </>
-                ) : (
-                  // 公众号与其它平台统一：都走扫码登录（公众号扫的是后台会话，用于发布+数据）
-                  <button
-                    className={`btn btn-block ${a.supported ? 'btn-primary' : ''}`}
-                    disabled={!a.supported || busy === a.platform || busy === a.platform + ':mp'}
-                    onClick={() => { if (accountPermission.current) return a.backend === 'wechat-oa' ? handleMpLogin(a) : handleLogin(a); }}>
-                    {(busy === a.platform || busy === a.platform + ':mp') ? '启动中…' : '登录'}
-                  </button>
-                )}
-              </div> : <div className="account-card-note" style={{ marginTop: 'auto' }}>由负责人管理连接</div>}
-            </div>
-          );
-        })}
-      </div>
-
-      </details>
       {canManageAccounts && qr && (
         <div className="overlay" onClick={closeQr}>
           <div className="modal" style={{ width: 360, maxWidth: '100%', textAlign: 'center' }}
@@ -497,7 +344,7 @@ export default function AccountsPage() {
             {qr.state === 'window_login' ? (
               <div className="loading" style={{ padding: '28px 8px', lineHeight: 1.7, flexDirection: 'column', gap: 12 }}>
                 <div className="spinner" />
-                <div>在运行 Easel 的电脑上，切换到新打开的浏览器完成登录。</div>
+                <div>在运行 响芽 的电脑上，切换到新打开的浏览器完成登录。</div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>完成后自动保存登录状态，并更新此页面。</div>
               </div>
             ) : qr.state === 'sms_required' ? (
@@ -532,7 +379,7 @@ export default function AccountsPage() {
             ) : qr.state === 'window_login' ? (
               <div className="loading" style={{ padding: '28px 8px', lineHeight: 1.7, flexDirection: 'column', gap: 12 }}>
                 <div className="spinner" />
-                <div>在运行 Easel 的电脑上，切换到新打开的浏览器完成登录。</div>
+                <div>在运行 响芽 的电脑上，切换到新打开的浏览器完成登录。</div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>完成后自动保存登录状态，并更新此页面。</div>
               </div>
             ) : qr.state === 'success' ? (

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Easel</title>
-<link rel="icon" type="image/png" href="easel-icon-transparent.png">
+<title>响芽 Xiangya · AI 自媒体自动化运营</title>
+<link rel="icon" type="image/svg+xml" href="xiangya-icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- 非阻塞加载：fonts.googleapis.com 在中国大陆网络下会 net::ERR_TIMED_OUT，
@@ -243,8 +243,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   <!-- ====== Sidebar ====== -->
   <aside class="sidebar">
     <div class="sidebar-header">
-      <img class="logo" src="easel-icon-transparent.png" alt="">
-      <span class="sidebar-title">Easel</span>
+      <img class="logo" src="xiangya-icon.svg" alt="">
+      <span class="sidebar-title">响芽</span>
     </div>
 
     <div class="persona-section">
@@ -285,7 +285,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       <div class="chat-messages" id="chatMessages">
         <div class="chat-empty" id="chatEmpty">
           <div>
-            <img class="chat-empty-logo" src="easel-icon-transparent.png" alt="">
+            <img class="chat-empty-logo" src="xiangya-icon.svg" alt="">
             <div>Start a conversation</div>
             <div class="chat-empty-hint">Try: Help me plan a tech review topic</div>
           </div>
@@ -529,7 +529,7 @@ function clearChat() {
   const empty = document.createElement('div');
   empty.className = 'chat-empty';
   empty.id = 'chatEmpty';
-  empty.innerHTML = '<div><img class="chat-empty-logo" src="easel-icon-transparent.png" alt=""><div>Start a conversation</div><div class="chat-empty-hint">Try: Help me plan a tech review topic</div></div>';
+  empty.innerHTML = '<div><img class="chat-empty-logo" src="xiangya-icon.svg" alt=""><div>Start a conversation</div><div class="chat-empty-hint">Try: Help me plan a tech review topic</div></div>';
   container.appendChild(empty);
 }
 

@@ -1,14 +1,14 @@
 /* 能力菜单数据（笔入口「能做的都在这」用）
- * 115 个技能的展示名/分组/状态 + 整片管线接入位。
+ * 技能展示名/分组/状态 + 整片管线接入位。
  * 技能集更新时随技能库重新生成。 */
 export interface CapabilityItem { id?: string; label: string; desc?: string; skill?: string | null; status?: string; }
 export interface CapabilityGroup { id?: string; label: string; items: CapabilityItem[]; }
 export interface CapabilityTab { id: string; label: string; groups: CapabilityGroup[]; }
 export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
  "meta": {
-  "name": "Easel 能力菜单",
+  "name": "响芽 能力菜单",
   "version": "v1-draft",
-  "date": "2026-10-03",
+  "date": "2026-11-05",
   "legend": {
    "done": "已验（真机跑过 · 有产物）",
    "ready": "可用（工具就绪 · 未真跑）",
@@ -16,8 +16,8 @@ export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
    "incoming": "接入中"
   },
   "counts": {
+   "ready": 94,
    "done": 7,
-   "ready": 98,
    "need": 10,
    "incoming": 1
   }
@@ -268,7 +268,7 @@ export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
       {
        "skill": "auto-short-video",
        "label": "一句话出片",
-       "desc": "一句话主题 → 成品短视频：自动串联 文案→配图/AI视频→配音→字幕→BGM→合成，把 Easel 制作层零件编排成一条'一键出片'流水线。**单条视频、口播/资讯向，画面默认逐句配图 + Ken Burns 缓动，需",
+       "desc": "一句话主题 → 成品短视频：自动串联 文案→配图/AI视频→配音→字幕→BGM→合成，把 响芽 制作层零件编排成一条'一键出片'流水线。**单条视频、口播/资讯向，画面默认逐句配图 + Ken Burns 缓动，需",
        "status": "ready"
       },
       {
@@ -456,14 +456,8 @@ export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
    "groups": [
     {
      "id": "discover",
-     "label": "发现与选题",
+     "label": "资讯与研究",
      "items": [
-      {
-       "skill": "skill-trending-topics",
-       "label": "热榜选题",
-       "desc": "抓取微博、抖音、知乎、头条、B站实时热搜，筛选与创作者赛道相关的热点，输出二创选题建议。 当用户说\"今天有什么热搜\"\"热点\"\"最近大家在聊什么\"\"追热点\"\"蹭热点\"\"二创选题\"\"热搜榜\"时使用。 和 skill-news",
-       "status": "ready"
-      },
       {
        "skill": "skill-news-intelligence",
        "label": "行业情报",
@@ -537,27 +531,9 @@ export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
        "status": "ready"
       },
       {
-       "skill": "skill-content-matrix",
-       "label": "选题矩阵",
-       "desc": "将内容支柱与多种格式交叉，生成选题矩阵，每个格子产出一个可直接执行的选题。 当用户说\"选题矩阵\"\"批量选题\"\"选题池\"\"内容矩阵\"\"一次多个选题\"\"支柱×格式\"\"选题规划表\"时使用。 和 skill-topic-eval",
-       "status": "ready"
-      },
-      {
        "skill": "skill-content-calendar",
        "label": "月度排期",
        "desc": "生成月度社媒内容排期表：逐条选题+角度+视觉方向，覆盖小红书/抖音/B站/微博。 当用户说\"内容排期\"\"月度日历\"\"发布计划\"\"内容日历\"\"排期表\"\"这个月发什么\"\"内容节奏表\"时使用。 消费 skill-content",
-       "status": "ready"
-      },
-      {
-       "skill": "skill-topic-evaluator",
-       "label": "选题评估",
-       "desc": "评估单个选题的潜力，按统一维度（流量潜力、账号匹配、 竞争差异化、时效价值、变现空间、制作成本、合规风险）打分，输出\"做/不做/改方向\"建议。 当用户说\"这个选题值不值得做\"、\"评估一下\"、\"能不能火\"、\"有没有流量\"、",
-       "status": "ready"
-      },
-      {
-       "skill": "skill-trend-rider",
-       "label": "蹭热点方案",
-       "desc": "给定一个热点事件或话题，结合创作者账号定位，输出蹭热点的具体内容方案。 包含切入角度、内容形式、标题建议、风险提醒。 当用户说\"这个热点怎么蹭\"、\"蹭热点\"、\"怎么结合\"、\"热点和我有关吗\"、 \"追热点\"、\"热点方案\"、",
        "status": "ready"
       },
       {
@@ -600,12 +576,6 @@ export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
        "skill": "skill-competitor-analysis",
        "label": "竞品分析",
        "desc": "分析竞品账号的内容策略，拆解选题、格式、爆款规律和互动模式，输出差异化机会与行动建议。 当用户说\"分析竞品\"\"竞品账号\"\"对标账号\"\"拆解爆款\"\"竞品在做什么\"\"对手内容策略\"\"竞争分析\"时使用。 和 skill-con",
-       "status": "ready"
-      },
-      {
-       "skill": "skill-content-gap-analysis",
-       "label": "内容空白分析",
-       "desc": "分析社媒赛道的内容空白，发现高需求低竞争的蓝海选题机会。 当用户说\"蓝海选题\"\"内容空白\"\"没人做的选题\"\"选题机会\"\"高需求低竞争\"\"差异化选题\"\"内容缺口\"时使用。 和 skill-competitor-analys",
        "status": "ready"
       },
       {
@@ -707,7 +677,7 @@ export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
       {
        "skill": "skill-post-scorer",
        "label": "互动潜力评分",
-       "desc": "对社媒帖子草稿进行互动潜力评分，基于历史表现数据输出结构化评分卡。 当用户说\"帖子打分\"\"评分\"\"这条能火吗\"\"发布前评估\"\"内容质量分\"\"评分卡\"\"草稿评估\"时使用。 和 skill-topic-evaluator 的",
+       "desc": "对已完成的社媒草稿评估互动潜力、结构和表达，输出评分与修改建议。",
        "status": "ready"
       },
       {
@@ -761,7 +731,7 @@ export const CAPABILITY_MENU: { meta?: unknown; tabs: CapabilityTab[] } = {
       {
        "skill": "skill-my-account",
        "label": "账号查询",
-       "desc": "查询用户自己在 Easel 已登录的小红书、抖音、快手、知乎和视频号身份、粉丝、获赞、关注及作品列表。 当用户问“我登录了哪些号、我是谁、我的粉丝/获赞、我最近发了什么、我有哪些帖子”时，先用本 SKILL 查本地登录态",
+       "desc": "查询用户自己在 响芽 已登录的小红书、抖音、快手、知乎和视频号身份、粉丝、获赞、关注及作品列表。 当用户问“我登录了哪些号、我是谁、我的粉丝/获赞、我最近发了什么、我有哪些帖子”时，先用本 SKILL 查本地登录态",
        "status": "done"
       },
       {

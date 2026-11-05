@@ -71,11 +71,6 @@ test('content changes after delivery require a new cut', () => {
   assert.equal(api.projectLifecycle(reviewed('human', 'approved', { revision: 4, stage: 'editing' })).key, 'producing');
 });
 
-test('known live canvas changes prevent old approval from appearing publish-ready', () => {
-  assert.equal(api.projectLifecycle(reviewed('human', 'approved', { engine_dirty: true,
-    engine_current_revision: 9, beeftv_canvas_id: 'canvas-1' })).key, 'producing');
-});
-
 test('published requires a publication record matching the actual delivery and version', () => {
   const publication = { id: 'pub-1', revision: 3, artifact_id: artifact.id,
     artifact_sha256: artifact.sha256, platform: '视频号', url: 'https://example.com/post',

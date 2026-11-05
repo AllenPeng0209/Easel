@@ -1,5 +1,5 @@
 /**
- * Easel's authenticated route adapter for the MIT DeepSeek Harness deliverables
+ * 响芽's authenticated route adapter for the MIT DeepSeek Harness deliverables
  * surface. Card markup, two-column summary and four-card expansion are migrated
  * from ui-deliverables/PresentedFileCard.tsx and Deliverables.tsx @ ce7073d.
  */
@@ -15,6 +15,7 @@ import DeliverablePreviewBody from './DeliverablePreviewBody';
 import FixedVersionComparison from './FixedVersionComparison';
 import { HostReadStore } from '../vendor/deepseek-harness/deliverables/HostReadStore';
 import reviewCss from '../vendor/deepseek-harness/deliverables/ReviewTab.module.css';
+import { publicationMediaReference, requestDeliverablePublication } from '../lib/publicationHandoff';
 import '../styles/deliverables.css';
 
 const labels: Record<string, string> = {
@@ -123,7 +124,7 @@ export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
   const presented = files.map(file => {
     const href = safeDeliverableHref(file);
     return { file, href, available: file.status === 'available' && !!href,
-      previewAvailable: !!deliverablePreviewCapability(file) };
+      previewAvailable: !!deliverablePreviewCapability(file), publishAvailable: !!publicationMediaReference(file) };
   });
   const openFile = (file: ChatDeliverable, trigger?: HTMLElement) => {
     if (!deliverablePreviewCapability(file)) return;
@@ -137,7 +138,7 @@ export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
     }} />
     <div className={css.root}>
       {hasOverview && <ul className="deliverable-overview" data-deliverable-overview aria-label="本轮交付物总览">
-        {presented.map(({ file, href, available, previewAvailable }) =>
+        {presented.map(({ file, href, available, previewAvailable, publishAvailable }) =>
           <li key={file.artifactId} className="deliverable-overview__row" data-deliverable-overview-id={file.artifactId}>
             <div className="deliverable-overview__file">
               {previewAvailable ? <button type="button" className="deliverable-overview__preview"
@@ -151,9 +152,13 @@ export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
                 {available && !previewAvailable && <span>不支持预览</span>}
               </span>
             </div>
-            {available ? <a className="deliverable-download" href={`${href}?download=1`}
-              download={file.name} aria-label={`下载：${file.name}`}>下载</a>
-              : <span className="deliverable-unavailable">暂不可用</span>}
+            <div className="deliverable-actions">
+              {publishAvailable && <button type="button" className="btn btn-secondary"
+                onClick={() => { requestDeliverablePublication(file); }}>用于发布</button>}
+              {available ? <a className="deliverable-download" href={`${href}?download=1`}
+                download={file.name} aria-label={`下载：${file.name}`}>下载</a>
+                : <span className="deliverable-unavailable">暂不可用</span>}
+            </div>
           </li>)}
       </ul>}
       {hasOverview && <button type="button" className={css.toggle} data-deliverable-details-toggle
@@ -161,7 +166,7 @@ export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
         onClick={() => setExpanded(value => !value)}>{expanded ? '收起交付详情' : '展开交付详情与版本'}</button>}
       <div id={detailsId} className="deliverable-detail-cards" hidden={hasOverview && !expanded} data-deliverable-detail-cards>
         <div className={css.presented} data-presented-files-row data-single={!hasOverview || undefined}>
-          {presented.map(({ file, href, available, previewAvailable }, index) =>
+          {presented.map(({ file, href, available, previewAvailable, publishAvailable }, index) =>
             <div key={file.artifactId} data-artifact-id={file.artifactId}>
               <PresentedFileCard file={{ path: file.path, description: file.description, seq: file.createdAt, index }}
                 cwd={undefined} phase={available ? undefined : 'error'} host={null} t={t} disabled={!available}
@@ -172,6 +177,8 @@ export default function DeliverableCards({ artifacts, onOpenDeliverable }: {
                   {available && !previewAvailable && <span data-deliverable-download-only>不支持预览</span>}
                 </span>}
                 actions={<div className="deliverable-actions">
+                  {publishAvailable && <button type="button" className="btn btn-secondary"
+                    onClick={() => { requestDeliverablePublication(file); }}>用于发布</button>}
                   {available ? <a className="deliverable-download" href={`${href}?download=1`}
                     download={file.name} aria-label={`下载：${file.name}`}>下载</a>
                     : <span className="deliverable-unavailable" role="status">暂不可用</span>}

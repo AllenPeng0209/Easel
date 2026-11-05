@@ -1,4 +1,4 @@
-"""Connect durable task workers to Easel's existing model and publication adapters."""
+"""Connect durable task workers to Xiangya's existing model and publication adapters."""
 from __future__ import annotations
 
 import asyncio

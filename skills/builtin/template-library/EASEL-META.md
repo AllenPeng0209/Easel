@@ -1,10 +1,10 @@
-# Easel SKILL 元数据 — template-library
+# 响芽 SKILL 元数据 — template-library
 
 | 字段 | 值 |
 |------|-----|
 | **SKILL 名称** | template-library |
 | **所属层** | general |
-| **自研** | 是（Easel 原创） |
+| **自研** | 是（响芽 原创） |
 | **脚本** | `scripts/templates.py`（纯 stdlib，python3.11） |
 
 ## 脚本说明

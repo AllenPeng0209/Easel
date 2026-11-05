@@ -31,7 +31,7 @@ layer: produce
 
 ## 配置（需设的环境变量）
 
-> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 Easel 项目根，确认当前目录有 `.env` 和 `skills/shared/scripts/`，再运行注册表、`check` 或生成命令。不得改用 workspace 的共享脚本副本，也不得以 `env` / `printenv` 没显示变量为由判断未配置。
+> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 响芽 项目根，确认当前目录有 `.env` 和 `skills/shared/scripts/`，再运行注册表、`check` 或生成命令。不得改用 workspace 的共享脚本副本，也不得以 `env` / `printenv` 没显示变量为由判断未配置。
 
 在项目根 `.env` 或环境变量中设置（脚本自动向上查找 `.env`）。用户自己填 key。
 

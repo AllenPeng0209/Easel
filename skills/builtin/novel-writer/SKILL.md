@@ -107,4 +107,4 @@ chapters/ 001.md 002.md ...                            ← 章节正文
 
 见 `EASEL-META.md`。方法论沉淀自 autonovel（模板体系/双免疫去 slop）、马良 MaliangAINovalWriter
 （三级大纲/黄金三章/剧情推演）、AI_NovelGenerator（定稿更新状态+一致性校验）、GOAT-Storytelling-Agent
-（场景卡分解替代长上下文）——均为「文件即真相 + 按需加载」思路，最适合纯文件工具的 Easel。
+（场景卡分解替代长上下文）——均为「文件即真相 + 按需加载」思路，最适合纯文件工具的 响芽。

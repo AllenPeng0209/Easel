@@ -21,7 +21,6 @@ layer: plan
 |-------|------|------|
 | **content-strategy（本 SKILL）** | 元策略层：支柱理论、受众路径、90 天节奏原则、渠道策略 | 只出框架和原则，**不出月度排期表** |
 | content-calendar | 消费本策略，产出**具体月度排期** | 引用本 SKILL 的支柱定义，不重复定义支柱理论 |
-| content-matrix | 产出**选题标题池**（支柱 × 格式矩阵） | 承接本 SKILL 定义的支柱 |
 
 支柱比例、发布频率的数据基线统一存于 `../../shared/pillar-and-cadence.md`，本 SKILL 引用而非另写。
 
@@ -102,9 +101,7 @@ layer: plan
 
 下一步：
 - 用 skill-content-calendar 将策略落地为**具体月度排期**
-- 用 skill-content-matrix 生成**选题标题池**
 - 用 skill-audience-profiler 深化受众画像
-- 用 skill-content-gap-analysis 发现蓝海选题
 
 ---
 

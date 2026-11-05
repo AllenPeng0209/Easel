@@ -1,4 +1,4 @@
-// Easel — OpenClaw 适配器专用 gateway 配置 (JSON5)
+// 响芽 — OpenClaw 适配器专用 gateway 配置 (JSON5)
 // ⚠️ 本文件仅作参考，实际配置由 setup.sh 通过 `openclaw config set` 直接写入
 //    ~/.openclaw-easel/openclaw.json，此模板从不被 setup.sh 应用。
 //    其中的字段（如 workspace 路径、agent 结构）可能已与实际配置漂移，

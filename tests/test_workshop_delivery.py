@@ -53,32 +53,23 @@ def test_host_manifest_cannot_follow_a_symlink_or_supply_identity(tmp_path):
 
 def test_planning_writes_real_scoped_objects_and_deduplicates_without_media(tmp_path, monkeypatch):
     payload = make_plan(tmp_path)
-    monkeypatch.setattr(workshop_delivery, "create_canvas", lambda project: "easel-" + project["id"])
-    ideas = []
     checks = []
-
-    def idea_operation(method, path, body):
-        assert path == "/ideas"
-        if method == "GET":
-            return ideas
-        ideas.append({"id": "idea-test", **body})
-        return ideas[-1]
 
     def authorize():
         checks.append(True)
 
-    arguments = dict(outputs=tmp_path, ip="approved-ip", ideas=idea_operation, authorize=authorize)
+    arguments = dict(outputs=tmp_path, ip="approved-ip", authorize=authorize)
     first = workshop_delivery.run_workshop_delivery(payload, **arguments)
     assert workshop_delivery.run_workshop_delivery(payload, **arguments) == first
-    assert len(checks) >= 8 and len(ideas) == 1
-    record = WorkshopStore(tmp_path, strict_canvas_bindings=True).get(first[0]["workshopId"])
-    assert record["beeftv_canvas_id"] == "easel-" + record["id"]
+    assert len(checks) >= 5
+    assert len(WorkshopStore(tmp_path).list()) == 1
+    record = WorkshopStore(tmp_path).get(first[0]["workshopId"])
+    assert record["stage"] == "draft"
     assert record["deliverables"] == []
-    assert ideas[0]["provenance"]["url"] == first[0]["workshopUrl"]
-    assert "/approved-ip/" in first[0]["ideaUrl"]
+    assert "/approved-ip/workshop/" in first[0]["workshopUrl"]
 
 
-def test_revoked_authority_prevents_writing_workshop_or_idea(tmp_path):
+def test_revoked_authority_prevents_writing_workshop(tmp_path):
     payload = make_plan(tmp_path)
     checks = 0
 
@@ -90,7 +81,7 @@ def test_revoked_authority_prevents_writing_workshop_or_idea(tmp_path):
 
     with pytest.raises(PermissionError):
         workshop_delivery.run_workshop_delivery(payload, outputs=tmp_path, ip="approved-ip",
-            ideas=lambda *args: pytest.fail("revoked operation touched ideas"), authorize=authorize)
+            authorize=authorize)
     assert list((tmp_path / "_workshop" / "projects").glob("*.json")) == []
 
 
@@ -111,23 +102,15 @@ def test_manifest_directory_is_part_of_new_batch_identity_and_legacy_resume_is_e
     })
     data["episodes"][0]["workshopId"] = legacy["id"]
     first.write_text(json.dumps(data))
-    ideas = []
-
-    def idea_operation(method, path, body):
-        if method == "GET":
-            return ideas
-        ideas.append({"id": "existing-plan", **body})
-        return ideas[-1]
-
     result = workshop_delivery.run_workshop_delivery(payload, outputs=tmp_path, ip="approved-ip",
-        ideas=idea_operation, authorize=lambda: None)
+        authorize=lambda: None)
     assert result[0]["workshopId"] == legacy["id"]
     assert len(WorkshopStore(tmp_path).list()) == 1
     data["episodes"][0]["workshopId"] = "f" * 32
     first.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="不属于当前制作批次"):
         workshop_delivery.run_workshop_delivery(payload, outputs=tmp_path, ip="approved-ip",
-            ideas=idea_operation, authorize=lambda: None)
+            authorize=lambda: None)
 
 
 def test_codex_typed_delivery_registers_and_replays_same_call_once(tmp_path):
@@ -145,7 +128,7 @@ def test_codex_typed_delivery_registers_and_replays_same_call_once(tmp_path):
     async def write(arguments):
         seen.append(arguments)
         await asyncio.sleep(0.01)
-        return [{"ideaId": "idea-result", "workshopId": "a" * 32}]
+        return [{"workshopId": "a" * 32}]
 
     async def no_input(*args):
         pytest.fail("typed production called interactive approval")

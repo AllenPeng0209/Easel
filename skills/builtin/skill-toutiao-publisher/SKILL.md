@@ -131,7 +131,7 @@ python skills/shared/scripts/manifest.py record --topic <主题> --layer publish
 
 ## Profile 感知
 
-有 Easel Profile 时，用 Profile 的账号定位/受众/语气决定标题风格与话题选择，并可用 `skill-persona-check` 做事后一致性检查；无 Profile 时按头条通用图文规范发布，不额外假设账号人设。
+有 响芽 Profile 时，用 Profile 的账号定位/受众/语气决定标题风格与话题选择，并可用 `skill-persona-check` 做事后一致性检查；无 Profile 时按头条通用图文规范发布，不额外假设账号人设。
 
 ## 结果核对
 

@@ -22,3 +22,8 @@ def publication_state_directory(repository: Path, project: str) -> Path:
         raise ValueError('发布批准状态必须保存在 Agent 可写工作区之外')
     identity = hashlib.sha256(str(repository).encode()).hexdigest()[:24]
     return base / identity / project / 'publications'
+
+
+def generation_state_directory(repository: Path, project: str) -> Path:
+    """Separate video admission authority, outside every native workspace."""
+    return publication_state_directory(repository, project).parent / 'video-generations'

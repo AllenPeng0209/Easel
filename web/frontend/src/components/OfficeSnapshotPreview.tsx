@@ -1,7 +1,7 @@
 /**
  * On-demand Office conversion, request lifetime, and font notice adapted from
  * DeepSeek Harness ui-sidebar-documentpreview/src/client/office
- * @ ce7073d (MIT). Conversion is bound to Easel's fixed artifact identity.
+ * @ ce7073d (MIT). Conversion is bound to 响芽's fixed artifact identity.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { officeSnapshotPreviewHref, safeDeliverableHref, type ChatDeliverable } from '../lib/deliverables';

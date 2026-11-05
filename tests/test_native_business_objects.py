@@ -55,9 +55,9 @@ for line in sys.stdin:
  elif method=="turn/interrupt":send({"id":m["id"],"result":{}})
 '''
 
-PAYLOAD = {'action': 'list', 'kind': 'idea', 'query': '真实选题'}
-HOST_DTO = {'schemaVersion': 1, 'actorId': 'host-actor', 'projectId': 'host-ip', 'kind': 'idea',
-            'items': [{'id': 'a' * 12, 'title': 'Host-owned title'}], 'nextCursor': None}
+PAYLOAD = {'action': 'list', 'kind': 'workshop', 'query': '真实工坊'}
+HOST_DTO = {'schemaVersion': 1, 'actorId': 'host-actor', 'projectId': 'host-ip', 'kind': 'workshop',
+            'items': [{'id': 'a' * 32, 'title': 'Host-owned title'}], 'nextCursor': None}
 
 
 def request_for(tmp_path, arguments, callback, *, no_call=False, native_id='', overrides=None,
@@ -116,20 +116,18 @@ def test_only_an_enabled_callback_registers_the_eager_business_object_tool(tmp_p
         assert schema['required'] == ['action', 'kind']
         assert set(schema['properties']) == {'action', 'kind', 'id', 'cursor', 'query'}
         assert schema['properties']['action']['enum'] == ['list', 'inspect']
-        assert set(schema['properties']['kind']['enum']) == {'idea', 'draft', 'workshop'}
+        assert set(schema['properties']['kind']['enum']) == {'draft', 'workshop'}
         assert schema['properties']['cursor']['maxLength'] == 2048
         assert schema['properties']['query']['maxLength'] == 500
         assert 'easel_business_objects' in start['developerInstructions']
 
 
 @pytest.mark.parametrize('payload', [
-    {'action': 'list', 'kind': 'idea'},
+    {'action': 'list', 'kind': 'workshop'},
     {'action': 'list', 'kind': 'draft', 'cursor': '', 'query': ''},
     {'action': 'list', 'kind': 'workshop', 'cursor': 'opaque-token_-', 'query': '来源 https://example.test/选题'},
-    {'action': 'list', 'kind': 'idea', 'cursor': 'c' * 2048, 'query': '题' * 500},
-    {'action': 'inspect', 'kind': 'idea', 'id': 'a' * 12},
-    {'action': 'inspect', 'kind': 'idea', 'id': 'x'},
-    {'action': 'inspect', 'kind': 'idea', 'id': 'A' * 160},
+    {'action': 'list', 'kind': 'workshop', 'cursor': 'c' * 2048, 'query': '题' * 500},
+    {'action': 'inspect', 'kind': 'workshop', 'id': 'a' * 32},
     {'action': 'inspect', 'kind': 'draft', 'id': 'b' * 32},
     {'action': 'inspect', 'kind': 'workshop', 'id': 'c' * 32},
 ])
@@ -158,21 +156,21 @@ def test_the_host_receives_the_real_native_call_id_without_argument_pollution(tm
 
 
 @pytest.mark.parametrize('arguments', [
-    None, [], {}, 'list everything', {'action': 'list'}, {'kind': 'idea'},
-    {'action': 'delete', 'kind': 'idea'}, {'action': True, 'kind': 'idea'},
-    {'action': 'list', 'kind': 'project'}, {'action': 'list', 'kind': ['idea']},
-    {'action': 'list', 'kind': 'idea', 'id': 'a' * 12},
-    {'action': 'list', 'kind': 'idea', 'id': None},
-    {'action': 'inspect', 'kind': 'idea'},
+    None, [], {}, 'list everything', {'action': 'list', 'kind': 'idea'}, {'action': 'list'}, {'kind': 'workshop'},
+    {'action': 'delete', 'kind': 'workshop'}, {'action': True, 'kind': 'workshop'},
+    {'action': 'list', 'kind': 'project'}, {'action': 'list', 'kind': ['workshop']},
+    {'action': 'list', 'kind': 'workshop', 'id': 'a' * 32},
+    {'action': 'list', 'kind': 'workshop', 'id': None},
+    {'action': 'inspect', 'kind': 'workshop'},
     {'action': 'inspect', 'kind': 'draft', 'id': 'a' * 12},
     {'action': 'inspect', 'kind': 'workshop', 'id': 'A' * 32},
     {'action': 'inspect', 'kind': 'workshop', 'id': True},
-    {'action': 'inspect', 'kind': 'idea', 'id': 'a' * 12, 'query': ''},
+    {'action': 'inspect', 'kind': 'workshop', 'id': 'a' * 32, 'query': ''},
     {'action': 'inspect', 'kind': 'draft', 'id': 'a' * 32, 'cursor': ''},
-    *[{'action': 'inspect', 'kind': 'idea', 'id': value} for value in ('', 'a' * 161, '../private', 'https://private.test/id', '/tmp/object', 'a' * 11 + '\n', '选题一')],
-    *[{'action': 'list', 'kind': 'idea', 'query': value} for value in (None, False, [], 'q' * 501, 'line\nnext', 'zero\x00byte')],
-    *[{'action': 'list', 'kind': 'idea', 'cursor': value} for value in (None, False, [], 'c' * 2049, 'bad\ttoken')],
-    *[{'action': 'list', 'kind': 'idea', key: value} for key, value in (
+    *[{'action': 'inspect', 'kind': 'workshop', 'id': value} for value in ('', 'a' * 161, '../private', 'https://private.test/id', '/tmp/object', 'a' * 11 + '\n', '选题一')],
+    *[{'action': 'list', 'kind': 'workshop', 'query': value} for value in (None, False, [], 'q' * 501, 'line\nnext', 'zero\x00byte')],
+    *[{'action': 'list', 'kind': 'workshop', 'cursor': value} for value in (None, False, [], 'c' * 2049, 'bad\ttoken')],
+    *[{'action': 'list', 'kind': 'workshop', key: value} for key, value in (
         ('actorId', 'other-user'), ('projectId', 'other-ip'), ('ip', 'other-ip'),
         ('path', '/private/data'), ('url', 'https://private.test/query'), ('state', 'published'),
         ('status', 'approved'), ('approved', True), ('callId', 'forged-call'), ('limit', 100), ('extra', {}))],
@@ -257,7 +255,7 @@ def test_a_call_id_cannot_be_rebound_to_different_query_arguments(tmp_path):
         seen.append(value)
         return HOST_DTO
     calls = [{'arguments': PAYLOAD, 'overrides': {'callId': 'same-call'}},
-             {'arguments': {'action': 'inspect', 'kind': 'idea', 'id': 'a' * 12}, 'overrides': {'callId': 'same-call'}}]
+             {'arguments': {'action': 'inspect', 'kind': 'workshop', 'id': 'a' * 32}, 'overrides': {'callId': 'same-call'}}]
     value = run_query(tmp_path, None, read, calls=calls)
     assert value['error'] is None and seen == [PAYLOAD]
     assert [item['success'] for item in results(value)] == [True, False]
@@ -290,7 +288,7 @@ def test_a_later_turn_with_the_same_call_id_queries_fresh_host_data(tmp_path):
     seen = []
     async def read(value, call_id):
         seen.append((value, call_id))
-        return {**HOST_DTO, 'items': [{'id': 'a' * 12, 'title': value['query']}]}
+        return {**HOST_DTO, 'items': [{'id': 'a' * 32, 'title': value['query']}]}
     alpha = {**PAYLOAD, 'query': 'Alpha'}
     beta = {**PAYLOAD, 'query': 'Beta'}
     first = run_query(tmp_path, alpha, read, restore_routing=True)
@@ -315,30 +313,6 @@ def test_fresh_rpc_process_restores_the_registered_tool_without_appending_it(tmp
     assert starts[0]['fixturePid'] != resumes[0]['fixturePid']
     assert not {'dynamicTools', 'path', 'history'} & set(resumes[0]['params'])
     assert results(second)[0]['success'] is True
-
-
-def test_an_opaque_legacy_idea_id_returned_by_list_can_be_inspected_after_resume(tmp_path):
-    legacy = 'Legacy_idea-2026'
-    item = {'id': legacy, 'title': 'Stored legacy idea'}
-    dto = {**HOST_DTO, 'items': [item]}
-    seen = []
-
-    async def read(payload, call_id):
-        seen.append((payload, call_id))
-        return dto
-
-    listing = {'action': 'list', 'kind': 'idea'}
-    first = run_query(tmp_path, listing, read, restore_routing=True)
-    listed = json.loads(results(first)[0]['contentItems'][0]['text'])
-    inspect = {'action': 'inspect', 'kind': 'idea', 'id': listed['items'][0]['id']}
-    second = run_query(tmp_path, inspect, read, native_id=first['ids'][0], restore_routing=True)
-
-    assert first['error'] is second['error'] is None
-    assert first['ids'] == second['ids']
-    assert seen == [(listing, 'business-call-0'), (inspect, 'business-call-0')]
-    response = results(second)[-1]
-    assert response['success'] is True
-    assert json.loads(response['contentItems'][0]['text'])['items'] == [item]
 
 
 def test_an_old_thread_without_this_tool_keeps_its_identity_and_does_not_invent_objects(tmp_path):

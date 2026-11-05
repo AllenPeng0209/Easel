@@ -23,11 +23,11 @@
 
 ## 实际复用与必要适配
 
-| 上游路径／commit／源SHA | 本地路径／目标SHA | verbatim／adapted／Easel适配 | 必要变动 | 来源账本位置 |
+| 上游路径／commit／源SHA | 本地路径／目标SHA | verbatim／adapted／响芽适配 | 必要变动 | 来源账本位置 |
 |---|---|---|---|---|
 | 待填 | 待填 | 待填 | 待填 | `integrations/deepseek-harness/upstream-manifest.json` |
 
-`verbatim` 只用于去除新增来源头后原正文逐字一致的情况。抽取函数、修改类型/依赖或业务边界均登记为 `adapted` 或独立的Easel适配。完整clone或候选来源不等于功能迁移完成。
+`verbatim` 只用于去除新增来源头后原正文逐字一致的情况。抽取函数、修改类型/依赖或业务边界均登记为 `adapted` 或独立的响芽适配。完整clone或候选来源不等于功能迁移完成。
 
 ## 测试先行与代码验证
 

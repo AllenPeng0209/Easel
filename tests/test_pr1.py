@@ -5,9 +5,9 @@
 - p2p（pass→pass）：改前改后都通过 —— 证明无回归。
 
 覆盖三处 Python 修复：
-  H2  easel chat 必须走 openclaw_base_cmd()，不能写死 "openclaw" 字面量（Windows 崩）
-  M6  easel web 必须传播子进程返回码（不能恒返回 0）
-  M5  easel skill 的 _resolve_input 对非 UTF-8 文本文件不能裸崩
+  H2  xiangya chat 必须走 openclaw_base_cmd()，不能写死 "openclaw" 字面量（Windows 崩）
+  M6  xiangya web 必须传播子进程返回码（不能恒返回 0）
+  M5  xiangya skill 的 _resolve_input 对非 UTF-8 文本文件不能裸崩
 
 H1（scripts/gateway.sh macOS 兼容）因有启动副作用，在 BEFORE/AFTER 阶段用
 直接的 `bash scripts/gateway.sh` 调用验证，不放进 pytest。
@@ -31,11 +31,11 @@ from easel.commands import skill as cli_skill  # noqa: E402
 
 
 # ============================================================
-# f2p: H2 — easel chat 走 openclaw_base_cmd()
+# f2p: H2 — xiangya chat 走 openclaw_base_cmd()
 # ============================================================
 
 def test_chat_cmd_uses_openclaw_base_cmd_not_literal(monkeypatch):
-    """easel chat 组装的命令必须以 openclaw_base_cmd() 的返回开头，
+    """xiangya chat 组装的命令必须以 openclaw_base_cmd() 的返回开头，
     而不是写死的字面量 "openclaw"（后者在 Windows 上是 .cmd shim，CreateProcess 跑不了）。"""
     base = ["node", "/fake/path/openclaw.mjs"]
     monkeypatch.setattr(cli, "openclaw_base_cmd", lambda: base)
@@ -64,7 +64,7 @@ def test_chat_cmd_attaches_message_only_when_prefix_present(monkeypatch):
 
 
 # ============================================================
-# f2p: M6 — easel web 传播返回码
+# f2p: M6 — xiangya web 传播返回码
 # ============================================================
 
 class _FakeCompleted:
@@ -83,7 +83,7 @@ class _FakeSubprocess:
 
 
 def test_cmd_web_propagates_nonzero_returncode(monkeypatch):
-    """web/app.py 非零退出时，easel web 必须把返回码透传（不能恒返回 0）。"""
+    """web/app.py 非零退出时，xiangya web 必须把返回码透传（不能恒返回 0）。"""
     monkeypatch.setattr(cli, "subprocess", _FakeSubprocess(returncode=7))
     rc = cli.cmd_web(types.SimpleNamespace(port=7860))
     assert rc == 7

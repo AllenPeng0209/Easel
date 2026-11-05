@@ -1,4 +1,4 @@
-"""Easel Web — FastAPI 后端（含 SSE 流式输出）."""
+"""响芽 Web — FastAPI 后端（含 SSE 流式输出）."""
 from __future__ import annotations
 
 import asyncio
@@ -102,7 +102,7 @@ except Exception:  # 兼容缺失依赖：问答题桥接降级为关闭
 _QBRIDGE_WARNED: set[str] = set()
 # 进程级熔断：一旦确认桥接不可用（旧版本无 question RPC、或 connect 持续失败如
 # NOT_PAIRED/scope-upgrade），就彻底停掉桥接，后续每轮直接跳过——不再连接，也就不再
-# 每轮在网关上触发新的配对/权限申请。恢复需重启 easel web。
+# 每轮在网关上触发新的配对/权限申请。恢复需重启 xiangya web。
 _QBRIDGE_DISABLED = False
 
 
@@ -345,7 +345,6 @@ OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 from easel.projects import (project_id, workspace as project_workspace, space_path, scoped_key,
                             ProjectMap, ProjectSet, ProjectScopeMiddleware,
                             create_router as project_router, context_thread)
-from web.business_objects import IdeaProvenance
 
 def _outputs_dir() -> Path:
     return space_path(PROJECT_ROOT, OUTPUTS_DIR, 'outputs')
@@ -397,8 +396,6 @@ def _wechat_config_yaml() -> Path:
 def _schedule_file() -> Path:
     return space_path(PROJECT_ROOT, SCHEDULE_FILE, 'outputs/_schedule.json')
 
-def _ideas_file() -> Path:
-    return space_path(PROJECT_ROOT, IDEAS_FILE, 'outputs/_ideas.json')
 
 def _workspace_root() -> Path:
     return project_workspace(PROJECT_ROOT)
@@ -895,7 +892,7 @@ async def _lifespan(_app: FastAPI):
             _stop_mp_login_on_shutdown()
 
 
-app = FastAPI(title="Easel", docs_url=None, redoc_url=None, lifespan=_lifespan)
+app = FastAPI(title="响芽 Xiangya", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 from easel.operations import OperationsManager
 from easel.operations_web import OperationsMount
@@ -939,22 +936,12 @@ app.include_router(_chat_plan_router(lambda: _sessions_dir(), settings_provider=
                                      require_operation=lambda: _require_operation()))
 
 from web.workshop_routes import create_router as _workshop_router
-from easel.beeftv_bridge import (runtime_status as _beeftv_status,
-                               create_canvas as _beeftv_canvas,
-                               canvas_state as _beeftv_canvas_state,
-                               render_start as _beeftv_render_start,
-                               render_status as _beeftv_render_status,
-                               render_cancel as _beeftv_render_cancel,
-                               render_cancel_status as _beeftv_render_cancel_status,
-                               render_collect as _beeftv_render_collect)
+app.include_router(_workshop_router(lambda: _outputs_dir(),
+                                   publication_workflow=lambda: _publication_workflow(),
+                                   workshop_sync=lambda identifier: __import__('web.huobao_bridge', fromlist=['reconcile']).reconcile(sys.modules[__name__], identifier)))
 
-app.include_router(_workshop_router(lambda: _outputs_dir(), _beeftv_status, _beeftv_canvas,
-                                   _beeftv_canvas_state, render_start=_beeftv_render_start,
-                                   render_status=_beeftv_render_status,
-                                   render_cancel=_beeftv_render_cancel,
-                                   render_cancel_status=_beeftv_render_cancel_status,
-                                   render_collect=lambda project, receipt: _beeftv_render_collect(
-                                       project, receipt, _outputs_dir())))
+from web.huobao_bridge import create_router as _huobao_router
+app.include_router(_huobao_router(lambda: sys.modules[__name__]))
 
 from web.interaction_routes import create_router as _interaction_router
 from easel.interaction_center import InteractionStore as _InteractionStore
@@ -990,7 +977,7 @@ def _interaction_tick():
 
 def _local_ports(env_port: str) -> set[str]:
     """本机写守卫放行的端口集合：固定的 7860/7870/5173，加上 `--port`/EASEL_PORT
-    实际配置的端口——否则自定义端口跑 Easel 时，前端自己发的写请求（包括发消息
+    实际配置的端口——否则自定义端口跑 响芽 时，前端自己发的写请求（包括发消息
     的 /api/chat/stream）会被 local_write_guard 当跨站请求 403 掉。"""
     return {'7860', '7870', '5173', (env_port or '').strip() or '7860'}
 
@@ -1001,7 +988,7 @@ _LOCAL_ORIGINS = [f'http://{host}:{port}'
 _LOCAL_ORIGINS += [o.strip() for o in os.environ.get('EASEL_EXTRA_ORIGINS', '').split(',') if o.strip()]
 _EXTRA_HOSTS = [h.strip() for h in os.environ.get('EASEL_EXTRA_HOSTS', '').split(',') if h.strip()]
 
-# VSCode/code-server 等远程开发环境常通过 VSCODE_PROXY_URI 这个反代域名访问 Easel
+# VSCode/code-server 等远程开发环境常通过 VSCODE_PROXY_URI 这个反代域名访问 响芽
 # （真实连接仍是本机回环，代理在同一台机器上转发）；不识别这个域名会让通过代理
 # 打开的页面从第一个请求起就被下面的 TrustedHostMiddleware/CORS 拒绝——收紧前
 # allow_origins=["*"] 时这条路是通的，别让这次收紧顺带堵死它。
@@ -1646,7 +1633,7 @@ def _write_env(updates: dict[str, str]) -> None:
     if appended:
         if out and out[-1].strip() != '':
             out.append('')
-        out.append('# ---- Easel API keys (added via Web) ----')
+        out.append('# ---- Xiangya API keys (added via Web) ----')
         out.extend(appended)
     tmp = ENV_FILE.with_suffix('.env.tmp')
     tmp.write_text('\n'.join(out) + '\n', encoding='utf-8')
@@ -1764,7 +1751,7 @@ def run_agent_sync(msg: str, timeout: int = TIMEOUT_DIRECT, session_id: str | No
 
 def check_gateway() -> bool:
     try:
-        # 端口不能写死：Easel 用 --profile easel，OpenClaw 对非默认 profile 会走
+        # 端口不能写死：响芽 用 --profile easel，OpenClaw 对非默认 profile 会走
         # 20000 + fnv1a32(profile) % 40000（easel → 37289），见 easel/gateway_endpoint.py。
         # 回环 healthz 探针不能继承 http_proxy；否则设置页会把健康的本机 gateway 误报离线。
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -2632,7 +2619,7 @@ def _write_env_direct(updates: dict[str, str]) -> None:
     if appended:
         if out and out[-1].strip() != '':
             out.append('')
-        out.append('# ---- Easel 模型配置（Web 设置面板写入）----')
+        out.append('# ---- 响芽 模型配置（Web 设置面板写入）----')
         out.extend(appended)
     tmp = ENV_FILE.with_suffix('.env.tmp')
     tmp.write_text('\n'.join(out) + '\n', encoding='utf-8')
@@ -3084,7 +3071,7 @@ async def api_local_agents():
 
 @app.post("/api/settings/local-agents/enable")
 async def api_local_agent_enable(req: LocalAgentEnableRequest):
-    """把一个本机 CLI agent（目前支持 claude-code / gemini-cli）接入 Easel。
+    """把一个本机 CLI agent（目前支持 claude-code / gemini-cli）接入 响芽。
 
     实现是把对应 provider 写进 openclaw.json（复用 _sync_anthropic_provider 的
     原子写套路）。CLI 登录态本身由 openclaw 的 auth store 管理 —— 这里只负责
@@ -3292,7 +3279,7 @@ async def api_models_selftest(req: SelftestRequest):
     """真自测：对已配置的 OpenAI 兼容通道发 GET {base}/models 并计耗时。"""
     channel = (req.channel or "all").strip()
     if channel in ("chat", "all") and _harness_settings()["runtime"] not in ("api", "openclaw"):
-        raise HTTPException(409, "此底座使用原生模型配置，请新建对话或运行 easel ping 验证")
+        raise HTTPException(409, "此底座使用原生模型配置，请新建对话或运行 xiangya ping 验证")
     direct = _direct_api_enabled()
     env = read_settings(ENV_FILE) if direct else _read_env()
     # (base, key, 是否为 Anthropic Messages 协议, slot)。协议决定鉴权头与路径：
@@ -3378,11 +3365,6 @@ class ChatFileReference(BaseModel):
     attachmentId: str = Field(pattern=r"^[a-f0-9]{24}$")
 
 
-class ChatTopicRef(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,160}$")
-    snapshotHash: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class ChatWorkshopRef(BaseModel):
@@ -3390,7 +3372,7 @@ class ChatWorkshopRef(BaseModel):
 
     id: str = Field(pattern=r"^[a-f0-9]{32}$")
     revision: int = Field(gt=0)
-    engineRevision: int | None = Field(default=None, ge=0)
+    shotId: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,80}$")
     artifactId: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     artifactSha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
@@ -3402,6 +3384,13 @@ class ChatWorkshopRef(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def reject_retired_topic_reference(cls, value):
+        if isinstance(value, dict) and any(value.get(key) is not None for key in ("topicRef", "topic_ref")):
+            raise ValueError("选题策划已移除，请直接在对话中描述制作要求")
+        return value
+
     message: str
     persona: str | None = None
     sessionId: str | None = None
@@ -3410,7 +3399,6 @@ class ChatRequest(BaseModel):
     references: list[ChatFileReference] = Field(default_factory=list, max_length=100)
     sessionReferences: list[ChatSessionReference] = Field(default_factory=list, max_length=MAX_SESSION_REFERENCES)
     autonomyMode: Literal["autonomous", "interactive"] = "autonomous"
-    topicRef: ChatTopicRef | None = None
     workshopRef: ChatWorkshopRef | None = None
     command: ChatCommand | None = None
     planRef: PlanReference | None = None
@@ -3424,20 +3412,10 @@ class ChatRequest(BaseModel):
         return value
 
 
-async def _resolve_chat_topic(ref: ChatTopicRef | None) -> dict | None:
-    if ref is None:
-        return None
-    result = await asyncio.to_thread(_business_query, {"action": "inspect", "kind": "idea", "id": ref.id})
-    record = result["items"][0]
-    if record["snapshotHash"] != ref.snapshotHash:
-        raise HTTPException(409, "选题已更新，请重新选择后发送")
-    return record
 
 
-async def _resolve_chat_references(req: ChatRequest) -> tuple[dict | None, dict | None]:
-    topic = await _resolve_chat_topic(req.topicRef)
-    workshop = await asyncio.to_thread(_workshop_handoff, req.workshopRef) if req.workshopRef else None
-    return topic, workshop
+async def _resolve_chat_references(req: ChatRequest) -> dict | None:
+    return await asyncio.to_thread(_workshop_handoff, req.workshopRef) if req.workshopRef else None
 
 
 def _session_reference_source(catalog: ChatHistoryStore, session_id: str) -> dict:
@@ -3464,14 +3442,6 @@ def _capture_session_references(req: ChatRequest, catalog: ChatHistoryStore) -> 
     return captures
 
 
-def _with_chat_topic(content: str | list, topic: dict | None) -> str | list:
-    if topic is None:
-        return content
-    idea = topic["details"]["idea"]
-    reference = {"id": topic["id"], "snapshotHash": topic["snapshotHash"], "title": topic["title"],
-                 **{key: idea[key] for key in ("note", "source", "status", "platform", "url", "collectedAt")
-                    if key in idea}}
-    return _append_chat_reference(content, "topic_reference", "选题", reference)
 
 
 def _with_chat_workshop(content: str | list, workshop: dict | None) -> str | list:
@@ -4249,8 +4219,44 @@ def _remember_harness_question(identifier, record, status, emit, *, answers=None
     emit("question_closed", json.dumps(visible, ensure_ascii=False))
 
 
+_PUBLICATION_QUESTION_POLL_SECONDS = .25
+
+
+def _publication_question_binding(publication):
+    """Bind an observation to an existing Host object, never to model-supplied answers."""
+    actor = current_user()
+    if (not actor or not isinstance(publication, dict)
+            or publication.get('actorId') != actor['id'] or publication.get('projectId') != project_id()
+            or publication.get('subject', {}).get('project', {}).get('id') != project_id()
+            or not isinstance(publication.get('id'), str)
+            or not re.fullmatch(r'[a-f0-9]{32}', publication['id'])
+            or not isinstance(publication.get('payloadHash'), str)
+            or not re.fullmatch(r'[a-f0-9]{64}', publication['payloadHash'])):
+        return None
+    return (actor['id'], project_id(), publication['id'], publication['payloadHash'])
+
+
+async def _observe_publication_question(binding, observer):
+    """A read of the exact actor/IP-owned decision can settle only its publication question."""
+    while True:
+        _require_host_tools()
+        actor = current_user()
+        if not actor or (actor['id'], project_id()) != binding[:2]:
+            raise HTTPException(403, '发布确认的用户或 IP 已变化')
+        try:
+            current = observer(binding[2])
+        except HTTPException as error:
+            if error.status_code != 404:
+                raise
+        else:
+            if (_publication_question_binding(current) == binding
+                    and current.get('state') in {'approved', 'rejected', 'expired', 'invalidated'}):
+                return current
+        await asyncio.sleep(_PUBLICATION_QUESTION_POLL_SECONDS)
+
+
 async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "autonomous", publication=None,
-                       turn_id: str | None = None) -> dict:
+                       turn_id: str | None = None, publication_observer=None) -> dict:
     _require_host_tools()
     if requests_secret(questions):
         raise HarnessError("请在原生终端完成敏感凭证输入，不要将密码或密钥写入聊天记录")
@@ -4269,6 +4275,17 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
               "expiresAtMs": deadline}
     if publication is not None:
         record["publication"] = publication
+    observation = None
+    if publication_observer is not None:
+        binding = _publication_question_binding(publication)
+        allow = ('批准此版本并创建草稿' if (publication or {}).get('subject', {}).get('mode') == 'create_draft'
+                 else '批准此版本并发布')
+        if (binding is None or not policy.requires_human or len(questions) != 1
+                or questions[0].get('questionId') != 'publication' or questions[0].get('kind') != 'approval'
+                or [item.get('label') for item in questions[0].get('options', [])] != [allow, '暂不执行']):
+            raise HTTPException(409, '发布确认必须绑定原用户、IP 和固定内容版本')
+        observation = asyncio.create_task(_observe_publication_question(binding, publication_observer),
+                                         name='publication-question:' + identifier)
     _HARNESS_QUESTIONS[identifier] = record
     try:
         public = {key: value for key, value in record.items() if key not in ("future", "receiptFuture", "session", "deadline")}
@@ -4277,7 +4294,20 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
         emit("question", _scrub_secrets(json.dumps(public, ensure_ascii=False)))
         source = "human"
         try:
-            answers = await asyncio.wait_for(asyncio.shield(future), policy.wait_seconds)
+            if observation is None:
+                answers = await asyncio.wait_for(asyncio.shield(future), policy.wait_seconds)
+            else:
+                done, _ = await asyncio.wait({future, observation}, timeout=policy.wait_seconds,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if observation in done:
+                    publication = observation.result()
+                    record['publication'] = publication
+                    source = 'publication_host'
+                    answers = {'publication': [allow if publication['state'] == 'approved' else '暂不执行']}
+                elif future in done:
+                    answers = future.result()
+                else:
+                    raise asyncio.TimeoutError
         except asyncio.TimeoutError:
             if future.done():
                 answers = future.result()
@@ -4289,7 +4319,8 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
                     _remember_harness_question(identifier, record, "blocked", emit, answers={}, source=source)
                     raise ChatFailure("permission_denied", diagnostic="等待人工确认超时，任务在需要授权的步骤受阻，未执行该操作")
         _require_host_tools()
-        status = "declined" if source == "timeout" else "resolved"
+        status = ("declined" if source == "timeout" or source == 'publication_host'
+                  and publication['state'] != 'approved' else "resolved")
         _remember_harness_question(identifier, record, status, emit, answers=answers, source=source, publication=publication)
         return answers
     except asyncio.CancelledError:
@@ -4306,6 +4337,9 @@ async def _harness_ask(sk: str, questions: list[dict], emit, *, mode: str = "aut
             _remember_harness_question(identifier, record, "revoked", emit)
         raise
     finally:
+        if observation is not None:
+            observation.cancel()
+            await asyncio.gather(observation, return_exceptions=True)
         if not record["receiptFuture"].done():
             _remember_harness_question(identifier, record, "cancelled", emit)
         _HARNESS_QUESTIONS.pop(identifier, None)
@@ -4523,7 +4557,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     async def publication_status(approval_id: str, call_id: str | None = None) -> dict:
         _require_host_tools()
         try:
-            return publication_event(_publication_workflow().get(approval_id), call_id=call_id,
+            record = await _publication_workflow().refresh(approval_id, before_refresh=_require_host_tools)
+            return publication_event(record, call_id=call_id,
                                      tool_name='easel_publication_status')
         except HTTPException as error:
             raise HarnessError(_scrub_secrets(str(error.detail))) from None
@@ -4547,9 +4582,8 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             raise HarnessError(_scrub_secrets(str(error.detail))) from None
 
     async def workshop_delivery(payload: dict) -> list[dict]:
-        from web.workshop_delivery import run_workshop_delivery
+        from web.workshop_delivery import run_workshop_delivery, prepare_workshop_publications
 
-        loop = asyncio.get_running_loop()
         cancelled = threading.Event()
 
         def authorize():
@@ -4557,28 +4591,14 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 raise HarnessError("成片操作已停止，可查询已保存的工坊任务")
             _require_host_tools()
 
-        async def idea_operation(method, path, values):
-            authorize()
-            if method == "GET":
-                return _read_ideas()
-            if method == "POST":
-                return await api_ideas_create(IdeaItem.model_validate(values))
-            return await api_ideas_update(path.rsplit("/", 1)[-1], IdeaItem.model_validate(values))
-
-        def ideas(method, path, values):
-            pending = asyncio.run_coroutine_threadsafe(idea_operation(method, path, values), loop)
-            try:
-                return pending.result(timeout=20)
-            except TimeoutError:
-                pending.cancel()
-                raise
-
         authorize()
         worker = asyncio.create_task(asyncio.to_thread(run_workshop_delivery, payload, outputs=_outputs_dir(),
-                                                       ip=project_id(), ideas=ideas, authorize=authorize))
+                                                       ip=project_id(), authorize=authorize))
         try:
             rows = await asyncio.shield(worker)
             authorize()
+            rows = await prepare_workshop_publications(rows, outputs=_outputs_dir(),
+                workflow=_publication_workflow(), authorize=authorize)
             return json.loads(_scrub_secrets(json.dumps(rows, ensure_ascii=False)))
         except asyncio.CancelledError:
             cancelled.set()
@@ -4591,6 +4611,64 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 except Exception:
                     break
             if worker.done():
+                try:
+                    worker.result()
+                except BaseException:
+                    pass
+            raise
+        finally:
+            cancelled.set()
+
+    async def video_generation(payload: dict, call_id: str) -> dict:
+        from web.video_generation import run_video_generation, approve_video_production_plan
+
+        _require_host_tools()
+        actor = current_user()
+        if not interactive or not actor or not isinstance(actor.get("id"), str):
+            raise HarnessError("请在已登录的当前 IP AI 对话中制作视频")
+        # Capture scope from the authenticated request, never from model arguments.
+        actor_id, ip = actor["id"], project_id()
+        workspace, outputs = _workspace_root().resolve(), _outputs_dir().resolve()
+        cancelled = threading.Event()
+
+        def authorize():
+            if cancelled.is_set():
+                raise HarnessError("视频制作操作已停止，请查询已保存的原任务")
+            _require_host_tools()
+            fresh_actor = current_user()
+            if (not fresh_actor or fresh_actor.get("id") != actor_id or project_id() != ip
+                    or _workspace_root().resolve() != workspace):
+                raise HarnessError("视频制作用户或 IP 已变化，请保留原任务回执")
+
+        authorize()
+        worker = None
+        try:
+            scope = dict(repository=PROJECT_ROOT, workspace=workspace, outputs=outputs,
+                actor_id=actor_id, ip=ip, session_id=sk, authorize=authorize)
+            if payload.get('action') == 'approve_plan':
+                async def production_question(question):
+                    return await _harness_ask(sk, [question], receive, mode=req.autonomyMode, turn_id=turn_id)
+                result = await approve_video_production_plan(payload, ask=production_question, **scope)
+            else:
+                worker = asyncio.create_task(asyncio.to_thread(run_video_generation, payload, **scope))
+                result = await asyncio.shield(worker)
+            authorize()
+            result = json.loads(_scrub_secrets(json.dumps(result, ensure_ascii=False, allow_nan=False)))
+            if result.get("workshopId"):
+                # Reuse the existing scoped workshop DTO/card; tool text carries
+                # only the bounded generation receipt, never the provider response.
+                await business_objects({"action": "inspect", "kind": "workshop", "id": result["workshopId"]}, call_id)
+            return result
+        except asyncio.CancelledError:
+            cancelled.set()
+            while worker is not None and not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if worker is not None and worker.done():
                 try:
                     worker.result()
                 except BaseException:
@@ -4614,16 +4692,23 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                 answers = await _harness_ask(sk, [{'questionId': 'publication', 'kind': 'approval',
                     'header': '发布批准', 'question': '请核对下方的具体账号、文案及媒体版本。是否批准本次操作？',
                     'options': [{'label': allow}, {'label': '暂不执行'}]}], receive,
-                    mode=req.autonomyMode, publication=record, turn_id=turn_id)
-                record = workflow.decide(record['id'], answers.get('publication') == [allow], record['payloadHash'])
+                    mode=req.autonomyMode, publication=record, turn_id=turn_id, publication_observer=workflow.get)
+                binding = _publication_question_binding(record)
+                current = workflow.get(record['id'])
+                if _publication_question_binding(current) != binding:
+                    raise HTTPException(409, '发布确认的用户、IP 或固定内容版本已变化')
+                record = (workflow.decide(record['id'], answers.get('publication') == [allow], record['payloadHash'])
+                          if current['state'] == 'pending' else current)
             if record['state'] != 'approved':
                 return publication_event({**record, 'message': '此版本未获发布批准；保留草稿并继续其它可完成工作，未公开发布。'},
                                          call_id=call_id, tool_name='easel_publish')
             subject = record['subject']
-            record = await workflow.start(subject['platform']['id'], {**{key: subject[key]
-                for key in ('title', 'body', 'tags', 'persona')}, 'media': [],
-                'artifactIds': [item['artifactId'] for item in subject['media']],
-                'approvalId': record['id'], 'payloadHash': record['payloadHash']})
+            if not record.get('operationId'):
+                record = await workflow.start(subject['platform']['id'], {**{key: subject[key]
+                    for key in ('title', 'body', 'tags', 'persona')}, 'media': [],
+                    'aiGenerated': subject.get('aiGenerated', False),
+                    'artifactIds': [item['artifactId'] for item in subject['media']],
+                    'approvalId': record['id'], 'payloadHash': record['payloadHash']})
             receive('activity', '正在执行已批准的具体版本；断线不会重发该操作')
             while ((record.get('result') or {}).get('status') == 'executing'
                     and (record.get('result') or {}).get('processState') != 'termination_unconfirmed'):
@@ -4686,20 +4771,42 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         claimed = True
         if current_user():
             privilege_watch = asyncio.create_task(watch_privileges())
+        binding_actor_id = (current_user() or {}).get("id")
+        binding_ip = project_id()
+        binding_workspace = _workspace_root().resolve()
+        binding_sessions = _sessions_dir().resolve()
+
+        def rebind_active_writer(original_native_id: str, new_native_id: str) -> None:
+            _require_host_tools()
+            actor = current_user()
+            if (not claimed or runtime != "codex" or not interactive or not actor
+                    or original_native_id != native_id
+                    or actor.get("id") != binding_actor_id or project_id() != binding_ip
+                    or _workspace_root().resolve() != binding_workspace
+                    or _sessions_dir().resolve() != binding_sessions
+                    or not locked or not acquired or not lock.locked() or not xlock.acquired):
+                raise HarnessError("原会话权限、IP 或执行锁已变化，未接管原生历史")
+            harness_store.rebind_active_writer(binding_sessions, sk, original_native_id, new_native_id)
+
         env = {**read_settings(ENV_FILE), **_proxy_env(), "EASEL_AGENT_RUNTIME": runtime,
                "EASEL_ROOT": str(_workspace_root())}
         request = RunRequest(message, _workspace_root(), env, native_id,
                              model, config["sandbox"], timeout,
                              session_key=_native_session_key(sk), codex_auto_approve=config.get("codex_auto_approve", False),
                              auto_allow_tools=os.environ.get("EASEL_AUTO_ALLOW_AI_TOOLS") == "1",
-                             autonomy_mode=req.autonomyMode, present=present, publish=publish,
+                             autonomy_mode=req.autonomyMode, present=present, publish=None if sk.startswith('workshop-action-') else publish,
                              publication_status=publication_status, publication_status_with_call=publication_status,
                              business_objects=business_objects,
                              workshop_delivery=workshop_delivery if (
                                  runtime == "codex" and interactive and current_user()
                                  and config["sandbox"] == "workspace-write") else None,
+                             video_generation=video_generation if (
+                                 runtime == "codex" and interactive and current_user()
+                                 and config["sandbox"] == "workspace-write") else None,
                              bind_steer=bind_steer if runtime == "codex" and interactive else None,
-                             record_subagent=record_subagent if runtime == "codex" and interactive else None)
+                             record_subagent=record_subagent if runtime == "codex" and interactive else None,
+                             rebind_active_writer=rebind_active_writer if (
+                                 runtime == "codex" and interactive and binding_actor_id) else None)
         if interactive and config["sandbox"] == "workspace-write":
             output_changes = await _begin_output_turn_changes()
         await asyncio.wait_for(harnesses.adapter(runtime).run(
@@ -5242,19 +5349,16 @@ def _workshop_handoff(ref: ChatWorkshopRef) -> dict:
 
     service = BusinessObjectService(sys.modules[__name__])
     scope = service._scope()
-    store = WorkshopStore(_outputs_dir(), strict_canvas_bindings=True)
+    store = WorkshopStore(_outputs_dir())
     try:
         project = store.get(ref.id)
         if project["revision"] != ref.revision:
             raise HTTPException(409, "工坊工程已更新，请重新选择后发送")
-        engine_revision = None
-        if ref.engineRevision is not None:
-            engine_revision = store._engine_revision(project, _beeftv_canvas_state)
-            if engine_revision != ref.engineRevision:
-                raise HTTPException(409, "工坊画布已更新，请重新选择后发送")
 
+        if ref.shotId is not None:
+            store._shot(project, ref.shotId)
         artifact = None
-        artifact_revision = artifact_engine_revision = None
+        artifact_revision = None
         if ref.artifactId is not None:
             deliverables = project.get("deliverables")
             if not isinstance(deliverables, list) or any(not isinstance(item, dict) for item in deliverables):
@@ -5263,10 +5367,7 @@ def _workshop_handoff(ref: ChatWorkshopRef) -> dict:
             if artifact is None or artifact.get("sha256") != ref.artifactSha256:
                 raise HTTPException(409, "所选成片版本已变化，请重新选择后发送")
             artifact_revision = artifact.get("revision")
-            artifact_engine_revision = artifact.get("engine_revision")
-            if (type(artifact_revision) is not int or artifact_revision < 1
-                    or artifact_engine_revision is not None
-                    and (type(artifact_engine_revision) is not int or artifact_engine_revision < 0)):
+            if type(artifact_revision) is not int or artifact_revision < 1:
                 raise HTTPException(503, "工坊成片版本记录无法核对")
             try:
                 unchanged = _digest(store._media_path(artifact["path"])) == ref.artifactSha256
@@ -5275,11 +5376,10 @@ def _workshop_handoff(ref: ChatWorkshopRef) -> dict:
             if not unchanged:
                 raise HTTPException(409, "所选成片缺失或摘要不一致，请重新选择后发送")
 
-        # Canvas and file checks can take time. Re-read the local project and
+        # File checks can take time. Re-read the local project and
         # keep the public card tied to the project and selection we validated.
         current = store.get(ref.id)
         if (current["revision"] != project["revision"]
-                or current.get("beeftv_canvas_id") != project.get("beeftv_canvas_id")
                 or artifact is not None and (not isinstance(current.get("deliverables"), list)
                                              or artifact not in current["deliverables"])):
             raise HTTPException(409, "核对期间工坊工程已更新，请重新选择后发送")
@@ -5288,14 +5388,12 @@ def _workshop_handoff(ref: ChatWorkshopRef) -> dict:
         raise HTTPException(error.status, str(error)) from None
     details = record["details"]
     details["handoff"] = {
-        "revision": current["revision"], "engineRevision": engine_revision,
+        "revision": current["revision"],
         "artifactId": artifact["id"] if artifact else None,
         "artifactSha256": artifact["sha256"] if artifact else None,
         "artifactRevision": artifact_revision,
-        "artifactEngineRevision": artifact_engine_revision,
+        "shotId": ref.shotId,
     }
-    if engine_revision is not None:
-        details["engineVerification"] = "verified"
     _public_business_records([record])
     if service._scope() != scope:
         raise HTTPException(403, "核对期间用户或 IP 已变化，请重新选择后发送")
@@ -5312,7 +5410,7 @@ def _public_business_records(records):
 
     def clean(value, field=''):
         if isinstance(value, dict):
-            return {key: clean(item, 'source' if field == 'idea' and key == 'url' else key)
+            return {key: clean(item, key)
                     for key, item in value.items()}
         if isinstance(value, list):
             return [clean(item) for item in value]
@@ -5698,7 +5796,7 @@ async def api_chat_stream(req: ChatRequest):
         plan = req.planRef
         expected_turn = f"plan-{plan.planId}-{plan.revision}"
         if (req.turnId != expected_turn or not req.sessionId or req.attachments or req.references
-                or req.sessionReferences or req.topicRef or req.workshopRef or req.command):
+                or req.sessionReferences or req.workshopRef or req.command):
             raise HTTPException(422, "计划执行必须绑定批准版本和原执行编号")
     elif req.turnId and req.turnId.startswith("plan-"):
         raise HTTPException(422, "计划执行缺少批准版本")
@@ -5712,9 +5810,6 @@ async def api_chat_stream(req: ChatRequest):
     direct = runtime == "api"
     alternate = runtime not in ("api", "openclaw")
     request_payload = req.model_dump()
-    if req.topicRef is None:
-        # Keep the digest of existing claims and older clients without a reference.
-        request_payload.pop("topicRef")
     if req.workshopRef is None:
         request_payload.pop("workshopRef")
     if not req.references:
@@ -5754,17 +5849,17 @@ async def api_chat_stream(req: ChatRequest):
     try:
         config = await _prepare_chat_model(runtime, req.modelOverride, config)
         fork_context = await asyncio.to_thread(read_fork_context, catalog, req.sessionId)
-        topic, workshop = await _resolve_chat_references(req)
+        workshop = await _resolve_chat_references(req)
         captures = await asyncio.to_thread(_capture_session_references, req, catalog) if req.sessionReferences else []
         if direct:
             content, system = _direct_chat_content(req)
-            content = _with_chat_workshop(_with_chat_topic(content, topic), workshop)
+            content = _with_chat_workshop(content, workshop)
             content = append_fork_context(append_session_reference_context(content, captures), fork_context)
             message = ""
         else:
             if req.sessionId and history_path(_sessions_dir(), req.sessionId).is_file():
                 raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
-            message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
+            message = _with_chat_workshop(_chat_message(req), workshop)
             message = append_fork_context(append_session_reference_context(message, captures), fork_context)
     except HTTPException:
         # Another identical POST may have been admitted during the scoped read.
@@ -5852,7 +5947,7 @@ async def api_chat_stream(req: ChatRequest):
         # 准入后立即显示「已收到」，不等 agent 冷启动。
         to_client("activity", "⏳ 已收到…" if direct else "⏳ 已收到，正在唤醒 agent…")
         initial_events = []
-        for name, reference in (("topic", topic), ("workshop", workshop)):
+        for name, reference in (("workshop", workshop),):
             if reference is not None:
                 event = {"id": f"business_{name}_{turn_id}", "kind": "business",
                     "name": "easel_business_objects", "callId": f"host:{name}:{turn_id}",
@@ -6112,7 +6207,7 @@ async def api_chat_stream(req: ChatRequest):
             proc._task = loop.create_task(_run_gateway_turn(proc))
 
         # ---- ask_user 问答题桥接：轮询 gateway 的 pending question，推给前端渲染 ----
-        # 背景：OpenClaw 的 ask_user 注册到 gateway 进程内，Easel 前端不消费 question RPC → 选项不可见。
+        # 背景：OpenClaw 的 ask_user 注册到 gateway 进程内，响芽 前端不消费 question RPC → 选项不可见。
         # 这里在 agent 运行期间每 2s 轮询一次，把新出现的 pending question 以 SSE `question` 事件推送，
         # 前端渲染选项卡片；用户点击后经 /api/chat/question/answer 调 question.resolve 完成回答。
         question_stop = threading.Event()
@@ -6499,6 +6594,12 @@ async def api_question_answer(req: QuestionAnswerRequest):
                     "error": "权限或问答请求已过期，请重试"}
         if not _question_scope_matches(record, req):
             return {"ok": False, "status": "replaced"}
+        # Only the server-owned policy can require a human. An automatic
+        # client must not turn its default/timeout/model answer into a human
+        # receipt, nor consume the pending question that a real user needs.
+        if record.get("requiresHuman") and req.resolvedBy not in (None, "user", "human"):
+            return {"ok": False, "status": record["status"], "requiresHuman": True,
+                    "error": "此问题需要人工确认，未接受自动答复"}
         _validate_question_answers(record["questions"], req.answers)
         replayed = record["future"].done() or record["receiptFuture"].done()
         if not replayed:
@@ -6816,13 +6917,13 @@ async def api_chat(req: ChatRequest):
     runtime = _chat_backend(req.sessionId)
     if req.modelOverride is not None and runtime != "codex":
         raise HTTPException(422, "当前底座不支持单轮模型选择，请使用已配置模型")
-    topic, workshop = await _resolve_chat_references(req)
+    workshop = await _resolve_chat_references(req)
     captures = await asyncio.to_thread(_capture_session_references, req, ChatHistoryStore(_sessions_dir())) if req.sessionReferences else []
     if catalog is not None and catalog.is_deleted(req.sessionId):
         raise HTTPException(410, "该会话已删除，请新建会话")
     if runtime not in ("api", "openclaw"):
         config = await _prepare_chat_model(runtime, req.modelOverride, _harness_settings())
-        message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
+        message = _with_chat_workshop(_chat_message(req), workshop)
         message = append_fork_context(append_session_reference_context(message, captures), fork_context)
         sk = req.sessionId or uuid.uuid4().hex
         errors = []
@@ -6836,7 +6937,7 @@ async def api_chat(req: ChatRequest):
         return {"response": result, "sessionKey": sk}
     if runtime == "api":
         content, system = _direct_chat_content(req)
-        content = _with_chat_workshop(_with_chat_topic(content, topic), workshop)
+        content = _with_chat_workshop(content, workshop)
         content = append_fork_context(append_session_reference_context(content, captures), fork_context)
         errors = []
         def emit(kind, text):
@@ -6850,7 +6951,7 @@ async def api_chat(req: ChatRequest):
     if req.sessionId and history_path(_sessions_dir(), req.sessionId).is_file():
         raise HTTPException(409, "此会话属于 API 直连，请新建会话使用 OpenClaw")
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
-    message = _with_chat_workshop(_with_chat_topic(_chat_message(req), topic), workshop)
+    message = _with_chat_workshop(_chat_message(req), workshop)
     message = append_fork_context(append_session_reference_context(message, captures), fork_context)
     loop = asyncio.get_event_loop()
     # chat 可能中途触发制作层长任务 → 用 TIMEOUT_CHAT，与流式 /api/chat/stream 一致（勿用 300s）
@@ -7267,6 +7368,196 @@ async def api_accounts():
          'note': cfg.get('note', '')}
         for pf, cfg in LOGIN_RUNNERS.items()
     ]
+
+
+async def _read_account_directory():
+    from easel.account_directory import AccountDirectoryError, build_account_directory, read_native_accounts
+    from easel.account_sessions import load_session, session_generation
+
+    workspace = _workspace_root()
+    managed = {'douyin': 'douyin', 'xiaohongshu': 'xhs'}
+    try:
+        for _attempt in range(2):
+            generations = {platform: session_generation(workspace, canonical)
+                           for platform, canonical in managed.items()}
+            catalog = await api_accounts()
+            native = read_native_accounts(workspace)
+            sessions = {platform: value for platform, canonical in managed.items()
+                        if (value := load_session(workspace, canonical)) is not None}
+            identities = {}
+            now = time.time()
+            with _WHOAMI_LOCK:
+                for connector in catalog:
+                    platform = connector['platform']
+                    cached = _WHOAMI_CACHE.get(platform)
+                    generation = generations.get(platform, 0)
+                    if (not isinstance(cached, tuple) or len(cached) != 2
+                            or not isinstance(cached[0], (int, float))
+                            or not isinstance(cached[1], dict)
+                            or not 0 <= now - cached[0] < WHOAMI_TTL
+                            or _WHOAMI_SESSION_GENERATIONS.get(platform, 0) != generation):
+                        continue
+                    identity = cached[1]
+                    if identity.get('accountIdentityStatus') != 'verified' or identity.get('loggedIn') is not True:
+                        continue
+                    if platform in managed and generation:
+                        record = sessions.get(platform)
+                        if not record or not _shared_identity_matches(platform, record.get('identity'), identity):
+                            continue
+                    identities[platform] = dict(identity)
+            if any(session_generation(workspace, canonical) != generations[platform]
+                   for platform, canonical in managed.items()):
+                continue
+            return build_account_directory(project_id(), catalog, native,
+                                           shared_sessions=sessions, legacy_identities=identities)
+        raise AccountDirectoryError('账号状态正在变化，请刷新后重试')
+    except AccountDirectoryError as error:
+        raise HTTPException(503, str(error)) from None
+    except (OSError, ValueError, TypeError, KeyError):
+        raise HTTPException(503, '暂时无法核对已有账号目录，请稍后重试；账号数据已保留') from None
+
+
+@app.get('/api/accounts/directory')
+async def api_account_directory():
+    return await _read_account_directory()
+
+
+async def _account_directory_row(key: str):
+    if not re.fullmatch(r'(?:native:[1-9][0-9]*|legacy:[a-z0-9_-]{1,80})(?::[a-f0-9]{20})?', key):
+        raise HTTPException(404, '账号不存在或不属于当前 IP')
+    directory = await _read_account_directory()
+    row = next((value for value in directory['accounts'] if value['key'] == key), None)
+    if row is None:
+        raise HTTPException(404, '账号不存在或不属于当前 IP')
+    return row
+
+
+def _authorize_directory_native(key, account_id):
+    from easel.account_directory import AccountDirectoryError, native_account_key, read_native_accounts
+    _require_operation(roles=('owner',))
+    try:
+        current = next((value for value in read_native_accounts(_workspace_root()) if value['id'] == account_id), None)
+    except AccountDirectoryError:
+        raise HTTPException(503, '账号目录暂时无法核对，请稍后重试') from None
+    if current is None or native_account_key(current) != key:
+        raise HTTPException(409, '账号身份已变化，请刷新账号目录后重新操作')
+    return current
+
+
+def _authorize_directory_backend(key, account_id, platform, *, actor_id, project, repository, workspace, generation):
+    """Synchronous fence reused inside the native browser's account lock."""
+    from easel.account_directory import platform_key
+    actor = current_user()
+    if not actor or actor['id'] != actor_id:
+        raise HTTPException(403, '打开账号后台的用户权限已变化')
+    if (project_id() != project or PROJECT_ROOT.resolve() != repository
+            or _workspace_root().resolve() != workspace):
+        raise HTTPException(409, '打开账号后台的 IP 工作空间已变化')
+    _require_operation(roles=('owner',))
+    current = _authorize_directory_native(key, account_id)
+    if (platform_key(current.get('platform')) != platform or current.get('status') != 'active'
+            or not current.get('has_auth') or _shared_account_generation(platform) != generation):
+        raise HTTPException(409, '账号登录或身份已变化，请刷新账号目录后重新操作')
+    _require_publication_profile_idle(platform)
+
+
+@app.post('/api/accounts/directory/{key}/open-backend')
+async def api_account_directory_open_backend(key: str):
+    actor = current_user()
+    if not actor:
+        raise HTTPException(401, '请先登录')
+    actor_id = actor['id']
+    _require_operation(roles=('owner',))
+    row = await _account_directory_row(key)
+    urls = {'douyin': 'https://creator.douyin.com/creator-micro/content/manage',
+            'xiaohongshu': 'https://creator.xiaohongshu.com/'}
+    account_id, platform = row.get('nativeAccountId'), row.get('platform')
+    if (type(account_id) is not int or account_id < 1 or platform not in urls
+            or row.get('identityVerified') is not True or row.get('loggedIn') is not True):
+        raise HTTPException(409, '请先通过统一登录核验该平台账号')
+    project, repository, workspace = project_id(), PROJECT_ROOT.resolve(), _workspace_root().resolve()
+    generation = _shared_account_generation(platform)
+    if generation < 0:
+        raise HTTPException(409, '账号登录状态暂时无法核对，请刷新后重试')
+
+    def authorize():
+        _authorize_directory_backend(key, account_id, platform, actor_id=actor_id, project=project,
+            repository=repository, workspace=workspace, generation=generation)
+
+    try:
+        authorize()
+        manager = await _operations_manager()
+        authorize()
+        if Path(manager.root).resolve() != repository:
+            raise HTTPException(409, '账号后台运行空间不匹配')
+        runtime = await manager.get(project)
+        authorize()
+        if runtime.project != project or Path(runtime.workspace).resolve() != workspace:
+            raise HTTPException(409, '账号后台运行空间不匹配')
+        result = await runtime.module.open_account_browser(account_id, url=urls[platform], authorize=authorize)
+        authorize()
+        if not isinstance(result, dict) or result.get('ok') is not True:
+            raise HTTPException(409, '账号后台打开结果尚未确认')
+    except HTTPException as error:
+        if error.status_code in (401, 403):
+            raise HTTPException(403, '当前 IP 的 owner 权限已变化，请刷新后重试') from None
+        raise HTTPException(409, '账号后台暂时无法安全打开，请刷新账号目录后重试') from None
+    except Exception:
+        raise HTTPException(409, '账号后台暂时无法安全打开，请刷新账号目录后重试') from None
+    return {'opened': True, 'summary': '已打开账号后台'}
+
+
+@app.post('/api/accounts/directory/{key}/verify')
+async def api_account_directory_verify(key: str):
+    row = await _account_directory_row(key)
+    if row['nativeAccountId'] is not None:
+        raise HTTPException(409, '请使用该账号的统一登录检查，继续核对可用功能')
+    _require_operation(roles=('owner',))
+    _require_publication_profile_idle(row['platform'])
+    await api_account_whoami(row['platform'], force=True)
+    _require_operation(roles=('owner',))
+    return await _read_account_directory()
+
+
+@app.post('/api/accounts/directory/{key}/logout')
+async def api_account_directory_logout(key: str):
+    row = await _account_directory_row(key)
+    platform = row['platform']
+    lock = _LOGIN_START_LOCKS.setdefault(platform, asyncio.Lock())
+    async with lock:
+        _require_operation(roles=('owner',))
+        row = await _account_directory_row(key)
+        _require_publication_profile_idle(platform)
+        managed = platform in {'douyin', 'xiaohongshu'}
+        generation = _shared_account_generation(platform) if managed else None
+        if managed:
+            from easel.account_sessions import load_session
+            try:
+                shared = load_session(_workspace_root(), 'xhs' if platform == 'xiaohongshu' else platform)
+            except (OSError, ValueError):
+                raise HTTPException(503, '账号登录归属无法核对，请检查后重试') from None
+        else:
+            shared = None
+        if row['nativeAccountId'] is not None:
+            manager = await _operations_manager()
+            _require_operation(roles=('owner',))
+            runtime = await manager.get(project_id(), start=False)
+            _require_operation(roles=('owner',))
+            result = await runtime.connections.revoke_account(row['nativeAccountId'],
+                authorize=lambda: _authorize_directory_native(key, row['nativeAccountId']))
+            # A newer login may finish while the browser closes. Only clear
+            # the compatibility slot while the exact revocation fence remains.
+            if result['shared_active'] and shared and shared.get('account_id') == row['nativeAccountId']:
+                await _clear_legacy_account(platform, expected_generation=generation + 1,
+                                            require_owner=False)
+            elif managed and generation == 0 and shared is None and row['current'] and row['identityVerified']:
+                await _clear_legacy_account(platform, expected_generation=0)
+        else:
+            if managed and shared is not None:
+                raise HTTPException(409, '统一登录与已保存账号归属不一致，请先核对身份后再退出')
+            await _clear_legacy_account(platform, expected_generation=generation,
+                                        require_owner=True)
+    return {'ok': True, 'key': key}
 
 
 @app.post("/api/login/{platform}")
@@ -7721,17 +8012,26 @@ async def _check_account_whoami(platform: str, force: bool = False, *, strict: b
     return data
 
 
-@app.post("/api/logout/{platform}")
-async def api_logout(platform: str):
-    """退出登录：删持久化浏览器 profile + 登录状态/二维码/头像文件（biliup 删 cookies.json）。"""
+async def _clear_legacy_account(platform: str, *, expected_generation=None, require_owner=False):
+    """Clear only the compatibility session; the caller owns native revocation."""
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg:
         raise HTTPException(404, '未知平台')
-    _require_publication_profile_idle(platform)
-    if platform in {'douyin', 'xiaohongshu'}:
-        runtime = await (await _operations_manager()).get(project_id(), start=False)
-        await runtime.connections.revoke('xhs' if platform == 'xiaohongshu' else platform)
-        _UNIFIED_LOGIN_TASKS.pop(platform, None)
+    if require_owner:
+        _require_operation(roles=('owner',))
+
+    def permitted():
+        if expected_generation is None:
+            return True
+        from easel.account_sessions import load_session
+        try:
+            return (_shared_account_generation(platform) == expected_generation
+                    and load_session(_workspace_root(), 'xhs' if platform == 'xiaohongshu' else platform) is None)
+        except (OSError, ValueError):
+            return False
+
+    if not permitted():
+        return {'ok': True, 'deleted': [], 'superseded': True}
     deleted = []
     if cfg['backend'] == 'wechat-oa':
         # 1) 清 AppID 凭证（旧配置兜底）
@@ -7771,6 +8071,8 @@ async def api_logout(platform: str):
             await asyncio.to_thread(proc.wait, timeout=5)
         except Exception:
             pass
+    if not permitted():
+        return {'ok': True, 'deleted': [], 'superseded': True}
     prof_name = cfg.get('profile')
     if prof_name:
         pdir = (_browser_profiles() / prof_name).resolve()
@@ -7792,7 +8094,22 @@ async def api_logout(platform: str):
             pass
     with _WHOAMI_LOCK:
         _WHOAMI_CACHE.pop(platform, None)
+    if expected_generation is not None:
+        _UNIFIED_LOGIN_TASKS.pop(platform, None)
     return {'ok': True, 'deleted': deleted}
+
+
+@app.post("/api/logout/{platform}")
+async def api_logout(platform: str):
+    """Compatibility platform-wide exit; directory actions exit one row instead."""
+    if platform not in LOGIN_RUNNERS:
+        raise HTTPException(404, '未知平台')
+    _require_publication_profile_idle(platform)
+    if platform in {'douyin', 'xiaohongshu'}:
+        runtime = await (await _operations_manager()).get(project_id(), start=False)
+        await runtime.connections.revoke('xhs' if platform == 'xiaohongshu' else platform)
+        _UNIFIED_LOGIN_TASKS.pop(platform, None)
+    return await _clear_legacy_account(platform)
 
 
 # 归因层：可抓创作数据的平台（多数走 Playwright 登录态；bilibili 用 biliup cookies 不起浏览器、
@@ -7922,6 +8239,7 @@ class PublishRequest(BaseModel):
     tags: str = ''
     persona: str = ''
     draft: bool = False
+    aiGenerated: StrictBool = False
     approvalId: str = ''
     payloadHash: str = ''
 
@@ -7983,6 +8301,78 @@ def _read_publication_receipt(record):
         return {**normalize_receipt(context), 'reason': 'machine_receipt_invalid'}
 
 
+async def _refresh_publication_receipt(record, *, before_process_start=None):
+    """Run only a receipt-bound readback command, never publish/upload."""
+    _require_operation()
+    context = _publication_receipt_context(record)
+    if context['platform'] not in {'douyin', 'xiaohongshu'}:
+        return {'performed': False, 'cleanupConfirmed': True, 'reason': 'unsupported_platform'}
+    directory = _publication_workflow().operation_dir(record)
+    if not (directory / 'receipt-context.json').is_file() or not (directory / 'receipt.json').is_file():
+        return {'performed': False, 'cleanupConfirmed': True, 'reason': 'machine_receipt_missing'}
+    try:
+        files = PublicationReceiptFiles(directory, context)
+        snapshot = files.read()
+        if isinstance(snapshot, dict) and snapshot.get('submissionAmbiguous') is True:
+            return {'performed': False, 'cleanupConfirmed': True, 'reason': 'ambiguous_submission'}
+        initial = normalize_receipt(context, snapshot)
+    except (ReceiptFileError, ReceiptEvidenceError):
+        return {'performed': False, 'cleanupConfirmed': True, 'reason': 'machine_receipt_invalid'}
+    # The normalizer checks the provider ACK, concrete ID, original operation/hash
+    # and authenticated submission account. No ACK means no browser or probe.
+    if (not initial.get('externalId') or initial.get('status') not in {'submitted', 'scheduled', 'confirmed', 'failed'}
+            or initial.get('phase') not in {'platform_ack', 'readback'}
+            or initial.get('evidenceMethod') not in {'provider_response', 'authenticated_readback'}):
+        return {'performed': False, 'cleanupConfirmed': True, 'reason': 'provider_ack_missing'}
+    if context['platform'] == 'xiaohongshu':
+        from easel.xhs_publication_readback import refresh_evidence_ready
+        if not refresh_evidence_ready(context, snapshot):
+            return {'performed': False, 'cleanupConfirmed': True, 'reason': 'original_baseline_missing'}
+        xhs_baseline_keys = ('sinceMs', 'xhsSessionGeneration', 'xhsNativeAccountId', 'xhsSessionHash')
+        xhs_baseline = tuple(snapshot['readback']['evidence'][key] for key in xhs_baseline_keys)
+    known_ids = {prior[key] for prior in [record.get('result') or {},
+        *(item.get('result') or {} for item in record.get('observations') or [])]
+        for key in ('externalId', 'external_id', 'external_message_id')
+        if isinstance(prior.get(key), str) and prior[key]}
+    if known_ids and known_ids != {initial['externalId']}:
+        return {'performed': False, 'cleanupConfirmed': True, 'reason': 'provider_ack_changed'}
+
+    def check_readback_authority():
+        _require_operation()
+        if before_process_start is not None:
+            before_process_start()
+        try:
+            snapshot = files.read()
+            if isinstance(snapshot, dict) and snapshot.get('submissionAmbiguous') is True:
+                raise HTTPException(409, '原操作存在提交歧义，未启动回查，也不会重新发布')
+            current = normalize_receipt(context, snapshot)
+        except (ReceiptFileError, ReceiptEvidenceError):
+            raise HTTPException(409, '原操作的发布回执已变化，未启动回查') from None
+        if (current.get('externalId') != initial['externalId']
+                or current.get('accountId') != initial.get('accountId')
+                or current.get('status') not in {'submitted', 'scheduled', 'confirmed', 'failed'}):
+            raise HTTPException(409, '原操作的账号或平台 ACK 已变化，未启动回查')
+        if context['platform'] == 'xiaohongshu':
+            if (not refresh_evidence_ready(context, snapshot)
+                    or tuple(snapshot['readback']['evidence'][key] for key in xhs_baseline_keys) != xhs_baseline):
+                raise HTTPException(409, '原操作的基线或账号快照证据已变化，未启动回查')
+
+    runner = 'douyin_publish.py' if context['platform'] == 'douyin' else 'xhs_publish.py'
+    command = [sys.executable, str(SHARED_SCRIPTS / runner), 'refresh-receipt', '--no-proxy',
+        '--receipt-context', str(files.context_path), '--receipt-file', str(files.receipt_path)]
+    try:
+        result = await run_publication_process(command, cwd=PROJECT_ROOT, env=_publish_env(),
+            timeout=120, preflight=check_readback_authority)
+    except PublicationProcessStartError:
+        return {'performed': False, 'cleanupConfirmed': True, 'reason': 'runner_unavailable'}
+    if getattr(result, 'cleanup_confirmed', True) is not True:
+        raise PublicationProcessCleanupError('回查进程终止尚未确认')
+    # Exit code, stdout and URLs cannot upgrade the publication. The caller will
+    # re-open this same private receipt through the normalizer and observe().
+    return {'performed': True, 'cleanupConfirmed': True,
+            'reason': 'readback_timeout' if result.timed_out else 'readback_requested'}
+
+
 def _record_confirmed_publication(record):
     subject, result = record['subject'], record.get('result') or {}
     expected = _publication_receipt_context(record)
@@ -8023,7 +8413,11 @@ def _publication_article_converter(markdown):
 
 @app.post('/api/publish/{platform}/prepare')
 async def api_prepare_publication(platform: str, req: PublishRequest):
-    return await _publication_workflow().prepare(platform, req.model_dump())
+    from web.publication_operator_guard import require_operator_http_available
+    workflow = _publication_workflow()
+    scope = workflow.scope()
+    require_operator_http_available(_publication_dir(), actor_id=scope['actor_id'], platform=platform)
+    return await workflow.prepare(platform, req.model_dump())
 
 
 @app.get('/api/publication-approvals/{identifier}')
@@ -8031,14 +8425,33 @@ async def api_publication_approval(identifier: str):
     return _publication_workflow().get(identifier)
 
 
+@app.post('/api/publication-approvals/{identifier}/refresh')
+async def api_refresh_publication_approval(identifier: str):
+    return await _publication_workflow().refresh(identifier)
+
+
 @app.post('/api/publication-approvals/{identifier}/decision')
 async def api_publication_decision(identifier: str, req: PublicationDecisionRequest):
-    return _publication_workflow().decide(identifier, req.approved, req.payloadHash)
+    from web.publication_operator_guard import require_operator_http_available
+    workflow = _publication_workflow()
+    scope = workflow.scope()
+    record = workflow.call('get', identifier)
+    require_operator_http_available(_publication_dir(), actor_id=scope['actor_id'],
+                                    platform=record['subject']['platform']['id'])
+    return workflow.decide(identifier, req.approved, req.payloadHash)
 
 
 @app.post('/api/publish/{platform}')
 async def api_publish(platform: str, req: PublishRequest):
-    return await _publication_workflow().start(platform, req.model_dump())
+    from web.publication_operator_guard import require_operator_http_available
+    workflow = _publication_workflow()
+
+    def check_http_entry():
+        scope = workflow.scope()
+        require_operator_http_available(_publication_dir(), actor_id=scope['actor_id'], platform=platform)
+
+    check_http_entry()
+    return await workflow.start(platform, req.model_dump(), before_claim=check_http_entry)
 
 
 class ManualPublishRequest(BaseModel):
@@ -8177,7 +8590,9 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
     if platform == 'xiaohongshu':
         base = [py, str(SHARED_SCRIPTS / 'xhs_publish.py')]
         cmd = base + ['publish-video', '--no-proxy', '--video', vids[0]] if vids else base + ['publish', '--no-proxy', '--images', ','.join(imgs)]
-        cmd += ['--title', title, '--content', req.body, '--tags', tags, '--exec']
+        cmd += ['--title', title, '--content', req.body, '--tags', tags, '--exec', '--require-public']
+        if req.aiGenerated:
+            cmd.append('--ai-generated')
     elif platform == 'bilibili':
         # B站投稿：直接调 biliup CLI（需 cookies.json，PATH 上有 biliup）。必须视频；
         # tid=36「知识」；B站投稿必须≥1 标签，无则兜底「日常」。
@@ -8191,6 +8606,8 @@ async def _dispatch_publish(platform: str, req: PublishRequest, *, media_paths=N
         base = [py, str(SHARED_SCRIPTS / 'douyin_publish.py')]
         cmd = base + ['publish-video', '--no-proxy', '--video', vids[0]] if vids else base + ['publish', '--no-proxy', '--images', ','.join(imgs)]
         cmd += ['--title', title, '--content', req.body, '--tags', tags, '--exec']
+        if req.aiGenerated:
+            cmd.append('--ai-generated')
         # 抖音发布可能触发风控短信墙——异步跑 + 状态/验证码文件，前端轮询到 sms_required 时弹输入框
         _publish_dir().mkdir(parents=True, exist_ok=True)
         status_file = operation_dir / 'runner.json'
@@ -8472,90 +8889,6 @@ async def api_delete_session(session_key: str):
     return {'deleted': False, 'reason': 'session not found'}
 
 
-# Source commands/URLs are loaded exclusively from a trusted local configuration file.
-# The browser only selects registered IDs; it cannot supply executable commands.
-from easel.trends.service import TrendService, failure_group as trend_failure_group
-from easel.trends.sources import ConfigError as TrendConfigError, load_sources as load_trend_sources
-from easel.trends import management as trend_management
-from easel.trends.protocol import CollectorError as TrendCollectorError, safe_json as trend_safe_json
-from easel.trends.protocol import MAX_MANAGEMENT_BYTES
-
-_TREND_SERVICE = TrendService()
-
-
-def _trend_registry():
-    warnings = []
-    try:
-        environment = read_settings(ENV_FILE)
-        sources = load_trend_sources(PROJECT_ROOT, environment, warnings=warnings)
-        return sources, environment, warnings
-    except Exception:
-        return [], {}, ["热点配置暂时无法读取，请检查本地配置；其他工作台功能不受影响。"]
-
-
-@app.get("/api/trends/sources")
-async def api_trend_sources():
-    sources, _, warnings = _trend_registry()
-    return {"version": 1, "sources": [source.public() for source in sources], "warnings": warnings}
-
-
-def _trend_manager_guard(request: Request):
-    # Check the real transport peer even when Origin/Host have been forged by a remote client.
-    if not _loopback_peer(request) or (request.headers.get("origin") and request.headers["origin"] not in _LOCAL_ORIGINS):
-        raise HTTPException(403, "数据源管理仅允许本机操作")
-
-
-@app.get("/api/trends/manage")
-async def api_trend_manage(request: Request):
-    _trend_manager_guard(request)
-    try:
-        return await asyncio.to_thread(trend_management.describe, PROJECT_ROOT, read_settings(ENV_FILE))
-    except Exception:
-        raise HTTPException(409, "无法读取数据源管理配置，请修复本地配置文件后重试") from None
-
-
-@app.post("/api/trends/manage")
-async def api_trend_manage_write(request: Request):
-    _trend_manager_guard(request)
-    length = request.headers.get("content-length", "")
-    if length and (not length.isascii() or not length.isdigit() or len(length) > 10):
-        raise HTTPException(400, "无效的请求长度")
-    if length.isdigit() and int(length) > MAX_MANAGEMENT_BYTES:
-        raise HTTPException(413, "数据源操作最多 256 KiB")
-    raw = bytearray()
-    async for chunk in request.stream():
-        if len(raw) + len(chunk) > MAX_MANAGEMENT_BYTES:
-            raise HTTPException(413, "数据源操作最多 256 KiB")
-        raw.extend(chunk)
-    try:
-        value = trend_safe_json(bytes(raw), MAX_MANAGEMENT_BYTES)
-        if not isinstance(value, dict):
-            raise TrendConfigError("数据源操作必须是对象")
-        return await asyncio.to_thread(trend_management.update, PROJECT_ROOT, read_settings(ENV_FILE), value)
-    except TrendConfigError as error:
-        raise HTTPException(400, str(error)) from None
-    except TrendCollectorError:
-        raise HTTPException(400, "数据源操作不是有效 JSON 或字段过深") from None
-    except Exception:
-        raise HTTPException(409, "配置保存失败，原配置已保留，请检查文件权限或修复配置") from None
-
-
-@app.get("/api/trends")
-async def api_trends(platforms: str | None = None, limit: int = 12):
-    if platforms is not None and len(platforms) > 8192:
-        raise HTTPException(400, "数据源查询过长")
-    sources, environment, warnings = _trend_registry()
-    registry = {source.id: source for source in sources}
-    selected = ([source.id for source in sources if source.default] if platforms is None else
-                list(dict.fromkeys(p.strip() for p in platforms.split(",") if p.strip() in registry)))
-    results = await asyncio.gather(*(
-        asyncio.to_thread(_TREND_SERVICE.get, registry[identifier], environment, max(1, min(limit, 30)))
-        for identifier in selected), return_exceptions=True)
-    groups = [result if isinstance(result, dict) else trend_failure_group(registry[identifier])
-              for identifier, result in zip(selected, results)]
-    return {"version": 1, "trends": groups, "updated": int(time.time()), "warnings": warnings}
-
-
 SCHEDULE_FILE = OUTPUTS_DIR / "_schedule.json"
 SCHEDULE_STATUSES = {"idea", "draft", "scheduled", "published"}
 SCHEDULE_KINDS = {"content", "event"}
@@ -8681,90 +9014,6 @@ async def api_schedule_context(days: int = 14):
         return {}
 
 
-IDEAS_FILE = OUTPUTS_DIR / "_ideas.json"
-IDEA_STATUSES = {"pending", "doing", "done"}
-
-
-def _read_ideas() -> list[dict]:
-    if not _ideas_file().is_file():
-        return []
-    try:
-        d = json.loads(_ideas_file().read_text(encoding="utf-8"))
-        return d if isinstance(d, list) else []
-    except Exception:
-        return []
-
-
-def _write_ideas(items: list[dict]) -> None:
-    _outputs_dir().mkdir(parents=True, exist_ok=True)
-    tmp = _ideas_file().with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(_ideas_file())
-
-
-class IdeaItem(BaseModel):
-    title: str
-    note: str = ""
-    source: str = ""
-    status: str = "pending"
-    provenance: IdeaProvenance | None = None
-
-
-@app.get("/api/ideas")
-async def api_ideas_list():
-    return _read_ideas()
-
-
-@app.post("/api/ideas")
-async def api_ideas_create(req: IdeaItem):
-    items = _read_ideas()
-    st = req.status if req.status in IDEA_STATUSES else "pending"
-    item = {
-        "id": uuid.uuid4().hex[:12],
-        "title": req.title.strip() or "未命名选题",
-        "note": req.note,
-        "source": req.source,
-        "status": st,
-        "created": int(time.time()),
-    }
-    if req.provenance is not None:
-        item["provenance"] = req.provenance.model_dump(exclude_none=True)
-    items.insert(0, item)
-    _write_ideas(items)
-    return item
-
-
-@app.put("/api/ideas/{iid}")
-async def api_ideas_update(iid: str, req: IdeaItem):
-    items = _read_ideas()
-    for it in items:
-        if it.get("id") == iid:
-            it.update({
-                "title": req.title.strip() or it.get("title", "未命名选题"),
-                "note": req.note,
-                "source": req.source,
-                "status": req.status if req.status in IDEA_STATUSES else it.get("status", "pending"),
-            })
-            if "provenance" in req.model_fields_set:
-                if req.provenance is None:
-                    it.pop("provenance", None)
-                else:
-                    it["provenance"] = req.provenance.model_dump(exclude_none=True)
-            _write_ideas(items)
-            return it
-    raise HTTPException(404, "选题不存在")
-
-
-@app.delete("/api/ideas/{iid}")
-async def api_ideas_delete(iid: str):
-    items = _read_ideas()
-    new = [it for it in items if it.get("id") != iid]
-    if len(new) == len(items):
-        raise HTTPException(404, "选题不存在")
-    _write_ideas(new)
-    return {"ok": True, "deleted": iid}
-
-
 if __name__ == "__main__":
     import uvicorn
     from easel.runtime_env import web_environment
@@ -8773,11 +9022,11 @@ if __name__ == "__main__":
     openclaw_base_cmd.cache_clear()
     port = int(os.environ.get("EASEL_PORT", "7860"))
     proxy_url = os.environ.get("VSCODE_PROXY_URI", "").replace("{{port}}", str(port))
-    print("\n  ✦ Easel Web")
+    print("\n  ✦ Xiangya Web")
     print(f"  http://localhost:{port}")
     if proxy_url:
         print(f"  {proxy_url}")
     print()
-    # 监听 0.0.0.0（非仅回环）是为了兼容 Docker/远程容器端口转发访问 Easel 的场景；
+    # 监听 0.0.0.0（非仅回环）是为了兼容 Docker/远程容器端口转发访问 响芽 的场景；
     # local_write_guard/TrustedHostMiddleware 只挡浏览器发起的跨站请求，见其注释里的局限说明。
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

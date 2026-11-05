@@ -50,7 +50,7 @@ python skills/shared/scripts/render_card.py \
   --width 1080 --height 1350 --scale 2
 ```
 
-先切换到 Easel 项目根，使用项目 `.venv` 的 Python。手写 HTML 保存在 `outputs/排版卡/card.html`，上述共享渲染器通过 Playwright Chromium 输出 2160×2700 PNG，不依赖 macOS Chrome 或其它仓库的脚本。安装与浏览器检查使用 `python skills/shared/scripts/render_card.py --selftest`。
+先切换到 响芽 项目根，使用项目 `.venv` 的 Python。手写 HTML 保存在 `outputs/排版卡/card.html`，上述共享渲染器通过 Playwright Chromium 输出 2160×2700 PNG，不依赖 macOS Chrome 或其它仓库的脚本。安装与浏览器检查使用 `python skills/shared/scripts/render_card.py --selftest`。
 
 ## 坑(都是踩过的)
 

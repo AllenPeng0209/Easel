@@ -6,6 +6,14 @@ import { QuestionReplyBubble } from '../vendor/deepseek-harness/message/Question
 import type { QuestionReplyData } from '../vendor/deepseek-harness/message/question-reply';
 import '../styles/agent-chat.css';
 import { PublicationSubjectView } from './PublicationApprovalDialog';
+import { publicationReceiptInScope } from '../lib/publicationReceipt';
+import { requestApprovalPublication } from '../lib/publicationHandoff';
+
+function PublicationReviewLink({ publication }: { publication: NonNullable<ChatQuestion['publication']> }) {
+  if (!publicationReceiptInScope(publication)) return null;
+  return <button type="button" className="btn btn-secondary"
+    onClick={() => { requestApprovalPublication(publication); }}>到发布中心核对</button>;
+}
 
 type QuestionDetails = ChatQuestion & {
   kind?: 'preference' | 'approval';
@@ -60,8 +68,10 @@ function QuestionResolution({ question }: { question: QuestionDetails }) {
     answers: Object.entries(question.answers || {}).map(([id, selected]) => ({ id, selected })),
   };
   return <div className="question-resolution" data-question-request={question.id} data-question-phase={question.status}>
-    {question.publication && <PublicationSubjectView subject={question.publication.subject} />}
-    <div className="question-resolution__status">{question.status === 'blocked' ? '等待确认超时，任务在需要授权的步骤受阻'
+    {question.publication && <><PublicationSubjectView subject={question.publication.subject} />
+      <PublicationReviewLink publication={question.publication} /></>}
+    <div className="question-resolution__status">{question.publication && question.resolvedBy === 'publication_host' ? '发布中心的决定已同步'
+      : question.status === 'blocked' ? '等待确认超时，任务在需要授权的步骤受阻'
       : question.status === 'declined' ? '未获授权，操作未执行'
       : !settledStatuses.has(question.status || '') ? closedLabel
         : question.resolvedBy === 'default' || question.status === 'defaulted' ? '已按默认答案继续' : '已答复'}</div>
@@ -253,6 +263,7 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
           <div className="question-card__mode">{requiresApproval ? '需要你确认' : '补充信息'}</div>
           {requiresApproval && <div className="question-card__hint">未答复不会自动授权。</div>}
           {question.publication && <><PublicationSubjectView subject={question.publication.subject} />
+            <PublicationReviewLink publication={question.publication} />
             <p className="question-card__hint">本次批准摘要：{question.publication.payloadHash}</p></>}
           {defaultScheduled && !expired && <div className="question-card__default" role="status">
             {seconds > 0 ? `${seconds} 秒后将按默认答案继续，你可以在此前修改。` : '正在等待服务端按默认答案继续…'}

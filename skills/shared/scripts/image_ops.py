@@ -497,7 +497,7 @@ def _selftest() -> int:
              lambda: out.is_file() and Image.open(out).format == "JPEG")
 
         out = dd / "wm.png"
-        _run("watermark", NS(input=srcs[0], output=str(out), text="Easel",
+        _run("watermark", NS(input=srcs[0], output=str(out), text="Xiangya",
                              image=None, position="bottom-right", opacity=0.5,
                              size=28, margin=20, color="#ffffff", font=None,
                              scale=1.0, quality=None),

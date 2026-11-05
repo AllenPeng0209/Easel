@@ -1,7 +1,7 @@
 """D25 read-only domain DTO adapter; never creates a parallel business store.
 
-Ideas reuse the IP idea catalog, draft files reuse D08's private immutable
-deliveries, and workshop projects reuse WorkshopStore. Query snapshot hashes
+Draft files reuse D08's private immutable deliveries, and workshop projects
+reuse WorkshopStore. Query snapshot hashes
 identify observations, not content revisions or authority to publish.
 """
 from __future__ import annotations
@@ -13,37 +13,13 @@ import math
 import re
 import time
 from pathlib import PurePosixPath
-from urllib.parse import urlsplit
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from easel.chat_artifacts import ArtifactError
 from easel.projects import project_id
 from easel.request_identity import current_user
 from easel.video_workshop import WorkshopError, WorkshopStore, public_render_cancellation, public_render_submission_attempts
-
-
-class IdeaProvenance(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    platform: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
-    url: str = Field(default="", max_length=4000)
-    collectedAt: int | None = Field(default=None, gt=0)
-
-    @field_validator("url")
-    @classmethod
-    def validate_source_url(cls, value: str) -> str:
-        if not value:
-            return value
-        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value) or "\\" in value:
-            raise ValueError("来源链接格式无效")
-        parts = urlsplit(value)
-        if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username is not None:
-            raise ValueError("来源链接必须是无凭据的 HTTP 或 HTTPS 地址")
-        # Accessing port also validates malformed and out-of-range ports.
-        _ = parts.port
-        return value
 
 
 def _digest(value):
@@ -67,7 +43,7 @@ def _status(code, label, source='computed'):
 
 
 def _identifier(value, kind):
-    pattern = r'[A-Za-z0-9_-]{1,160}' if kind == 'idea' else r'[a-f0-9]{32}'
+    pattern = r'[a-f0-9]{32}'
     return isinstance(value, str) and re.fullmatch(pattern, value) is not None
 
 
@@ -93,8 +69,8 @@ class BusinessObjectService:
             raise HTTPException(400, '业务查询参数无效')
         action, kind = payload.get('action'), payload.get('kind')
         if (not isinstance(action, str) or action not in {'list', 'inspect'}
-                or not isinstance(kind, str) or kind not in {'idea', 'draft', 'workshop'}):
-            raise HTTPException(400, '仅支持选题、草稿文件和工坊项目的只读查询')
+                or not isinstance(kind, str) or kind not in {'draft', 'workshop'}):
+            raise HTTPException(400, '仅支持草稿文件和工坊项目的只读查询')
         allowed = {'action', 'kind', 'id'} if action == 'inspect' else {'action', 'kind', 'cursor', 'query'}
         if set(payload) - allowed or action == 'inspect' and not _identifier(payload.get('id'), kind):
             raise HTTPException(400, '业务查询字段或对象编号无效')
@@ -123,28 +99,12 @@ class BusinessObjectService:
 
     @staticmethod
     def _object(scope, kind, identifier, title, summary, status, version, details):
-        target, label = {'idea': ('ideas', '查看选题'), 'draft': ('artifact', '查看草稿文件'),
+        target, label = {'draft': ('artifact', '查看草稿文件'),
                          'workshop': ('workshop', '查看工坊项目')}[kind]
         value = {'schemaVersion': 1, **scope, 'kind': kind, 'id': identifier, 'title': title,
                  'summary': summary, 'status': status, 'version': version, 'details': details,
                  'actions': [{'kind': 'open', 'target': target, 'entityId': identifier, 'label': label}]}
         return {**value, 'snapshotHash': _digest(value), 'observedAt': int(time.time() * 1000)}
-
-    def _idea(self, value, scope):
-        statuses = {'pending': _status('idea_pending', '待处理选题', 'stored'),
-                    'doing': _status('idea_doing', '选题进行中', 'stored'),
-                    'done': _status('idea_done', '选题已完成', 'stored')}
-        stored = _scalars(value, {'id', 'title', 'note', 'source', 'status', 'created'})
-        if value.get('provenance') is not None:
-            try:
-                provenance = IdeaProvenance.model_validate(value['provenance'])
-            except ValidationError:
-                pass  # Old or damaged provenance must not hide the idea.
-            else:
-                stored.update(provenance.model_dump(exclude_none=True))
-        state = statuses.get(_text(stored.get('status')), _status('unknown', '选题状态待核对', 'unknown'))
-        return self._object(scope, 'idea', stored['id'], _text(stored.get('title'), '未命名选题'),
-            _text(stored.get('note')), state, {'revision': None, 'sha256': None}, {'idea': stored})
 
     def _draft(self, value, store, scope):
         metadata = _scalars(value, {'artifactId', 'projectId', 'sessionId', 'turnId', 'path', 'workspacePath',
@@ -176,10 +136,10 @@ class BusinessObjectService:
         safe = _scalars(project, {'id', 'title', 'brief', 'stage', 'revision', 'aspect_ratio',
                                   'created_at', 'updated_at', 'archived_at'})
         nested = {
-            'deliverables': {'id', 'sha256', 'revision', 'engine_revision', 'render_id', 'created_at'},
+            'deliverables': {'id', 'sha256', 'revision', 'render_id', 'created_at'},
             'reviews': {'id', 'revision', 'artifact_id', 'artifact_sha256', 'kind', 'decision', 'notes',
                         'created_at', 'actor_id', 'actorId', 'reviewer_id'},
-            'renders': {'id', 'operation_id', 'task_id', 'status', 'content_revision', 'engine_revision',
+            'renders': {'id', 'operation_id', 'task_id', 'status', 'content_revision',
                         'submission_state', 'progress', 'progress_known', 'artifact_id', 'collected_revision',
                         'created_at', 'updated_at', 'collected_at'},
             'publications': {'id', 'revision', 'artifact_id', 'artifact_sha256', 'platform', 'published_at', 'created_at'},
@@ -197,13 +157,14 @@ class BusinessObjectService:
                     cancellation = public_render_cancellation(source)
                     if cancellation is not None:
                         projected['cancellation'] = cancellation
-        details = {'project': safe, 'engineVerification': 'not_checked', 'publishEligibility': 'unverified',
+        safe['script'] = project.get('script', '')
+        safe['assets'] = [{key: row[key] for key in ('id', 'name', 'kind', 'description', 'path', 'sha256', 'image_prompt', 'appearance', 'styling', 'lighting') if key in row}
+                          for row in project.get('assets', [])]
+        safe['shots'] = [{key: row[key] for key in ('id', 'title', 'description', 'atmosphere', 'prompt', 'seconds', 'asset_ids', 'selected_candidate_id', 'candidates') if key in row}
+                         for row in project.get('shots', [])]
+        safe['comments'] = project.get('comments', [])
+        details = {'project': safe, 'publishEligibility': 'unverified',
                    'deliveryVerification': 'not_available', 'publicationEvidence': 'stored_records_only'}
-        try:
-            store._assert_canvas_binding(project)
-            details['canvasBinding'] = 'verified' if project.get('beeftv_canvas_id') else 'not_linked'
-        except WorkshopError:
-            details['canvasBinding'] = 'unverified'
         state = _status('unknown', '工坊状态待核对', 'unknown')
         latest = safe['deliverables'][-1] if safe['deliverables'] else None
         sha = latest.get('sha256') if latest else None
@@ -259,12 +220,8 @@ class BusinessObjectService:
         scope = self._scope()
         action, kind, query, after, binding = self._request(payload, scope)
         try:
-            if kind == 'idea':
-                source = [value for value in self.host._read_ideas()
-                          if isinstance(value, dict) and _identifier(value.get('id'), kind)]
-                transform, identifier = lambda value: self._idea(value, scope), 'id'
-            elif kind == 'workshop':
-                store = WorkshopStore(self.host._outputs_dir(), strict_canvas_bindings=True)
+            if kind == 'workshop':
+                store = WorkshopStore(self.host._outputs_dir())
                 source = [store.get(payload['id'])] if action == 'inspect' else store.list()
                 transform, identifier = lambda value: self._workshop(value, store, scope), 'id'
             else:

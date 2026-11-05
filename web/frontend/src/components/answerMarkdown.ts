@@ -1,5 +1,5 @@
 /**
- * Easel binding for the pinned DeepSeek incremental Markdown renderer.
+ * Xiangya binding for the pinned DeepSeek incremental Markdown renderer.
  * The existing sanitizer, immutable media policy and settled discovery still own all output.
  */
 import { useMemo, useRef, useState } from 'react';

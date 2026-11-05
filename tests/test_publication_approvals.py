@@ -133,6 +133,79 @@ def test_concurrent_claim_has_one_durable_operation_and_replays_after_restart(tm
     assert store_for(tmp_path).claim(record['id'], subject(), actor_id='actor-one', project_id='ip-one')['claimed'] is False
 
 
+def test_confirmed_exact_subject_blocks_another_approval_but_preserves_original_replay(tmp_path):
+    store = store_for(tmp_path)
+    first = approved(store)
+    original = store.claim(first['id'], subject(), actor_id='actor-one', project_id='ip-one')
+    finished = store.finish(first['id'], original['operationId'], {'status': 'confirmed', 'externalId': 'real-post'},
+                            actor_id='actor-one', project_id='ip-one')
+    second = approved(store)
+    assert second['payloadHash'] == first['payloadHash']
+    with pytest.raises(api().PublicationApprovalError) as caught:
+        store_for(tmp_path).claim(second['id'], subject(), actor_id='actor-one', project_id='ip-one')
+    assert caught.value.status_code == 409
+    untouched = store.get(second['id'], actor_id='actor-one', project_id='ip-one')
+    assert untouched['state'] == 'approved' and untouched['operationId'] is None and untouched['result'] is None
+    replay = store.claim(first['id'], subject(), actor_id='actor-one', project_id='ip-one')
+    assert replay['claimed'] is False and replay['operationId'] == original['operationId']
+    assert replay['result'] == finished['result']
+
+
+@pytest.mark.parametrize('change', ['actor', 'project', 'platform', 'body'])
+def test_confirmed_duplicate_guard_does_not_block_another_scope_or_full_subject(tmp_path, change):
+    store = store_for(tmp_path)
+    first = approved(store)
+    original = store.claim(first['id'], subject(), actor_id='actor-one', project_id='ip-one')
+    store.finish(first['id'], original['operationId'], {'status': 'confirmed', 'externalId': 'real-post'},
+                 actor_id='actor-one', project_id='ip-one')
+    actor, project, value = 'actor-one', 'ip-one', subject()
+    if change == 'actor': actor = 'actor-two'
+    if change == 'project':
+        project = 'ip-two'; value = subject(project={'id': project, 'name': '另一个IP'})
+    if change == 'platform': value = subject(platform={'id': 'zhihu', 'name': '知乎'})
+    if change == 'body': value = subject(body='另一条发布内容')
+    second = approved(store, value, actor=actor, project=project)
+    assert store.claim(second['id'], value, actor_id=actor, project_id=project)['claimed'] is True
+
+
+def test_unknown_previous_attempt_is_preserved_and_never_reclassified_by_duplicate_guard(tmp_path):
+    store = store_for(tmp_path)
+    first = approved(store)
+    original = store.claim(first['id'], subject(), actor_id='actor-one', project_id='ip-one')
+    historical = store.finish(first['id'], original['operationId'], {'status': 'unknown', 'phase': 'submit_attempted'},
+                              actor_id='actor-one', project_id='ip-one')
+    second = approved(store)
+    assert store.claim(second['id'], subject(), actor_id='actor-one', project_id='ip-one')['claimed'] is True
+    assert store.get(first['id'], actor_id='actor-one', project_id='ip-one') == historical
+
+
+def test_claim_racing_same_subject_confirmation_has_no_duplicate_dispatch_window(tmp_path):
+    store = store_for(tmp_path)
+    first = approved(store)
+    original = store.claim(first['id'], subject(), actor_id='actor-one', project_id='ip-one')
+    second = approved(store)
+    barrier = threading.Barrier(2, timeout=10)
+
+    def finish():
+        barrier.wait()
+        return store_for(tmp_path).finish(first['id'], original['operationId'],
+            {'status': 'confirmed', 'externalId': 'real-post'}, actor_id='actor-one', project_id='ip-one')
+
+    def competing_claim():
+        barrier.wait()
+        try:
+            store_for(tmp_path).claim(second['id'], subject(), actor_id='actor-one', project_id='ip-one')
+        except api().PublicationApprovalError as error:
+            return error.status_code
+        return 'unexpected_duplicate_claim'
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        done, competing = pool.submit(finish), pool.submit(competing_claim)
+        assert done.result()['result']['status'] == 'confirmed'
+        assert competing.result() == 409
+    assert store.get(second['id'], actor_id='actor-one', project_id='ip-one')['operationId'] is None
+
+
 def test_platform_profile_is_exclusive_across_actors_until_execution_settles(tmp_path):
     module = api()
     one, two = store_for(tmp_path), store_for(tmp_path)

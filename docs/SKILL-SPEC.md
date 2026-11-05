@@ -1,6 +1,6 @@
-# Easel SKILL 接口规范 v0.3
+# 响芽 SKILL 接口规范 v0.3
 
-> 所有 Easel SKILL 遵循此规范。SKILL 是独立可调的原子能力单元。
+> 所有 响芽 SKILL 遵循此规范。SKILL 是独立可调的原子能力单元。
 
 ## 目录结构
 
@@ -90,8 +90,8 @@ python scripts/validate_skill_commands.py
 ## 调用方式
 
 ```bash
-easel skill check-compliance -i "内容"
-easel skill check-compliance -i "内容" -p 画像名
+xiangya skill check-compliance -i "内容"
+xiangya skill check-compliance -i "内容" -p 画像名
 ```
 
 所有调用统一走 OpenClaw agent，由 OpenClaw 读对应 SKILL、按 AGENTS.md 规则自己执行。

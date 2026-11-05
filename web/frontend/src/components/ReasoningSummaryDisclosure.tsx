@@ -1,7 +1,7 @@
 /**
  * Public summary disclosure adapted from DeepSeek Harness
  * ui-trajectory/src/client/TrajectoryTable.tsx's reasoning quote @ ce7073d (MIT).
- * Easel renders only the typed public summary and keeps the retained text inert.
+ * 响芽 renders only the typed public summary and keeps the retained text inert.
  */
 import { useId, useMemo, useState } from 'react';
 import type { ReasoningSummary } from '../lib/store';

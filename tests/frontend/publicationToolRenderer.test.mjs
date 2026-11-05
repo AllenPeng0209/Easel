@@ -68,3 +68,20 @@ test('legacy, wrong run/name, and unmatched markers never bind publication cards
   assert.ok(detached.every(element => element.closest('[data-tool-call]') === null));
   assert.doesNotMatch(doc.querySelector('.agent-events').textContent, /外国账号正文|发布成功/);
 });
+
+test('the native publication receipt explicit refresh posts only to its existing approval refresh route', async () => {
+  const requests = [];
+  const { resolveToolRenderer } = componentModule('components/toolRendererRegistry.ts', { user, globals: {
+    Headers, Response,
+    fetch: async (value, init = {}) => {
+      requests.push({ url: String(value), method: init.method || 'GET' });
+      return new Response(JSON.stringify(record()), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  } });
+  const resolution = resolveToolRenderer(native('refresh-call'), true, { publications: [record()] });
+  assert.equal(resolution.kind, 'specialized');
+  const details = resolution.view.details();
+  const card = details.props.children[0];
+  await card.props.onRefresh(record().id);
+  assert.deepEqual(requests, [{ url: `/api/publication-approvals/${record().id}/refresh`, method: 'POST' }]);
+});

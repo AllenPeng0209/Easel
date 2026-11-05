@@ -16,10 +16,10 @@ const artifact=changes=>({artifactId:'a'.repeat(32),projectId:'default',sessionI
   path:'reports/draft.md',name:'draft.md',mime:'text/markdown',size:32,description:'固定稿件说明',status:'available',createdAt:1000,
   url:`/api/chat/artifacts/${'a'.repeat(32)}/content`,storageMode:'snapshot',revision:2,sha256:'b'.repeat(64),bundleSha256:null,
   reviewStatus:'unreviewed',...changes});
-const object=changes=>({schemaVersion:1,actorId:actor,projectId:'default',kind:'idea',id:'idea-one',title:'真实选题标题',
-  summary:'来自选题库中的真实备注',status:{code:'doing',label:'正在推进',source:'stored'},version:{revision:null,sha256:null},
-  snapshotHash:digest,observedAt:1_793_664_000_000,details:{idea:{id:'idea-one',note:'先解释政策再讲案例',source:'选题库',status:'doing',created:1000}},
-  actions:[{kind:'open',target:'ideas',entityId:'idea-one',label:'打开此选题'}],...changes});
+const object=changes=>({schemaVersion:1,actorId:actor,projectId:'default',kind:'workshop',id:'1'.repeat(32),title:'真实工程标题',
+  summary:'来自制作工程中的真实备注',status:{code:'doing',label:'正在推进',source:'stored'},version:{revision:null,sha256:null},
+  snapshotHash:digest,observedAt:1_793_664_000_000,details:{project:{id:'1'.repeat(32),brief:'先解释政策再讲案例',stage:'producing'}},
+  actions:[{kind:'open',target:'workshop',entityId:'1'.repeat(32),label:'打开此工程'}],...changes});
 const draft=changes=>object({kind:'draft',id:'a'.repeat(32),title:'文字稿件',summary:'固定交付记录',status:{code:'draft_file',label:'草稿文件（固定版本）',source:'computed'},
   version:{revision:2,sha256:'b'.repeat(64)},details:{artifact:artifact()},actions:[{kind:'open',target:'artifact',entityId:'a'.repeat(32),label:'打开稿件'}],...changes});
 const workshop=changes=>object({kind:'workshop',id:workshopId,title:'课程介绍视频',summary:'已有制作工程',
@@ -65,22 +65,22 @@ async function cardDOM(props,callback,options={}) {
   }
 }
 
-test('a real idea card exposes exact identity, stored status and observation digest without inventing a formal version',()=>{
+test('a workshop card exposes exact identity, stored status and observation digest without inventing a version',()=>{
   const html=render(object());
-  for(const text of ['真实选题标题','idea-one','doing','正在推进',digest,String(object().observedAt)])assert.ok(html.includes(text),text);
-  assert.match(html,/data-business-object="idea-one"/);assert.match(html,/data-kind="idea"/);
-  assert.match(html,/无正式稿件版本/);assert.match(html,/观测摘要/);assert.match(html,/已保存状态/);
+  for(const text of ['真实工程标题','11111111111111111111111111111111','doing','正在推进',digest,String(object().observedAt)])assert.ok(html.includes(text),text);
+  assert.match(html,/data-business-object="11111111111111111111111111111111"/);assert.match(html,/data-kind="workshop"/);
+  assert.match(html,/版本未记录/);assert.match(html,/观测摘要/);assert.match(html,/已保存状态/);
   assert.doesNotMatch(html,/V1|已发布|审核通过|✓/);
 });
 
 test('normalization rejects invalid or foreign envelopes and strips backend configuration from visible business details',()=>{
   const {normalizeBusinessObject}=library();
-  const valid=normalizeBusinessObject(object({details:{idea:{note:'真实内容',source:'真实来源',config:{apiKey:'SECRET'}},
+  const valid=normalizeBusinessObject(object({details:{project:{brief:'真实内容',title:'真实来源',config:{apiKey:'SECRET'}},
     model_provider:'SECRET',runtime_url:'https://backend.invalid/private',password:'SECRET'}}));
   assert.ok(valid);
   assert.ok(!JSON.stringify(valid).includes('SECRET'));
   for(const change of [{actorId:'other'}, {projectId:'other'}, {kind:'unknown'}, {schemaVersion:2}, {observedAt:0}, {observedAt:Number.MAX_SAFE_INTEGER},
-    {snapshotHash:'bad'}, {version:{revision:null,sha256:'bad'}}, {version:{revision:1,sha256:null}},
+    {snapshotHash:'bad'}, {version:{revision:null,sha256:'bad'}}, {version:{revision:-1,sha256:null}},
     {status:{code:'doing',label:'正在推进',source:'agent_message'}}, {id:'../../private'}, {id:'idea%2fsecret'},
     {id:'https://evil.test/'}, {id:'not.a.host.idea'}]) {
     assert.equal(normalizeBusinessObject(object(change)),null,JSON.stringify(change));
@@ -91,52 +91,32 @@ test('normalization rejects invalid or foreign envelopes and strips backend conf
 
 test('Host-bounded Unicode titles and historical CRLF text remain readable in the real card',async()=>{
   const title='📝'.repeat(1024);
-  const value=object({title,summary:'第一行\r\n第二行',details:{idea:{note:'旧备注\r\n保留换行',source:'历史选题库'}}});
-  assert.equal(library().normalizeBusinessObject(value)?.summary,'第一行\r\n第二行');
+  const value=object({title,summary:'第一行\r\n第二行\r\n旧备注\r\n保留换行',details:{project:{stage:'producing'}}});
+  assert.equal(library().normalizeBusinessObject(value)?.summary,'第一行\r\n第二行\r\n旧备注\r\n保留换行');
   await cardDOM({record:value},async({window,card,expand})=>{
-    assert.equal(card().getAttribute('data-business-object'),'idea-one');
+    assert.equal(card().getAttribute('data-business-object'),'11111111111111111111111111111111');
     await expand();
-    for(const text of ['📝','第一行','第二行','旧备注','保留换行','历史选题库'])assert.ok(window.document.body.textContent.includes(text),text);
+    for(const text of ['📝','第一行','第二行','旧备注','保留换行'])assert.ok(window.document.body.textContent.includes(text),text);
   });
 });
 
 test('only exact local open actions survive and no server href can redirect navigation',async()=>{
-  const value=object({actions:[...object().actions,{kind:'open',target:'ideas',entityId:'idea-one',label:'打开此选题',href:'https://evil.test/redirect'},
-    {kind:'publish',target:'ideas',entityId:'idea-one',label:'危险发布'},{kind:'open',target:'workshop',entityId:'idea-one',label:'错类型'},
-    {kind:'open',target:'ideas',entityId:'another',label:'错对象'}]});
+  const value=object({actions:[...object().actions,{kind:'open',target:'workshop',entityId:'1'.repeat(32),label:'打开此工程',href:'https://evil.test/redirect'},
+    {kind:'publish',target:'workshop',entityId:'11111111111111111111111111111111',label:'危险发布'},{kind:'open',target:'artifact',entityId:'11111111111111111111111111111111',label:'错类型'},
+    {kind:'open',target:'workshop',entityId:'another',label:'错对象'}]});
   await cardDOM({record:value},async({window})=>{
     const links=[...window.document.querySelectorAll('a')];
-    assert.deepEqual(links.map(link=>link.getAttribute('href')),['#/business/default/idea/idea-one']);
+    assert.deepEqual(links.map(link=>link.getAttribute('href')),['#/business/default/workshop/11111111111111111111111111111111']);
     assert.doesNotMatch(window.document.body.textContent,/危险发布|错类型|错对象/);
     assert.equal(window.document.querySelectorAll('[data-decision]').length,0);
   });
 });
 
-test('existing opaque idea IDs can navigate without being forced into the new hex-only ID shape',async()=>{
-  const id='_legacy-idea_2025';
-  const value=object({id,actions:[{kind:'open',target:'ideas',entityId:id,label:'查看旧选题'}]});
-  await cardDOM({record:value},async({window,card})=>{
-    assert.equal(card().getAttribute('data-business-object'),id);
-    assert.equal(window.document.querySelector('a').getAttribute('href'),`#/business/default/idea/${id}`);
-  });
-});
-
-test('saved idea card emits its current scoped ID only from the explicit creation action',async()=>{
-  const record=object({id:'idea-two',details:{idea:{platform:'weibo',url:'https://source.test/idea-two',collectedAt:1234}},
-    actions:[{kind:'open',target:'ideas',entityId:'idea-two',label:'查看选题'}]});
-  await cardDOM({record},async({window,card,render,expand})=>{
-    const events=[];
-    window.addEventListener('easel:use-idea', event=>events.push({...event.detail}));
-    const start=()=>[...card().querySelectorAll('button')].find(button=>button.textContent==='用此选题创作');
-    assert.deepEqual(events,[]);
-    assert.ok(start());
-    await React.act(async()=>start().click());
-    assert.deepEqual(events,[{id:'idea-two',projectId:'default',actorId:actor}]);
-    await expand();
-    assert.match(card().textContent,/来源平台weibo来源链接https:\/\/source\.test\/idea-two采集时间/);
-    await render({record:workshop()});
-    assert.equal(start(),undefined);
-  });
+test('legacy idea observations expose no retired navigation or creation actions',()=>{
+  const legacy=object({kind:'idea',id:'legacy-idea',title:'旧选题正文',actions:[{kind:'open',target:'ideas',entityId:'legacy-idea',label:'查看选题'}]});
+  assert.equal(library().normalizeBusinessObject(legacy),null);
+  const html=render(legacy);
+  assert.doesNotMatch(html,/旧选题正文|查看选题|用此选题创作|data-business-object=/);
 });
 
 test('workshop details show actual renders, historical artifacts, simulated and human reviews without inventing an actor',async()=>{
@@ -146,7 +126,7 @@ test('workshop details show actual renders, historical artifacts, simulated and 
     await expand();
     for(const text of [workshopId,'V4','render-one','render-operation','render-task','running','40%','delivery-one','V3','review-sim','review-human',
       '模拟','人工','changes_requested','审核人未记录','reviewer-from-host','历史版本','发布登记','非平台自动验证',
-      '最新成片摘要','引擎未核验','发布条件待核对'])assert.ok(window.document.body.textContent.includes(text),text);
+      '最新成片摘要','发布条件待核对'])assert.ok(window.document.body.textContent.includes(text),text);
     assert.equal(window.document.querySelectorAll('iframe,video').length,0);
     assert.deepEqual([...window.document.querySelectorAll('a')].map(link=>link.getAttribute('href')),[`#/business/default/workshop/${workshopId}`]);
     assert.doesNotMatch(window.document.body.textContent,/平台已确认公开发布|https:\/\/evil/);
@@ -230,7 +210,7 @@ test('foreign actor/IP and malformed records show only an unavailable placeholde
     const requests=[];
     await cardDOM({record:value,onRefresh:async(...args)=>{requests.push(args);return value;}},async({window,refresh})=>{
       assert.match(window.document.body.textContent,/当前用户或 IP|对象信息不可用/);
-      assert.doesNotMatch(window.document.body.textContent,/真实选题标题|idea-one/);
+      assert.doesNotMatch(window.document.body.textContent,/真实工程标题|11111111111111111111111111111111/);
       assert.equal(refresh(),null);assert.deepEqual(requests,[]);
     });
   }
@@ -253,24 +233,24 @@ test('refresh only inspects kind/id, duplicate-locks immediately and displays a 
 
 test('refresh rejects cross identity, same/older observations and malformed replacement versions',async()=>{
   const initial=object();
-  for(const change of [{actorId:'foreign'},{projectId:'foreign'},{kind:'workshop'},{id:'other-id'},
+  for(const change of [{actorId:'foreign'},{projectId:'foreign'},{kind:'draft'},{id:'other-id'},
     {observedAt:initial.observedAt},{observedAt:initial.observedAt-1},{snapshotHash:'invalid'},
-    {version:{revision:1,sha256:null}}]) {
+    {version:{revision:-1,sha256:null}}]) {
     await cardDOM({record:initial,onRefresh:async()=>object({observedAt:initial.observedAt+100,title:'不得替换的内容',...change})},async({window,refresh})=>{
       await React.act(async()=>refresh().click());
-      assert.match(window.document.body.textContent,/真实选题标题/);assert.doesNotMatch(window.document.body.textContent,/不得替换/);
+      assert.match(window.document.body.textContent,/真实工程标题/);assert.doesNotMatch(window.document.body.textContent,/不得替换/);
       assert.ok(window.document.querySelector('[role="alert"]'));assert.equal(refresh().disabled,false);
     });
   }
 });
 
-test('a newer valid response for another kind cannot replace an idea with the same opaque ID',async()=>{
-  const initial=object({id:workshopId,actions:[{kind:'open',target:'ideas',entityId:workshopId,label:'查看选题'}]});
-  await cardDOM({record:initial,onRefresh:async()=>workshop({observedAt:initial.observedAt+100})},async({window,card,refresh})=>{
+test('a newer valid response for another kind cannot replace a workshop with the same ID',async()=>{
+  const initial=object({id:workshopId,actions:[{kind:'open',target:'workshop',entityId:workshopId,label:'查看选题'}]});
+  await cardDOM({record:initial,onRefresh:async()=>draft({id:workshopId,observedAt:initial.observedAt+100})},async({window,card,refresh})=>{
     await React.act(async()=>refresh().click());
-    assert.equal(card().getAttribute('data-kind'),'idea');
+    assert.equal(card().getAttribute('data-kind'),'workshop');
     assert.ok(window.document.querySelector('[role="alert"]'));
-    assert.doesNotMatch(window.document.body.textContent,/课程介绍视频/);
+    assert.doesNotMatch(window.document.body.textContent,/文字稿件/);
   });
 });
 
@@ -279,8 +259,8 @@ test('deletion/404 retains the prior snapshot, labels its history and remains re
   await cardDOM({record:initial,onRefresh:async()=>{if(attempt++===0)throw Object.assign(new Error('server-secret-config'),{status:404});return object({observedAt:initial.observedAt+100});}},async({window,card,refresh})=>{
     await React.act(async()=>refresh().click());
     assert.match(window.document.body.textContent,/历史观测/);assert.match(window.document.body.textContent,/无法刷新/);
-    assert.ok(![...card().querySelectorAll('button')].some(button=>button.textContent==='用此选题创作'));
-    assert.match(window.document.body.textContent,/真实选题标题/);assert.ok(!window.document.body.textContent.includes('server-secret-config'));
+    assert.equal(card().querySelectorAll('a').length,0);
+    assert.match(window.document.body.textContent,/真实工程标题/);assert.ok(!window.document.body.textContent.includes('server-secret-config'));
     assert.equal(refresh().disabled,false);
     await React.act(async()=>refresh().click());
     assert.equal(card().getAttribute('data-observed-at'),String(initial.observedAt+100));
@@ -309,7 +289,7 @@ test('a refresh response after unmount cannot restore a removed card or affect a
     await React.act(async()=>refresh().click());
     await render({record:object({actorId:'foreign'}),onRefresh:async()=>first});
     await React.act(async()=>finish(object({observedAt:first.observedAt+100})));
-    assert.equal(card(),null);assert.doesNotMatch(window.document.body.textContent,/真实选题标题/);
+    assert.equal(card(),null);assert.doesNotMatch(window.document.body.textContent,/真实工程标题/);
   });
 });
 

@@ -1,4 +1,4 @@
-"""Import current-IP platform messages into Easel's reviewed conversation store."""
+"""Import current-IP platform messages into Xiangya's reviewed conversation store."""
 
 from __future__ import annotations
 

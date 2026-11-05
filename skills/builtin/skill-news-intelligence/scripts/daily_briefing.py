@@ -89,7 +89,7 @@ def save_individual_sources(data, base_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Easel 创作者情报简报")
+    parser = argparse.ArgumentParser(description="响芽 创作者情报简报")
     parser.add_argument('--profile', default='creator', choices=PROFILES.keys(), help='简报 Profile')
     parser.add_argument('--outdir', help='输出目录')
     parser.add_argument('--no-save', action='store_true', help='只输出到 stdout，不落盘')

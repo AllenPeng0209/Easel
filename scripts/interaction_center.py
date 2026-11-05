@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Operate Easel's scoped interaction inbox without platform credentials in the CLI."""
+"""Operate Xiangya's scoped interaction inbox without platform credentials in the CLI."""
 from __future__ import annotations
 
 import argparse
@@ -76,7 +76,7 @@ def request(base: str, path: str, *, method="GET", payload=None, project_id="def
     with open_request(req, timeout=45) as response:
         result = json.loads(response.read())
     if not isinstance(result, (dict, list)):
-        raise InputError("Easel returned an invalid interaction response")
+        raise InputError("Xiangya returned an invalid interaction response")
     return result
 
 
@@ -235,7 +235,7 @@ def main(argv=None) -> int:
             raise InputError("draft context changed or is not approved; read the conversation before sending")
         return emit(call(path + "/send", method="POST", payload=data))
     except urllib.error.HTTPError as error:
-        print(f"Easel HTTP {error.code}; no retry was sent", file=sys.stderr)
+        print(f"Xiangya HTTP {error.code}; no retry was sent", file=sys.stderr)
         return {404: 3, 409: 4, 401: 6, 403: 6, 422: 8}.get(error.code, 1)
     except InputError as error:
         print(str(error), file=sys.stderr)

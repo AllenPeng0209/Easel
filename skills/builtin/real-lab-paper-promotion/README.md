@@ -4,7 +4,7 @@
 
 ## 安装
 
-已接入 Easel 的 `skills/builtin/real-lab-paper-promotion/`。在技能面板选择，或在对话中用 `/real-lab-paper-promotion` 调用。依赖使用项目虚拟环境安装：
+已接入 响芽 的 `skills/builtin/real-lab-paper-promotion/`。在技能面板选择，或在对话中用 `/real-lab-paper-promotion` 调用。依赖使用项目虚拟环境安装：
 
 ```bash
 .venv/bin/python -m pip install -r skills/builtin/real-lab-paper-promotion/requirements.txt
@@ -20,7 +20,7 @@
 
 也接受裸 arXiv 编号及指定版本的链接。下载链接需可访问；无需填写图号、裁剪框或提纲。Agent 负责阅读、写作、选择截图并检查；脚本负责获取 PDF、渲染及硬性校验，不是无模型自动写作程序。
 
-Easel 项目目录包含：
+响芽 项目目录包含：
 
 ```text
 outputs/<论文简称>/

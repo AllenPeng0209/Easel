@@ -1,6 +1,6 @@
 /**
  * Adapted from DeepSeek Harness ui-reference/src/client/index.ts @ ce7073d (MIT).
- * The candidate row resolves an opaque session ID; Easel adds an explicit snapshot preview
+ * The candidate row resolves an opaque session ID; 响芽 adds an explicit snapshot preview
  * and only inserts the inspected ID/hash rather than copying transcript content into the draft.
  */
 import { useEffect, useRef, useState } from 'react';

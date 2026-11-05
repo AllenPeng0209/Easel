@@ -1,4 +1,4 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
@@ -6,7 +6,7 @@
 | **所属层** | publish（互动运营） |
 | **实现** | `../../shared/scripts/xhs_comment.py`（Playwright，headless 可用） |
 | **原型来源** | 本项目自研原型 `/tmp/xhs_reply.py`（async 版）+ `/tmp/xhs_get_comments.py`（响应拦截抓评论） |
-| **自研** | ✅ Easel 自研 |
+| **自研** | ✅ 响芽 自研 |
 | **自包含** | 需小红书登录态（与 skill-xhs-publisher 共用持久化目录） |
 | **备注** | 抓评论走接口响应拦截（comment/page），回复走 DOM 定位 + 逐字符输入反检测 |
 
@@ -16,7 +16,7 @@
 
 第七次会话打通小红书发布链路后，评论区**互动运营**是自然的下一步能力。原型在探索阶段以
 一组散脚本验证可行（`/tmp/xhs_*.py`：抓评论、找回复按钮、逐字输入发送，真机跑通并有截图佐证），
-本 SKILL 把其中两条能力（抓评论 + 回复）**沉淀为对齐 Easel 规范的单一确定性脚本**：
+本 SKILL 把其中两条能力（抓评论 + 回复）**沉淀为对齐 响芽 规范的单一确定性脚本**：
 
 - **async → sync**：重写为 `sync_playwright`，与 `xhs_publish.py` 同风格，可复用同款
   `_launch/_proxy/_profile_dir/LAUNCH_ARGS` 与 `login_state` 协议。

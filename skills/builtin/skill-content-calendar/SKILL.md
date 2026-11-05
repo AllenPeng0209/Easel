@@ -21,7 +21,6 @@ layer: plan
 |-------|------|------|
 | content-strategy | 元策略：定义支柱理论、受众路径、节奏原则 | 不出月度排期 |
 | **content-calendar（本 SKILL）** | 消费策略，产出**具体月度排期表** | **不重复定义支柱理论**，支柱定义引用 strategy 产出或 Profile |
-| content-matrix | 产出选题标题池 | 排期可从矩阵取选题填充 |
 | content-calendar-log | 统一日历时间线底座（已发/待发/平台活动） | 本 SKILL 排期前**先读**它的 `context`（发布节奏/断更缺口/临近节点），排出的计划可写回该底座 |
 
 支柱比例、发布频率的基线统一读 `../../shared/pillar-and-cadence.md`；格式混搭比例读 `references/content-mix-guide.md`。本 SKILL 不内联这些数据表。

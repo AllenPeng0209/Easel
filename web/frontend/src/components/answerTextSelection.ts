@@ -1,7 +1,7 @@
 /**
  * Copyright (c) 2026 DeepSeek. MIT License.
  * Adapted from ui-chat/src/client/chat/text-selection.ts @ ce7073d51254c26cd63b22a60835b8f948deb447.
- * Easel restricts each selection to the one settled assistant answer.
+ * Xiangya restricts each selection to the one settled assistant answer.
  * License: integrations/deepseek-harness/LICENSE.
  */
 /** DOM selection validation and visible-text projection, independent of business actions. */

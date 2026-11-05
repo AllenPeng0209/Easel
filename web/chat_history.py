@@ -1,6 +1,6 @@
 """Durable browser-session catalog scoped by the caller's verified directory.
 
-This is the Easel SQLite storage adapter for the Host-owned session-directory
+This is the Xiangya SQLite storage adapter for the Host-owned session-directory
 pattern in DeepSeek Harness session-controller (MIT, ce7073d). No native engine
 transcript is removed or rewritten by catalog operations.
 """

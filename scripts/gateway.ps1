@@ -22,7 +22,7 @@ function Invoke-NativeCapturePS([string]$Exe, [string[]]$Arguments) {
     return [pscustomobject]@{ Ok = ($code -eq 0); Output = $out; Code = $code }
 }
 
-# ---- gateway 端口：问 Easel 的解析器，不要在这里再抄一份 ----------------------
+# ---- gateway 端口：问 响芽 的解析器，不要在这里再抄一份 ----------------------
 # 这里曾经用 PowerShell 重新实现过一遍 OpenClaw 的 resolveGatewayPort（FNV-1a 哈希、
 # 配置文件读取、环境变量优先级）。那样一来同一个端口就有三份独立实现：这里、
 # easel/gateway_endpoint.py、以及 OpenClaw 自己。三份只要有一份跟不上版本变化就错配，
@@ -93,7 +93,7 @@ switch ($args[0]) {
     'start' {
         if (Test-Gateway) { Write-Host '[easel] Gateway already running'; break }
         New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
-        Write-Host "[easel] Starting Easel gateway (profile: $ProfileName, port: $Port)..."
+        Write-Host "[easel] Starting Xiangya gateway (profile: $ProfileName, port: $Port)..."
         $command = "openclaw --profile $ProfileName gateway run --force --allow-unconfigured --bind loopback"
         Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command', $command `
             -WorkingDirectory $Root -RedirectStandardOutput $LogFile -RedirectStandardError $ErrorLogFile -WindowStyle Hidden | Out-Null

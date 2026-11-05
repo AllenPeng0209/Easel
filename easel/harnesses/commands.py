@@ -10,7 +10,7 @@ from .base import HarnessError
 
 
 def codex_override(environment: dict[str, str]) -> list[str] | None:
-    """Select Easel's explicit native CLI without changing the user's global PATH."""
+    """Select Xiangya's explicit native CLI without changing the user's global PATH."""
     configured = environment.get('EASEL_CODEX_EXECUTABLE', '').strip()
     if not configured:
         return None

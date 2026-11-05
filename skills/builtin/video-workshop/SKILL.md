@@ -1,59 +1,64 @@
 ---
 name: video-workshop
 description: >-
-  在 Easel 视频工坊中用真实 BeefTV 画布、素材与时间线制作和修订营销视频，保留镜头候选、人工修改及具体成片版本的审阅记录。当用户说“视频工坊”“参考视频复刻”“AI初稿后人工加工”或要求对话、Skill、MCP串联制作时使用；单个片段生成和独立文件剪辑仍用对应制作技能。
+  在响芽视频工坊中通过火宝原版工作台管理剧本、角色场景道具、分镜和镜头候选。通过 AI 对话调用制作技能，生成后自动交付工坊；人工审核当前成片与目标账号后自动发布。适用于整片制作、参考视频复刻、系列短剧、单镜头返工及交付审核。
 layer: produce
 ---
 
 # 视频工坊
 
-从当前项目继续工作，把参考分析、镜头候选、剪辑、导出和审阅连成真实工程。画布使用已连接的 BeefTV，不用文件列表、占位图或对话描述冒充节点和执行结果。
+主流程：用户在对话交办 → 调用合适的制作 Skill → 保存剧本、资产和分镜 → 生成并剪辑真实视频 → 自动交付视频工坊 → 人工审核 → 自动发布并回传平台状态。
 
-## 运行入口
+## 原版工作台与对话共用项目
 
-从 Easel 安装根目录执行。项目管理用 [本地 CLI](../../../scripts/video_workshop.py)，原生画布能力经官方 BeefTV CLI/MCP 执行；详细用法见 [接入与制作说明](../../../docs/video-workshop-usage.md)。
+列表沿用响芽紧凑项目表，进入项目后直接运行火宝原版 Nuxt/Vue 工作台及 Hono 制作后端。阶段、资产管理、分镜任务、参考绑定、历史视频、重绘、批量生成与拼接均复用上游源码。原版后端与对话共用同一项目；不要创建平行工程。修改遇到双向版本冲突时先读取最新内容，保护人工编辑。
 
-```bash
-.venv/bin/python scripts/video_workshop.py status
-.venv/bin/python scripts/video_workshop.py projects
-.venv/bin/python scripts/video_workshop.py operations --query timeline
-.venv/bin/python scripts/video_workshop.py business-list --query resource
+工作台选择“当前 AI 底座”时，原版 AI 按钮通过现有 Skill Host 完成任务。直接保存原版页面修改会同步回工坊。对话需修改已有工坊时，可写一个当前 IP 内容目录中的 JSON 清单，包含 `workshopId`、`expectedRevision` 和 `production`（`raw_content`、`script`、`assets`、`shots`），调用 `easel_workshop_delivery` 的 `action=update` 保存。使用 Native 稳定 ID，不要用火宝数据库的数字编号覆盖既有资产和镜头 ID。
+
+## 制作与自动交付
+
+1. 读取当前 IP 的创作要求、真实参考和已有工坊。沿用其项目编号和当前 revision，不另建平行工程，不要求用户提供内部编号。
+2. 将系列清单写入 `outputs/<内容项目>/series.json`。调用原生工具 `easel_workshop_delivery`，`action=plan`、`manifestPath=<内容项目>/series.json`，创建或续接视频工坊项目。已有工坊时，在对应集保留工具返回的 `workshopId`。
+3. 根据任务选择短剧、家庭教育、配音、字幕或剪辑 Skill。新动态视频调用 `easel_video_generation`；模型目录、冻结生产计划、一次提交和原任务收取均由 Host 执行。沿用已授权算力与生成范围；不能通过换镜头编号绕过已拒绝或用尽的额度。
+4. `production` 保存可编辑的剧本、素材与稳定分镜编号。人物、场景、道具使用稳定 asset ID，分镜通过 `asset_ids` 绑定。参考图片、视频、音频须来自当前 IP 内容目录，不使用外部身份、密钥或远端路径。
+5. 保留成功镜头和所有候选。选片、剪辑和最终成片是不同阶段。先按用户要求完成剪辑、原声、字幕及配乐，实际观看、听音检查连续性与台词，再交付完整文件。不能把最后一个生成段当作整片，不能用静态图片轮播冒充新生成的视频。
+6. `action=deliver` 将真实成片自动复制为不可变交付版本，并关联回同一工坊。重复执行原批次会继续已有交付，不重复登记相同当前版本。
+
+清单示例（路径相对于当前 IP 的 outputs）：
+
+```json
+{
+  "series": "家庭教育",
+  "episodes": [{
+    "id": "01",
+    "title": "先听孩子说完",
+    "brief": "45秒竖版家庭教育短剧，原生对白，后期白色细描边字幕",
+    "aspectRatio": "9:16",
+    "path": "倾听/final.mp4",
+    "production": {
+      "script": "已确认的完整拍摄剧本",
+      "assets": [{"id":"mother","kind":"character","name":"母亲","description":"沿用本片母亲形象","path":"倾听/assets/mother.png"}],
+      "shots": [{"id":"shot-01","title":"放下手机","prompt":"完整画面动作与原声台词","seconds":8,"asset_ids":["mother"]}]
+    },
+    "publication": {"platform":"douyin","title":"先听孩子说完","body":"本片发布文案","tags":"家庭教育","aiGenerated":true}
+  }]
+}
 ```
 
-`status` 是实时状态，不用“安装了”“有进程”代替可访问。未连接时保留已有项目，按提示恢复运行时；不要创建伪造画布 ID。只检查配置存在性与脱敏状态，不回显凭据。
+`plan` 时成片可以尚未存在；`deliver` 时必须有真实完整音视频。`production` 和 `publication` 都可以按真实任务提供。平台不明确时先交付待审核，用户可在工坊补充发布信息；不要猜账号。Host 会核对平台实际登录身份，并冻结成片、文案及目标账号供审核。
 
-## 参考、简报与工程
+## 单镜头返工
 
-- 看或听真实参考，记录来源、开头、镜头组织、文字/画面关系、声音与结尾引导。只有题名或摘要时明确记录缺失，不能声称逐帧复刻。
-- 复用参考的结构、节奏或表现关系，为目标产品重新创作；用户素材、品牌事实、受众与已确认的限制进入简报。不得把参考热度或生成效果当作新视频效果保证。
-- 明确推广对象、画幅、时长、素材来源和模型生成范围。付费或计算资源的使用沿用当前授权；新费用、新账户或范围增加时先解决预算问题。
-- 创建或读取 Easel 项目，使用返回的 `beeftv_canvas_id` 与当前 revision。分镜、素材和候选放在该真实画布；交付文件保存到 `outputs/<具体项目名>/`，中间文件放其 `assets/`。
+用户从工坊发起返工时，对话带有 `shotId` 和已保存修改意见。先读取最新项目，只修改所选镜头。为新生成使用独立的候选任务编号；`prepare` 可通过 `shotId` 关联原分镜。保留其他镜头、旧候选和当前选片，不覆盖原文件。新增生成仍遵守既有授权与生产计划。收取后新候选自动归入原分镜；采用新候选后再生成新的完整成片。
 
-```bash
-.venv/bin/python scripts/video_workshop.py create --title "咖啡新品竖版广告" --brief "30秒，先展示卖点，再给使用场景与行动引导" --aspect-ratio 9:16
-```
+用户也可直接编辑镜头提示词、切换候选或修改剧本。任何影响当前成片的修改都会产生新内容版本，旧审核不能批准新版本。
 
-## 生成、修改与交付
+## 审核与自动发布
 
-1. 把剧本、参考和分镜组织成节点。常用素材保持稳定身份，生成新候选后再选择，不覆盖正在采用的原件。
-2. 从当前操作目录读取准确 schema。`operation-call` 调用官方高频操作，`business-call` 调用发现的底层业务接口；不猜不存在的路由或模型能力。
-3. 每次写操作使用稳定 `operation-id`，并按 schema 带上 `expectedRevision`。同一请求结果未知时先查询任务与画布；原 ID 仅可重放原请求，不改参数后重用，也不自动重复提交付费生成。
-4. 本地处理、配音、字幕、BGM、视频生成分别保留产物与任务状态。生成、采用、时间线更新和成片导出是不同事实；不把素材时长相加当作成片实测时长。
-5. 按用户选择构造时间线，再通过真实渲染任务导出。遇到重叠、效果或字幕能力不支持，报告具体差距并选适用处理方式，不静默丢失表现。
-6. 在界面播放、检查和修改当前工程。模拟人工 computer use 时，记录实际改变的片段、字幕、音量或顺序，保留前后版本；自动执行者的记录使用 `kind=simulated`，不冒充真人审批。
-7. AI 继续修改时读取最新工程，只改本次指定范围，保护人工已经改变或锁定的内容。版本冲突先展示真实差异，不静默覆盖。
-8. 修改后重新导出；用 ffprobe/解码和实际观看、听音核对时长、画幅、声音、字幕、过渡和结尾。只交付实际存在、可播放的完整文件。
-9. 把导出的既存视频登记到 Easel，同时传入该渲染回执真实返回的 `sourceRevision` 作为 `engine_revision`；不能读取当前画布版本来冒充旧输出来源。审阅绑定成片 ID、内容 revision、上游版本与内容摘要。修改后的成片需要新的审阅，模拟通过只代表模拟审阅。
+- AI 可以执行质量检查，记录 `kind=simulated`；这不是人工发布批准。
+- 交付清单带 `publication` 时，Host 自动准备具体成片、文案、实际账号和 AI 生成声明。用户在工坊核对后点击“审核通过并发布”，一次操作即批准并自动执行本次发布。
+- 不再要求用户跳到发布中心重复确认；同一工坊成片也不要另外调用 `easel_publish` 形成第二条发布任务。
+- 发布只使用获批的不可变成片。账号、文案、成片或内容版本变化时重新准备审核，不沿用旧批准。
+- `submitted` 仅代表平台已接收提交；只有确证公开可见才是已发布。未知结果保留原操作，只查询，不自动重发。
 
-```bash
-.venv/bin/python scripts/video_workshop.py register-delivery PROJECT_ID --expected-revision 1 --engine-revision 8 --path "咖啡新品竖版广告/final.mp4"
-.venv/bin/python scripts/video_workshop.py review PROJECT_ID --expected-revision 2 --artifact-id ARTIFACT_ID --decision approved --kind simulated --notes "已播放并核对，记录本次自动模拟审阅"
-```
-
-`PROJECT_ID`、两个版本和成片 ID 必须取实际返回值，示例的 `8` 不代表当前工程版本。失败、中断和未检查项保持原状并明确交付边界。用户未要求发布时，完成导出与审阅即可，不调用发布脚本。
-
-## Profile 与持续迭代
-
-有当前画像时，读取其定位、风格、受众、偏好及长期记忆，把与本片有关的要求落实到简报、画面与声音；沿用用户明确的画幅，不从画像静默覆盖。无画像时以本次简报为准。
-
-当前接入用于本机内部制作与验收。把 BeefTV 新许可覆盖部分对外托管、交付或销售，需要适用的授权；本技能本身不授予上游软件的商业使用权限。
+维护与 API 用法见 [视频工坊使用说明](../../../docs/video-workshop-usage.md)。原生 CLI 为 [video_workshop.py](../../../scripts/video_workshop.py)，不再依赖外部编辑器服务。

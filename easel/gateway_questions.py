@@ -1,11 +1,11 @@
-"""Gateway question-answer bridge for the Easel web UI.
+"""Gateway question-answer bridge for the Xiangya web UI.
 
 OpenClaw's `ask_user` tool registers a structured question on the Gateway
 (`question.request`, backed by `question.list` / `question.get` /
 `question.resolve` RPCs). The official Control UI renders these as a docked
 option card and answers them through the `operator.questions` RPC surface.
 
-The Easel web frontend is a custom React app that does not speak the Gateway
+The Xiangya web frontend is a custom React app that does not speak the Gateway
 WebSocket protocol, so ask_user cards never render and the agent blocks for
 the full timeout (default 900 s) before continuing with `no_answer`.
 
@@ -36,7 +36,7 @@ PROFILE_DIR = state_dir()
 PROFILE_STATE_DIR = PROFILE_DIR / "state"
 PROFILE_DB = PROFILE_STATE_DIR / "openclaw.sqlite"
 
-# Gateway loopback endpoint. 端口**不写死**：Easel 用 --profile easel，而 OpenClaw 对非默认
+# Gateway loopback endpoint. 端口**不写死**：响芽 用 --profile easel，而 OpenClaw 对非默认
 # profile 不用 18789，而是 20000 + fnv1a32(profile) % 40000（easel → 37289）。写死会造成
 # 「gateway 明明活着，卡片桥接却连不上」。解析优先级见 easel/gateway_endpoint.py；
 # 端口在每次 connect 时现取（web 进程长驻，用户可能改配置后重启 gateway）。
@@ -173,7 +173,7 @@ def _raw_pubkey_b64url(public_key_pem: str) -> str:
 def _load_device_from_file() -> dict | None:
     """Load identity from state/identity/device.json (current OpenClaw store).
 
-    Under Easel's gateway config (auth.mode=none, loopback) the operator token
+    Under Xiangya's gateway config (auth.mode=none, loopback) the operator token
     is not required — silent local pairing accepts an empty token — so we do
     not need the DB's device_auth_tokens row here.
     """

@@ -1,4 +1,4 @@
-# DeepSeek Harness → Easel 迁移记录
+# DeepSeek Harness → 响芽 迁移记录
 
 日期：2026-11-03。产品清单见 [agent-workbench-backlog.md](agent-workbench-backlog.md)。本文区分“上游已下载”“源代码已复用”“接口已适配”“本机已验收”，四者不能互相替代。
 
@@ -16,7 +16,7 @@
 | B18发布进程 | 已提交 `8464b4e` | macOS真实进程终态、持锁/未确认状态与回执保留已验收；完整任务矩阵/崩溃恢复仍待 |
 | D25 | 本次独立功能提交 | 真实选题、固定稿件、工坊只读卡；精确导航；D26/D28继续 |
 
-对外进度仅按原01–10产品包汇报；M00–M12是内部模块，一包可多个功能commit。以下基线/早期验证保留为历史，不能关闭全部144项或AUT要求。Python持久化、权限、回执判定和SDK路由属于必要Easel适配，不冒称上游逐字复制。
+对外进度仅按原01–10产品包汇报；M00–M12是内部模块，一包可多个功能commit。以下基线/早期验证保留为历史，不能关闭全部144项或AUT要求。Python持久化、权限、回执判定和SDK路由属于必要响芽适配，不冒称上游逐字复制。
 
 ## 已固定的上游来源
 
@@ -29,25 +29,25 @@
 | 许可证 | MIT，`Copyright (c) 2026 DeepSeek`；原文保留于 `integrations/deepseek-harness/LICENSE` |
 | 来源清单 | `integrations/deepseek-harness/upstream-manifest.json` |
 | 生产迁移目录 | `web/frontend/src/vendor/deepseek-harness/{composer,message,navigation}` |
-| 版本策略 | 完整 clone 已忽略入库；真正迁移的源码、署名、适配和测试进入 Easel 版本管理 |
+| 版本策略 | 完整 clone 已忽略入库；真正迁移的源码、署名、适配和测试进入 响芽 版本管理 |
 
 已在本机核对上述 clone 的 HEAD、origin 和 package version。清单中的 `selected_packages` 是候选上游包的逐文件 SHA-256 清单；`migrated_files` 只登记真正复用到产品中的源文件。候选清单不表示所有包都已导入、启用或通过验收。
 
 ## 复用与适配边界
 
-用户要求优先 clone 和迁移成熟实现。执行策略是保留上游结构与行为，迁移可独立复用的 React／TypeScript／CSS，再为 Easel 的数据契约提供薄适配。不能把“参考过源码后重新写了一套”登记成原样复用，也不能因为下载整个 monorepo 就宣称迁移完成。
+用户要求优先 clone 和迁移成熟实现。执行策略是保留上游结构与行为，迁移可独立复用的 React／TypeScript／CSS，再为 响芽 的数据契约提供薄适配。不能把“参考过源码后重新写了一套”登记成原样复用，也不能因为下载整个 monorepo 就宣称迁移完成。
 
-| 层 | 优先复用来源 | Easel 中的职责 | 允许的必要适配 | 首批状态 |
+| 层 | 优先复用来源 | 响芽 中的职责 | 允许的必要适配 | 首批状态 |
 |---|---|---|---|---|
 | 输入、附件、草稿 | `packages/client/ui-conversation`、`ui-attachment`、`ui-input-trigger` | `vendor/deepseek-harness/composer` 与 ChatPage | 将上传和引用接入授权素材 API；存储键加入 user/IP/session；去除与现有 Host 不兼容的全局依赖 | 本轮基础迁移/冻结回归已验证；剩余范围见清单 |
 | 消息、工具、问答卡 | `ui-primitives`、`ui-tool`、`ui-user-questions`、`ui-approval` | `vendor/deepseek-harness/message` 与 MessageBubble／QuestionCards | 本地化、主题 token、工具事件与现有媒体画廊映射；保留未知工具回退与安全消毒 | 本轮基础迁移/冻结回归已验证；剩余范围见清单 |
-| 阅读跟随和会话导航 | `ui-chat` 的 reading/scroll 实现、`ui-workspace` | `vendor/deepseek-harness/navigation` 与 ChatPage／Sidebar | 替换 Host 导航为 Easel 会话ID；与现有页面滚动容器对接 | 本轮基础迁移/冻结回归已验证；剩余范围见清单 |
+| 阅读跟随和会话导航 | `ui-chat` 的 reading/scroll 实现、`ui-workspace` | `vendor/deepseek-harness/navigation` 与 ChatPage／Sidebar | 替换 Host 导航为 响芽 会话ID；与现有页面滚动容器对接 | 本轮基础迁移/冻结回归已验证；剩余范围见清单 |
 | 引擎事件 | `ui-tool`／`ui-trajectory` 的身份和生命周期契约 | Codex／ACP → Python SSE → App消息状态 | Python引擎协议无法直接导入React包；必须保留 callId／parent、参数、输出与终态的对应关系 | 协议适配通过回归及本机Codex命令验收；非复制上游Python |
 | 自主问答 | `ui-user-questions`、Inbox、Goal、Approval 契约 | 服务端默认决策、截止时间、持久问题记录；前端呈现和答复 | 默认策略、权限校验和竞态必须在服务器执行；不靠浏览器定时器假装自动推进 | 服务端默认/问答策略回归通过；AUT未全关闭 |
 | 会话目录 | `session-controller` 持久会话头与投影契约 | 授权服务器目录、本地历史导入与重建 | 现有user/IP目录隔离；迁移旧localStorage；不丢弃原生历史边界 | 目录回归/本机刷新与重命名已验收；跨浏览器场景按清单 |
 | 产物与业务卡 | `ui-deliverables`、`workspace-changes`、`ui-workflow-run`、右侧预览 | 复用交付视图，接选题／制作／审阅／发布实体 | 现有revision/hash、RBAC和真实回执不能被通用文件UI替代 | D01已提交3086ca8；D08版本store/UI切片已验收并随本记录独立提交；B30/D30业务批准与回执仍后续P0 |
 
-上游 React 包依赖其 Cordis、Store、Host/preset 和 workspace 包体系；Easel 当前为 React 前端与 Python/FastAPI 后端。直接将插件入口 import 进来不会自动具备对应服务。对原样复制文件保留源路径与 SHA；对适配文件说明变动范围。不要为迁移删除 Easel 已有的 IP、平台账号、权限和工坊业务能力。
+上游 React 包依赖其 Cordis、Store、Host/preset 和 workspace 包体系；响芽 当前为 React 前端与 Python/FastAPI 后端。直接将插件入口 import 进来不会自动具备对应服务。对原样复制文件保留源路径与 SHA；对适配文件说明变动范围。不要为迁移删除 响芽 已有的 IP、平台账号、权限和工坊业务能力。
 
 ## 首批实施顺序（历史计划）
 
@@ -90,7 +90,7 @@
 }
 ```
 
-某个实现只是参考上游交互或契约而由 Easel 适配，不使用 `copied`。如果它是业务专属代码，应登记到开发条目的实现证据，不混入上游版权声称。
+某个实现只是参考上游交互或契约而由 响芽 适配，不使用 `copied`。如果它是业务专属代码，应登记到开发条目的实现证据，不混入上游版权声称。
 
 ## 不能混淆的官方能力条件
 
@@ -100,7 +100,7 @@
 - Office/Excel 是预览，受本地转换服务/字体等条件影响；不等于可编辑、重算或可靠导出。
 - `present` 是交付宣告；它本身不冻结所有历史文件内容，业务批准仍需绑定版本/hash。
 - liveshare 是实验、非默认部署能力；Mermaid 本轮仍未验证默认渲染器。
-- 通用 Harness 的 Workspace 不是商业 IP/RBAC；现有 Easel 业务隔离与发布回执保留。
+- 通用 Harness 的 Workspace 不是商业 IP/RBAC；现有 响芽 业务隔离与发布回执保留。
 
 ## 验证记录
 
@@ -112,12 +112,12 @@
 
 | 本地实际文件 | 上游文件 | 复用方式 | 必要改动 | 验证状态 |
 |---|---|---|---|---|
-| web/frontend/src/vendor/deepseek-harness/composer/ImageLightbox.module.css | packages/client/ui-primitives/src/ImageLightbox.module.css | adapted | 保留上游CSS主体；增加Easel语义颜色token映射和小屏padding。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
+| web/frontend/src/vendor/deepseek-harness/composer/ImageLightbox.module.css | packages/client/ui-primitives/src/ImageLightbox.module.css | adapted | 保留上游CSS主体；增加响芽语义颜色token映射和小屏padding。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/composer/ImageLightbox.tsx | packages/client/ui-primitives/src/ImageLightbox.tsx | adapted | 保留上游lightbox行为；仅将关闭图标替换为本地×字形并新增来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/composer/file-size.ts | packages/client/ui-primitives/src/file-size.ts | verbatim | 原始实现正文保持逐字一致；仅添加MIT、commit与来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
-| web/frontend/src/vendor/deepseek-harness/composer/use-scroll-follow.ts | packages/client/ui-chat/src/client/chat/use-scroll-follow.ts | adapted | 保留ScrollFollowState及hook逻辑；把TypeScript构造参数属性展开为显式字段，以兼容当前Easel TS配置；新增MIT来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
+| web/frontend/src/vendor/deepseek-harness/composer/use-scroll-follow.ts | packages/client/ui-chat/src/client/chat/use-scroll-follow.ts | adapted | 保留ScrollFollowState及hook逻辑；把TypeScript构造参数属性展开为显式字段，以兼容当前响芽 TS配置；新增MIT来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/message/DisclosureRow.module.css | packages/client/ui-primitives/src/DisclosureRow.module.css | verbatim | 原始实现正文保持逐字一致；仅添加MIT、commit与来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
-| web/frontend/src/vendor/deepseek-harness/message/DisclosureRow.tsx | packages/client/ui-primitives/src/DisclosureRow.tsx | adapted | 用Easel本地bridge替换clsx和图标依赖；为React 19 inert类型提供必要兼容；保留上游展开行结构。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
+| web/frontend/src/vendor/deepseek-harness/message/DisclosureRow.tsx | packages/client/ui-primitives/src/DisclosureRow.tsx | adapted | 用响芽本地bridge替换clsx和图标依赖；为React 19 inert类型提供必要兼容；保留上游展开行结构。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/message/QuestionReplyBubble.tsx | packages/client/ui-user-questions/src/client/QuestionReplyView.tsx | adapted | 从QuestionReplyView提取独立props组件；移除Cordis/Host绑定，改用现有图标和原生title；保留问答上下排版与复制行为。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/message/QuestionReplyView.module.css | packages/client/ui-user-questions/src/client/QuestionReplyView.module.css | verbatim | 原始实现正文保持逐字一致；仅添加MIT、commit与来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/message/TextShimmer.module.css | packages/client/ui-primitives/src/TextShimmer.module.css | verbatim | 原始实现正文保持逐字一致；仅添加MIT、commit与来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
@@ -126,7 +126,7 @@
 | web/frontend/src/vendor/deepseek-harness/message/UserMessageBubble.tsx | packages/client/ui-primitives/src/UserMessageBubble.tsx | adapted | 用本地cx bridge替换clsx；保留上游消息气泡结构。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/message/clipboard.ts | packages/client/ui-primitives/src/clipboard.ts | verbatim | 原始实现正文保持逐字一致；仅添加MIT、commit与来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/message/file-size.ts | packages/client/ui-primitives/src/file-size.ts | verbatim | 原始实现正文保持逐字一致；仅添加MIT、commit与来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
-| web/frontend/src/vendor/deepseek-harness/message/question-drafts.ts | packages/client/ui-user-questions/src/client/draft-store.ts | adapted | 迁移draft-store存储生命周期；改用Easel user/IP范围storage桥接，收束本地问题/草稿类型。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
+| web/frontend/src/vendor/deepseek-harness/message/question-drafts.ts | packages/client/ui-user-questions/src/client/draft-store.ts | adapted | 迁移draft-store存储生命周期；改用响芽 user/IP范围storage桥接，收束本地问题/草稿类型。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/message/question-reply.ts | packages/client/ui-user-questions/src/client/question-reply.ts | adapted | 提取原有payload类型和问答复制函数；移除Cordis注册，将translator收束为本地函数边界。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/message/use-clipboard-copy.ts | packages/client/ui-primitives/src/use-clipboard-copy.ts | verbatim | 原始实现正文保持逐字一致；仅添加MIT、commit与来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
 | web/frontend/src/vendor/deepseek-harness/navigation/focus.ts | packages/client/ui-primitives/src/focus.ts | verbatim | 原始实现正文保持逐字一致；仅添加MIT、commit与来源头。 | 来源/SHA、冻结构建与回归已验证；功能范围见最终证据 |
@@ -151,7 +151,7 @@
 
 新建Codex会话已完成真实 `easel_ask_user` → 风格输入卡 → 无人填写 → 25.0秒默认专业 → 继续真实shell `printf EASEL_DEFAULT_CONTINUED` → 输出及exitCode0 → 最终汇报。默认历史、倒计时与快捷操作可见，截图为 `.scratch/agent-workbench-verification/input-default-complete.jpg`。
 
-原生 `request_user_input` 在默认模式受门禁，因此必要Python适配为新的 `thread/start` 注册 eager动态工具，`item/tool/call` 对接现有问答，再返回contentItems/success。工具定义和响应经过本机schema校验（0 errors）及新增12项协议回归。它是Easel原生引擎桥接，不登记成上游Python逐字复制。
+原生 `request_user_input` 在默认模式受门禁，因此必要Python适配为新的 `thread/start` 注册 eager动态工具，`item/tool/call` 对接现有问答，再返回contentItems/success。工具定义和响应经过本机schema校验（0 errors）及新增12项协议回归。它是响芽原生引擎桥接，不登记成上游Python逐字复制。
 
 旧未注册的原生线程不能经 `thread/resume` 追加工具，需新建对话；旧ID与历史保留，不能声称旧线程已无缝具备卡片。最终全量后端2032 passed/17 skipped（2旧warning）、前端356 passed；最终build exit0（108 modules，index-BSJixOw6.js约636.21KB既有体积提示）、lint零warning、diff-check通过。M09/M10与持久目标/待答future重启等未完成范围保持不变。
 
@@ -169,7 +169,7 @@
 | web/frontend/src/vendor/deepseek-harness/deliverables/presented.ts | packages/client/ui-deliverables/src/presented.ts | adapted | 历史阶段：当时未验收，后续D01已提交3086ca8 |
 | web/frontend/src/vendor/deepseek-harness/deliverables/turn-deliverables.ts | packages/client/ui-deliverables/src/client/turn-deliverables.ts | adapted | 历史阶段：当时未验收，后续D01已提交3086ca8 |
 
-D01声明工具目前只在新Codex线程注册；旧未注册resume保留ID/历史且需新建，ACP未注册对应MCP/present工具，不能声称支持。初期阶段证据曾为67项后端、12项前端、真实3卡/文本/PNG；随后HTML修复与最终回归/真实验收已通过，D01已提交3086ca8。Python store和Host边界列为Easel适配，不声称上游Python原样复制。
+D01声明工具目前只在新Codex线程注册；旧未注册resume保留ID/历史且需新建，ACP未注册对应MCP/present工具，不能声称支持。初期阶段证据曾为67项后端、12项前端、真实3卡/文本/PNG；随后HTML修复与最终回归/真实验收已通过，D01已提交3086ca8。Python store和Host边界列为响芽适配，不声称上游Python原样复制。
 
 
 ## D01 验证更新（2026-11-03）
@@ -186,12 +186,12 @@ D01已真实验收并提交 `3086ca8`；C19并发初始化修复已提交 `f5118
 
 ## D30 结构化发布回执核心
 
-复用固定上游 WorkflowRunPanel 的展开/完成/焦点生命周期及既有 DisclosureRow；来源SHA与30个代码/测试目标文件SHA已登记在manifest的D30条目。Easel本地适配负责私有机器回执、固定操作与批准关联、既有CLI边界、读取及持久化观察。退出码、日志文案和UI跳转都不能单独确认公开发布。详见[D30验收记录](agent-feature-acceptance/D30.md)；真实平台及取消恢复仍按主包07未过验收追踪。
+复用固定上游 WorkflowRunPanel 的展开/完成/焦点生命周期及既有 DisclosureRow；来源SHA与30个代码/测试目标文件SHA已登记在manifest的D30条目。响芽本地适配负责私有机器回执、固定操作与批准关联、既有CLI边界、读取及持久化观察。退出码、日志文案和UI跳转都不能单独确认公开发布。详见[D30验收记录](agent-feature-acceptance/D30.md)；真实平台及取消恢复仍按主包07未过验收追踪。
 
 
 ## B18 发布进程终态切片
 
-见[B18验收记录](agent-feature-acceptance/B18-publication-process.md)。来源及目标SHA见manifest对应条目；此次为必要Python进程owner与Easel批准/回执接线。不是整个停止包或真实平台验收，原目标继续。
+见[B18验收记录](agent-feature-acceptance/B18-publication-process.md)。来源及目标SHA见manifest对应条目；此次为必要Python进程owner与响芽批准/回执接线。不是整个停止包或真实平台验收，原目标继续。
 
 
 ## D25 真实业务对象卡

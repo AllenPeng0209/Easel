@@ -75,7 +75,7 @@ function winget {
 }
 $originalPath = 'C:\easel probe\node;C:\easel probe\python'
 $env:Path = $originalPath
-Install-RequiredCommand 'easel-path-probe' 'Easel.Test' 'mock dependency'
+Install-RequiredCommand 'easel-path-probe' 'Xiangya.Test' 'mock dependency'
 if (-not $script:Installed) { throw 'Mock dependency was not installed' }
 $expectedPath = $originalPath + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($env:Path -ne $expectedPath) { throw 'Process PATH was lost or registry PATH was not refreshed' }

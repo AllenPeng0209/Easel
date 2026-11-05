@@ -1,4 +1,4 @@
-"""The default-mode Easel question tool uses Codex's real reverse-RPC shape."""
+"""The default-mode Xiangya question tool uses Codex's real reverse-RPC shape."""
 import asyncio
 import json
 import os

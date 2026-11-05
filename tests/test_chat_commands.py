@@ -10,7 +10,7 @@ pytestmark = pytest.mark.access_integration
 
 ROUTE = '/api/chat/commands'
 CHOICE = {'id': 'social-draft', 'token': '/文案'}
-COMMANDS = {('topic-ideas', '/选题'), ('social-draft', '/文案'), ('voice-script', '/口播'), ('review-draft', '/审稿')}
+COMMANDS = {('social-draft', '/文案'), ('voice-script', '/口播'), ('review-draft', '/审稿')}
 
 
 def prompt(**changes):

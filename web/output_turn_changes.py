@@ -1,7 +1,7 @@
 """D06 bounded before/after output observations for a native chat turn.
 
 Adapted from DeepSeek Harness workspace-changes' net-change model (MIT).
-Easel observes only its current IP's public output tree. Shared-workspace
+Xiangya observes only its current IP's public output tree. Shared-workspace
 observations are not proof that a specific agent was the writer.
 """
 from __future__ import annotations

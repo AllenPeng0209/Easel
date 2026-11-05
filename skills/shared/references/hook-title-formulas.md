@@ -1,6 +1,6 @@
 # 钩子 + 标题公式库（公共源）
 
-> Easel 文案类 SKILL 的**唯一钩子/标题公式源**（social-content / copywriting / xhs-note-creator / post-formatter 共用），
+> 响芽 文案类 SKILL 的**唯一钩子/标题公式源**（social-content / copywriting / xhs-note-creator / post-formatter 共用），
 > 避免各处维护副本漂移。定义公式与原则，用 `{}` 占位，不写死具体产品/行业案例。
 > 引用方式（CWD=项目根）：`skills/shared/references/hook-title-formulas.md`。
 

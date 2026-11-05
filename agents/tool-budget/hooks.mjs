@@ -3,7 +3,7 @@ import { ToolBudget } from './budget.mjs';
 const identity = ctx => [ctx?.agentId, ctx?.sessionKey, ctx?.runId].every(
   value => typeof value === 'string' && value.trim() && value.length <= 512);
 const key = ctx => JSON.stringify([ctx.agentId, ctx.sessionKey, ctx.runId]);
-const denied = reason => ({ block: true, blockReason: `Easel tool budget: ${reason}` });
+const denied = reason => ({ block: true, blockReason: `Xiangya tool budget: ${reason}` });
 
 /** Dependency-injected transport keeps admission synchronous; stop never widens its target. */
 export function installBudgetHooks(api, { stop, clock, schedule = setTimeout, cancel = clearTimeout }) {
@@ -30,7 +30,7 @@ export function installBudgetHooks(api, { stop, clock, schedule = setTimeout, ca
       }, () => { state.stopStatus = 'unconfirmed'; emit(state, 'easel_budget_stop'); });
   };
   api.on('before_agent_run', (_event, ctx) => {
-    const block = reason => ({ outcome: 'block', reason, message: `Easel tool budget: ${reason}` });
+    const block = reason => ({ outcome: 'block', reason, message: `Xiangya tool budget: ${reason}` });
     if (!identity(ctx)) return block('missing_run_identity');
     const existing = runs.get(key(ctx));
     if (existing) {

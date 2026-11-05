@@ -6,7 +6,7 @@ layer: produce
 
 # 文字转语音配音（TTS Voiceover）
 
-> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 Easel 项目根，确认当前目录有 `.env` 和 `skills/shared/scripts/`。云 TTS 配置只能用项目根的 `skills/shared/scripts/model_registry.py configured --group voice --env-file .env` 和 `skills/shared/scripts/voice_clone.py check ... --env-file .env` 判断；不得在 workspace 跑共享脚本副本，也不得用 `env` / `printenv` 推断 Key/URL 缺失。
+> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 响芽 项目根，确认当前目录有 `.env` 和 `skills/shared/scripts/`。云 TTS 配置只能用项目根的 `skills/shared/scripts/model_registry.py configured --group voice --env-file .env` 和 `skills/shared/scripts/voice_clone.py check ... --env-file .env` 判断；不得在 workspace 跑共享脚本副本，也不得用 `env` / `printenv` 推断 Key/URL 缺失。
 
 把文案 / 脚本合成为 AI 语音（口播、旁白、朗读）。共享脚本 `skills/shared/scripts/tts.py speak`：
 **默认闭源优先**——配了 `.env` 的 `VOICE_PROVIDER`(+ VOICE_API_KEY) 就走闭源云 TTS（voice_clone，

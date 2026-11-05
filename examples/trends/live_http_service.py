@@ -1,7 +1,7 @@
 """HTTP v1 adapter that fetches real public upstream data on every request.
 
 python -X utf8 live_http_service.py --provider github --limit 10 --port 8766
-Easel HTTP source URL: http://127.0.0.1:8766/trends
+Xiangya HTTP source URL: http://127.0.0.1:8766/trends
 The upstream requests follow the standard proxy environment variables.
 """
 from __future__ import annotations

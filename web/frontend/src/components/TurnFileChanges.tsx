@@ -1,7 +1,7 @@
 /**
  * Turn-tail file list and four-row disclosure adapted from DeepSeek Harness
  * ui-deliverables/src/client/ChangedFiles.tsx @ ce7073d (MIT).
- * Easel lists scoped snapshot evidence without implying file-opening authority.
+ * 响芽 lists scoped snapshot evidence without implying file-opening authority.
  */
 import { useId, useRef, useState } from 'react';
 import type { AgentFileChanges } from '../lib/agentEvents';

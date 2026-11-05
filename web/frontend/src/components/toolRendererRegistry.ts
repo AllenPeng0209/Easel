@@ -11,7 +11,7 @@ import { WebBlock } from '../vendor/deepseek-harness/tool/WebBlock';
 import { webActionTitle, webCardModel } from '../vendor/deepseek-harness/tool/web-card-model';
 import { businessObjectIdentity, type BusinessObject } from '../lib/businessObjects';
 import { fetchBusinessObject } from '../lib/businessObjectApi';
-import { fetchPublicationApproval } from '../lib/api';
+import { refreshPublicationApproval } from '../lib/api';
 import type { PublicationApprovalRecord } from '../lib/publicationApproval';
 import { publicationReceiptIdentity } from '../lib/publicationReceipt';
 import PublicationReceiptCard from './PublicationReceiptCard';
@@ -138,7 +138,7 @@ export const resolveToolRenderer = createToolRendererRegistry([
         title: event.name === 'easel_publish' ? '发布调用' : '查询发布状态',
         details: () => createElement('div', { 'data-tool-publication-receipts': true }, publications.map(record =>
           createElement(PublicationReceiptCard, {
-            key: JSON.stringify([publicationReceiptIdentity(record), record.operationId]), record, onRefresh: fetchPublicationApproval,
+            key: JSON.stringify([publicationReceiptIdentity(record), record.operationId]), record, onRefresh: refreshPublicationApproval,
           }))),
       };
     },

@@ -26,7 +26,7 @@ function component(name, role, props = {}) {
   ];
   const api = new Proxy({
     fetchAccounts: async () => { calls.push('fetchAccounts'); return accounts; },
-    fetchTrends: async () => ({ trends: [] }), fetchSchedule: async () => [], fetchOutputs: async () => [], fetchIdeas: async () => [],
+    fetchSchedule: async () => [], fetchOutputs: async () => [],
     fetchAnalyticsPlatforms: async () => accounts.map(account => ({ ...account })),
     fetchPersonas: async () => [{ name: '汽车观察', description: '智能驾驶与新能源' }],
     fetchPersonaFiles: async () => ({ files: [{ filename: 'identity.md', content: '真实画像内容' }, { filename: 'platforms.md', content: '多平台运营资料' }] }),
@@ -69,10 +69,10 @@ function component(name, role, props = {}) {
   }; visit(root); return result; };
   const render = () => { cursor = 0; effects = []; tree = flatten(exports.default({ persona: '',
     gatewayStatus: 'connected', apiDirect: true, agentRuntime: 'api', onNavigate: page => navigations.push(page),
-    onUseTopic: topic => navigations.push(topic), onNewProfile: () => navigations.push('new-profile'),
+    onNewProfile: () => navigations.push('new-profile'),
     onUsePersona: persona => navigations.push(persona), onDeleted() {}, ...props }));
     const pending = effects; effects = []; pending.forEach(effect => effect()); return tree; };
-  return { render, calls, navigations, intervals, setRole(next) { currentRole = next; },
+  return { render, calls, navigations, intervals, catalog: accounts, setRole(next) { currentRole = next; },
     async ready() { render(); await settle(); render(); await settle(); return render(); } };
 }
 
@@ -87,7 +87,7 @@ for (const role of ['viewer', 'operator']) {
   test(`${role} can inspect account status without identity probes or login and logout controls`, async () => {
     const ui = component('AccountsPage', role);
     const nodes = await ui.ready();
-    assert.ok(nodes.some(node => text(node).includes('小红书')));
+    assert.ok(nodes.some(node => text(node).includes('账号管理')));
     assert.ok(!ui.calls.includes('verifyStale'), 'Opening a read-only account page must not start browser verification');
     const actions = buttons(nodes).map(text).join('|');
     assert.doesNotMatch(actions, /校验账号|退出登录|^登录$|保存并验证|提交验证码/);
@@ -95,22 +95,22 @@ for (const role of ['viewer', 'operator']) {
   });
 }
 
-test('an owner retains account verification and social platform login controls', async () => {
+test('the account page renders one directory and does not probe all platforms on open', async () => {
   const ui = component('AccountsPage', 'owner');
   const nodes = await ui.ready();
-  assert.ok(ui.calls.includes('verifyStale'));
-  assert.ok(buttons(nodes).some(node => text(node) === '校验账号'));
-  assert.ok(buttons(nodes).some(node => text(node) === '登录'));
+  assert.ok(!ui.calls.includes('verifyStale'));
+  assert.ok(!ui.calls.includes('fetchAccounts'));
+  assert.equal(nodes.filter(node => node.type === 'details').length, 0);
+  assert.equal(nodes.filter(node => node.props?.className?.includes('account-card')).length, 0);
+  assert.equal(nodes.filter(node => typeof node.props?.onPlatformLogin === 'function').length, 1);
 });
 
-test('the unified account picker receives the existing catalog and opens the original Bilibili login', async () => {
+test('the unified directory delegates Bilibili to its existing login protocol', async () => {
   const ui = component('AccountsPage', 'owner');
   const nodes = await ui.ready();
   const picker = nodes.find(node => typeof node.props?.onPlatformLogin === 'function');
-  assert.ok(picker, 'The add-account picker must route existing Easel platforms to their login flow');
-  assert.deepEqual(picker.props.platforms.map(account => account.platform),
-    ['xiaohongshu', 'douyin', 'bilibili', 'wechat-oa', 'youtube']);
-  await picker.props.onPlatformLogin(picker.props.platforms.find(account => account.platform === 'bilibili'));
+  assert.ok(picker, 'The one directory must retain existing Xiangya login protocols');
+  await picker.props.onPlatformLogin(ui.catalog.find(account => account.platform === 'bilibili'));
   assert.ok(ui.calls.includes('startLogin'));
   assert.ok(!ui.calls.includes('startMpLogin'));
   assert.ok(ui.render().some(node => text(node).includes('登录 B站')));
@@ -121,7 +121,7 @@ test('the unified account picker uses the public-account session login instead o
   const nodes = await ui.ready();
   const picker = nodes.find(node => typeof node.props?.onPlatformLogin === 'function');
   assert.ok(picker, 'The add-account picker must retain public-account login');
-  await picker.props.onPlatformLogin(picker.props.platforms.find(account => account.platform === 'wechat-oa'));
+  await picker.props.onPlatformLogin(ui.catalog.find(account => account.platform === 'wechat-oa'));
   assert.ok(ui.calls.includes('startMpLogin'));
   assert.ok(!ui.calls.includes('getCredentials'));
 });
@@ -133,7 +133,7 @@ test('a stale unified account picker cannot start a login after management permi
   assert.ok(picker, 'The add-account picker must retain current permission checks');
   ui.setRole('operator');
   ui.render();
-  await picker.props.onPlatformLogin(picker.props.platforms.find(account => account.platform === 'youtube'));
+  await picker.props.onPlatformLogin(ui.catalog.find(account => account.platform === 'youtube'));
   assert.ok(!ui.calls.includes('startLogin'));
 });
 
@@ -141,6 +141,8 @@ test('a viewer dashboard can select cached analytics without starting verificati
   const ui = component('DashboardPage', 'viewer');
   const nodes = await ui.ready();
   assert.ok(!ui.calls.includes('verifyStale'));
+  assert.ok(!ui.calls.includes('fetchIdeas') && !ui.calls.includes('fetchTrends'));
+  assert.doesNotMatch(buttons(nodes).map(text).join('|'), /选题|热点|拆爆款/);
   const platform = buttons(nodes).find(node => text(node) === '小红书');
   assert.ok(platform, 'A viewer should be able to inspect the existing platform snapshot');
   platform.props.onClick();
@@ -187,25 +189,12 @@ for (const page of ['AccountsPage', 'DashboardPage']) {
 test('removing account-management permission stops an active login poll', async () => {
   const ui = component('AccountsPage', 'owner');
   const nodes = await ui.ready();
-  await buttons(nodes).find(node => text(node) === '登录').props.onClick();
+  await nodes.find(node => typeof node.props?.onPlatformLogin === 'function').props.onPlatformLogin(ui.catalog.find(account => account.platform === 'bilibili'));
   assert.equal(ui.intervals.size, 1);
   ui.setRole('viewer');
   ui.render();
   assert.equal(ui.intervals.size, 0);
 });
-
-for (const [label, method] of [['校验账号', 'accountWhoami'], ['登录', 'startLogin'], ['退出登录', 'logoutAccount']]) {
-  test(`an old ${label} click handler cannot mutate accounts after the owner is downgraded`, async () => {
-    const ui = component('AccountsPage', 'owner');
-    const nodes = await ui.ready();
-    const oldClick = buttons(nodes).find(node => text(node) === label).props.onClick;
-    ui.setRole('operator');
-    ui.render();
-    oldClick();
-    await settle();
-    assert.ok(!ui.calls.includes(method), 'A removed owner control cannot retain permission through its captured callback');
-  });
-}
 
 test('an old dashboard data-collection callback cannot bypass a viewer downgrade', async () => {
   const ui = component('DashboardPage', 'operator');

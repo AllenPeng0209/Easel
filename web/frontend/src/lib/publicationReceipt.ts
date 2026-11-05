@@ -3,7 +3,7 @@
  * Disclosure lifecycle adapted from deepseek-ai/deepseek-harness
  * packages/client/ui-workflow-run/src/client/WorkflowRunPanel.tsx
  * @ ce7073d51254c26cd63b22a60835b8f948deb447.
- * Easel changes: publication receipt facts, scope/correlation checks and labels.
+ * Xiangya changes: publication receipt facts, scope/correlation checks and labels.
  * Notice: integrations/deepseek-harness/LICENSE.
  */
 import type { PublicationApprovalRecord, PublicationApprovalSubject } from './publicationApproval';
@@ -56,7 +56,7 @@ export function publicationReceiptInScope(record: PublicationApprovalRecord): bo
 function subjectBinding(subject: PublicationApprovalSubject): string {
   return JSON.stringify([subject.schemaVersion, subject.project.id, subject.project.name, subject.platform.id,
     subject.platform.name, subject.account.id, subject.account.name, subject.mode, subject.scheduledAt,
-    subject.audience, subject.title, subject.body, subject.tags, subject.persona,
+    subject.audience, subject.title, subject.body, subject.tags, subject.persona, subject.aiGenerated ?? false,
     subject.media.map(media => [media.artifactId, media.path, media.name, media.mime, media.revision,
       media.sha256, media.bundleSha256, media.size, media.url])]);
 }

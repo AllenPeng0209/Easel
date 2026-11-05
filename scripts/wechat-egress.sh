@@ -6,7 +6,7 @@
 # 配置目录 /etc/mihomo-wechat（由本仓库调试时生成：抽主实例 /etc/mihomo 的一个健康节点 +
 # geodata 文件 + dns 段，mode=rule 且 MATCH 全部走该节点）。
 # 用法：bash scripts/wechat-egress.sh {start|stop|status|ip}
-# 起 web 时：export WECHAT_EGRESS_PROXY=http://127.0.0.1:7899 后再 easel web。
+# 起 web 时：export WECHAT_EGRESS_PROXY=http://127.0.0.1:7899 后再 xiangya web。
 
 set -euo pipefail
 PORT=7899

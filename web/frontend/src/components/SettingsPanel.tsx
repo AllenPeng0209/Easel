@@ -721,7 +721,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
               className="btn btn-sm"
               onClick={() => void doSelftest(sec === 'model' ? chan : 'all')}
               disabled={testing || modelLoading || selectedHarness !== harness || (!['api', 'openclaw'].includes(harness) && (sec !== 'model' || chan === 'chat'))}
-              title={!['api', 'openclaw'].includes(harness) ? '原生对话请发送消息或运行 easel ping 验证' : undefined}
+              title={!['api', 'openclaw'].includes(harness) ? '原生对话请发送消息或运行 xiangya ping 验证' : undefined}
             >
               {testing ? '自测中…' : '全部自测'}
             </button>

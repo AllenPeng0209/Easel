@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "easel"
+name = "xiangya"
 version = "0.3.0"
-description = "社媒内容工作流整合层 — Easel CLI"
+description = "响芽 Xiangya — AI 自媒体自动化运营平台"
 requires-python = ">=3.10"
 # 运行依赖统一安装，确保 Web、媒体处理和浏览器发布开箱可用。
 dependencies = [
@@ -33,10 +33,11 @@ dependencies = [
 ]
 
 [project.scripts]
+xiangya = "xiangya.cli:main"
 easel = "easel.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["easel*"]
+include = ["easel*", "xiangya*"]
 
 [tool.setuptools.package-data]
 easel = ["vendor/creatorhub/UPSTREAM.json", "vendor/creatorhub/web/*", "vendor/creatorhub/platforms/xhs/static/*", "vendor/creatorhub/js_deps/crypto-js/*"]

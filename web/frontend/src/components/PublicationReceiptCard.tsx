@@ -2,7 +2,7 @@
  * Copyright (c) 2026 DeepSeek. MIT License.
  * Composition adapted from packages/client/ui-workflow-run/src/client/WorkflowRunPanel.tsx
  * @ ce7073d51254c26cd63b22a60835b8f948deb447; reuses the existing vendored DisclosureRow.
- * Easel changes: readonly publication subject/receipt and identity-pinned refresh.
+ * 响芽 changes: readonly publication subject/receipt and identity-pinned refresh.
  * Notice: integrations/deepseek-harness/LICENSE.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -14,6 +14,7 @@ import {
   publicationReceiptInScope, publicationReceiptView,
 } from '../lib/publicationReceipt';
 import { DisclosureRow } from '../vendor/deepseek-harness/message/DisclosureRow';
+import { requestApprovalPublication } from '../lib/publicationHandoff';
 import '../styles/publicationReceipt.css';
 
 interface Props {
@@ -96,6 +97,8 @@ function ScopedPublicationReceipt({ record, onRefresh }: Props) {
         <span>{current.subject.account.name}</span><span className="publication-receipt__caption">{current.subject.title || '无标题内容'}</span>
       </span>}
       headerAccessory={<div className="publication-receipt__tail"><span className="publication-receipt__status" role="status">{status.label}</span>
+        <button type="button" className="publication-receipt__refresh"
+          onClick={() => { requestApprovalPublication(current); }}>到发布中心核对</button>
         {onRefresh && <button type="button" className="publication-receipt__refresh" aria-label="刷新发布回执" disabled={busy}
           onClick={() => { void refresh(); }}>{busy ? '刷新中…' : '刷新回执'}</button>}
       </div>}>

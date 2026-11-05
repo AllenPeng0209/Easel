@@ -72,7 +72,7 @@ def test_delete_wins_when_new_turn_is_waiting_on_preflight(artifact_http_environ
     async def preflight(_):
         entered.set()
         assert await asyncio.to_thread(release.wait, 3)
-        return None, None
+        return None
 
     monkeypatch.setattr(web, '_resolve_chat_references', preflight)
     body = {'sessionId': 'racing', 'turnId': 'not-admitted', 'message': 'Stale prompt'}

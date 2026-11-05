@@ -2,7 +2,7 @@
  * Copyright (c) 2026 DeepSeek. MIT License.
  * Preference values adapted from ui-chat/src/chat-settings.ts
  * @ ce7073d51254c26cd63b22a60835b8f948deb447.
- * Easel stores the two offered modes and independent fold timing per actor/IP.
+ * Xiangya stores the two offered modes and independent fold timing per actor/IP.
  */
 import { projectStorageKey } from './projectScope';
 

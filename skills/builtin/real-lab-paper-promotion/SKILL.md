@@ -8,9 +8,9 @@ layer: produce
 
 交付一个 `post.md` 和一个 `images/` 文件夹。自主完成理解、写稿、选图和审核，不要求用户提供提纲、图号或填写 manifest。没有论文时只说明所需输入，不生成虚构稿件。不要登录或发布小红书。
 
-## Easel 接入
+## 响芽 接入
 
-- 从 Easel 项目根使用 `.venv/bin/python`，技能位于 `skills/builtin/real-lab-paper-promotion/`。
+- 从 响芽 项目根使用 `.venv/bin/python`，技能位于 `skills/builtin/real-lab-paper-promotion/`。
 - `OUT=outputs/<论文简称>`，`WORK=outputs/<论文简称>/assets/paper-promotion`。正文与原始截图是成品；PDF、提取数据、证据、截图计划与审核报告留在 assets 中。脚本校验产物路径。
 - 有画像时读取 `profiles/<画像>/` 的受众与语气偏好；用户本次要求优先，事实边界与截图忠实度仍需保持。无画像也能使用。仅当用户或论文证据确认其身份时使用“我们/组里”。
 
@@ -34,6 +34,6 @@ layer: produce
 
 ## 交付
 
-只交付 `OUT/post.md` 和 `OUT/images/`（按序命名 PNG），不在 MD 插入配图说明、审核报告、计数或真实链接。PDF、提取文本、证据、manifest 和审核报告均留在 WORK；允许 OUT 包含 Easel 的 `assets/` 和 `.easel.json`，但不把它们当成待发布内容。通过审核后用 `skills/shared/scripts/manifest.py meta` 登记 `kind=xhs-note`、`status=draft`、`post.md` 及实际 `images/NN-*.png` 成品列表，首张截图作为封面；用 `record --layer produce --skill real-lab-paper-promotion` 记录步骤。内部 `WORK/manifest.json` 是截图计划，不能替代项目 `.easel.json`。最后用一两句话给出文件位置与标题/正文字符数、图片数；有实质限制明确说明。不要额外生成选题方案、多个版本或自动发布。
+只交付 `OUT/post.md` 和 `OUT/images/`（按序命名 PNG），不在 MD 插入配图说明、审核报告、计数或真实链接。PDF、提取文本、证据、manifest 和审核报告均留在 WORK；允许 OUT 包含 响芽 的 `assets/` 和 `.easel.json`，但不把它们当成待发布内容。通过审核后用 `skills/shared/scripts/manifest.py meta` 登记 `kind=xhs-note`、`status=draft`、`post.md` 及实际 `images/NN-*.png` 成品列表，首张截图作为封面；用 `record --layer produce --skill real-lab-paper-promotion` 记录步骤。内部 `WORK/manifest.json` 是截图计划，不能替代项目 `.easel.json`。最后用一两句话给出文件位置与标题/正文字符数、图片数；有实质限制明确说明。不要额外生成选题方案、多个版本或自动发布。
 
 用户修改后，当前稿优先遵循反馈。只有用户明确要求沉淀时才更新案例或风格规则；保留原始案例，不把一次性改动升级为永久规范。

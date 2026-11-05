@@ -19,6 +19,17 @@ const render = (message, props = {}) => parseHTML(renderToStaticMarkup(React.cre
   componentModule('components/MessageBubble.tsx').default, { message, ...props },
 ))).document;
 
+test('a real publication-center decision retains its Host provenance without claiming a chat human answer or default', () => {
+  const { observeAgentTimeline } = componentModule('lib/agentTimeline.ts');
+  const observations = observeAgentTimeline([], { id: 'publication-decision', kind: 'decision', questionId: 'publication-question',
+    status: 'resolved', resolvedBy: 'publication_host' });
+  assert.equal(observations[0].resolvedBy, 'publication_host');
+  const document = render({ role: 'assistant', content: '', timeline: observations });
+  const text = document.querySelector('[data-agent-timeline]').textContent;
+  assert.match(text, /发布中心的决定已同步/);
+  assert.doesNotMatch(text, /用户答复已记录|默认答案已记录/);
+});
+
 test('saved compact observations render by recorded order with distinct tool count and collapsed failure', () => {
   const document = render({ role: 'assistant', content: '', timeline, activity: '多行\n旧活动' });
   const details = document.querySelector('[data-agent-timeline]');

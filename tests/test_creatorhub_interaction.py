@@ -1,4 +1,4 @@
-"""Exercise the read-only CreatorHub path through Easel's real Web API."""
+"""Exercise the read-only CreatorHub path through Xiangya's real Web API."""
 import httpx
 import pytest
 from fastapi.testclient import TestClient

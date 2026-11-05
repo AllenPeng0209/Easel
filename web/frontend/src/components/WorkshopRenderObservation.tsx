@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { canRetryChatWorkshopObservation, chatWorkshopRenderState, observeChatWorkshopRender, workshopCancellationLabel, workshopProgress, type WorkshopRenderReceipt } from '../lib/workshop';
 
 // Visibility-owned observation adapted from DeepSeek Harness JobListAction.tsx
-// (ui-jobs @ ce7073d, MIT). Easel polls only the exact persisted render receipt.
+// (ui-jobs @ ce7073d, MIT). 响芽 polls only the exact persisted render receipt.
 export default function WorkshopRenderObservation({ projectId, initial }: {
   projectId: string;
   initial: WorkshopRenderReceipt;

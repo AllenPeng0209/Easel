@@ -37,7 +37,6 @@ export interface WorkshopJob {
   artifactId: string | null;
   artifactSha256: string | null;
   contentRevision: number | null;
-  engineRevision: number | null;
   canCancel: boolean;
   cancellation?: WorkshopJobCancellation;
 }
@@ -79,7 +78,7 @@ function normalizeJob(value: unknown): WorkshopJob | null {
     elapsedMs: integer(row.elapsedMs),
     artifactId: typeof row.artifactId === 'string' && ID.test(row.artifactId) ? row.artifactId : null,
     artifactSha256: typeof row.artifactSha256 === 'string' && HASH.test(row.artifactSha256) ? row.artifactSha256 : null,
-    contentRevision: integer(row.contentRevision), engineRevision: integer(row.engineRevision),
+    contentRevision: integer(row.contentRevision),
     canCancel: row.canCancel === true && taskId !== null,
     cancellation: normalizeCancellation(row.cancellation, row.id, taskId),
   };

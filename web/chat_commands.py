@@ -1,7 +1,7 @@
 """Typed, allowlisted conversation recipes.
 
 Adapts DeepSeek Harness's leading command claim and editable suffix contract
-(ui-conversation input/machine.ts, ce7073d, MIT) to ordinary Easel chat.
+(ui-conversation input/machine.ts, ce7073d, MIT) to ordinary Xiangya chat.
 Recipes never dispatch tools directly.
 """
 from __future__ import annotations
@@ -35,9 +35,6 @@ class _Recipe:
 
 
 _RECIPES = (
-    _Recipe("topic-ideas", "/选题", "构思选题", "内容创作",
-            "围绕已知主题提出可执行的选题和差异化角度。", "主题、受众、已知热点",
-            "根据本轮提供的素材和目标受众提出选题，说明角度与适用场景。不要把推测说成已查证的热点。"),
     _Recipe("social-draft", "/文案", "起草文案", "内容创作",
             "根据指定主题和受众起草社媒文案。", "主题、平台、语气或目标长度",
             "起草一版社媒文案。根据给定平台和受众组织标题、正文及可选话题，区分已知信息和创作假设。"),

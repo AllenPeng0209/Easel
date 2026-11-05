@@ -55,13 +55,19 @@ def _time(value):
     return type(value) is int and value > 0
 
 
-def _readback_evidence(readback, expected_account, expected_id):
+def _readback_evidence(readback, expected_account, expected_id, *, platform=None):
     """Match concrete ACK ID, never a title prefix or an arbitrary public URL."""
     if not isinstance(readback, dict) or readback.get('outcome') != 'verified':
         return False, 'readback_unverified', None
     matched, evidence = readback.get('matched'), readback.get('evidence')
     if not isinstance(matched, dict) or not isinstance(evidence, dict):
         return False, 'readback_missing', None
+    if platform == 'xiaohongshu' and (
+            any(type(evidence.get(key)) is not int or not 0 < evidence[key] <= 2**53 - 1
+                for key in ('xhsSessionGeneration', 'xhsNativeAccountId'))
+            or not isinstance(evidence.get('xhsSessionHash'), str)
+            or not re.fullmatch(r'[a-f0-9]{64}', evidence['xhsSessionHash'])):
+        return False, 'readback_account_snapshot_unverified', None
     if _id(matched.get('platform_content_id')) != expected_id:
         return False, 'readback_id_mismatch', None
     if not _same_account(evidence.get('account'), expected_account):
@@ -117,6 +123,9 @@ def normalize_receipt(host, observation=None, *, returncode=None, process_error=
         return {**result, 'status': 'failed', 'reason': not_started_reason, 'notStarted': True}
     if not machine:
         return result
+    if (observation.get('submissionAmbiguous') is True or context['platform'] == 'xiaohongshu'
+            and 'submissionAmbiguous' in observation and type(observation['submissionAmbiguous']) is not bool):
+        return {**result, 'status': 'unknown', 'reason': 'ambiguous_submission'}
     phase = result['phase']
     reason = observation.get('reason')
     if phase == 'not_started' and isinstance(reason, str) and reason in _NOT_STARTED:
@@ -157,7 +166,8 @@ def normalize_receipt(host, observation=None, *, returncode=None, process_error=
     if context['mode'] == 'scheduled' and state == 'scheduled':
         result['status'] = 'scheduled'
     if phase == 'readback':
-        confirmed, reason, publication_state = _readback_evidence(observation.get('readback'), context['accountId'], identifier)
+        confirmed, reason, publication_state = _readback_evidence(observation.get('readback'), context['accountId'], identifier,
+                                                                platform=context['platform'])
         result['reason'] = reason
         if publication_state is not None:
             result['publicationState'] = publication_state

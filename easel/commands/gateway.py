@@ -1,4 +1,4 @@
-"""easel gateway — 管理 OpenClaw gateway。"""
+"""xiangya gateway — 管理 OpenClaw gateway。"""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ def cmd_gateway(args) -> int:
     from easel.direct_api import read_settings
     runtime = harnesses.settings(PROJECT_ROOT / "outputs", read_settings())["runtime"]
     if runtime == "api":
-        print("仅聊天模式直接请求模型 API，无需 Agent 或 OpenClaw gateway；用 easel ping 检查连通性")
+        print("仅聊天模式直接请求模型 API，无需 Agent 或 OpenClaw gateway；用 xiangya ping 检查连通性")
         return 0
     if runtime != "openclaw":
-        print(f"{runtime} 通过私有 stdio 按轮启动，无需 OpenClaw gateway；用 easel ping 检查连通性")
+        print(f"{runtime} 通过私有 stdio 按轮启动，无需 OpenClaw gateway；用 xiangya ping 检查连通性")
         return 0
     action = getattr(args, "action", "status") or "status"
     command = (

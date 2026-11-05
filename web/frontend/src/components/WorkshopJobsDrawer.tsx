@@ -1,6 +1,6 @@
 /**
  * Read-only job roster adapted from DeepSeek Harness ui-jobs/JobListAction.tsx
- * @ ce7073d (MIT). Easel watches the current IP's stored render observations.
+ * @ ce7073d (MIT). 响芽 watches the current IP's stored render observations.
  */
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -66,7 +66,7 @@ function WorkshopCancelConfirmation({ confirmation, pending, valid, onClose, onC
       <h2>{title}</h2>
       <dl>
         <dt>IP</dt><dd>{ACTIVE_PROJECT_ID === 'default' ? '默认 IP' : ACTIVE_PROJECT_ID}</dd>
-        <dt>平台</dt><dd>BeefTV</dd>
+        <dt>任务类型</dt><dd>原生成片合成</dd>
         <dt>工坊</dt><dd>{confirmation.job.title}</dd>
         <dt>任务 ID</dt><dd><code>{confirmation.job.taskId}</code></dd>
       </dl>

@@ -94,6 +94,6 @@ def test_real_install_linux_creates_environment_before_setup():
     install_job = workflow.split("\n  install-real:", 1)[1]
     creation = install_job.index("run: python -m venv .venv")
     setup = install_job.index("run: bash setup.sh --openclaw")
-    doctor = install_job.index(".venv/bin/easel doctor")
+    doctor = install_job.index(".venv/bin/xiangya doctor")
     assert creation < setup < doctor
     assert "if: runner.os == 'Linux'" in install_job[:creation].rsplit("- name:", 1)[1]

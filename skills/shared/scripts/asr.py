@@ -87,15 +87,36 @@ def _extract_audio(video: Path) -> Path:
     if not _has_ffmpeg():
         _die("处理视频需要 ffmpeg 提取音轨，但未找到 ffmpeg。", 3)
     tmp = Path(tempfile.mkdtemp(prefix="asr_")) / "audio.wav"
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(video), "-vn",
+             "-ac", "1", "-ar", "16000", "-f", "wav", str(tmp)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if proc.returncode != 0 or not tmp.is_file():
+            tail = "\n".join((proc.stderr or "").strip().splitlines()[-10:])
+            _die(f"ffmpeg 提取音轨失败:\n{tail}", proc.returncode or 1)
+        return tmp
+    except BaseException:
+        shutil.rmtree(tmp.parent, ignore_errors=True)
+        raise
+
+
+def _decode_pcm(audio: Path):
+    """Bypass incompatible PyAV builds with Whisper's 16kHz mono float input."""
+    if not _has_ffmpeg():
+        _die("音轨解码兼容恢复需要 ffmpeg，但未找到 ffmpeg。", 3)
+    import numpy as np
+
     proc = subprocess.run(
-        ["ffmpeg", "-y", "-i", str(video), "-vn",
-         "-ac", "1", "-ar", "16000", "-f", "wav", str(tmp)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        ["ffmpeg", "-nostdin", "-v", "error", "-i", str(audio), "-map", "0:a:0", "-vn",
+         "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", "-f", "s16le", "pipe:1"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
-    if proc.returncode != 0 or not tmp.is_file():
-        tail = "\n".join((proc.stderr or "").strip().splitlines()[-10:])
-        _die(f"ffmpeg 提取音轨失败:\n{tail}", proc.returncode or 1)
-    return tmp
+    if proc.returncode != 0 or not proc.stdout or len(proc.stdout) % 2:
+        tail = "\n".join(proc.stderr.decode("utf-8", errors="replace").strip().splitlines()[-10:])
+        _die(f"ffmpeg 解码音轨失败:\n{tail}", proc.returncode or 1)
+    return np.frombuffer(proc.stdout, dtype="<i2").astype(np.float32) / np.float32(32768)
 
 
 # ── 时间戳格式化 ──────────────────────────────────────────────────────
@@ -287,12 +308,16 @@ def _transcribe_audio(audio: Path, a) -> tuple[list[tuple[float, float, str]], d
              f"（config.json/model.bin/tokenizer.json/vocabulary.txt）", 4)
 
     language = None if a.language in (None, "", "auto") else a.language
-    segments, tinfo = model.transcribe(
-        str(audio),
-        language=language,
-        vad_filter=True,
-        beam_size=a.beam_size,
-    )
+    options = {"language": language, "vad_filter": True, "beam_size": a.beam_size}
+    try:
+        segments, tinfo = model.transcribe(str(audio), **options)
+    except TypeError as error:
+        # Some installed PyAV versions reject faster-whisper's decoder keyword.
+        # Do not disguise unrelated model/option errors as decoding problems.
+        if "metadata_errors" not in str(error) or "unexpected keyword argument" not in str(error):
+            raise
+        print("[asr] PyAV 解码参数不兼容，改用 ffmpeg PCM 输入。", file=sys.stderr)
+        segments, tinfo = model.transcribe(_decode_pcm(audio), **options)
     detected = getattr(tinfo, "language", None)
     duration = getattr(tinfo, "duration", None)
     print(f"[asr] 检测语言={detected} 时长={duration}s，开始转录……", file=sys.stderr)
@@ -322,7 +347,7 @@ def cmd_transcribe(a) -> int:
     try:
         audio = src
         if is_video:
-            print(f"[asr] 视频输入，先提取音轨……", file=sys.stderr)
+            print("[asr] 视频输入，先提取音轨……", file=sys.stderr)
             tmp_audio = _extract_audio(src)
             audio = tmp_audio
 

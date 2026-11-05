@@ -13,7 +13,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('Easel UI error:', error, info);
+    console.error('响芽 UI error:', error, info);
   }
 
   render() {

@@ -3,7 +3,7 @@
 背景（实机复现）：npm 全局前缀被设为用户目录（官方推荐的免 sudo 装法
 `npm config set prefix ~/.npm-global`）时，node 在系统路径、openclaw 装在
 `<prefix>/lib/node_modules/openclaw/openclaw.mjs` —— 原实现的三个候选路径
-全部落空，于是 `easel chat/skill/ping` 全部抛 FileNotFoundError，而 gateway
+全部落空，于是 `xiangya chat/skill/ping` 全部抛 FileNotFoundError，而 gateway
 其实跑得好好的（用户被误导成"没装 openclaw"）。
 """
 from __future__ import annotations

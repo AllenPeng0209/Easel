@@ -124,5 +124,5 @@ python skills/shared/scripts/multivoice.py dub \
 
 ## 参考来源
 
-见 `EASEL-META.md`。多声线配音（cast + 逐行 lines + 按角色音色逐行合成 + ffmpeg 拼接 + 说话人字幕）为 Easel 自研；
+见 `EASEL-META.md`。多声线配音（cast + 逐行 lines + 按角色音色逐行合成 + ffmpeg 拼接 + 说话人字幕）为 响芽 自研；
 底层封装 edge-tts（tts.py）与云端克隆（voice_clone.py）。

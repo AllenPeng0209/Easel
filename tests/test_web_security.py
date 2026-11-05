@@ -310,7 +310,7 @@ def test_ready_probe_hits_chat_completions_not_models():
     """探针不能打 /v1/models：那个路径会被网关控制台 SPA 的 catch-all 接走，端点没开也返回
     200（body 是 HTML 首页），于是只要网关活着就恒为 True —— 等于没探，每轮对话直接撞 404。
 
-    探针的 **端口** 同样不能写死：Easel 用 --profile easel，OpenClaw 对非默认 profile
+    探针的 **端口** 同样不能写死：响芽 用 --profile easel，OpenClaw 对非默认 profile
     分配的端口不是 18789（easel → 37289），写死就恒探不通、对话悄悄退回 CLI 冷启动路径。
     所以 URL 一律走 easel/gateway_endpoint 解析。"""
     import inspect

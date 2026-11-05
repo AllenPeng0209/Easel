@@ -15,7 +15,7 @@ layer: produce
 > 把一支原片（口播 / 独白）做成**包装级成片**：摸底 → 转录 → 分场 → 设计表 → 脚手架 → 写码
 > → 验证 → 预览 → 渲染 → 交付。质量不靠自觉，靠可执行的门。
 >
-> 产线 SDK 已**内置**在本技能 `vendor/video-pipeline-sdk/`（随 Easel 进仓、可复现、可在其基础上改）。
+> 产线 SDK 已**内置**在本技能 `vendor/video-pipeline-sdk/`（随 响芽 进仓、可复现、可在其基础上改）。
 > 首次使用先跑一次依赖还原：`bash <ROOT>/skills/builtin/video-production/vendor/video-pipeline-sdk/deps/bootstrap.sh`
 > （装 Remotion 渲染引擎，`--ignore-scripts`；node_modules 不入库）。
 
@@ -32,7 +32,7 @@ layer: produce
 
 产线第二步要把口播里说的话转成带时间轴的文字稿。三级降级，越靠前越省：
 
-1. **tier1 现成稿（最优）**：源片自带字幕/台词就用它——`start --transcript 路径`。`.srt`/`.vtt` 会自动转成段级 `transcript.json`（保留时间轴）；`.json`（segments 结构）直接用。**Easel 做的口播剧一般自带 SRT，走这条即可，不下模型。**
+1. **tier1 现成稿（最优）**：源片自带字幕/台词就用它——`start --transcript 路径`。`.srt`/`.vtt` 会自动转成段级 `transcript.json`（保留时间轴）；`.json`（segments 结构）直接用。**响芽 做的口播剧一般自带 SRT，走这条即可，不下模型。**
 2. **tier2 云端 ASR API**：没现成稿但配了 `SILICONFLOW_API_KEY`（env）→ 自动调硅基流动（默认 `XingChenAGI/XingChenGSR-V1.0`，可用 `SILICONFLOW_ASR_MODEL` / `SILICONFLOW_BASE_URL` 覆盖）。key 只从环境变量读，勿写进命令/仓库。
 3. **tier3 本地 whisper（兜底）**：都没有才用本地 large-v3（首次下约 3GB）。需 `faster-whisper`。
 

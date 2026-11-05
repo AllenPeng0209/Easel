@@ -168,7 +168,7 @@ class InteractionChannels:
             return {**base, 'state': 'configured' if configured else 'awaiting_authorization',
                     'can_sync': configured,
                     'message': '已绑定本机 CreatorHub。仅导入已采集的评论，回复请到抖音处理。' if configured
-                    else '请在 Easel 服务端配置当前 IP、客户、账号与自有作品绑定。'}
+                    else '请在 响芽 服务端配置当前 IP、客户、账号与自有作品绑定。'}
         if kind == 'dm':
             return {**base, 'message': '私信需要平台单独准入与授权，当前尚未接通'}
         if platform == 'douyin' and kind == 'comment' and channel.get('delivery_mode') == 'official':

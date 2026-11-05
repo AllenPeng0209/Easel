@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Easel 素材管理 — outputs/ 产物的确定性索引 / 检索 / 归档 / 标签。
+"""响芽 素材管理 — outputs/ 产物的确定性索引 / 检索 / 归档 / 标签。
 
 把有副作用、需状态一致的文件操作从 LLM 手动 find/grep/mv/改 JSON 固化为代码。
 
@@ -457,7 +457,7 @@ def cmd_archive(args):
 def build_parser():
     p = argparse.ArgumentParser(
         prog="assets.py",
-        description="Easel 素材管理：scan/search/archive/tag/list/report。",
+        description="响芽 素材管理：scan/search/archive/tag/list/report。",
     )
     p.add_argument("--root", default="outputs", help="产物根目录（默认 outputs）")
     sub = p.add_subparsers(dest="cmd", required=True)

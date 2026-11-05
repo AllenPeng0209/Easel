@@ -13,7 +13,7 @@ layer: discover
 > 把一批订阅源的最新更新聚合成摘要，用于每日选题与资讯追踪。走 `scripts/rss_digest.py`
 > （纯标准库解析 RSS 2.0 / Atom），无第三方依赖。
 
-> 全网热搜见 skill-trending-topics；行业新闻见 skill-news-intelligence；本 SKILL 专注
+> 行业新闻见 skill-news-intelligence；本 SKILL 专注
 > **用户自选订阅源**的更新聚合。
 
 ## 输入
@@ -41,7 +41,7 @@ python <skill>/scripts/rss_digest.py fetch --url https://example.com/feed.xml --
 
 ## 结果怎么用
 
-1. 聚合摘要 → 从中挑选题，喂 skill-topic-evaluator 评估可行性、skill-content-matrix 排选题。
+1. 聚合摘要 → 按当前对话的创作要求选取有依据的素材，交给相应写作或制作技能。
 2. 关键词过滤锁定垂类，只看和账号相关的更新。
 3. 定期跑（配合当前执行引擎可用的定时功能或系统调度器）做"每日/每周资讯简报"；没有调度能力时说明限制，不声称已安排自动执行。
 

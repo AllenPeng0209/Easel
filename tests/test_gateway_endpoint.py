@@ -1,8 +1,8 @@
 """gateway 端口解析的回归测试。
 
-钉住的坑：Easel 用 ``--profile easel``，而 **OpenClaw 对非默认 profile 不用 18789** ——
+钉住的坑：响芽 用 ``--profile easel``，而 **OpenClaw 对非默认 profile 不用 18789** ——
 它按 ``20000 + fnv1a32(profile) % 40000`` 算，easel → 37289（见 OpenClaw
-dist/paths-*.mjs ``resolveGatewayPort``）。Easel 以前在 web/app.py、doctor、ping、
+dist/paths-*.mjs ``resolveGatewayPort``）。响芽 以前在 web/app.py、doctor、ping、
 scripts/gateway.* 里各自写死 18789，于是「gateway 活着、面板常驻网关离线」，
 ``gateway.sh start`` 还会反复 --force 重启一个健康的 gateway。
 
@@ -66,7 +66,7 @@ def test_profile_hash_is_deterministic_and_in_range():
 
 def test_profile_hash_is_case_sensitive():
     """OpenClaw 的 normalizeProfileName 只在判断是否等于 "default" 时转小写比较，
-    参与哈希的仍是原始大小写——"Easel"/"easel" 是两个不同 profile，端口不同。"""
+    参与哈希的是原始大小写；既有 "Easel"/"easel" 配置的端口保持兼容。"""
     assert ge.profile_port("Easel") == 45577
     assert ge.profile_port("EASEL") == 48137
     assert ge.profile_port("Easel") != ge.profile_port("easel")

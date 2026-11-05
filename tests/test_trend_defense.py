@@ -211,21 +211,3 @@ for i in range(3):
         _, stderr = process.communicate(timeout=15)
         assert process.returncode == 0, stderr.decode("utf-8", "replace")
     assert len(load_sources(tmp_path, {})) == 12
-
-
-def test_manager_endpoints_reject_remote_clients_even_with_forged_origin(tmp_path, monkeypatch):
-    import app as web
-    from fastapi.testclient import TestClient
-    monkeypatch.setattr(web, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(web, "ENV_FILE", tmp_path / ".env")
-    with TestClient(web.app, base_url="http://127.0.0.1:7860", client=("192.0.2.1", 50000),
-                    headers={"Origin": "http://127.0.0.1:7860"}) as client:
-        assert client.get("/api/trends/manage").status_code == 403
-        assert client.post("/api/trends/manage", json={"action": "add"}).status_code == 403
-    with TestClient(web.app, base_url="http://127.0.0.1:7860", client=("127.0.0.1", 50000),
-                    headers={"Origin": "http://127.0.0.1:7860"}) as client:
-        assert client.post("/api/trends/manage", content='x' * (MAX_MANAGEMENT_BYTES + 1)).status_code == 413
-        assert client.post("/api/trends/manage", content='{"action":"add","action":"delete"}').status_code == 400
-        added = client.post("/api/trends/manage", json={"action": "add", "type": "rss", "label": "订阅", "url": "https://example.com/feed"})
-        assert added.status_code == 200
-        assert any(source["id"] == added.json()["id"] for source in client.get("/api/trends/sources").json()["sources"])

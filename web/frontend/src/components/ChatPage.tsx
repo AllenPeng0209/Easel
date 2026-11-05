@@ -67,9 +67,9 @@ interface ChatPageProps {
   admissionNotice?: { message: string; action?: { label: string; run: () => void } };
 }
 
-// 空态推荐（贴合 Easel 社媒创作场景）
+// 空态推荐（贴合 响芽 社媒创作场景）
 const SUGGESTIONS = [
-  { icon: '🔥', title: '蹭个热点', prompt: '看看现在微博和抖音有什么热搜，挑几个适合我做二创的选题' },
+  { icon: '🎥', title: '制作视频', prompt: '基于当前 IP 定位，调用适合的 Skill 制作一条短视频，生成剧本、资产和分镜，完成后交付到视频工坊待审核。' },
   { icon: '✍️', title: '写小红书文案', prompt: '基于当前 IP 的定位选择合适主题，写一条小红书文案初稿，普通偏好采用合理默认值并说明。' },
   { icon: '🎴', title: '做金句卡片', prompt: '把一句走心的话做成一张适合发朋友圈的金句卡片' },
   { icon: '🎬', title: '口播脚本', prompt: '基于当前 IP 的定位，完成一条 60 秒口播短视频脚本，先采用合适主题和默认风格做一版初稿。' },
@@ -455,7 +455,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
             selectingFileRef.current = pending;
             setSelectingFile(pending);
           }}
-          placeholder={backgroundExecution ? '描述要交给 Super Agent 的任务…' : dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，选题 / 文案 / 卡片 / 视频 / 发布都行…（输入 @ 引用文件，也可拖入素材）' : '发消息…（@ 引用文件）'}
+          placeholder={backgroundExecution ? '描述要交给 Super Agent 的任务…' : dragOver ? '松手上传素材…' : hero ? '把你的想法告诉我，脚本 / 文案 / 卡片 / 视频制作 / 发布都行…（输入 @ 引用文件，也可拖入素材）' : '发消息…（@ 引用文件）'}
           onChange={(text, nextReferences, nextSessions, nextCommand) => {
             if (sendingRef.current) return;
             const receipts = uploads.ready;
@@ -573,8 +573,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
         {dragOverlay}{preview}
         <div className="chat-hero">
           <div className="chat-hero-brand">
-            <img src="./static/easel-icon-transparent.png" alt="" />
-            <span>Easel</span>
+            <img src="./static/xiangya-icon.svg" alt="" />
+            <span>响芽</span>
           </div>
           <h1 className="chat-hero-title">{greeting()}</h1>
           <p className="chat-hero-sub">{apiDirect ? 'API 直连：写文案、策划选题、分析附件。本机工具和自动发布未启用。'

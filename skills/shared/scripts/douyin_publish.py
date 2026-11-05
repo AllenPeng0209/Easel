@@ -22,11 +22,12 @@ import argparse
 import json
 import os
 import random
+import re
 import signal
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import login_state  # noqa: E402
@@ -413,6 +414,211 @@ def _fill_title_desc(page, title: str, desc: str, tags: list[str]):
     if di and body:
         _human_type(page, di, body, delay_ms=(65, 140))
     page.wait_for_timeout(300)
+
+
+def _declare_ai_content(page):
+    """Use the platform's named control, and require its actual checked state.
+
+    Official path: https://trust.douyin.com/article/15868 . These are accessible
+    labels, not inferred class names or an invented request field. An unverified
+    PC UI stops before the public submit click; visible caption text is separate.
+    """
+    def checkbox():
+        control = page.get_by_role('checkbox', name='内容由AI生成', exact=True)
+        return control if control is not None and control.count() == 1 and control.is_visible() else None
+
+    control = checkbox()
+    if control is None:
+        for label in ('高级设置', '发文助手自主声明'):
+            entry = page.get_by_text(label, exact=True)
+            if entry is not None and entry.count() == 1 and entry.is_visible():
+                entry.click()
+            control = checkbox()
+            if control is not None:
+                break
+    if control is None:
+        raise RuntimeError('未能核实抖音原生 AI 内容声明控件，未点击发布')
+    if not control.is_checked():
+        control.check()
+    if not control.is_checked():
+        raise RuntimeError('抖音原生 AI 内容声明未确认选中，未点击发布')
+
+
+def _douyin_content_id(value):
+    if type(value) is int:
+        value = str(value)
+    return value if isinstance(value, str) and re.fullmatch(r'[1-9][0-9]{0,31}', value) else None
+
+
+class _DouyinSubmitAck:
+    """Observe one real UI POST; never call a write endpoint or infer an ID.
+
+    Creator private endpoint evidence (not an official stable API contract):
+    https://github.com/yunsur/douyin-mcp/blob/7e90d139007f141cb7389aa509d8e6e67f7b5840/douyin/creator.go#L528
+    Unknown endpoints/shapes remain unacknowledged. No signed URLs or request
+    bodies are written to diagnostics or returned to the model.
+    """
+    def __init__(self, page, *, title, desc, kind, on_ack, on_ambiguous=None):
+        self.page, self.title, self.desc, self.kind, self.on_ack = page, title, desc, kind, on_ack
+        self.account = self.request = self._ack = None
+        self.seen_exact_request = None
+        self.on_ambiguous = on_ambiguous
+        self.active = True
+        self.ambiguous = False
+        self.attached = callable(getattr(page, 'on', None))
+        self.handlers = (('request', self._request), ('response', self._response))
+        if self.attached:
+            for kind, callback in self.handlers:
+                page.on(kind, callback)
+
+    @property
+    def ack(self):
+        return None if self.ambiguous else self._ack
+
+    def arm(self, account):
+        if not isinstance(account, dict) or account.get('authenticated') is not True or not isinstance(account.get('id'), str):
+            raise RuntimeError('无法绑定本次提交的真实账号')
+        self.account = dict(account)
+
+    def _request(self, request):
+        if not self.active or self.account is None:
+            return
+        try:
+            url = urlparse(request.url)
+            if (request.method != 'POST' or url.scheme != 'https' or url.netloc != 'creator.douyin.com'
+                    or url.path != '/web/api/media/aweme/create_v2/'):
+                return
+            # Every distinct create POST is an external effect in this armed
+            # boundary, including malformed or different-copy requests. Keep
+            # that fact separate from the first fully validated ACK candidate.
+            if self.seen_exact_request is not None and self.seen_exact_request is not request:
+                self.ambiguous = True
+                if self.on_ambiguous is not None:
+                    self.on_ambiguous()
+                return
+            self.seen_exact_request = request
+            body = request.post_data_json
+            common = body.get('item', {}).get('common', {}) if isinstance(body, dict) else {}
+            text = common.get('text')
+            if (not isinstance(text, str) or self.title not in text or self.desc and self.desc not in text
+                    or common.get('media_type') != (4 if self.kind == 'video' else 2)
+                    or not isinstance(common.get('creation_id'), str) or not common['creation_id']):
+                return
+            self.request = request
+        except Exception:
+            return
+
+    def _response(self, response):
+        if not self.active or self.ambiguous or self.request is None or self._ack is not None:
+            return
+        try:
+            if response.request is not self.request or not 200 <= response.status < 300:
+                return
+            body = response.json()
+            if not isinstance(body, dict) or type(body.get('status_code')) is not int or body['status_code'] != 0:
+                return
+            # Both concrete fields are accepted by creator implementations. If
+            # both exist they must agree; upload/video/task IDs are never used.
+            values = {_douyin_content_id(body[key]) for key in ('item_id', 'aweme_id') if key in body}
+            if len(values) != 1 or None in values:
+                return
+            ack = {'kind': 'post', 'accepted': True, 'id': values.pop(), 'source': 'provider_response', 'state': 'submitted'}
+            self.on_ack(self.account, ack)
+            self._ack = ack
+        except Exception:
+            return
+
+    def close(self):
+        self.active = False
+        if self.attached:
+            for kind, callback in self.handlers:
+                try:
+                    self.page.remove_listener(kind, callback)
+                except Exception:
+                    pass
+
+
+def _read_douyin_rows(page):
+    query = urlencode({'count': 50, 'max_cursor': 0, 'status': 0, 'scene': 7, 'device_platform': 'webapp', 'aid': 2906})
+    result = platform_readback._navigation_safe_evaluate(page, platform_readback._JS_FETCH_JSON,
+        [f'{platform_readback.DOUYIN_WORK_LIST_URL}?{query}', 15000, 'no-store'])
+    if not isinstance(result, dict) or result.get('httpStatus') != 200:
+        raise RuntimeError('抖音作品读回未取得有效响应')
+    body = result.get('body')
+    if not isinstance(body, dict) or type(body.get('status_code')) is not int or body['status_code'] != 0:
+        raise RuntimeError('抖音作品读回未获平台确认')
+    data = body.get('data') if isinstance(body.get('data'), dict) else {}
+    rows = data.get('work_list', body.get('aweme_list', data.get('aweme_list', body.get('items'))))
+    if not isinstance(rows, list) or len(rows) > 50 or any(not isinstance(row, dict) for row in rows):
+        raise RuntimeError('抖音作品读回结构未核实')
+    return rows
+
+
+def _read_douyin_receipt_account(page):
+    response = page.evaluate(platform_readback._JS_FETCH_JSON,
+        [platform_readback.DOUYIN_PROFILE_API, 4000, 'no-store'])
+    binding = _account_binding(response)
+    if binding.get('accountIdentityStatus') != 'verified':
+        raise RuntimeError('抖音读回账号身份未核实')
+    return {'id': f"{binding['accountIdKind']}:{binding['accountId']}", 'authenticated': True}
+
+
+def _douyin_explicit_state(row):
+    """Missing/private/review flags never inherit legacy 'published' defaults."""
+    status = row.get('status')
+    if not isinstance(status, dict):
+        return 'unknown', 'unknown'
+    for key, label in (('is_delete', 'deleted'), ('is_prohibited', 'prohibited'),
+                       ('in_reviewing', 'reviewing'), ('is_private', 'private')):
+        if status.get(key) is True:
+            return label, 'private' if label == 'private' else 'unknown'
+    if not all(type(status.get(key)) is bool and status[key] is False
+               for key in ('is_delete', 'is_prohibited', 'in_reviewing', 'is_private')):
+        return 'unknown', 'unknown'
+    # Explicit server visibility is required; submitted visibility intent,
+    # creator-list presence, a title match and audit_status=0 are not proof.
+    visibility = row.get('visibility_type')
+    if type(visibility) is int and visibility == 0:
+        return 'published', 'public'
+    if type(visibility) is int and visibility in (1, 2):
+        return 'private', 'private'
+    return 'unknown', 'unknown'
+
+
+def _verify_douyin_ack(page, *, ack_id, expected_account, since_ms, baseline, attempts=3, delay_s=10):
+    """Only exact ACK ID + authenticated same author + explicit visibility can confirm."""
+    result = platform_readback.ReadbackResult('unverified')
+    for index in range(max(1, attempts)):
+        evidence = {'method': 'authenticated_readback', 'matchMethod': 'ack_id', 'unique': False,
+            'baselineCaptured': baseline is not None and ack_id not in baseline,
+            'sinceMs': since_ms, 'checkedAtMs': int(time.time() * 1000)}
+        try:
+            account = _read_douyin_receipt_account(page)
+            if account != expected_account:
+                raise RuntimeError('抖音读回账号与批准账号不一致')
+            evidence['account'] = account
+            rows = _read_douyin_rows(page)
+            exact = [row for row in rows if _douyin_content_id(row.get('aweme_id', row.get('item_id'))) == ack_id]
+            if len(exact) == 1 and baseline is not None and ack_id not in baseline:
+                row = exact[0]
+                author = row.get('author') if isinstance(row.get('author'), dict) else {}
+                author_id = author.get('uid')
+                if author_id is None or f'uid:{author_id}' != expected_account['id']:
+                    raise RuntimeError('抖音读回作品作者身份未核实')
+                status, visibility = _douyin_explicit_state(row)
+                evidence.update(unique=True, statusSource='explicit' if status != 'unknown' else 'unknown', visibility=visibility)
+                matched = platform_readback.WorkItem(ack_id, str(row.get('desc') or row.get('title') or '')[:1000], status,
+                    platform_readback._epoch_ms(row.get('public_time')))
+                result = platform_readback.ReadbackResult('verified', matched=matched, candidates=[matched], evidence=evidence)
+                if visibility == 'public' or status in ('private', 'prohibited', 'deleted'):
+                    return result
+            else:
+                result = platform_readback.ReadbackResult('unverified', evidence=evidence)
+        except Exception:
+            result = platform_readback.ReadbackResult('readback_error', evidence=evidence, error='精确作品读回尚未核实')
+        if index + 1 < attempts:
+            page.wait_for_timeout(int(delay_s * 1000))
+    return result
 
 
 def _find_publish_button(page):
@@ -1168,7 +1374,7 @@ def cmd_plan(a) -> int:
 
 
 def _readback_verify(p, a, title: str, since_ms: int | None = None,
-                     snapshot_ids: set[str] | None = None):
+                     snapshot_ids: set[str] | None = None, *, ack_id=None, expected_account=None, baseline=None):
     """重开一个干净 context 读回创作者中心作品列表，与本次发布对账（权威判定）。
 
     发布收尾偶发渲染进程崩溃（"Page crashed"）但作品其实已提交成功——崩溃后用它核验，
@@ -1183,6 +1389,9 @@ def _readback_verify(p, a, title: str, since_ms: int | None = None,
             page.goto("https://creator.douyin.com/creator-micro/content/manage",
                       wait_until="domcontentloaded")
             page.wait_for_timeout(3000)     # 页面上下文稳定后再发页内请求
+            if ack_id is not None:
+                return _verify_douyin_ack(page, ack_id=ack_id, expected_account=expected_account,
+                    since_ms=since_ms, baseline=baseline)
             return platform_readback.verify_douyin_publish(
                 page, title=title, since_ms=since_ms, limit=20, attempts=3, delay_s=10,
                 snapshot_ids=snapshot_ids)
@@ -1250,6 +1459,8 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
     final_submit_attempted = False
     readback = None    # 读回对账（权威判定）：platform_readback.ReadbackResult
     snapshot_ids: set[str] = set()   # 发前快照（发布前作品 id 集；发布动作前在页面里抓）
+    baseline = None
+    observer = None
     with sync_playwright() as p:
         ctx = _launch(p, headed=a.headed, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -1283,10 +1494,29 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
                 account = require_current_account() if reporter.enabled else None
                 record_attempt(account)
                 final_submit_attempted = True
+                if observer is not None:
+                    observer.arm(account)
 
             before_verify = require_current_account if reporter.enabled else None
             # 发前快照：记录当前作品 id 集，读回时用于排除旧作品
             snapshot_ids = platform_readback.capture_douyin_snapshot(page)
+            if reporter.enabled:
+                try:
+                    ids = [_douyin_content_id(row.get('aweme_id', row.get('item_id'))) for row in _read_douyin_rows(page)]
+                    if all(ids):
+                        baseline = frozenset(ids)
+                except Exception:
+                    pass  # Failure is distinct from a successfully captured empty baseline.
+
+                def observed_ack(account, ack):
+                    proof = platform_readback.ReadbackResult('unverified', evidence={
+                        'baselineCaptured': baseline is not None and ack['id'] not in baseline,
+                        'sinceMs': started_ms, 'checkedAtMs': int(time.time() * 1000)})
+                    reporter.record('platform_ack', account=account, ack=ack, readback=proof)
+                    state.update(phase='platform_ack', account=account)
+
+                observer = _DouyinSubmitAck(page, title=a.title, desc=a.content or '', kind=kind, on_ack=observed_ack,
+                    on_ambiguous=reporter.mark_submission_ambiguous)
             _go_upload(page)
             human_pace.pace("task-switch")               # 进编辑器的自然停顿
             _switch_tab(page, "video" if kind == "video" else "imagetext")
@@ -1302,6 +1532,8 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
             if kind == "video":
                 _select_ai_cover(page)
             _fill_title_desc(page, a.title, a.content or "", tags)
+            if getattr(a, 'ai_generated', False):
+                _declare_ai_content(page)
             _click_publish(page, len(a.title) + len(a.content or ""), before_submit=before_submit)
             # 点击后轮询等风控墙浮现（2026-09-12 真机发现：墙的渲染晚于 2.5s，
             # 单次检查会扑空 → 漏进收尾 → 对着被墙遮挡的按钮空点超时。≤12s 窗口）
@@ -1348,10 +1580,14 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
             # keep_open 也必须就地读回：同一 user-data-dir 不能再开第二个 context。
             if readback is None:
                 try:
-                    readback = platform_readback.verify_douyin_publish(
-                        page, title=a.title, since_ms=started_ms,
-                        limit=20, attempts=3, delay_s=10,
-                        snapshot_ids=snapshot_ids)
+                    if observer is not None and observer.ack is not None:
+                        readback = _verify_douyin_ack(page, ack_id=observer.ack['id'], expected_account=state['account'],
+                            since_ms=started_ms, baseline=baseline)
+                    else:
+                        readback = platform_readback.verify_douyin_publish(
+                            page, title=a.title, since_ms=started_ms,
+                            limit=20, attempts=3, delay_s=10,
+                            snapshot_ids=snapshot_ids)
                 except Exception as e:  # noqa: BLE001
                     print(f"⚠️ 就地读回失败（将重开核验）：{e}", file=sys.stderr)
                     readback = None
@@ -1362,6 +1598,8 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
             print(f"⚠️ 发布过程渲染异常（{e}）——将重开浏览器核验", file=sys.stderr)
             published = None
         finally:
+            if observer is not None:
+                observer.close()
             try:
                 if not a.keep_open:
                     ctx.close()
@@ -1371,8 +1609,10 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
         # --keep-open 时窗口还占着 profile，禁止再 launch_persistent_context。
         if ((final_submit_attempted or not reporter.enabled) and not a.keep_open
                 and (readback is None or readback.outcome == "readback_error")):
+            extra = ({'ack_id': observer.ack['id'], 'expected_account': state['account'], 'baseline': baseline}
+                     if observer is not None and observer.ack is not None else {})
             readback = _readback_verify(p, a, a.title, since_ms=started_ms,
-                                        snapshot_ids=snapshot_ids)
+                                        snapshot_ids=snapshot_ids, **extra)
     # 结算：以读回对账为权威（四档），界面判定仅作旁证。
     outcome = readback.outcome if readback else "readback_error"
     if not final_submit_attempted:
@@ -1384,7 +1624,8 @@ def _publish_impl(a, kind: str, reporter, state) -> int:
     reason = {'unverified': 'unverified', 'login_required': 'login_required', 'readback_error': 'readback_error'}.get(outcome)
     if observation is not None:
         state['phase'] = 'readback'
-    reporter.record(state['phase'], account=state['account'], readback=observation, reason=reason)
+    reporter.record(state['phase'], account=state['account'],
+        ack=observer.ack if observer is not None else None, readback=observation, reason=reason)
     state['settled'] = True
     if outcome == "verified":
         m = readback.matched
@@ -1414,6 +1655,38 @@ def cmd_publish(a) -> int:
 
 def cmd_publish_video(a) -> int:
     return _publish(a, "video")
+
+
+def cmd_refresh_receipt(a) -> int:
+    """Read only the original Host ACK; never upload, click publish, or mint an operation."""
+    from publication_receipt import PublicationReceiptReporter
+    reporter = PublicationReceiptReporter.from_args(a, 'douyin')
+    previous = reporter.snapshot()
+    if not isinstance(previous, dict):
+        _die('读回刷新必须使用原 Host 私有回执上下文')
+    ack, account = previous.get('ack'), previous.get('account')
+    evidence = (previous.get('readback') or {}).get('evidence') or {}
+    if (previous.get('submissionAmbiguous') is True
+            or not isinstance(ack, dict) or ack.get('source') != 'provider_response' or ack.get('accepted') is not True
+            or ack.get('kind') != 'post' or _douyin_content_id(ack.get('id')) is None
+            or not isinstance(account, dict) or account.get('authenticated') is not True
+            or account.get('id') != previous.get('approvedAccountId')
+            or type(evidence.get('sinceMs')) is not int or evidence['sinceMs'] <= 0):
+        _die('原操作缺少可核实的提交 ACK、账号或时间证明，不能刷新或重新发布')
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as playwright:
+        context = _launch(playwright, headed=False, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            page.set_default_timeout(30000)
+            page.goto(platform_readback.DOUYIN_MANAGE_URL, wait_until='domcontentloaded')
+            result = _verify_douyin_ack(page, ack_id=ack['id'], expected_account=account, since_ms=evidence['sinceMs'],
+                baseline=frozenset() if evidence.get('baselineCaptured') is True else None, attempts=1)
+            reporter.record('readback', account=account, ack=ack, readback=result)
+        finally:
+            context.close()
+    print('已刷新原操作的精确作品读回，未上传或再次提交；最终状态由 Host 核验')
+    return 0
 
 
 def _account_binding(response) -> dict:
@@ -1590,7 +1863,13 @@ def main() -> int:
         p.add_argument("--status-file", help="登录/验证状态 JSON 输出路径（供 Web 后端轮询短信墙）")
         p.add_argument("--receipt-context", help="Host 提供的机器回执上下文文件")
         p.add_argument("--receipt-file", help="机器回执输出文件")
+        p.add_argument('--ai-generated', action='store_true', help='显式选择平台原生内容由AI生成声明；无法核实选中状态则停止')
 
+    refresh = sub.add_parser('refresh-receipt', help='只读刷新原Host操作的精确ACK作品，不上传或重新提交')
+    add_common(refresh)
+    refresh.add_argument('--receipt-context', required=True)
+    refresh.add_argument('--receipt-file', required=True)
+    refresh.set_defaults(func=cmd_refresh_receipt)
     sub.add_parser("check", help="检查 playwright/内核").set_defaults(func=cmd_check)
 
     p = sub.add_parser("login", help="扫码登录并持久化（headless 抠二维码）")

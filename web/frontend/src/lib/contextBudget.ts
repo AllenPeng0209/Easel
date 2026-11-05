@@ -1,5 +1,5 @@
 /** Adapted from DeepSeek Harness ui-conversation/context-occupancy.ts
- * (MIT, ce7073d). Easel uses only explicitly attributed native observations.
+ * (MIT, ce7073d). Xiangya uses only explicitly attributed native observations.
  */
 import type { AgentEvent } from './agentEvents';
 import type { ChatMessage } from './store';

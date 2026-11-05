@@ -1,4 +1,4 @@
-/* Easel theme bridge for DeepSeek Harness's vendored message primitives. */
+/* Xiangya theme bridge for DeepSeek Harness's vendored message primitives. */
 .message-row, .agent-events, .question-resolution {
   --dsw-alias-label-primary: var(--text);
   --dsw-alias-label-secondary: var(--text-secondary);

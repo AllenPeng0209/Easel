@@ -32,7 +32,7 @@ def test_skip_run_installs_web_without_overwriting_native_selection(tmp_path, ru
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls"
-    for command in ("python3", "node", "npm", "easel", "ffmpeg", "openclaw", runtime):
+    for command in ("python3", "node", "npm", "xiangya", "easel", "ffmpeg", "openclaw", runtime):
         source = "#!/bin/bash\n"
         source += f'printf "%s\\n" {shlex.quote(command)} >> {shlex.quote(str(calls))}\n'
         if command == "node":

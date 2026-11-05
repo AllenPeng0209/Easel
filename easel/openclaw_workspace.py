@@ -1,6 +1,6 @@
 """解析 agent 实际读取的 workspace 目录（写入端与读取端的唯一真相）。
 
-为什么需要这个模块：OpenClaw 的默认 workspace 布局在版本之间**变过**，而 Easel 有三处
+为什么需要这个模块：OpenClaw 的默认 workspace 布局在版本之间**变过**，而 响芽 有三处
 各自硬编码了一个路径，于是在不同版本上必然有一处是错的：
 
 - 2026.6.x：非 default profile 的默认 workspace 是 ``~/.openclaw/<profile 拼进目录名>``

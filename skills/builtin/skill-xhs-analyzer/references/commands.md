@@ -62,7 +62,7 @@ JSON：`{ dominantHookPatterns, titleStructure, bodyStructure, engagementProfile
 
 ## 写操作边界
 
-本 Skill 只允许上面的读取与分析命令。不要调用 CLI 内置的发布、评论、回复、点赞、收藏或批量互动命令；这些路径没有 Easel 的确认与内容安全闸门。发布改用 `skill-xhs-publisher`，评论和回复改用 `skill-xhs-comment-reply`。
+本 Skill 只允许上面的读取与分析命令。不要调用 CLI 内置的发布、评论、回复、点赞、收藏或批量互动命令；这些路径没有 响芽 的确认与内容安全闸门。发布改用 `skill-xhs-publisher`，评论和回复改用 `skill-xhs-comment-reply`。
 
 ### `redbook render <file>`（离线，无需 cookie）
 markdown → styled PNG 卡片，用本机 Chrome。

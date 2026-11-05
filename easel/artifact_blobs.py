@@ -5,7 +5,7 @@ packages/deliverables/workspace-changes/src/capture.ts at
 ce7073d51254c26cd63b22a60835b8f948deb447 (MIT, Copyright (c) 2026 DeepSeek).
 The upstream notice is retained in integrations/deepseek-harness/LICENSE.
 
-Streaming copy, flush/fsync and source-change checks reuse Easel's existing
+Streaming copy, flush/fsync and source-change checks reuse Xiangya's existing
 video_workshop.py:deliver/_digest sequence. Unlike upstream's temporary SHA-1
 captures, these SHA-256 blobs survive host restarts. Only already verified source
 handles enter this module; it never reopens the source pathname.

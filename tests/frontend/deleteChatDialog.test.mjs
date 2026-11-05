@@ -52,7 +52,7 @@ test('delete confirmation lists exact scope and dismissal leaves the conversatio
   await fixture(async ({ document, update, click, trigger, calls }) => {
     await update(true);
     const dialog = document.querySelector('[data-delete-chat-dialog]');
-    assert.match(dialog.textContent, /有消息的对话.*浏览器.*Easel.*正文.*删除标记.*原生历史.*保留/s);
+    assert.match(dialog.textContent, /有消息的对话.*浏览器.*响芽.*正文.*删除标记.*原生历史.*保留/s);
     assert.deepEqual(calls, []);
     assert.equal(document.activeElement, dialog.querySelector('[data-delete-chat-dismiss]'));
     await click('[data-delete-chat-dismiss]');

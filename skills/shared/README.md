@@ -6,7 +6,6 @@
 
 - `hotlist-apis.md` — 中文社媒热搜 API（60s / xxapi 聚合源，走代理；禁止直接抓平台官网）
 - `pillar-and-cadence.md` — 内容支柱与发布节奏（策划三角共享知识）
-- `scoring-dimensions.md` — 统一评分维度（七维 + 标尺）
 
 ## 脚本（scripts/）
 
@@ -31,4 +30,4 @@
 - `tts.py` 的 edge 引擎需 `pip install edge-tts` 和到语音服务的网络连接；闭源引擎使用项目 `.env` 中的语音配置。代理按实际网络配置选择。
 - `ai_image.py` / `ai_video.py` / `ai_music.py` 纯标准库（urllib/hmac），但需**用户自备各服务的 API key**（配 .env），见各自 SKILL 的配置章节
 - `data-report`（pandas+matplotlib）、`infographic/gif_chart.py`（matplotlib+Pillow）、`auto-short-video/assemble.py`（ffmpeg）在各自 SKILL 的 scripts/ 下
-- 浏览器账号与发布脚本需 Playwright + Chromium；图片、音视频、统计等脚本还会使用 Pillow、FFmpeg、pandas 等依赖。项目 Python 依赖由 `pip install -e .` 安装，系统工具与浏览器内核由安装脚本补齐；各脚本 `check` / `--help` 和 `easel doctor` 用于确认当前环境。
+- 浏览器账号与发布脚本需 Playwright + Chromium；图片、音视频、统计等脚本还会使用 Pillow、FFmpeg、pandas 等依赖。项目 Python 依赖由 `pip install -e .` 安装，系统工具与浏览器内核由安装脚本补齐；各脚本 `check` / `--help` 和 `xiangya doctor` 用于确认当前环境。

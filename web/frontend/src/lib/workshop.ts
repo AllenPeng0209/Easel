@@ -1,3 +1,4 @@
+import type { PublicationApprovalSubject } from './publicationApproval';
 import { projectUrl, projectFetch } from './projectScope';
 export type ReviewKind = 'human' | 'simulated';
 export type ReviewDecision = 'approved' | 'changes_requested';
@@ -5,7 +6,7 @@ export type ReviewDecision = 'approved' | 'changes_requested';
 export interface WorkshopReference {
   id: string;
   revision: number;
-  engineRevision?: number;
+  shotId?: string;
   artifactId?: string;
   artifactSha256?: string;
 }
@@ -22,7 +23,6 @@ export interface WorkshopDeliverable {
   path: string;
   sha256: string;
   revision: number;
-  engine_revision?: number | null;
   created_at: string;
 }
 
@@ -130,7 +130,6 @@ export interface WorkshopRenderReceipt {
   operation_id: string;
   task_id: string;
   content_revision: number;
-  engine_revision: number;
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   submission_state?: 'unconfirmed' | 'confirmed';
   submission_attempts?: WorkshopSubmissionAttempt[];
@@ -145,6 +144,20 @@ export interface WorkshopRenderReceipt {
   collected_revision?: number;
 }
 
+export interface WorkshopAsset {
+  id: string; kind: 'character' | 'scene' | 'prop' | 'image' | 'video' | 'audio' | 'subtitle';
+  name: string; description?: string; path: string; sha256?: string;
+  versions: { path: string; sha256: string; created_at: string }[];
+}
+export interface WorkshopCandidate { id: string; path: string; sha256: string; created_at?: string; prompt?: string; }
+export interface WorkshopShot {
+  id: string; title: string; prompt: string; seconds: number; asset_ids: string[];
+  candidates: WorkshopCandidate[]; selected_candidate_id?: string | null;
+}
+export const publicationResultLabel = (status?: string) => ({ executing: '正在发布', submitted: '已提交，等待平台回执',
+  confirmed: '已公开发布', unknown: '发布结果待核对', failed: '发布失败', draft_created: '平台草稿已创建',
+  scheduled: '已安排发布' }[status || ''] || '等待发布回执');
+
 export interface WorkshopProject {
   id: string;
   title: string;
@@ -153,11 +166,11 @@ export interface WorkshopProject {
   aspect_ratio: string;
   revision: number;
   stage: string;
-  beeftv_canvas_id: string;
-  runtime_message?: string;
-  engine_current_revision?: number | null;
-  engine_dirty?: boolean;
-  engine_message?: string;
+  script: string;
+  assets: WorkshopAsset[];
+  shots: WorkshopShot[];
+  publication_preparation?: { approval_id: string; payload_hash: string; revision: number; artifact_id: string; subject: PublicationApprovalSubject } | null;
+  publication_runs: { approval_id: string; revision?: number; artifact_id?: string; artifact_sha256?: string; result?: { status: string; message?: string; url?: string } | null }[];
   deliverables: WorkshopDeliverable[];
   reviews: WorkshopReview[];
   comments?: WorkshopComment[];
@@ -169,15 +182,15 @@ export interface WorkshopProject {
 }
 
 export type WorkshopLifecycleKey = 'draft' | 'producing' | 'pending_review'
-  | 'ready_to_publish' | 'published' | 'archived';
+  | 'ready_to_publish' | 'publishing' | 'published' | 'archived';
 
 export const WORKSHOP_LIFECYCLE_STATES: readonly { key: WorkshopLifecycleKey; label: string }[] = [
   { key: 'draft', label: '草稿' }, { key: 'producing', label: '制作中' },
   { key: 'pending_review', label: '待审核' },
-  { key: 'ready_to_publish', label: '待发布' }, { key: 'published', label: '已发布' },
+  { key: 'ready_to_publish', label: '待发布' }, { key: 'publishing', label: '发布中' }, { key: 'published', label: '已发布' },
 ];
 
-/** List status follows saved evidence; entering a project rechecks its live canvas. */
+/** List state is derived from exact deliveries, reviews and publication receipts. */
 export function projectLifecycle(project: WorkshopProject): {
   key: WorkshopLifecycleKey; label: string;
   tone: 'neutral' | 'active' | 'warning' | 'success' | 'danger'; detail: string;
@@ -194,9 +207,12 @@ export function projectLifecycle(project: WorkshopProject): {
   }
   if (render && ['failed', 'cancelled'].includes(render.status)) return state('producing', 'danger',
     render.submission_state === 'unconfirmed' ? '导出提交结果待核对' : render.status === 'cancelled' ? '导出已取消，可进入项目重试' : '导出失败，可进入项目检查');
-  if (artifact && (artifact.revision !== project.revision || (project.engine_dirty
-    && Number.isSafeInteger(project.engine_current_revision) && artifact.engine_revision !== project.engine_current_revision))) {
-    return state('producing', 'warning', '项目已有修改，等待导出新版本');
+  if (artifact && artifact.revision !== project.revision) return state('producing', 'warning', '项目已有修改，等待交付新版本');
+  const run = project.publication_runs?.at(-1);
+  if (run?.result && artifact && artifact.revision === project.revision && run.revision === project.revision && run.artifact_id === artifact.id && run.artifact_sha256 === artifact.sha256) {
+    if (run.result.status === 'confirmed') return state('published', 'success', publicationResultLabel('confirmed'));
+    if (['executing', 'submitted', 'unknown', 'failed'].includes(run.result.status)) return state('publishing',
+      run.result.status === 'failed' ? 'danger' : 'active', publicationResultLabel(run.result.status));
   }
   if (artifact) {
     const publication = project.publications?.find(item => item.revision === project.revision
@@ -212,7 +228,7 @@ export function projectLifecycle(project: WorkshopProject): {
   if (['failed', 'error'].includes(project.stage)) return state('producing', 'danger', '制作遇到问题，请进入项目检查');
   if (['planning', 'generating', 'editing', 'producing'].includes(project.stage)) return state('producing', 'active',
     project.stage === 'planning' ? '正在策划脚本与分镜' : project.stage === 'generating' ? '正在生成镜头素材' : '正在制作与编辑');
-  return state('draft', 'neutral', project.runtime_message || '填写创作要求，开始制作');
+  return state('draft', 'neutral', '在 AI 对话中交办制作任务');
 }
 
 export function filterWorkshopProjects(projects: WorkshopProject[], query = '', status: WorkshopLifecycleKey | 'all' = 'all'): WorkshopProject[] {
@@ -241,7 +257,6 @@ export interface WorkshopProjectPatch {
   brief?: string;
   reference_url?: string;
   aspect_ratio?: string;
-  beeftv_canvas_id?: string;
 }
 
 class WorkshopRequestError extends Error {
@@ -292,8 +307,7 @@ export async function fetchWorkshopProjectsWithActive(selectedId = '', signal?: 
     detail = await fetchWorkshopProject(selected.id, signal);
   } catch (cause) {
     if (signal?.aborted) throw cause;
-    detail = { ...selected, engine_current_revision: null, engine_dirty: true,
-      engine_message: cause instanceof Error ? cause.message : '无法确认画布当前版本，请重新检查。' };
+    throw cause;
   }
   return { projects: projects.map(project => project.id === selected.id ? detail : project) };
 }
@@ -318,20 +332,14 @@ export function recordWorkshopPublication(id: string, input: {
   return request(`/projects/${encodeURIComponent(id)}/publications`, { method: 'POST', body: JSON.stringify(input) });
 }
 
-export function connectWorkshopCanvas(id: string, expectedRevision: number): Promise<WorkshopProject> {
-  return request(`/projects/${encodeURIComponent(id)}/canvas`, {
-    method: 'POST', body: JSON.stringify({ expected_revision: expectedRevision }),
-  });
-}
-
 export function addWorkshopComment(id: string, input: {
-  expected_revision: number; at_seconds: number; notes: string; kind: ReviewKind;
+  expected_revision: number; at_seconds: number; notes: string; kind: ReviewKind; shot_id?: string;
 }): Promise<WorkshopProject> {
   return request(`/projects/${encodeURIComponent(id)}/comments`, { method: 'POST', body: JSON.stringify(input) });
 }
 
 export function addWorkshopReview(id: string, input: {
-  expected_revision: number; artifact_id: string; decision: ReviewDecision; kind: ReviewKind; notes: string;
+  expected_revision: number; artifact_id: string; decision: ReviewDecision; kind: ReviewKind; notes: string; publication_approval_id?: string; publication_payload_hash?: string;
 }): Promise<WorkshopProject> {
   return request(`/projects/${encodeURIComponent(id)}/reviews`, { method: 'POST', body: JSON.stringify(input) });
 }
@@ -373,7 +381,7 @@ function chatWorkshopReceipt(value: unknown): value is WorkshopRenderReceipt {
   return typeof item.id === 'string' && renderReceiptId.test(item.id)
     && typeof item.operation_id === 'string' && item.operation_id.length > 0 && item.operation_id.length <= 256
     && typeof item.task_id === 'string' && (item.task_id === '' || renderTaskId.test(item.task_id))
-    && Number.isSafeInteger(item.content_revision) && Number.isSafeInteger(item.engine_revision)
+    && Number.isSafeInteger(item.content_revision)
     && typeof item.status === 'string' && renderStates.has(item.status)
     && (item.submission_state === undefined || item.submission_state === 'confirmed' || item.submission_state === 'unconfirmed')
     && typeof item.progress === 'number' && item.progress >= 0 && item.progress <= 1
@@ -416,8 +424,7 @@ export async function observeChatWorkshopRender(projectId: string, receipt: Work
   }
   const next = await request<unknown>(renderPath(projectId, receipt.id), { signal });
   if (!chatWorkshopReceipt(next) || next.id !== receipt.id || next.operation_id !== receipt.operation_id
-      || next.task_id !== receipt.task_id || next.content_revision !== receipt.content_revision
-      || next.engine_revision !== receipt.engine_revision) {
+      || next.task_id !== receipt.task_id || next.content_revision !== receipt.content_revision) {
     throw new Error('渲染回执身份不一致');
   }
   return retainRenderReceipt(receipt, next) ? receipt : next;
@@ -454,8 +461,7 @@ export class WorkshopRenderFlow {
     if (this.starting) return this.starting;
     if (this.collecting) throw new Error('正在登记交付，请等待完成后再导出。');
     const existing = this.current;
-    const sameEngine = !project.beeftv_canvas_id || existing?.engine_revision === project.engine_current_revision;
-    if (existing && sameEngine && (existing.content_revision === project.revision
+    if (existing && (existing.content_revision === project.revision
       || existing.collected_revision === project.revision)
       && !['failed', 'cancelled'].includes(existing.status)) return existing;
     const pending = request<WorkshopRenderReceipt>(renderPath(this.projectId), {
@@ -485,9 +491,8 @@ export class WorkshopRenderFlow {
     if (!receipt || receipt.status !== 'succeeded') throw new Error('导出任务尚未成功，不能登记成片。');
     if (receipt.artifact_id) return this.collectedProject || project;
     if (this.collecting) return this.collecting;
-    if (receipt.content_revision !== project.revision
-      || (project.beeftv_canvas_id && project.engine_current_revision !== receipt.engine_revision)) {
-      throw new Error('工程或画布已修改，请重新导出当前成片。');
+    if (receipt.content_revision !== project.revision) {
+      throw new Error('内容已修改，请重新合成当前成片。');
     }
     const pending = request<WorkshopProject>(`${renderPath(this.projectId, receipt.id)}/collect`, {
       method: 'POST', body: JSON.stringify({ expected_revision: receipt.content_revision }),
@@ -512,37 +517,10 @@ export function workshopMediaUrl(path: string): string | null {
   return projectUrl('/api/media/' + parts.map(encodeURIComponent).join('/'));
 }
 
-export function safeRuntimeUrl(value?: string): string | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
-      || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return null;
-    return url.href;
-  } catch { return null; }
-}
-
-export function workshopCanvasUrl(value?: string, canvasId = ''): string | null {
-  const base = safeRuntimeUrl(value);
-  if (!base) return null;
-  if (!canvasId) return base;
-  if (!/^[A-Za-z0-9_-]{1,200}$/.test(canvasId)) return null;
-  return new URL(`/canvas/${encodeURIComponent(canvasId)}`, base).href;
-}
-
 export function deliveryReviewState(project: WorkshopProject, artifact?: WorkshopDeliverable) {
   if (!artifact) return { canReview: false, label: '尚无交付', message: '' };
   if (artifact.revision !== project.revision) return { canReview: false, label: '历史交付',
     message: `这是历史交付。当前工程已更新至 V${project.revision}，请导出当前版本后提交审阅。` };
-  if (project.beeftv_canvas_id) {
-    const current = project.engine_current_revision;
-    if (!Number.isSafeInteger(current) || current! < 0) return { canReview: false, label: '画布版本待确认',
-      message: project.engine_message || '无法确认画布当前版本，请重新检查后再审阅。' };
-    if (project.engine_dirty || artifact.engine_revision !== current) return { canReview: false, label: '需重新导出',
-      message: '画布已有新修改，请重新导出当前成片后再审阅。' };
-    if (project.engine_dirty !== false) return { canReview: false, label: '画布版本待确认',
-      message: '画布版本尚未确认，请重新检查后再审阅。' };
-  }
   return { canReview: true, label: '待审阅', message: '' };
 }
 
@@ -561,4 +539,29 @@ export function reviewSummary(project: WorkshopProject, artifact?: WorkshopDeliv
     decision: latest.decision,
     label: simulated ? (approved ? '模拟审阅通过' : '模拟审阅待修改') : (approved ? '人工审阅通过' : '人工审阅待修改'),
   };
+}
+
+export function saveWorkshopProduction(project: WorkshopProject, input: { script: string; assets: Partial<WorkshopAsset>[]; shots: Partial<WorkshopShot>[] }): Promise<WorkshopProject> {
+  return request(`/projects/${project.id}/production`, { method: 'PUT', body: JSON.stringify({ expected_revision: project.revision, ...input }) });
+}
+export function selectWorkshopCandidate(project: WorkshopProject, shotId: string, candidateId: string): Promise<WorkshopProject> {
+  return request(`/projects/${project.id}/shots/${encodeURIComponent(shotId)}/select`, { method: 'POST', body: JSON.stringify({ expected_revision: project.revision, candidate_id: candidateId }) });
+}
+export function prepareWorkshopPublication(project: WorkshopProject, artifactId: string, input: { platform: string; title: string; body: string; tags: string; aiGenerated: boolean }): Promise<{ project: WorkshopProject }> {
+  return request(`/projects/${project.id}/publish/prepare`, { method: 'POST', body: JSON.stringify({ expected_revision: project.revision, artifact_id: artifactId, ...input }) });
+}
+export async function uploadWorkshopAsset(project: WorkshopProject, file: File, asset: { id: string; kind: WorkshopAsset['kind']; name: string }): Promise<WorkshopProject> {
+  const form = new FormData();
+  form.append('file', file); form.append('expected_revision', String(project.revision));
+  form.append('asset_id', asset.id); form.append('kind', asset.kind); form.append('name', asset.name);
+  const response = await projectFetch(`/api/workshop/projects/${project.id}/assets/upload`, { method: 'POST', body: form });
+  const result = await response.json();
+  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : '素材上传未完成');
+  return result;
+}
+
+export async function openHuobaoStudio(project: WorkshopProject, signal?: AbortSignal): Promise<{ url: string; engine: string; upstream_commit: string }> {
+  const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  return request(`/projects/${project.id}/engine/open`, { method: 'POST', signal,
+    body: JSON.stringify({ expected_revision: project.revision, theme }) });
 }

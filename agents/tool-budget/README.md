@@ -1,7 +1,7 @@
 # Native tool budgets (opt in)
 
 This plugin adds a per-run admission limit to the OpenClaw embedded agent used by
-Easel. The limit is reserved synchronously **before** a tool executes. Failed
+Xiangya. The limit is reserved synchronously **before** a tool executes. Failed
 tools and later policy vetoes consume their reservation. A monotonic deadline
 also runs while the model is thinking. Retries with the same run identity cannot
 reset either limit.
@@ -12,8 +12,8 @@ can execute one target through Tool Search or two directly exposed tools. A
 parallel dispatcher burst can exhaust capacity before its targets begin. Limits
 are conservative and are not a count of external API requests.
 
-The plugin is optional; installing Easel does not enable it or alter existing
-OpenClaw settings. **By default, Easel adds no tool-call count or total runtime
+The plugin is optional; installing Xiangya does not enable it or alter existing
+OpenClaw settings. **By default, Xiangya adds no tool-call count or total runtime
 limit.** Loading this plugin with no `config` or an empty `{}` also registers no
 budget hooks, deadline timers, capability method, or guarded submission method.
 Only explicitly configuring both limits activates enforcement. Existing native
@@ -27,7 +27,7 @@ The native integration is tested against **OpenClaw 2026.10.2, Node 24.19**.
 Use the same OpenClaw version for the CLI and gateway. Other versions and
 alternative harnesses need their own acceptance run before enabling protection.
 
-Merge the following entries into the existing **Easel profile** configuration
+Merge the following entries into the existing **Xiangya profile** configuration
 (normally `~/.openclaw-easel/openclaw.json`). Replace the path with the absolute
 path to this directory. Preserve existing plugin allow entries, paths, and
 configuration; do not replace the entire config with this fragment.
@@ -36,7 +36,7 @@ configuration; do not replace the entire config with this fragment.
 {
   "plugins": {
     "allow": ["easel-tool-budget"],
-    "load": { "paths": ["/absolute/path/to/Easel/agents/tool-budget"] },
+    "load": { "paths": ["/absolute/path/to/Xiangya/agents/tool-budget"] },
     "entries": {
       "easel-tool-budget": {
         "enabled": true,
@@ -60,7 +60,7 @@ run or call identities deny execution. Lifecycle hooks need OpenClaw's
 tool parameters, or results. Without that setting, OpenClaw blocks those hooks
 and every attempted tool is denied because its run was never admitted.
 
-After saving, restart the Easel gateway and inspect the **same profile**:
+After saving, restart the Xiangya gateway and inspect the **same profile**:
 
 ```sh
 openclaw --profile easel plugins inspect easel-tool-budget --runtime --json
@@ -170,6 +170,6 @@ after acceptance; the caller must inspect the original task before retrying,
 and must not generate a fresh idempotency key to bypass an uncertain outcome.
 The native acceptance script now exercises actual tools through this guarded
 entrypoint and rejects a previous registration ID before any model request.
-Existing Easel chat transports and the global strict-mode setting are not yet
+Existing Xiangya chat transports and the global strict-mode setting are not yet
 wired to this endpoint; do not describe those transports as protected by this
 new admission binding until that integration is installed and verified.

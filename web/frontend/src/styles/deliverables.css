@@ -1,4 +1,4 @@
-/* Easel's palette bridge; DeepSeek's card/grid CSS is retained in vendor. */
+/* Xiangya's palette bridge; DeepSeek's card/grid CSS is retained in vendor. */
 .deliverable-section {
   --dsw-static-neutral-00: var(--bg);
   --dsw-static-neutral-50: var(--surface-2);

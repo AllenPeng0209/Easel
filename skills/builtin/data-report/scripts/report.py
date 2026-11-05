@@ -412,7 +412,7 @@ def build_html(df: pd.DataFrame, overview: dict, charts: list[dict],
   <section><h2>数据明细</h2>
     <div class="table-wrap"><table><thead><tr>{thead}</tr></thead>
     <tbody>{trows}</tbody></table></div>{more}</section>
-  <footer>Easel data-report · 由 report.py 自动生成</footer>
+  <footer>响芽 data-report · 由 report.py 自动生成</footer>
 </div></body></html>"""
 
 

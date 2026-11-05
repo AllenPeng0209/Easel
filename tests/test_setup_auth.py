@@ -6,7 +6,7 @@
    `ANTHROPIC_API_KEY=sk-ant-REPLACE_ME`，用户照 README 加了 OpenAI 兼容服务但没删那行时，
    整条 OpenAI 分支被跳过 —— provider 一个字没写，却照样把 primary 设成了 openai/xxx，
    对话直接报 "No route-compatible authentication source is configured for openai"。
-2. `easel doctor` 只静态查 .env，查不出上面那种「.env 填了但 openclaw 没写」，于是全绿。
+2. `xiangya doctor` 只静态查 .env，查不出上面那种「.env 填了但 openclaw 没写」，于是全绿。
 3. setup.ps1 里 `if (Test-UsableKey $x -and $y.ContainsKey(...))` 会进命令解析模式，
    `-and` 被当成参数名静默吞掉，后半个守卫失效（PS 5.1 与 7 同样中招）。
 4. install_tool 用 [Environment]::GetEnvironmentVariable 读用户 PATH 会展开 %VAR%，
@@ -247,7 +247,7 @@ def test_doctor_catches_missing_config(tmp_path, monkeypatch):
      {"rednote-openai": {"apiKey": "local-adapter", "localService": {"command": "python3"}}}),
     # OAuth 型 provider 配置里没有 apiKey，不能误判成坏配置
     ("anthropic/claude-sonnet-4-6", {"anthropic": {"oauthToken": "tok"}}),
-    # 非 provider/model 形式：解析不出 provider 就别猜，交给 easel ping
+    # 非 provider/model 形式：解析不出 provider 就别猜，交给 xiangya ping
     ("some-bare-model", {}),
 ])
 def test_doctor_passes_valid_configs(tmp_path, monkeypatch, primary, providers):

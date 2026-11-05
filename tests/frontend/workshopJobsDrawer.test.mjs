@@ -157,7 +157,7 @@ test('only an operator can confirm cancellation, and the exact task stays pendin
     assert.ok(action);
     await React.act(() => action.click());
     const confirm = document.querySelector('[data-workshop-cancel-confirmation]');
-    assert.match(confirm.textContent, /scoped.*BeefTV.*provider-task/s);
+    assert.match(confirm.textContent, /scoped.*原生.*provider-task/s);
     assert.equal(requests.filter(request => request.options.method === 'POST').length, 0);
     await React.act(() => confirm.querySelector('[data-confirm-workshop-cancel]').click());
     const submitted = requests.filter(request => request.options.method === 'POST');

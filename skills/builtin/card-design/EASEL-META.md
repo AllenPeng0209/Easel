@@ -1,4 +1,4 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
@@ -9,7 +9,7 @@
 | **借鉴方式** | 只借鉴「设计系统 + 硬规则」的方法论，配色/字阶/法则均重新组织表述。确定性质检 `scripts/card_audit.py` 为自研（PIL+numpy 横向边缘密度分析，带 selftest） |
 | **内部关系** | 被 card-xiaohongshu / card-quote / poster-hero / comparison-card / xhs-note-creator / paper-explainer(xhs分支) 在生成 HTML 前引用；渲染仍走 shared/scripts/render_card.py（HTML→PNG） |
 | **对标** | 类似 Anthropic Claude 的 `dataviz` skill——生成前先读的设计系统 + 生成后校验 |
-| **许可** | 随 Easel 项目许可 |
+| **许可** | 随 响芽 项目许可 |
 
 > 整理时间: 2026-08-04
 > 用途: 来源溯源与致谢

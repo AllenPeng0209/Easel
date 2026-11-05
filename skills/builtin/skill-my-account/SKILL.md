@@ -1,7 +1,7 @@
 ---
 name: skill-my-account
 description: |
-  查询用户自己在 Easel 已登录的小红书、抖音、快手、知乎和视频号身份、粉丝、获赞、关注及作品列表。
+  查询用户自己在 响芽 已登录的小红书、抖音、快手、知乎和视频号身份、粉丝、获赞、关注及作品列表。
   当用户问“我登录了哪些号、我是谁、我的粉丝/获赞、我最近发了什么、我有哪些帖子”时，先用本 SKILL 查本地登录态，不要先向用户索要账号名或链接。
   某条帖子的评论抓取与分析分别用 skill-xhs-comment-reply 和 skill-comment-insights。
 layer: general

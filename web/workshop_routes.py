@@ -1,4 +1,4 @@
-"""Video workshop HTTP routes; BeefTV runtime operations are injected by the host."""
+"""Native video workshop routes for AI production, review and publication."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Callable, Literal
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
+from pydantic import BaseModel, ConfigDict, Field, field_validator, ValidationError
 
 from easel.video_workshop import WorkshopCancelAuthorizationError, WorkshopError, WorkshopStore
 from easel.projects import project_id
@@ -50,9 +50,8 @@ class EditProject(Versioned):
     brief: str | None = Field(default=None, max_length=50000)
     reference_url: str | None = Field(default=None, max_length=4096)
     aspect_ratio: Literal["9:16", "16:9", "1:1", "4:5"] | None = None
-    beeftv_canvas_id: str | None = Field(default=None, max_length=160)
 
-    @field_validator("title", "brief", "reference_url", "aspect_ratio", "beeftv_canvas_id")
+    @field_validator("title", "brief", "reference_url", "aspect_ratio")
     @classmethod
     def supplied_values_are_not_null(cls, value):
         if value is None:
@@ -69,6 +68,7 @@ class Comment(Versioned):
     at_seconds: float = Field(ge=0, allow_inf_nan=False)
     notes: str = Field(min_length=1, max_length=10000)
     kind: Literal["human", "simulated"]
+    shot_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,80}$")
 
 
 class Review(Versioned):
@@ -76,11 +76,12 @@ class Review(Versioned):
     decision: Literal["approved", "changes_requested"]
     kind: Literal["human", "simulated"]
     notes: str = Field(default="", max_length=10000)
+    publication_approval_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    publication_payload_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class Delivery(Versioned):
     path: str = Field(min_length=1, max_length=4096)
-    engine_revision: int | None = Field(default=None, strict=True, ge=0)
 
 
 class Archive(Versioned):
@@ -114,14 +115,58 @@ class Publication(Versioned):
         return value
 
 
-def create_router(outputs_provider: Callable[[], Path], runtime_status=None, canvas_creator=None, canvas_state=None,
-                  *, render_start=None, render_status=None, render_collect=None, render_cancel=None,
-                  render_cancel_status=None) -> APIRouter:
-    router = APIRouter(prefix="/api/workshop", tags=["video-workshop"])
+class Asset(RequestModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    kind: Literal['character', 'scene', 'prop', 'image', 'video', 'audio', 'subtitle']
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default='', max_length=4000)
+    path: str = Field(default='', max_length=1024)
+    image_prompt: str | None = Field(default=None, max_length=12000)
+    appearance: str | None = Field(default=None, max_length=4000)
+    styling: str | None = Field(default=None, max_length=4000)
+    lighting: str | None = Field(default=None, max_length=4000)
 
-    def store(http_request: Request) -> WorkshopStore:
-        return WorkshopStore(outputs_provider(),
-                             strict_canvas_bindings=isinstance(getattr(http_request.state, "user", None), dict))
+
+class Shot(RequestModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    title: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(default='', max_length=12000)
+    description: str | None = Field(default=None, max_length=12000)
+    atmosphere: str | None = Field(default=None, max_length=4000)
+    seconds: int = Field(strict=True, ge=1, le=60)
+    asset_ids: list[str] = Field(default_factory=list, max_length=24)
+
+
+class Production(Versioned):
+    raw_content: str | None = Field(default=None, max_length=100000)
+    script: str = Field(default='', max_length=100000)
+    assets: list[Asset] = Field(default_factory=list, max_length=200)
+    shots: list[Shot] = Field(default_factory=list, max_length=200)
+
+
+class Candidate(Versioned):
+    path: str = Field(min_length=1, max_length=1024)
+
+
+class SelectCandidate(Versioned):
+    candidate_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class PublishPreparation(Versioned):
+    artifact_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    platform: str = Field(pattern=r"^[a-z0-9-]{1,64}$")
+    title: str = Field(min_length=1, max_length=1000)
+    body: str = Field(default='', max_length=100000)
+    tags: str = Field(default='', max_length=2000)
+    persona: str = Field(default='', max_length=120)
+    aiGenerated: bool = True
+
+
+def create_router(outputs_provider: Callable[[], Path], *, publication_workflow=None, workshop_sync=None) -> APIRouter:
+    router = APIRouter(prefix='/api/workshop', tags=['video-workshop'])
+
+    def store():
+        return WorkshopStore(outputs_provider())
 
     def perform(action, *args, **kwargs):
         try:
@@ -129,98 +174,139 @@ def create_router(outputs_provider: Callable[[], Path], runtime_status=None, can
         except WorkshopError as error:
             raise HTTPException(error.status, str(error)) from error
         except OSError:
-            raise HTTPException(503, "视频工坊文件暂时无法读写，请保留项目后重试") from None
+            raise HTTPException(503, '视频工坊文件暂时无法读写，请保留项目后重试') from None
 
-    @router.get("/status")
+    @router.get('/status')
     def status():
-        if runtime_status is not None:
+        return {'state': 'running', 'version': 'native', 'message': 'AI 对话制作，工坊审阅后自动发布'}
+
+    @router.get('/projects')
+    def projects():
+        rows = perform(store().list)
+        return {'projects': [perform(workshop_sync, row['id']) for row in rows] if workshop_sync is not None else rows}
+
+    @router.get('/jobs')
+    def jobs():
+        return {'projectId': project_id(), 'jobs': perform(workshop_jobs, store())}
+
+    @router.post('/projects', status_code=201)
+    def create(request: NewProject):
+        return perform(store().create, request.model_dump())
+
+    @router.get('/projects/{identifier}')
+    def project(identifier: str, http_request: Request):
+        current_store = store()
+        if workshop_sync is not None:
+            perform(workshop_sync, identifier)
+        if publication_workflow is not None and getattr(http_request.state, 'project_role', None) in {'owner', 'operator'}:
+            from web.workshop_publication import WorkshopPublication
+            return perform(WorkshopPublication(current_store, publication_workflow()).observe, identifier)
+        return perform(current_store.get, identifier)
+
+    @router.patch('/projects/{identifier}')
+    def edit(identifier: str, request: EditProject):
+        return perform(store().update, identifier, request.expected_revision,
+                       request.model_dump(exclude_unset=True, exclude={'expected_revision'}))
+
+    @router.put('/projects/{identifier}/production')
+    def production(identifier: str, request: Production):
+        return perform(store().production, identifier, request.expected_revision,
+                       request.model_dump(exclude={'expected_revision'}, exclude_none=True))
+
+    @router.post('/projects/{identifier}/assets/upload')
+    async def upload_asset(identifier: str, file: UploadFile = File(...), expected_revision: int = Form(...),
+                           asset_id: str = Form(...), kind: str = Form(...), name: str = Form(...)):
+        import uuid
+        current_store = store()
+        current = perform(current_store.get, identifier)
+        perform(current_store._expect, current, expected_revision)
+        suffix = Path(file.filename or '').suffix.lower()
+        if suffix not in {'.png', '.jpg', '.jpeg', '.webp', '.mp4', '.mov', '.webm', '.wav', '.mp3', '.m4a', '.srt'}:
+            raise HTTPException(422, '请选择图片、音视频或 SRT 字幕')
+        directory = current_store.outputs / ('素材导入-' + identifier[:8])
+        if directory.is_symlink():
+            raise HTTPException(403, '素材导入目录不能是符号链接')
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / (uuid.uuid4().hex + suffix)
+        try:
+            count = 0
+            with path.open('xb') as stream:
+                while chunk := await file.read(1024 * 1024):
+                    count += len(chunk)
+                    if count > 50 * 1024 * 1024:
+                        raise HTTPException(413, '单个素材不能超过 50 MB')
+                    stream.write(chunk)
+            asset = Asset.model_validate({'id': asset_id, 'kind': kind, 'name': name,
+                'path': path.relative_to(current_store.outputs).as_posix()}).model_dump(exclude_none=True)
+            assets = [{key: row[key] for key in ('id', 'kind', 'name', 'description', 'path') if key in row}
+                      for row in current['assets'] if row['id'] != asset_id]
+            assets.append(asset)
+            return perform(current_store.production, identifier, expected_revision, {
+                'script': current['script'], 'assets': assets,
+                'shots': [{key: row[key] for key in ('id', 'title', 'prompt', 'seconds', 'asset_ids')} for row in current['shots']]})
+        except ValidationError:
+            raise HTTPException(422, '素材名称或类型无效') from None
+        finally:
+            path.unlink(missing_ok=True)
+            await file.close()
+
+    @router.post('/projects/{identifier}/shots/{shot_id}/candidates')
+    def candidate(identifier: str, shot_id: str, request: Candidate):
+        return perform(store().add_candidate, identifier, request.expected_revision, shot_id, request.path)
+
+    @router.post('/projects/{identifier}/shots/{shot_id}/select')
+    def select(identifier: str, shot_id: str, request: SelectCandidate):
+        return perform(store().select_candidate, identifier, request.expected_revision, shot_id, request.candidate_id)
+
+    @router.post('/projects/{identifier}/comments')
+    def comment(identifier: str, request: Comment):
+        return perform(store().comment, identifier, request.expected_revision,
+                       request.model_dump(exclude={'expected_revision'}, exclude_none=True))
+
+    @router.post('/projects/{identifier}/publish/prepare')
+    async def prepare_publication(identifier: str, request: PublishPreparation):
+        if publication_workflow is None:
+            raise HTTPException(503, '发布服务尚未配置')
+        from web.workshop_publication import WorkshopPublication
+        try:
+            return await WorkshopPublication(store(), publication_workflow()).prepare(identifier, request.model_dump())
+        except WorkshopError as error:
+            raise HTTPException(error.status, str(error)) from None
+
+    @router.post('/projects/{identifier}/reviews')
+    async def review(identifier: str, request: Review):
+        if publication_workflow is not None:
+            from web.workshop_publication import WorkshopPublication
             try:
-                return runtime_status()
-            except Exception:
-                pass
-        return {"state": "unavailable", "ui_url": "", "version": "", "message": "BeefTV 服务暂不可用"}
+                return await WorkshopPublication(store(), publication_workflow()).review(identifier, request.model_dump())
+            except WorkshopError as error:
+                raise HTTPException(error.status, str(error)) from None
+        return perform(store().review, identifier, request.expected_revision, request.artifact_id,
+                       request.model_dump(include={'kind', 'decision', 'notes'}))
 
-    @router.get("/projects")
-    def projects(http_request: Request):
-        return {"projects": perform(store(http_request).list, render_status=render_status)}
+    @router.post('/projects/{identifier}/archive')
+    def archive(identifier: str, request: Archive):
+        return perform(store().archive, identifier, request.expected_revision, request.archived)
 
-    @router.get("/jobs")
-    def jobs(http_request: Request):
-        role = getattr(http_request.state, "project_role", None)
-        can_operate = (role in ("owner", "operator") or not isinstance(getattr(http_request.state, "user", None), dict))
-        return {"projectId": project_id(), "jobs": perform(workshop_jobs, store(http_request),
-                can_operate=can_operate, cancel_supported=render_cancel is not None and render_cancel_status is not None)}
+    @router.post('/projects/{identifier}/publications')
+    def publication(identifier: str, request: Publication):
+        return perform(store().publication, identifier, request.expected_revision, request.artifact_id,
+                       request.model_dump(mode='json', exclude={'expected_revision', 'artifact_id'}))
 
-    @router.post("/projects", status_code=201)
-    def create(http_request: Request, request: NewProject):
-        return perform(store(http_request).create, request.model_dump(), canvas_creator=canvas_creator)
+    @router.post('/projects/{identifier}/deliverables')
+    def delivery(identifier: str, request: Delivery):
+        return perform(store().deliver, identifier, request.expected_revision, request.path)
 
-    @router.get("/projects/{project_id}")
-    def project(http_request: Request, project_id: str):
-        return perform(store(http_request).get, project_id, canvas_state=canvas_state)
+    @router.post('/projects/{identifier}/renders')
+    def start_render(identifier: str, request: Versioned):
+        return perform(store().start_render, identifier, request.expected_revision)
 
-    @router.patch("/projects/{project_id}")
-    def edit(http_request: Request, project_id: str, request: EditProject):
-        values = request.model_dump(exclude_unset=True, exclude={"expected_revision"})
-        return perform(store(http_request).update, project_id, request.expected_revision, values)
+    @router.get('/projects/{identifier}/renders/{render_id}')
+    def get_render(identifier: str, render_id: str):
+        return perform(store().render_status, identifier, render_id)
 
-    @router.post("/projects/{project_id}/comments")
-    def comment(http_request: Request, project_id: str, request: Comment):
-        return perform(store(http_request).comment, project_id, request.expected_revision,
-                       request.model_dump(exclude={"expected_revision"}))
-
-    @router.post("/projects/{project_id}/canvas")
-    def canvas(http_request: Request, project_id: str, request: Versioned):
-        return perform(store(http_request).attach_canvas, project_id, request.expected_revision, canvas_creator=canvas_creator)
-
-    @router.post("/projects/{project_id}/reviews")
-    def review(http_request: Request, project_id: str, request: Review):
-        return perform(store(http_request).review, project_id, request.expected_revision, request.artifact_id,
-                       request.model_dump(exclude={"expected_revision", "artifact_id"}), canvas_state=canvas_state)
-
-    @router.post("/projects/{project_id}/archive")
-    def archive(http_request: Request, project_id: str, request: Archive):
-        return perform(store(http_request).archive, project_id, request.expected_revision, request.archived)
-
-    @router.post("/projects/{project_id}/publications")
-    def publication(http_request: Request, project_id: str, request: Publication):
-        return perform(store(http_request).publication, project_id, request.expected_revision, request.artifact_id,
-                       request.model_dump(mode="json", exclude={"expected_revision", "artifact_id"}),
-                       canvas_state=canvas_state)
-
-    @router.post("/projects/{project_id}/deliverables")
-    def delivery(http_request: Request, project_id: str, request: Delivery):
-        return perform(store(http_request).deliver, project_id, request.expected_revision, request.path,
-                       engine_revision=request.engine_revision, canvas_state=canvas_state)
-
-    @router.post("/projects/{project_id}/renders")
-    def start_render(http_request: Request, project_id: str, request: Versioned):
-        return perform(store(http_request).start_render, project_id, request.expected_revision,
-                       canvas_state=canvas_state, render_start=render_start)
-
-    @router.get("/projects/{project_id}/renders/{render_id}")
-    def get_render(http_request: Request, project_id: str, render_id: str):
-        return perform(store(http_request).render_status, project_id, render_id, render_status=render_status,
-                       render_cancel_status=render_cancel_status)
-
-    @router.post("/projects/{project_id}/renders/{render_id}/cancel")
-    def cancel(http_request: Request, project_id: str, render_id: str, request: CancelRender):
-        authorize = getattr(http_request.state, "workshop_cancel_authorized", None)
-
-        def require_operation():
-            if authorize is not None and not authorize():
-                raise WorkshopCancelAuthorizationError("当前权限已变更，未发送取消操作", 403)
-
-        def dispatch(project, receipt):
-            return render_cancel(project, receipt, before_post=require_operation)
-
-        return perform(store(http_request).cancel_render, project_id, render_id, request.taskId,
-                       render_cancel=dispatch if render_cancel is not None else None,
-                       render_cancel_status=render_cancel_status, authorize=require_operation)
-
-    @router.post("/projects/{project_id}/renders/{render_id}/collect")
-    def collect_render(http_request: Request, project_id: str, render_id: str, request: Versioned):
-        return perform(store(http_request).collect_render, project_id, render_id, request.expected_revision,
-                       canvas_state=canvas_state, render_status=render_status, render_collect=render_collect)
+    @router.post('/projects/{identifier}/renders/{render_id}/collect')
+    def collect_render(identifier: str, render_id: str, request: Versioned):
+        return perform(store().collect_render, identifier, render_id, request.expected_revision)
 
     return router

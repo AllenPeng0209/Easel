@@ -1,4 +1,4 @@
-# Easel SKILL 元数据
+# 响芽 SKILL 元数据
 
 | 字段 | 值 |
 |------|-----|
@@ -14,11 +14,11 @@
 | **备注** | 612行，含MD→公众号排版转换 |
 
 > 收录时间: 2026-07-16
-> 用途: Easel SKILL 验证测试
+> 用途: 响芽 SKILL 验证测试
 
 ## Wave4 瘦身说明（2026-07-23）
 
-- **Easel 路由名**：frontmatter `name` 与目录统一为 `skill-wechat-publisher`；上游项目名和配置文件名仍为 `wechat-publisher`。
+- **响芽 路由名**：frontmatter `name` 与目录统一为 `skill-wechat-publisher`；上游项目名和配置文件名仍为 `wechat-publisher`。
 - **瘦身**：612 → 117 行。把主题库、配图风格、错误码、反 AI 清单、行内标色、结构库等领域知识下沉到 `references/`；正文只留流程 + 引用指针。
   - references 原有：`anti-ai-checklist.md` / `api_reference.md` / `article-structures.md` / `image-styles-guide.md` / `multi-platform-sync.md` / `newspic-mode.md` / `themes.md` / `typeset-card.md`
   - 本次新增：`inline-markup.md`（8 种行内标色 + 主题文件结构）、`errors.md`（错误码 + 约束）

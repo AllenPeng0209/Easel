@@ -24,7 +24,6 @@ def client(tmp_path, monkeypatch):
         'DEBUG_DIR': 'outputs/_debug',
         'SESSIONS_DIR': 'outputs/_sessions',
         'SCHEDULE_FILE': 'outputs/_schedule.json',
-        'IDEAS_FILE': 'outputs/_ideas.json',
         'WECHAT_CONFIG_YAML': 'wechat-publisher.yaml',
         'OPENCLAW_SESSIONS_DIR': '_openclaw/agents/main/sessions',
     }.items():
@@ -51,19 +50,18 @@ def test_project_lifecycle_keeps_legacy_space_and_validates_names(client):
     assert client.post("/api/projects", json={"name": "  "}).status_code == 400
     # The authentication boundary rejects malformed IP identifiers before any
     # registry lookup, so they cannot be used to probe another space.
-    assert client.get("/api/projects/missing/ideas").status_code == 403
+    assert client.get("/api/projects/missing/schedule").status_code == 403
 
 
 def test_same_named_content_and_schedule_are_isolated(client, tmp_path):
     a, b = create(client, "房产"), create(client, "汽车")
     for project, title in [(a, "房产选题"), (b, "汽车选题")]:
         base = f"/api/projects/{project}"
-        assert client.post(base + "/ideas", json={"title": title}).status_code == 200
         assert client.post(base + "/schedule", json={"title": title, "date": "2026-11-02"}).status_code == 200
-    assert client.get(f"/api/projects/{a}/ideas").json()[0]["title"] == "房产选题"
+    assert client.get(f"/api/projects/{a}/schedule").json()[0]["title"] == "房产选题"
     assert client.get(f"/api/projects/{b}/schedule").json()[0]["title"] == "汽车选题"
-    assert client.get("/api/ideas").json() == []
-    assert not (tmp_path / "outputs" / "_ideas.json").exists()
+    assert client.get("/api/schedule").json() == []
+    assert not (tmp_path / "outputs" / "_schedule.json").exists()
 
 
 def test_accounts_cookies_and_logout_belong_to_project(client, tmp_path):
@@ -103,15 +101,15 @@ def test_concurrent_requests_and_background_threads_keep_original_project(client
     threads = []
     for project in [a, b]:
         with project_context(project, tmp_path):
-            thread = context_thread(target=lambda: web._write_ideas([{"title": "own"}]))
+            thread = context_thread(target=lambda: web._write_schedule([{"title": "own"}]))
             threads.append(thread)
             thread.start()
     for thread in threads:
         thread.join()
     with ThreadPoolExecutor() as pool:
-        responses = list(pool.map(lambda p: client.get(f"/api/projects/{p}/ideas").json(), [a, b]))
+        responses = list(pool.map(lambda p: client.get(f"/api/projects/{p}/schedule").json(), [a, b]))
     assert responses == [[{"title": "own"}], [{"title": "own"}]]
-    assert not (tmp_path / "outputs" / "_ideas.json").exists()
+    assert not (tmp_path / "outputs" / "_schedule.json").exists()
 
 
 def test_runtime_identity_cache_and_agent_context_are_scoped(client, tmp_path):

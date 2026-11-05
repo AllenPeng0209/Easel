@@ -1,4 +1,4 @@
-"""easel ping — 连通性测试（直接运行，不依赖 Docker）。"""
+"""xiangya ping — 连通性测试（直接运行，不依赖 Docker）。"""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def cmd_ping(_args) -> int:
     print(f"  {gateway_step:<50s} "
           f"{GREEN if gateway_ok else RED}{'OK' if gateway_ok else 'FAIL'}{NC}")
     if not gateway_ok:
-        print(f"    └─ 端口来自 {port_source()}；改了 profile/端口后请 python -m easel gateway restart")
+        print(f"    └─ 端口来自 {port_source()}；改了 profile/端口后请 python -m xiangya gateway restart")
     all_ok &= gateway_ok
 
     # Step 2: OpenClaw agent
@@ -115,6 +115,6 @@ def cmd_ping(_args) -> int:
     if all_ok:
         print(f"{GREEN}✓ 全部通过{NC}")
     else:
-        print(f"{RED}✗ 有步骤失败{NC} — 请运行 python -m easel doctor 检查环境")
+        print(f"{RED}✗ 有步骤失败{NC} — 请运行 python -m xiangya doctor 检查环境")
 
     return 0 if all_ok else 1

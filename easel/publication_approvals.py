@@ -2,7 +2,7 @@
 
 The subject/decision boundary follows DeepSeek Harness ui-approval/tool-approval
 (ce7073d, MIT): the Host owns identity, scope and saved grants; the card only
-collects a decision. Durable intent/unknown-result handling reuses Easel's
+collects a decision. Durable intent/unknown-result handling reuses Xiangya's
 interaction_center pattern. No platform is contacted by this module.
 """
 from __future__ import annotations
@@ -72,7 +72,8 @@ _RECEIPT_REASONS = {'machine_receipt_missing', 'dry_run', 'help', 'validation_fa
     'provider_draft_created', 'unsupported_provider_effect', 'provider_submission_acknowledged',
     'readback_unverified', 'readback_missing', 'readback_id_mismatch', 'readback_account_unverified',
     'readback_ambiguous', 'readback_status_unknown', 'readback_time_unverified',
-    'public_readback_confirmed', 'publication_not_public', 'readback_visibility_unknown', 'provider_rejected'}
+    'public_readback_confirmed', 'publication_not_public', 'readback_visibility_unknown', 'provider_rejected',
+    'ambiguous_submission'}
 
 
 def _external_id(value):
@@ -108,8 +109,8 @@ class PublicationApprovalStore:
         self.path = directory / 'publication_approvals.sqlite3'
         with self._database() as database:
             names = {row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-                "('publication_approvals','publication_approval_calls')")}
-            if names == {'publication_approvals', 'publication_approval_calls'}:
+                "('publication_approvals','publication_approval_calls','publication_profile_refresh')")}
+            if names == {'publication_approvals', 'publication_approval_calls', 'publication_profile_refresh'}:
                 return
         with self._database(write=True) as database:
             database.execute('CREATE TABLE IF NOT EXISTS publication_approvals ('
@@ -120,6 +121,10 @@ class PublicationApprovalStore:
             database.execute('CREATE TABLE IF NOT EXISTS publication_approval_calls ('
                 'actor_id TEXT NOT NULL,project_id TEXT NOT NULL,call_key TEXT NOT NULL,request_hash TEXT NOT NULL,'
                 'approval_id TEXT NOT NULL,PRIMARY KEY(actor_id,project_id,call_key))')
+            database.execute('CREATE TABLE IF NOT EXISTS publication_profile_refresh ('
+                'project_id TEXT NOT NULL,platform_id TEXT NOT NULL,actor_id TEXT NOT NULL,approval_id TEXT NOT NULL,'
+                'operation_id TEXT NOT NULL,payload_hash TEXT NOT NULL,token TEXT,last_attempt_ms INTEGER NOT NULL,'
+                'PRIMARY KEY(project_id,platform_id))')
 
     @contextmanager
     def _database(self, *, write=False):
@@ -270,8 +275,11 @@ class PublicationApprovalStore:
     @staticmethod
     def _profile_busy(database, record):
         row = database.execute('SELECT 1 FROM publication_approvals WHERE project_id=? AND platform_id=? '
-            "AND execution_status='executing' AND id<>? LIMIT 1",
-            (record['projectId'], record['subject']['platform']['id'], record['id'])).fetchone()
+            "AND execution_status='executing' AND id<>? UNION ALL "
+            'SELECT 1 FROM publication_profile_refresh WHERE project_id=? AND platform_id=? '
+            'AND token IS NOT NULL LIMIT 1',
+            (record['projectId'], record['subject']['platform']['id'], record['id'],
+             record['projectId'], record['subject']['platform']['id'])).fetchone()
         if row:
             raise PublicationApprovalError('该 IP 的平台账号正在执行另一操作，请等待其结果', 409)
 
@@ -281,7 +289,73 @@ class PublicationApprovalStore:
         _identity(project_id)
         with self._database() as database:
             return database.execute("SELECT 1 FROM publication_approvals WHERE project_id=? AND platform_id=? "
-                "AND execution_status='executing' LIMIT 1", (project_id, platform_id)).fetchone() is not None
+                "AND execution_status='executing' UNION ALL "
+                'SELECT 1 FROM publication_profile_refresh WHERE project_id=? AND platform_id=? '
+                'AND token IS NOT NULL LIMIT 1',
+                (project_id, platform_id, project_id, platform_id)).fetchone() is not None
+
+    @staticmethod
+    def _refresh_reference_matches(record, operation_id, payload_hash):
+        return (record['state'] == 'approved' and isinstance(operation_id, str)
+                and re.fullmatch(r'[a-f0-9]{32}', operation_id) is not None
+                and isinstance(payload_hash, str) and re.fullmatch(r'[a-f0-9]{64}', payload_hash) is not None
+                and record['operationId'] == operation_id and record['payloadHash'] == payload_hash)
+
+    @staticmethod
+    def _refresh_lease_owned(database, record, token, operation_id, payload_hash):
+        if (not PublicationApprovalStore._refresh_reference_matches(record, operation_id, payload_hash)
+                or not isinstance(token, str) or re.fullmatch(r'[a-f0-9]{32}', token) is None):
+            return False
+        return database.execute('SELECT 1 FROM publication_profile_refresh WHERE project_id=? AND platform_id=? '
+            'AND actor_id=? AND approval_id=? AND operation_id=? AND payload_hash=? AND token=?',
+            (record['projectId'], record['subject']['platform']['id'], record['actorId'], record['id'],
+             operation_id, payload_hash, token)).fetchone() is not None
+
+    def reserve_refresh(self, identifier, operation_id, payload_hash, *, min_interval_ms=30000, actor_id, project_id):
+        """Own one browser readback without changing publication or execution authority.
+
+        An active token has no TTL: a timeout cannot prove that its browser has
+        stopped. The managed Host releases it only after confirmed cleanup.
+        """
+        if type(min_interval_ms) is not int or not 0 <= min_interval_ms <= 9_223_372_036_854_775_807:
+            raise PublicationApprovalError('回执核对间隔必须是非负整数')
+        with self._database(write=True) as database:
+            record = self._load(database, identifier, actor_id, project_id)
+            if (not self._refresh_reference_matches(record, operation_id, payload_hash)
+                    or (record.get('result') or {}).get('status') in {'executing', 'confirmed'}):
+                raise PublicationApprovalError('该固定操作当前不能启动回执核对', 409)
+            self._profile_busy(database, record)
+            platform = record['subject']['platform']['id']
+            previous = database.execute('SELECT last_attempt_ms FROM publication_profile_refresh '
+                'WHERE project_id=? AND platform_id=?', (project_id, platform)).fetchone()
+            now = _now_ms()
+            if previous is not None and now - previous[0] < min_interval_ms:
+                return {'reserved': False}
+            token = uuid.uuid4().hex
+            database.execute('INSERT INTO publication_profile_refresh '
+                '(project_id,platform_id,actor_id,approval_id,operation_id,payload_hash,token,last_attempt_ms) '
+                'VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(project_id,platform_id) DO UPDATE SET '
+                'actor_id=excluded.actor_id,approval_id=excluded.approval_id,operation_id=excluded.operation_id,'
+                'payload_hash=excluded.payload_hash,token=excluded.token,last_attempt_ms=excluded.last_attempt_ms',
+                (project_id, platform, actor_id, identifier, operation_id, payload_hash, token, now))
+        return {'reserved': True, 'token': token}
+
+    def release_refresh(self, identifier, token, operation_id, payload_hash, *, cleanup_confirmed, actor_id, project_id):
+        """Release only this exact lease after its owned process is known to have stopped."""
+        with self._database(write=True) as database:
+            record = self._load(database, identifier, actor_id, project_id)
+            if (cleanup_confirmed is not True
+                    or not self._refresh_lease_owned(database, record, token, operation_id, payload_hash)):
+                return False
+            database.execute('UPDATE publication_profile_refresh SET token=NULL WHERE project_id=? AND platform_id=?',
+                (project_id, record['subject']['platform']['id']))
+        return True
+
+    def refresh_owned(self, identifier, token, operation_id, payload_hash, *, actor_id, project_id):
+        """Read-only managed-process preflight for the original actor/IP and operation."""
+        with self._database() as database:
+            record = self._load(database, identifier, actor_id, project_id)
+            return self._refresh_lease_owned(database, record, token, operation_id, payload_hash)
 
     def claim(self, identifier, current_subject, *, actor_id, project_id):
         failure = None
@@ -299,6 +373,16 @@ class PublicationApprovalStore:
             elif record['operationId'] is not None:
                 pass
             else:
+                # A new approval cannot repeat an already confirmed exact
+                # subject. Keep same-operation replay above read-only, and
+                # check this under the same write transaction as the claim.
+                confirmed = database.execute('SELECT 1 FROM publication_approvals WHERE actor_id=? '
+                    "AND project_id=? AND platform_id=? AND payload_hash=? AND execution_status='confirmed' "
+                    'AND id<>? LIMIT 1',
+                    (record['actorId'], record['projectId'], record['subject']['platform']['id'],
+                     record['payloadHash'], record['id'])).fetchone()
+                if confirmed:
+                    raise PublicationApprovalError('相同发布内容已有确认回执，不能重复执行', 409)
                 self._profile_busy(database, record)
                 record.update(operationId=uuid.uuid4().hex, result={'status': 'executing'})
                 self._save(database, record)

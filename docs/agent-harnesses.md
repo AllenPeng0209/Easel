@@ -1,6 +1,6 @@
 # Agent 底座接入与本地测试
 
-Easel 将执行底座与模型供应商分开。Web **设置 → 模型配置 → 对话 → 执行引擎**
+响芽 将执行底座与模型供应商分开。Web **设置 → 模型配置 → 对话 → 执行引擎**
 统一选择仅聊天模式、OpenClaw、OpenCode、Codex 或通用 ACP。
 标准安装默认安装并使用 OpenClaw；设置中可切换到已安装的其它底座，不自动安装 Codex / OpenCode。
 仅使用 `--api` 安装或没有任何 Agent 配置的环境回退到仅聊天模式。
@@ -16,7 +16,7 @@ Easel 将执行底座与模型供应商分开。Web **设置 → 模型配置 �
 
 ## 原生客户端交互并发上限
 
-Easel 默认不增加工具调用次数或任务总运行时间预算。可选的 OpenClaw 工具预算插件
+响芽 默认不增加工具调用次数或任务总运行时间预算。可选的 OpenClaw 工具预算插件
 只有显式配置次数和时长后才注册限制钩子；未配置或空配置保持不限制。
 这不改变底座既有超时、权限或以下协议资源保护。
 
@@ -35,7 +35,7 @@ Codex / ACP 的每条原生连接最多保留 64 个尚未完成的客户端请�
 
 ## OpenClaw 执行侧工具限额（可选）
 
-需要限制每轮实际工具准入次数与执行时限时，可在 Easel 使用的 Gateway 配置中启用
+需要限制每轮实际工具准入次数与执行时限时，可在 响芽 使用的 Gateway 配置中启用
 [工具预算插件](../agents/tool-budget/README.md)。插件在原生执行前预占额度，失败不退款；
 超限取消只针对同一会话中的指定执行，保留并发任务。文档包含配置、运行时核验和真实
 Gateway 验收命令，验证版本为 OpenClaw 2026.10.2 / Node 24.19。
@@ -63,7 +63,7 @@ Codex 不必通过第三方 ACP 桥接，以免丢失原生流式事件和权限
 ## 安装与配置
 
 安装向导默认安装或复用 OpenClaw，也可以在「是否安装或复用 OpenClaw？」处输入 `n`。
-跳过后仍安装 Easel、构建 Web，并准备浏览器登录依赖；不会安装、初始化或启动 OpenClaw，
+跳过后仍安装 响芽、构建 Web，并准备浏览器登录依赖；不会安装、初始化或启动 OpenClaw，
 也不自动安装其它 Agent。无人值守安装可以显式选择：
 
 ```bash
@@ -79,7 +79,7 @@ Windows PowerShell：
 .\setup.ps1 -OpenClaw -NonInteractive
 ```
 
-安装后运行 `easel web`，在「设置 → Agent 底座 → 执行引擎」选择已检测到的 Codex / OpenCode，
+安装后运行 `xiangya web`，在「设置 → Agent 底座 → 执行引擎」选择已检测到的 Codex / OpenCode，
 保存后新建对话。跳过 OpenClaw 的新安装初始为「仅聊天模式」，只需使用已有原生 Agent 时，
 无需填写 OpenClaw 的 API Key；尚未选择 Agent 时也可以进入 Web、管理配置与账号，
 但对话需选择已认证的 Agent 或配置仅聊天模式的模型 API。
@@ -97,7 +97,7 @@ npm install -g @openai/codex
 codex login
 ```
 
-CLI 需要在 Web 的 PATH 中。`easel web` 在非交互启动遗漏 PATH 时，会补充当前服务器账户下
+CLI 需要在 Web 的 PATH 中。`xiangya web` 在非交互启动遗漏 PATH 时，会补充当前服务器账户下
 常见的 npm、nvm、fnm、Volta、用户本地与 OpenCode 安装目录，包括自定义 npm 前缀、
 用户 `.npmrc` 和 Windows 的 `%APPDATA%\npm`。macOS 会兼顾 Homebrew 安装路径。
 只补充 Web 子进程缺失的 PATH，不覆盖已有 CLI 的优先级，不修改系统环境或任何 Agent 配置。
@@ -138,11 +138,11 @@ Web 不提供任意命令输入。内容是 JSON argv 数组，不走 shell。�
   空闲 5 分钟自动回收，最多保留 8 个空闲进程；下一轮按原生 ID 续接，而非新建历史。
   显式停止、超时、协议错误、配置变更、删除对话和服务关闭回收相应进程。
   CLI 单次执行仍在结束后回收进程；不自动重试失败的原生会话为新会话。
-- 删除 Easel 的对话绑定不会删除 Codex / ACP 的原生历史。
-- Easel 提供统一技能目录、Python 环境与输出目录提示，不把 OpenClaw 的 slash 命令当成其他 CLI 的原生命令。
+- 删除 响芽 的对话绑定不会删除 Codex / ACP 的原生历史。
+- 响芽 提供统一技能目录、Python 环境与输出目录提示，不把 OpenClaw 的 slash 命令当成其他 CLI 的原生命令。
 - 内置技能统一存于 `skills/builtin/`，跨技能共享层仍为 `skills/shared/`。
   Windows 安装、OpenClaw 同步、脚本示例和检查入口使用相同路径。
-  Web 启动 Agent 的 cwd 固定为实际安装的 Easel 根目录，不接受用户传入工作目录。
+  Web 启动 Agent 的 cwd 固定为实际安装的 响芽 根目录，不接受用户传入工作目录。
   共享身份、业务规则和人格说明位于 `agents/workspace/`，不绑定某个引擎。
   OpenClaw 沿用 `bash agents/sync.sh` 同步；Codex 通过原有 `developerInstructions`、
   OpenCode / ACP 通过原有消息前缀加载全部工作区 Markdown，再追加当前引擎与运行时路径。
@@ -151,8 +151,8 @@ Web 不提供任意命令输入。内容是 JSON argv 数组，不走 shell。�
   刷新或 Web 重启不会新建原生会话，但清空浏览器数据或换浏览器不等同于迁移聊天记录。
 - ACP 不声明客户端文件 / terminal 能力，因此依赖客户端代执行这些工具的 Agent 暂不支持；
   需要 Agent 自带工具。协议版本必须是 ACP v1；历史续接要求 `loadSession`。
-- “CLI 已安装”不是认证成功或模型在线的证明；用实际消息或 `easel ping` 验证。
-- `easel chat`、`easel skill`、`easel ping` 使用所选底座。新底座不需要 OpenClaw gateway。
+- “CLI 已安装”不是认证成功或模型在线的证明；用实际消息或 `xiangya ping` 验证。
+- `xiangya chat`、`xiangya skill`、`xiangya ping` 使用所选底座。新底座不需要 OpenClaw gateway。
 
 ## 验收建议
 
@@ -202,7 +202,7 @@ Windows 启动入口通过单元测试验证，尚未在真实 Windows 系统做
   114 个技能及共享目录均可读取。运行中的 OpenClaw 工作区只更新未被用户修改的副本，
   不覆盖私人记忆、用户资料或自定义共享脚本。
 - Codex 和 OpenCode 均通过真实三轮对话验证：第二轮复用同一进程与原生会话，
-  真实工具确认 cwd 为 Easel 根目录并读取 `skills/builtin/social-content/SKILL.md`；
+  真实工具确认 cwd 为 响芽 根目录并读取 `skills/builtin/social-content/SKILL.md`；
   回收进程后第三轮续接相同原生会话，正确回忆前文。
 - 删除浏览器初始化中的过期历史清空逻辑，回归覆盖旧会话、当前会话和断线恢复标记保留。
   页面记录仍保存在浏览器本地，不声称支持跨浏览器同步。

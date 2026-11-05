@@ -1,7 +1,7 @@
 /**
  * Request-local archive confirmation adapted from DeepSeek Harness
  * ui-workspace/src/client/session-actions/ArchiveSession.tsx @ ce7073d (MIT).
- * Easel exposes the independent background and exact-stop intents.
+ * 响芽 exposes the independent background and exact-stop intents.
  */
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';

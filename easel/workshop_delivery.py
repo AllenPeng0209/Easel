@@ -1,4 +1,4 @@
-"""Shared strategy-to-workshop workflow, using an authenticated host transport."""
+"""Deliver production manifests directly to the authenticated video workshop."""
 from __future__ import annotations
 
 import hashlib
@@ -6,10 +6,8 @@ import json
 from pathlib import Path
 import re
 import subprocess
-import time
 from urllib.parse import quote
 
-from integrations.beeftv.media_import import import_media
 from scripts.video_workshop import identifier, relative_media
 
 
@@ -64,6 +62,11 @@ def load_episodes(manifest: Path, outputs: Path, selected: set[str], plan_only: 
                 raise ValueError("关联工坊编号无效")
             episode["linked_workshop"] = linked
             episode["legacy_marker"] = f"Easel 制作批次 {legacy_batch}/{episode_id}"
+        if 'production' in item:
+            episode['production'] = item['production']
+        if 'publication' in item:
+            episode['publication'] = item['publication']
+        episode['path'] = path
         if not plan_only:
             media = {}
             for relative in dict.fromkeys([path, *sources]):
@@ -71,6 +74,7 @@ def load_episodes(manifest: Path, outputs: Path, selected: set[str], plan_only: 
                 if source.resolve(strict=True) != source or not source.is_file():
                     raise ValueError(f"成片路径须在当前 IP 的 outputs 内：{relative}")
                 media[relative] = (source, probe_video(source))
+            episode['master'] = media[path][0]
             _, width, height, fps = media[path][1]
             episode["media"] = [media[relative] for relative in sources]
             episode["output"] = {"width": width, "height": height, "fps": fps, "sampleRate": 48000}
@@ -82,37 +86,7 @@ def load_episodes(manifest: Path, outputs: Path, selected: set[str], plan_only: 
     return episodes
 
 
-def save_timeline(beeftv, canvas: str, workshop_id: str, episode: dict, authorize) -> None:
-    authorize()
-    snapshot = beeftv.operation("canvas.get", {"canvasId": canvas})["canvas"]
-    existing = snapshot.get("timeline") or {}
-    if existing.get("clips"):
-        if all(clip.get("id", "").startswith(f"{workshop_id}-") for clip in existing["clips"]):
-            return
-        raise ValueError("当前工坊已经有人工时间线，请使用新制作批次")
-    clips = []
-    cursor = 0
-    revision = snapshot["revision"]
-    for index, (source, info) in enumerate(episode["media"], start=1):
-        authorize()
-        title = f"{index:02d} · {source.stem}"
-        asset = import_media(source, title, canvas)
-        revision = asset["revision"]
-        duration = info[0]
-        clips.append({"id": f"{workshop_id}-{index}", "kind": "video", "nodeId": asset["nodeId"],
-                      "trackId": "picture", "title": title, "startMs": cursor, "durationMs": duration})
-        cursor += duration
-    authorize()
-    beeftv.operation("canvas.timeline.update", {
-        "canvasId": canvas, "expectedRevision": revision, "timeline": {
-            "version": 2, "durationMs": cursor,
-            "tracks": [{"id": "picture", "kind": "video", "label": "成片镜头"}],
-            "clips": clips, "output": episode["output"],
-        },
-    }, operation_id=f"easel-episode-timeline-{workshop_id}")
-
-
-def produce_episode(api, beeftv, base: str, ip: str, episode: dict, timeout: float,
+def produce_episode(api, base: str, ip: str, episode: dict, timeout: float,
                     plan_only: bool = False, *, authorize=lambda: None) -> dict:
     title, marker = episode["title"], episode["marker"]
     projects = api("GET", "/workshop/projects")["projects"]
@@ -133,45 +107,25 @@ def produce_episode(api, beeftv, base: str, ip: str, episode: dict, timeout: flo
     workshop = project["id"]
     endpoint = f"/workshop/projects/{workshop}"
     link = f"{base}/#/business/{quote(ip, safe='')}/workshop/{workshop}"
-    ideas = api("GET", "/ideas")
-    idea = next((row for row in ideas if re.fullmatch(
-        re.escape(link) + r"(?:/artifact/[a-f0-9]{32})?", (row.get("provenance") or {}).get("url", ""))), None)
-    if idea is None:
-        idea = api("POST", "/ideas", {
-            "title": title, "note": episode["brief"], "source": "成片制作",
-            "status": "doing", "provenance": {"platform": "easel_workshop", "url": link},
-        })
-    identifiers = {"episode": episode["id"], "title": title, "ideaId": idea["id"], "workshopId": workshop,
-                   "ideaUrl": f"{base}/#/business/{quote(ip, safe='')}/idea/{idea['id']}"}
+    identifiers = {"episode": episode["id"], "title": title, "workshopId": workshop}
     if plan_only:
         return {**identifiers, "workshopUrl": link, "stage": project["stage"]}
     project = api("GET", endpoint)
-    if not project["beeftv_canvas_id"]:
-        project = api("POST", endpoint + "/canvas", {"expected_revision": project["revision"]})
-    if not project["beeftv_canvas_id"]:
-        raise RuntimeError("无法关联 BeefTV 画布，请恢复运行时后重试原批次")
-    if not project["deliverables"]:
-        save_timeline(beeftv, project["beeftv_canvas_id"], workshop, episode, authorize)
-        revision = {"expected_revision": project["revision"]}
-        render = api("POST", endpoint + "/renders", revision)
-        render_path = endpoint + "/renders/" + render["id"]
-        deadline = time.monotonic() + timeout
-        while render["status"] in {"queued", "running"}:
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"原渲染 {render['id']} 仍在运行，可再次执行原批次收取")
-            time.sleep(2)
-            render = api("GET", render_path)
-        if render["status"] != "succeeded":
-            raise RuntimeError(f"渲染 {render['id']} 状态为 {render['status']}，请在工坊核对")
-        project = api("POST", render_path + "/collect", revision)
+    if episode.get('production'):
+        project = api('PUT', endpoint + '/production', {'expected_revision': project['revision'], **episode['production']})
+    current = project['deliverables'][-1] if project['deliverables'] else None
+    digest = _digest_master(episode['master'])
+    if not current or current['sha256'] != digest or current['revision'] != project['revision']:
+        project = api('POST', endpoint + '/deliverables', {'expected_revision': project['revision'], 'path': episode['path']})
     artifact = project["deliverables"][-1]
     final_link = f"{link}/artifact/{artifact['id']}"
     media_path = "/api/projects/" + quote(ip, safe="") + "/media/" + quote(artifact["path"])
-    if idea["status"] == "doing":
-        idea = api("PUT", "/ideas/" + identifier(idea["id"]),
-                   {key: idea[key] for key in ("title", "note", "source")} | {
-                       "status": "done", "provenance": {"platform": "easel_workshop", "url": final_link}})
-    return {**identifiers, "artifactId": artifact["id"], "canvasId": project["beeftv_canvas_id"],
-            "renderId": artifact["render_id"], "engineRevision": artifact["engine_revision"],
+    return {**identifiers, "artifactId": artifact["id"], "revision": project["revision"],
             "sha256": artifact["sha256"], "path": artifact["path"],
-            "workshopUrl": final_link, "mediaUrl": base + media_path}
+            "workshopUrl": final_link, "mediaUrl": base + media_path,
+            **({"publication": episode["publication"]} if episode.get("publication") else {})}
+
+
+def _digest_master(path):
+    from easel.video_workshop import _digest
+    return _digest(path)

@@ -106,3 +106,10 @@ skills/builtin/video-production/vendor/**/*large-v3*
 
 # Full pinned upstream checkout; migrated runtime modules retain their own MIT notice.
 /integrations/deepseek-harness/upstream/
+
+# Vendored Huobao source is tracked; dependencies and build products are reproducible.
+/integrations/huobao-drama/source/**/node_modules/
+/integrations/huobao-drama/source/frontend/.nuxt/
+/integrations/huobao-drama/source/frontend/.output/
+/integrations/huobao-drama/source/frontend/dist/
+/integrations/huobao-drama/source/frontend/dist

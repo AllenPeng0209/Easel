@@ -6,7 +6,7 @@
 
 B30初版用进程内 `_easel_publish_thread_id` 判断工具是否已注册。CLI连接或服务重建后缓存消失，即使原生线程已经持久保存工具也被错误声明为不可用。
 
-现在工具定义是否存在交给原生SDK持久状态及实际路由；Easel只依据当前Host callback是否启用来开放该通道，并保持thread/turn/name/namespace/callId/schema检查。新线程仍在start注册，resume不追加dynamicTools、不换native ID。原生清单中确实从未注册的旧线程不能假装具备工具；保留其历史并提示显式新会话/迁移。
+现在工具定义是否存在交给原生SDK持久状态及实际路由；响芽只依据当前Host callback是否启用来开放该通道，并保持thread/turn/name/namespace/callId/schema检查。新线程仍在start注册，resume不追加dynamicTools、不换native ID。原生清单中确实从未注册的旧线程不能假装具备工具；保留其历史并提示显式新会话/迁移。
 
 工具可用不代表业务批准：恢复后的每次请求仍走原有actor/IP、账号、固定内容版本、人工决定和幂等操作。没有增加授权账本或用模型文字替代发布许可。
 
@@ -17,7 +17,7 @@ B30初版用进程内 `_easel_publish_thread_id` 判断工具是否已注册。C
 ## 证据
 
 - 原生协议审计：`.scratch/b30/native-restore-audit.md`、`native-restore-probe-results.json`。仅两条自有QA模拟会话，新的CLI进程分别收到easel_ask_user和easel_publish，ID不变，resume不带新定义/path/history，发布回调固定拒绝。
-- 当前真实Easel适配器：`.scratch/native-restore/adapter_probe.py`、`adapter-proof.json`。独立新进程恢复同一QA native ID，恰好一次合法Host callback、返回rejected/no dispatch、模型完成AUDIT_DONE。shell/apps/browser/MCP/web search禁用，未加载发布器或社媒账号浏览器。
+- 当前真实响芽适配器：`.scratch/native-restore/adapter_probe.py`、`adapter-proof.json`。独立新进程恢复同一QA native ID，恰好一次合法Host callback、返回rejected/no dispatch、模型完成AUDIT_DONE。shell/apps/browser/MCP/web search禁用，未加载发布器或社媒账号浏览器。
 - 真stub-RPC双子进程回归先红后绿；相关组69项通过，相邻present/question/权限/workspace回归215项通过，独立review相关174项通过。
 - 初次scratch适配器探针把AUDIT_DONE当单个token检查，因正常流式拆分而断言失败；改为累加tokens后通过，实际应用代码没有该故障。
 

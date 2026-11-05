@@ -163,28 +163,22 @@ def _workshop_generation(workshop: WorkshopStore, projects: list[dict], metadata
                     or artifact.get("sha256") != metadata["sha256"]):
                 continue
             artifact_id, render_id = artifact.get("id"), artifact.get("render_id")
-            revision, engine = artifact.get("revision"), artifact.get("engine_revision")
+            revision = artifact.get("revision")
             if (not all(isinstance(value, str) and _WORKSHOP_ID.fullmatch(value) for value in (artifact_id, render_id))
-                    or type(revision) is not int or revision < 1 or type(engine) is not int or engine < 0):
+                    or type(revision) is not int or revision < 1):
                 continue
             for receipt in renders:
                 if (not isinstance(receipt, dict) or receipt.get("id") != render_id
                         or receipt.get("artifact_id") != artifact_id or receipt.get("status") != "succeeded"
                         or type(receipt.get("collected_revision")) is not int or receipt["collected_revision"] != revision
-                        or type(receipt.get("engine_revision")) is not int or receipt["engine_revision"] != engine
                         or not WorkshopStore._submission_confirmed(receipt)):
                     continue
                 task, content_revision = receipt.get("task_id"), receipt.get("content_revision")
                 if (not isinstance(task, str) or not _WORKSHOP_ID.fullmatch(task)
                         or type(content_revision) is not int or content_revision < 1):
                     continue
-                try:
-                    workshop._assert_canvas_binding(project, receipt)
-                except WorkshopError:
-                    continue
-                matches.append({"source": "beeftv_workshop", "workshopProjectId": project_id,
-                                "renderId": render_id, "taskId": task, "contentRevision": content_revision,
-                                "engineRevision": engine})
+                matches.append({"source": "native_workshop", "workshopProjectId": project_id,
+                                "renderId": render_id, "taskId": task, "contentRevision": content_revision})
     return matches[0] if len(matches) == 1 else None
 
 
@@ -199,7 +193,7 @@ def _compare_media(store: ChatArtifactStore, before: dict, after: dict, left_mim
                 _verify_media_type(stream, mime, metadata["size"])
         except (SnapshotError, OSError) as error:
             raise ArtifactError("固定媒体版本不可用或已损坏", getattr(error, "status_code", 409)) from None
-    workshop = WorkshopStore(store.outputs, strict_canvas_bindings=True) if family == "video" else None
+    workshop = WorkshopStore(store.outputs) if family == "video" else None
     projects = []
     if workshop is not None:
         try:

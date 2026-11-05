@@ -1,10 +1,10 @@
 # 贡献指南
 
-感谢参与 Easel。项目以 Apache-2.0 开源，欢迎 Issue 和 PR。
+感谢参与 响芽。项目以 Apache-2.0 开源，欢迎 Issue 和 PR。
 
 ## 反馈 Issue
 
-- **环境问题**：附上 OS、Python、Node.js、`openclaw --version` 版本、`easel doctor` 输出和 `easel gateway logs` 相关片段。先查 [已知问题](docs/known-issues.md)。
+- **环境问题**：附上 OS、Python、Node.js、`openclaw --version` 版本、`xiangya doctor` 输出和 `xiangya gateway logs` 相关片段。先查 [已知问题](docs/known-issues.md)。
 - **功能建议 / 新技能**：先开 Issue 说明场景与预期产物，确认方向后再动手，避免大改撞车。
 
 ## 提交前必跑
@@ -31,7 +31,7 @@ python -m pytest tests/                      # 核心单测（不会调用真实
 
 - Python ≥ 3.10；Web 为 FastAPI + React（`web/`），CLI 入口在 `easel/`。
 - 超时只改 [`easel/timeouts.py`](easel/timeouts.py) 单一真相源，不要在调用处各写各的。
-- OpenClaw 的缺陷跟随上游修复，不在本仓库内置补丁；环境问题沉淀到 `easel doctor` 或 [known-issues](docs/known-issues.md)。
+- OpenClaw 的缺陷跟随上游修复，不在本仓库内置补丁；环境问题沉淀到 `xiangya doctor` 或 [known-issues](docs/known-issues.md)。
 - 凭证不进仓库：`.env` 不入库；测试不得调用真实模型、真实平台或外部消息渠道。
 
 ## PR 约定

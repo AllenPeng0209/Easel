@@ -13,7 +13,7 @@ layer: plan
 > 产出一份可落地的营销活动方案，覆盖目标→节奏→内容矩阵→玩法→资源→风险→复盘指标。
 > 领域方法在 `references/campaign-frameworks.md`，本文件只讲流程。**定义规则与模型，不套具体案例。**
 
-> 单条选题蹭热点见 skill-trend-rider；系列内容规划见 skill-content-strategy；
+> 系列内容规划见 skill-content-strategy；
 > 商单/联名见 skill-collab-proposal；本 SKILL 做**一次营销活动的整体策划**。
 
 ## 输入
