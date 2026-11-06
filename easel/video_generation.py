@@ -369,6 +369,24 @@ class VideoGenerationService:
                 self._check_replacement_records(plan, project)
         return self.plan_store.decide(plan_id, scope_hash, approved)
 
+    def plan_reconfirmation(self, workshop_id, plan_id):
+        """Host-only preflight for a new human card about an unchanged expired scope."""
+        self.authorize()
+        self._owned_project(workshop_id)
+        plan = self.plan_store.reconfirmation(plan_id, workshop_id=workshop_id)
+        for clip in plan['clips']:
+            self._verify_references(clip)
+        return plan
+
+    def plan_reconfirmation_decision(self, workshop_id, plan_id, scope_hash, expired_at, approved):
+        self.authorize()
+        self._owned_project(workshop_id)
+        plan = self.plan_store.get(plan_id, workshop_id=workshop_id)
+        if approved is True:
+            for clip in plan['clips']:
+                self._verify_references(clip)
+        return self.plan_store.reconfirm(plan_id, scope_hash, expired_at, approved, workshop_id=workshop_id)
+
     def _verify_references(self, spec):
         refs = spec.get('references', [])
         if refs:

@@ -8,12 +8,13 @@ from tests.test_chat_artifacts import artifact_http_environment
 pytestmark = pytest.mark.access_integration
 
 @pytest.mark.access_integration
+@pytest.mark.parametrize('expired_reconfirmation', [False, True])
 @pytest.mark.parametrize(('manual_answer', 'resolved_by'), [
     (True, None), (False, None), (True, 'user'), (True, 'human'),
     (True, 'default'), (True, 'timeout'), (True, 'model'), (True, 'publication_host'),
 ])
 def test_actual_native_host_callback_requires_current_turn_human_answer(
-        artifact_http_environment, monkeypatch, manual_answer, resolved_by):
+        artifact_http_environment, monkeypatch, manual_answer, resolved_by, expired_reconfirmation):
     import ast
     import asyncio
     from pathlib import Path
@@ -35,6 +36,12 @@ def test_actual_native_host_callback_requires_current_turn_human_answer(
     monkeypatch.setattr(bridge, 'NativeVideoClient', lambda **kwargs: client)
     private = root.parent / (root.name + '-production-private')
     monkeypatch.setattr(bridge, 'generation_state_directory', lambda *args: private / 'video-generations')
+    clock = [1000]
+    if expired_reconfirmation:
+        import easel.video_production_plans as plans
+        original_store = plans.VideoProductionPlanStore
+        monkeypatch.setattr(plans, 'VideoProductionPlanStore',
+            lambda *args, **kwargs: original_store(*args, **kwargs, now_ms=lambda: clock[0]))
     monkeypatch.setattr(web, '_HARNESS_QUESTIONS', ActorMap())
     monkeypatch.setattr(web, '_HARNESS_QUESTION_RESULTS', ActorMap())
     monkeypatch.setenv('EASEL_AGENT_APPROVAL_WAIT_SECONDS', '2' if manual_answer else '.02')
@@ -52,6 +59,11 @@ def test_actual_native_host_callback_requires_current_turn_human_answer(
         with actor_context(actor), project_context('default', root):
             plan = await callback({'action': 'plan', 'workshopId': workshop['id'],
                                    'manifestPath': 'family-case/production.json'}, 'plan-call')
+            if expired_reconfirmation:
+                service = bridge._service(repository=web.PROJECT_ROOT, workspace=root, outputs=root / 'outputs',
+                    actor_id=actor['id'], ip='default', session_id='production-chat', authorize=lambda: None)
+                service.plan_decision(workshop['id'], plan['planId'], plan['scopeHash'], True)
+                clock[0] = plan['expiresAt'] + 10
             task = asyncio.create_task(callback({'action': 'approve_plan', 'workshopId': workshop['id'],
                                                   'planId': plan['planId']}, 'approval-call'))
             try:
@@ -78,7 +90,8 @@ def test_actual_native_host_callback_requires_current_turn_human_answer(
                             {'action': 'plan_status', 'workshopId': workshop['id'], 'planId': plan['planId']},
                             repository=web.PROJECT_ROOT, workspace=root, outputs=root / 'outputs',
                             actor_id=actor['id'], ip='default', session_id='production-chat', authorize=lambda: None)
-                        assert current['state'] == 'pending' and current['clipClaims'] == []
+                        assert current['state'] == ('expired' if expired_reconfirmation else 'pending')
+                        assert current['clipClaims'] == []
                         # A rejected automatic answer must leave the original
                         # question available to its real current-turn user.
                         answer = await web.api_question_answer(web.QuestionAnswerRequest(
@@ -87,6 +100,11 @@ def test_actual_native_host_callback_requires_current_turn_human_answer(
                     assert answer['ok'] is True
                 result = await asyncio.wait_for(task, 2)
                 assert result['state'] == ('approved' if manual_answer else 'declined')
+                if expired_reconfirmation:
+                    assert result['scopeHash'] == plan['scopeHash']
+                    assert len(result['reconfirmations']) == 1
+                    if manual_answer:
+                        assert result['expiresAt'] == clock[0] + 900000
                 assert submitted == []
             finally:
                 if not task.done():

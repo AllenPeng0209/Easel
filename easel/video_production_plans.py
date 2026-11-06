@@ -147,6 +147,36 @@ def _scope_fingerprint(actor_id, ip, session_id, workshop_id, value):
     return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 
 
+def _reconfirmation_ttl(record):
+    """Validate the append-only decision history and retain the original TTL."""
+    history = record.get('reconfirmations', [])
+    if not isinstance(history, list) or 'reconfirmations' in record and not history:
+        raise ValueError('invalid reconfirmation history')
+    original_expiry = history[0]['previousExpiresAt'] if history else record['expiresAt']
+    ttl = original_expiry - record['createdAt']
+    if type(original_expiry) is not int or not 1000 <= ttl <= 86400000:
+        raise ValueError('invalid original approval lifetime')
+    previous_expiry, previous_decision = original_expiry, None
+    for index, item in enumerate(history):
+        if (set(item) != {'scopeHash', 'previousExpiresAt', 'previousDecidedAt', 'decidedAt', 'decision', 'expiresAt'}
+                or item['scopeHash'] != record['scopeHash'] or item['previousExpiresAt'] != previous_expiry
+                or item['decision'] not in {'approved', 'declined'}
+                or type(item['decidedAt']) is not int or item['decidedAt'] < previous_expiry
+                or item['previousDecidedAt'] is not None and (type(item['previousDecidedAt']) is not int
+                    or not record['createdAt'] <= item['previousDecidedAt'] < previous_expiry)
+                or index and item['previousDecidedAt'] != previous_decision
+                or type(item['expiresAt']) is not int
+                or item['expiresAt'] != (item['decidedAt'] + ttl if item['decision'] == 'approved' else previous_expiry)
+                or item['decision'] == 'declined' and index != len(history) - 1):
+            raise ValueError('invalid reconfirmation decision')
+        previous_expiry, previous_decision = item['expiresAt'], item['decidedAt']
+    if history and (record['expiresAt'] != previous_expiry or record.get('decidedAt') != previous_decision
+            or record['state'] not in ({'declined'} if history[-1]['decision'] == 'declined'
+                                      else {'approved', 'expired', 'superseded'})):
+        raise ValueError('reconfirmation outcome changed')
+    return ttl
+
+
 class VideoProductionPlanStore:
     def __init__(self, state_directory: Path, *, workspace: Path, actor_id: str, ip: str, session_id: str,
                  repository: Path, authorize=lambda: None, now_ms=None,
@@ -248,6 +278,7 @@ class VideoProductionPlanStore:
                     or type(record['expiresAt']) is not int or record['expiresAt'] <= record['createdAt']
                     or record['state'] not in {'pending', 'approved', 'declined', 'expired', 'superseded'}):
                 raise ValueError
+            _reconfirmation_ttl(record)
         except (IndexError, KeyError, TypeError, ValueError):
             raise VideoProductionPlanError('Host 制作批准记录完整性未通过，未准入生成', 503) from None
         return record
@@ -414,6 +445,42 @@ class VideoProductionPlanStore:
                     parent.update(state='superseded', supersededBy=record['planId'], supersededAt=now)
                     self._save(database, parent)
             record.update(state=desired, decidedAt=now)
+            self._save(database, record)
+            return record
+
+    def _reconfirmable(self, database, record):
+        now = self.now_ms()
+        if (type(now) is not int or now < record['expiresAt'] or record['state'] != 'expired'
+                or self._claims(database, record['planId']) or record.get('supersession')):
+            raise VideoProductionPlanError('仅能重新确认已过期、零提交的普通原制作计划', 409)
+        if self._active_workshop_plans(database, record['workshopId'], now=now):
+            raise VideoProductionPlanError('同一工坊已有已批准制作范围，不能恢复旧范围', 409)
+        return now
+
+    def reconfirmation(self, plan_id, *, workshop_id):
+        """Host-only preflight; does not grant approval or extend a deadline."""
+        self.authorize()
+        with self._database(write=True) as database:
+            record = self._record(database, self._load(database, plan_id, workshop_id))
+            self._reconfirmable(database, record)
+            return record
+
+    def reconfirm(self, plan_id, expected_hash, expired_at, approved, *, workshop_id):
+        """Settle one expired epoch only after a fresh Host human question."""
+        self.authorize()
+        if type(approved) is not bool or type(expired_at) is not int:
+            raise VideoProductionPlanError('原范围重新确认须有真实决定及原到期版本', 409)
+        with self._database(write=True) as database:
+            record = self._record(database, self._load(database, plan_id, workshop_id))
+            if expected_hash != record['scopeHash'] or expired_at != record['expiresAt']:
+                raise VideoProductionPlanError('原范围或确认版本已变化，旧确认不能恢复批准', 409)
+            now = self._reconfirmable(database, record)
+            expiry = now + _reconfirmation_ttl(record) if approved else expired_at
+            decision = 'approved' if approved else 'declined'
+            record.setdefault('reconfirmations', []).append({'scopeHash': record['scopeHash'],
+                'previousExpiresAt': expired_at, 'previousDecidedAt': record.get('decidedAt'),
+                'decidedAt': now, 'decision': decision, 'expiresAt': expiry})
+            record.update(state=decision, decidedAt=now, expiresAt=expiry)
             self._save(database, record)
             return record
 
