@@ -378,17 +378,58 @@ class WorkshopStore:
             raise WorkshopError('分镜不存在', 404)
         return shot
 
-    def add_candidate(self, identifier, expected_revision, shot_id, relative, *, candidate_id=None, task_id=None, source_prompt=None, auto_select=True):
+    def add_candidate(self, identifier, expected_revision, shot_id, relative, *, candidate_id=None, task_id=None,
+                      source_prompt=None, auto_select=True, source_declaration=None, expected_sha256=None):
         with self._locked():
             project = self._read(identifier)
             shot = self._shot(project, shot_id)
             existing = next((row for row in shot['candidates'] if row['id'] == candidate_id), None)
+            if source_declaration is not None:
+                if (not isinstance(source_declaration, dict)
+                        or set(source_declaration) != {'kind', 'shot_id', 'candidate_id', 'sha256'}
+                        or source_declaration['kind'] != 'declared_edit'
+                        or not isinstance(candidate_id, str) or not _PROJECT_ID.fullmatch(candidate_id)
+                        or not isinstance(expected_sha256, str) or not re.fullmatch(r'[a-f0-9]{64}', expected_sha256)
+                        or task_id is not None or source_prompt is not None):
+                    raise WorkshopError('剪辑候选须有固定请求编号、文件 SHA 和来源声明，不能指定生成任务', 422)
+                matches = [(row['id'], item) for row in project['shots'] for item in row['candidates']
+                           if item['id'] == candidate_id]
+                if matches and (len(matches) != 1 or matches[0][0] != shot_id or existing is None
+                        or existing.get('source_declaration') != source_declaration
+                        or existing.get('import_path') != relative or existing['sha256'] != expected_sha256
+                        or existing.get('task_id') is not None):
+                    raise WorkshopError('该请求编号已用于其他候选内容，请先读回原回执', 409)
+                if not existing:
+                    self._expect(project, expected_revision)
+                source_shot = self._shot(project, source_declaration['shot_id'])
+                original = next((row for row in source_shot['candidates']
+                                 if row['id'] == source_declaration['candidate_id']), None)
+                if original is None:
+                    raise WorkshopError('来源候选不属于指定分镜', 404)
+                if (original['sha256'] != source_declaration['sha256']
+                        or _digest(self._media_path(original['path'])) != source_declaration['sha256']):
+                    raise WorkshopError('来源候选内容已变化，不能登记剪辑来源', 409)
+                if existing and _digest(self._media_path(existing['path'])) != expected_sha256:
+                    raise WorkshopError('已登记剪辑候选内容已变化，不能复用回执', 409)
+            elif expected_sha256 is not None:
+                raise WorkshopError('剪辑文件 SHA 须与来源声明一起提供', 422)
             if existing:
                 return project
             self._expect(project, expected_revision)
             source = self._media_path(relative)
-            self._validate_video(source)
+            if source_declaration is None:
+                self._validate_video(source)
             snapshot = self._snapshot(identifier, source, 'candidates')
+            if source_declaration is not None:
+                try:
+                    if snapshot['sha256'] != expected_sha256:
+                        raise WorkshopError('剪辑候选文件与指定 SHA 不一致，请重新读取', 409)
+                    self._validate_video(self._media_path(snapshot['path']))
+                except BaseException:
+                    (self.outputs / snapshot['path']).unlink(missing_ok=True)
+                    raise
+                # File identities are verified; the edit relationship remains a caller declaration.
+                snapshot.update(source_declaration=dict(source_declaration), import_path=relative)
             snapshot.update(id=candidate_id or uuid.uuid4().hex, task_id=task_id, prompt=source_prompt if source_prompt is not None else shot['prompt'])
             shot['candidates'].append(snapshot)
             if auto_select and not shot['selected_candidate_id']:

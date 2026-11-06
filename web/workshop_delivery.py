@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath
 import json
 import re
+import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,14 +21,28 @@ class _CandidateSelectionManifest(BaseModel):
     candidateId: str = Field(pattern=r'^[a-f0-9]{32}$')
 
 
+class _CandidateImportManifest(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    workshopId: str = Field(pattern=r'^[a-f0-9]{32}$')
+    expectedRevision: int = Field(ge=1)
+    shotId: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    path: str = Field(min_length=1, max_length=512)
+    sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    requestId: str = Field(pattern=r'^[a-f0-9]{32}$')
+    sourceShotId: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    sourceCandidateId: str = Field(pattern=r'^[a-f0-9]{32}$')
+    sourceSha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
 def _manifest_request(payload: object, outputs: Path) -> tuple[Path, set[str], bool]:
     if not isinstance(payload, dict) or set(payload) - {"action", "manifestPath", "episodes"}:
         raise ValueError("工坊交付工具参数无效")
     action, relative = payload.get("action"), payload.get("manifestPath")
-    if action not in ("plan", "deliver", "update", "select_candidate") or not isinstance(relative, str) or not 1 <= len(relative) <= 512:
+    if action not in ("plan", "deliver", "update", "select_candidate", "add_candidate") or not isinstance(relative, str) or not 1 <= len(relative) <= 512:
         raise ValueError("请指定工坊操作及当前 IP 下的制作清单")
-    if action == 'select_candidate' and 'episodes' in payload:
-        raise ValueError('采用候选只操作清单指定的一个分镜，不接受集数筛选')
+    if action in {'select_candidate', 'add_candidate'} and 'episodes' in payload:
+        raise ValueError('候选操作只处理清单指定的一个分镜，不接受集数筛选')
     if '\\' in relative or any(ord(char) < 32 or ord(char) == 127 for char in relative):
         raise ValueError("清单路径无效")
     path = PurePosixPath(relative)
@@ -49,6 +64,23 @@ def run_workshop_delivery(payload: object, *, outputs: Path, ip: str, authorize)
     authorize()
     outputs = outputs.resolve()
     manifest, selected, plan_only = _manifest_request(payload, outputs)
+    if payload['action'] == 'add_candidate':
+        request = _CandidateImportManifest.model_validate_json(manifest.read_text(encoding='utf-8'))
+        candidate_id = uuid.uuid5(uuid.NAMESPACE_URL,
+            f'xiangya:workshop:{request.workshopId}:edited-candidate:{request.requestId}').hex
+        authorize()
+        project = WorkshopStore(outputs).add_candidate(
+            request.workshopId, request.expectedRevision, request.shotId, request.path,
+            candidate_id=candidate_id, expected_sha256=request.sha256,
+            source_declaration={'kind': 'declared_edit', 'shot_id': request.sourceShotId,
+                                'candidate_id': request.sourceCandidateId, 'sha256': request.sourceSha256})
+        shot = next(row for row in project['shots'] if row['id'] == request.shotId)
+        candidate = next(row for row in shot['candidates'] if row['id'] == candidate_id)
+        return [{'workshopId': project['id'], 'revision': project['revision'], 'shotId': request.shotId,
+                 'requestId': request.requestId, 'candidateId': candidate['id'],
+                 'path': candidate['path'], 'sha256': candidate['sha256'],
+                 'taskId': candidate['task_id'], 'sourceDeclaration': candidate['source_declaration'],
+                 'selectedCandidateId': shot['selected_candidate_id'], 'stage': project['stage']}]
     if payload['action'] == 'select_candidate':
         request = _CandidateSelectionManifest.model_validate_json(manifest.read_text(encoding='utf-8'))
         authorize()

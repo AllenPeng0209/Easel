@@ -158,12 +158,19 @@ EASEL_WORKSHOP_DELIVERY_TOOL = {
         'Select_candidate reads {workshopId,expectedRevision,shotId,candidateId} to adopt an already-collected '
         'candidate in that shot. It preserves history, invalidates the old film review when the selection '
         'changes, and never generates, imports or publishes media. Read the current revision first. '
+        'Add_candidate imports one real edited local video using a strict manifest '
+        '{workshopId,expectedRevision,shotId,path,sha256,requestId,sourceShotId,sourceCandidateId,sourceSha256}. '
+        'Use a stable 32-lowercase-hex requestId for safe retries; the receipt returns a separate candidateId. The existing source '
+        'candidate must belong to this workshop and its declared source shot. Both file hashes are verified. '
+        'This records a source declaration, not proof of pixel derivation or a model task. No generation or '
+        'approval occurs. Existing selection is preserved; an empty shot selects its first candidate. '
+        'Candidate actions accept no episodes filter. '
         'Use returned workshopUrl and artifact receipts. Never pass identities, commands or credentials.'
     ),
     'inputSchema': {
         'type': 'object', 'additionalProperties': False, 'required': ['action', 'manifestPath'],
         'properties': {
-            'action': {'type': 'string', 'enum': ['plan', 'deliver', 'update', 'select_candidate']},
+            'action': {'type': 'string', 'enum': ['plan', 'deliver', 'update', 'select_candidate', 'add_candidate']},
             'manifestPath': {'type': 'string', 'minLength': 1, 'maxLength': 512},
             'episodes': {'type': 'array', 'maxItems': 12, 'uniqueItems': True,
                          'items': {'type': 'string', 'pattern': '^[A-Za-z0-9_-]{1,120}$'}},
@@ -863,6 +870,17 @@ class CodexAdapter:
                     'actual source you will use. candidateId is the existing shot candidates[].id, not a '
                     'provider task ID or a final publication artifact ID. Read the fresh Workshop revision '
                     'first; changing the selected source requires a new complete delivery and publication preparation. '
+                    'Keep every editorial shot when several shots share one generated production clip; '
+                    'production updates replace the shot/asset lists, so include all retained rows. After '
+                    'editing real per-shot videos, import each with easel_workshop_delivery action add_candidate '
+                    'and a current-IP manifest {workshopId,expectedRevision,shotId,path,sha256,requestId,'
+                    'sourceShotId,sourceCandidateId,sourceSha256}. Use actual hashes and the existing same-workshop '
+                    'source candidate. Keep the stable 32-hex requestId distinct from the returned candidateId; '
+                    'on an unknown result read back a known candidateId or retry the identical request, '
+                    'never create a fresh requestId blindly. '
+                    'Imported clips have no provider task ID. The source declaration does not prove the edit '
+                    'relationship; preserve the actual edit decisions and verify every clip in Workshop. '
+                    'Existing selected candidates remain selected; explicitly adopt the edited candidate if needed. '
                     'Edit the real audiovisual clips, preserve original voices, add requested subtitles in '
                     'post, and verify the full film. Put the actual edited/subtitled clip paths in series.json '
                     'episodes[].timeline, its complete master path in episodes[].path, and the original '
