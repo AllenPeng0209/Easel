@@ -54,8 +54,24 @@ class EventDetails:
         return event
 
     def compact_event(self, event: dict) -> dict:
-        # Host business/approval records stay typed and immediately available.
-        if not isinstance(event, dict) or event.get('kind') != 'tool' or event.get('detailRef'):
+        if not isinstance(event, dict) or event.get('detailRef'):
+            return event
+        result = event
+        if event.get('kind') == 'business':
+            business = event.get('business')
+            details = business.get('details') if isinstance(business, dict) else None
+            project = details.get('project') if isinstance(details, dict) else None
+            if not isinstance(project, dict) or business.get('kind') != 'workshop':
+                return event
+            # BusinessObjectCard already projects these editor-only bodies out.
+            # Keep all typed scope, versions, decisions, receipts and actions;
+            # preserve the exact historical production snapshot in private storage.
+            visible = {key: value for key, value in project.items()
+                       if key not in {'script', 'assets', 'shots', 'comments'}}
+            if len(visible) == len(project):
+                return event
+            result = {**event, 'business': {**business, 'details': {**details, 'project': visible}}}
+        elif event.get('kind') != 'tool':
             return event
         data = _encode(event)
         if len(data) <= 2048:
@@ -71,11 +87,12 @@ class EventDetails:
                 os.replace(name, target)
             finally:
                 Path(name).unlink(missing_ok=True)
-        result = {**event, 'detailRef': reference, 'detailsAvailable': True}
-        budget = [700]
-        for key in ('input', 'output', 'text'):
-            if key in result:
-                result[key] = _preview(result[key], budget)
+        result = {**result, 'detailRef': reference, 'detailsAvailable': True}
+        if event.get('kind') == 'tool':
+            budget = [700]
+            for key in ('input', 'output', 'text'):
+                if key in result:
+                    result[key] = _preview(result[key], budget)
         return result
 
     def restore_event(self, event: dict) -> dict:

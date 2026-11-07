@@ -49,6 +49,32 @@ def test_typed_host_business_receipts_remain_available_in_the_compact_view(tmp_p
     assert EventDetails(tmp_path).compact_event(event) == event
 
 
+def test_workshop_card_projection_retains_receipts_and_restores_unused_production_payload(tmp_path):
+    from web.chat_event_details import EventDetails
+    event = {'id': 'workshop-observation', 'kind': 'business', 'runId': 'run', 'callId': 'host:business:call',
+             'business': {'kind': 'workshop', 'id': 'a' * 32, 'snapshotHash': 'b' * 64,
+                 'actorId': 'actor', 'projectId': 'default', 'status': {'code': 'rendered', 'source': 'computed'},
+                 'version': {'revision': 4, 'sha256': 'c' * 64}, 'actions': [{'kind': 'open', 'entityId': 'a' * 32}],
+                 'details': {'deliveryVerification': 'current_file_verified', 'project': {
+                     'id': 'a' * 32, 'revision': 4, 'brief': 'Exact searchable requirements',
+                     'script': 'Full screenplay\n' * 10000, 'assets': [{'description': 'Full asset prompt' * 1000}],
+                     'shots': [{'prompt': 'Full shot prompt' * 1000}], 'comments': [{'text': 'Full comment' * 1000}],
+                     'reviews': [{'decision': 'changes_requested', 'notes': 'Keep this exact human review'}],
+                     'renders': [{'id': 'render-one', 'submission_state': 'accepted', 'status': 'completed'}]}}}}
+    before = copy.deepcopy(event)
+    store = EventDetails(tmp_path)
+    compact = store.compact_event(event)
+    assert len(json.dumps(compact)) < 2000
+    assert compact['detailRef']
+    for key in ('status', 'version', 'actions', 'snapshotHash', 'actorId', 'projectId'):
+        assert compact['business'][key] == event['business'][key]
+    for key in ('brief', 'revision', 'reviews', 'renders'):
+        assert compact['business']['details']['project'][key] == event['business']['details']['project'][key]
+    assert store.restore_event(compact) == event
+    assert store.get(compact['detailRef']) == event
+    assert event == before
+
+
 def test_delta_merge_reads_back_only_the_submitted_sessions(tmp_path):
     from web.chat_history import ChatHistoryStore
     store = ChatHistoryStore(tmp_path)
