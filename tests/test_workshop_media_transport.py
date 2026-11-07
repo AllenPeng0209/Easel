@@ -75,3 +75,32 @@ def test_hashed_editor_assets_are_immutable_while_its_html_is_revalidated(tmp_pa
     assert asset.status_code == 200
     assert asset.headers.get('cache-control') == 'public, max-age=31536000, immutable'
     assert client.get('/huobao-studio/drama/1').headers.get('cache-control') == 'no-cache'
+
+
+@pytest.mark.parametrize('method', ['GET', 'HEAD'])
+def test_editor_json_reads_use_the_revision_checked_binding_without_full_open(tmp_path, monkeypatch, method):
+    import httpx
+    observed = []
+
+    def read_binding(identifier):
+        observed.append(identifier)
+        return {'episode_id': 1}
+
+    def full_sync(*args):
+        raise AssertionError('A JSON read must not open or pull the whole project')
+
+    identifier = 'a' * 32
+    engine = SimpleNamespace(directory=tmp_path, state={'base': 'http://engine', 'token': 'fixture'},
+                             read_binding=read_binding, open=full_sync, pull=full_sync)
+    monkeypatch.setattr(huobao_bridge, 'runtime', lambda host: engine)
+
+    async def transport(host, runtime):
+        return httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={'code': 200, 'data': []}))), True
+
+    monkeypatch.setattr(huobao_bridge, 'proxy_client', transport)
+    app = FastAPI()
+    app.include_router(huobao_bridge.create_router(lambda: SimpleNamespace()))
+    response = TestClient(app).request(method, f'/api/workshop/projects/{identifier}/engine/api/v1/episodes/1/characters')
+    assert response.status_code == 200
+    assert observed == [identifier]

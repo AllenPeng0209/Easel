@@ -143,7 +143,7 @@ def create_router(get_host):
         try:
             project=engine.store.get(identifier)
             engine.store._expect(project,body.get('expected_revision'))
-            binding=await asyncio.to_thread(engine.read_binding if request.method in {'GET', 'HEAD'} else engine.open,identifier)
+            binding=await asyncio.to_thread(engine.open,identifier)
         except WorkshopError as error:
             raise HTTPException(error.status,str(error)) from None
         stage='videos' if project['shots'] else 'assets' if project['script'] else 'script'
@@ -178,7 +178,7 @@ def create_router(get_host):
                     except (ValueError, OSError):
                         raise HTTPException(404, '视频素材暂不可用') from None
                 return await asyncio.to_thread(media)
-            binding=await asyncio.to_thread(engine.open,identifier)
+            binding=await asyncio.to_thread(engine.read_binding if request.method in {'GET', 'HEAD'} else engine.open,identifier)
             if path.startswith(('api/v1/server-update','api/v1/storage')):
                 raise HTTPException(404, '此管理功能由响芽宿主提供')
             body=await request.body()
