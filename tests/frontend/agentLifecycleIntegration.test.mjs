@@ -387,7 +387,7 @@ test('fast server hydration waits for delayed tab ownership before restoring rem
     close() {}
   }
   const ui = appBoundary(local, {
-    navigationReady: false, BroadcastChannel: Channel,
+    navigationReady: false, historyReady: false, chatSurfaceReady: true, BroadcastChannel: Channel,
     TAB_SESSION_KEY: 'scope:easel_tab_session', activeIdRef: { current: null },
     loadSessions: () => plain(local), loadActiveId: () => 'local-empty',
     sessionStorage: { getItem: () => null, setItem() {} },
@@ -422,6 +422,29 @@ test('fast server hydration waits for delayed tab ownership before restoring rem
   assert.equal(ui.context.historyReady, true);
   cleanupHydration?.();
   cleanup?.();
+});
+
+test('switching from a loading chat to video aborts initial catalog transfer without saving or marking it read', async () => {
+  let signal, fetches=0;
+  const ui=appBoundary([],{
+    navigationReady:true,historyReady:false,chatSurfaceReady:true,
+    fetchChatSessions:next=>{fetches++;signal=next;return new Promise((resolve,reject)=>{
+      next.addEventListener('abort',()=>reject(Object.assign(new Error('cancelled'),{name:'AbortError'})),{once:true});
+    });},
+    setHistoryNotice:()=>assert.fail('A cancelled background read must not replace a video page with a history error'),
+    setHistoryReady:value=>{ui.context.historyReady=value;},
+  });
+  const cleanup=ui.effect('fetchChatSessions')();
+  assert.equal(fetches,1);
+  assert.equal(signal.aborted,false);
+  ui.context.chatSurfaceReady=false;
+  cleanup();
+  await settle();
+  ui.effect('fetchChatSessions')();
+  assert.equal(signal.aborted,true);
+  assert.equal(fetches,1);
+  assert.equal(ui.context.historyReady,false);
+  assert.equal(ui.saved.length,0);
 });
 
 test('workshop handoff sends the selected delivery into its originating chat and keeps it on retry', () => {

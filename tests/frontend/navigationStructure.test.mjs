@@ -30,6 +30,7 @@ for (const canOperate of [true,false]) test(`the application opens the ${canOper
       : name === './lib/projectScope' ? {projectStorageKey:key=>key,projectUrl:url=>url,ACTIVE_PROJECT_ID:'default'}
       : name === './lib/store' ? {loadSessions:()=>[],loadActiveId:()=>null}
       : name === './components/SuperagentPage' ? {useChatSuperagent:()=>({})}
+      : name === './lib/useDeferredMount' ? {useDeferredMount:active=>active}
       : {default: name === './components/Sidebar' ? 'sidebar' : 'page'},
   });
   const sidebar=nodes(exports.default()).find(node=>node.props?.onPageChange && Object.hasOwn(node.props,'currentPage'));

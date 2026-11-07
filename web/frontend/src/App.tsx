@@ -20,6 +20,7 @@ import { validateChatCommand, type ChatCommand } from './lib/chatCommands';
 import { trimChatReferenceText, toWireSessionReferences, type ChatReference, type ChatSessionReference } from './lib/chatReferences';
 import { mergeWindowedCatalog, nextSessionRevision } from './lib/sessionSync';
 import { sessionAttentionState } from './lib/sessionNavigation';
+import { useDeferredMount } from './lib/useDeferredMount';
 import { confirmChatStop, enqueueMessage, nextQueuedMessage } from './lib/chatControl';
 import { chatDraftOwner, loadChatDraft, saveChatDraft, clearChatDraft } from './lib/chatDrafts';
 import { applyPromptAdmission, forgetPromptAttempt, loadPromptAttempt, sameComposerDraft,
@@ -95,6 +96,7 @@ function onboardingSeen(): boolean {
 export default function App() {
   const { canOperate, isPlatformAdmin } = useIpPermissions();
   const [currentPage, setCurrentPage] = useState<Page>(() => canOperate ? 'chat' : 'dashboard');
+  const chatSurfaceReady = useDeferredMount(currentPage === 'chat');
   const [workshopEntry, setWorkshopEntry] = useState(0);
   const [workshopJobsOpen, setWorkshopJobsOpen] = useState(false);
   const [archiveRequest, setArchiveRequest] = useState<ArchiveIntent | null>(null);
@@ -407,7 +409,7 @@ export default function App() {
   }, [activeSessionId, activeSession?.unreadCompletion, canOperate, currentPage, historyReady]);
 
   useEffect(() => {
-    if (!canOperate || !navigationReady) return;
+    if (!canOperate || !navigationReady || historyReady || !chatSurfaceReady) return;
     let cancelled = false;
     const controller = new AbortController();
     void fetchChatSessions(controller.signal, true, true).then(result => {
@@ -428,7 +430,7 @@ export default function App() {
       if (!cancelled) setHistoryNotice('服务器历史暂不可用，当前内容仍保存在此浏览器。');
     }).finally(() => { if (!cancelled) setHistoryReady(true); });
     return () => { cancelled = true; controller.abort(); };
-  }, [canOperate, navigationReady]);
+  }, [canOperate, navigationReady, historyReady, chatSurfaceReady]);
 
   useEffect(() => () => historyMoreRequest.current?.abort(), []);
   const loadMoreHistory = useCallback(async () => {
@@ -1801,6 +1803,7 @@ export default function App() {
           />
         );
       case 'chat': {
+        if (!chatSurfaceReady) return <div className="dash-empty" role="status">正在打开对话…</div>;
         const stopOwner = activeSession ? streamAcc.current[activeSession.id] : undefined;
         const pending = activeSession ? loadPromptAttempt(activeSession.id) : undefined;
         const canReconcile = pending && pending.state !== 'accepted' && !stopOwner;
