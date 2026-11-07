@@ -89,7 +89,7 @@ Caddy 通过域名自动申请/续签 TLS，www 跳转到 apex；保留 Host 和
 
 原生 Agent、视频引擎和媒体转换通过服务用户的 systemd scope 分离，避免与 Web 共用内存回收预算。安装 `chirpiva-workloads.slice` 到 `/srv/chirpiva/.config/systemd/user/`，开启 `loginctl enable-linger chirpiva`，以该用户的 `XDG_RUNTIME_DIR=/run/user/1001`、`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus` 重载 user manager（实际 UID 以主机为准）。在生产开启 `EASEL_WORKLOAD_ISOLATION=1` 前，验证 scope 的 UID、stdin/stdout、进程组取消和内存/CPU上限；不支持 user systemd 的环境保持关闭。`chirpiva-resource-limits.conf` 是 Web 本身的资源上限，不能误当工作负载 slice 安装。
 
-视频播放使用私有、按内容版本缓存的 faststart 副本；原画默认无损封装，流畅预览单独转码，下载仍返回原文件。媒体缓存只在认证与 IP 权限通过后允许私有 ETag 重验证，不能加入公共静态树。大工具记录仍完整存储，页面和 SSE 只按需投影摘要，展开时读取同用户/IP的原始详情。
+视频播放使用私有、按内容版本缓存的 faststart 副本；制作预览默认流畅档并可切换原画，原画采用无损封装，下载仍返回原文件。媒体缓存只在认证与 IP 权限通过后允许私有 ETag 重验证，不能加入公共静态树。大工具记录仍完整存储，页面和 SSE 只按需投影摘要，展开时读取同用户/IP的原始详情。
 
 `GET /api/performance/summary` 供管理员读取本 IP 的 p50/p95。客户端指标只上报固定类别、耗时和字节数，不采集提示词、媒体 URL 或凭据；视频生成的阶段耗时记录用于区分排队、模型生成、下载与交付，不代表外部模型耗时能由页面优化消除。
 

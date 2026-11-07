@@ -734,7 +734,7 @@
                 </a>
               </div>
               <label v-if="playerVideoUrl && !playerIsRemote" class="video-preview-quality">预览画质
-                <select v-model="playbackQuality"><option value="original">原画</option><option value="low">流畅</option></select>
+                <select v-model="playbackQuality"><option value="low">流畅</option><option value="original">原画</option></select>
               </label>
               <div class="video-player-stage">
                 <video
@@ -1504,7 +1504,7 @@ const dramaId = Number(route.params.id)
 const episodeNumber = Number(route.params.episodeNumber)
 
 const drama = ref(null), episode = ref(null), chars = ref([]), scenes = ref([]), propItems = ref([]), sbs = ref([]), mergeData = ref(null)
-const playbackQuality = ref('original')
+const playbackQuality = ref('low')
 const hostJobNotice = ref('')
 let observedHostJob = ''
 function receiveHostReceipt(event) {

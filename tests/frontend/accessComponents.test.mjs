@@ -9,7 +9,7 @@ const ts = require('typescript');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const owner = {id:'owner',username:'owner',display_name:'主理人',is_admin:true,active:true};
 
-function harness(file, component, context, api, initialMarker = 'owner', pathname = '/') {
+function harness(file, component, context, api, initialMarker = 'owner', pathname = '/', hash = '') {
   const path = new URL(`../../web/frontend/src/components/${file}.tsx`, import.meta.url);
   const source = existsSync(path) ? readFileSync(path, 'utf8') : '';
   const compiled = ts.transpileModule(source, {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
@@ -32,7 +32,7 @@ function harness(file, component, context, api, initialMarker = 'owner', pathnam
   const modules={};
   const environment={console,Error,Promise,document:{body:{},activeElement:null},
     sessionStorage,
-    window:{location:{pathname,reload:()=>reloads.push(true),assign:url=>navigations.push(url),replace:url=>navigations.push(url)},addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)},
+    window:{location:{pathname,hash,reload:()=>reloads.push(true),assign:url=>navigations.push(url),replace:url=>navigations.push(url)},addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)},
     setInterval:()=>1,clearInterval(){},
   };
   const resolve=name=>{
@@ -73,6 +73,13 @@ test('registration remains directly reachable before session discovery finishes'
   assert.equal(register?.props.href,'/register/');
   resolveBootstrap({configured:true});await settle();view=ui.render();
   assert.equal(view.nodes.find(node=>node.type==='a' && node.props['data-auth-mode']==='register')?.props.href,'/register/');
+});
+
+test('opening a workspace waits for identity without downloading homepage artwork', () => {
+  const ui=harness('AuthGate','default',null,{fetchAuthBootstrap:()=>new Promise(()=>{})},'','/','#workspace');
+  const view=ui.render();
+  assert.ok(!view.nodes.some(node=>node.type==='img'),'Homepage artwork must not compete with authenticated workspace chunks');
+  assert.ok(view.nodes.some(node=>node.type==='h2' && node.props.children==='正在打开你的空间…'));
 });
 
 test('interactive product preview switches content locally without executing a real creative task',()=>{

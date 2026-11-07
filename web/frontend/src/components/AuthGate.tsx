@@ -206,7 +206,8 @@ export default function AuthGate({ children, onAuthenticated }: {
   </AuthContext.Provider>;
 
   const registering = phase === 'register';
-  if (!AUTH_PAGE && phase !== 'setup' && !(phase === 'loading' && error)) return <LandingPage />;
+  const openingWorkspace = phase === 'loading' && /^(?:#workspace|#projects|#\/business\/)/.test(window.location.hash || '');
+  if (!AUTH_PAGE && !openingWorkspace && phase !== 'setup' && !(phase === 'loading' && error)) return <LandingPage />;
   return <main className="auth-screen auth-landing">
     <header className="auth-site-header"><a className="chirpiva-wordmark" href={`${PUBLIC_BASE}/`} aria-label="Chirpiva 响芽首页"><span className="chirpiva-mark" aria-hidden="true">c</span><strong>Chirpiva<span>响芽</span></strong></a>
       <a className="auth-back-home" href={`${PUBLIC_BASE}/`}>← 返回官网</a></header>
