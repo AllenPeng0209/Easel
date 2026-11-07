@@ -18,6 +18,7 @@ import time
 from urllib.parse import quote
 
 from easel.video_workshop import WorkshopError, WorkshopStore, _digest, _file_lock
+from easel.video_provider import VideoProviderError, submission_error_metadata
 
 
 _ID = r"[a-f0-9]{32}"
@@ -369,29 +370,30 @@ class VideoGenerationService:
                 self._check_replacement_records(plan, project)
         return self.plan_store.decide(plan_id, scope_hash, approved)
 
-    def plan_reconfirmation(self, workshop_id, plan_id):
-        """Host-only preflight for a new human card about an unchanged expired scope."""
-        self.authorize()
-        self._owned_project(workshop_id)
-        plan = self.plan_store.reconfirmation(plan_id, workshop_id=workshop_id)
-        for clip in plan['clips']:
-            self._verify_references(clip)
-        return plan
-
-    def plan_reconfirmation_decision(self, workshop_id, plan_id, scope_hash, expired_at, approved):
-        self.authorize()
-        self._owned_project(workshop_id)
-        plan = self.plan_store.get(plan_id, workshop_id=workshop_id)
-        if approved is True:
-            for clip in plan['clips']:
-                self._verify_references(clip)
-        return self.plan_store.reconfirm(plan_id, scope_hash, expired_at, approved, workshop_id=workshop_id)
-
     def _verify_references(self, spec):
         refs = spec.get('references', [])
         if refs:
             from easel.video_generation_references import verify_references
             verify_references(self.outputs, refs)
+
+    def _verify_primary_reference(self, project, shot_id, spec):
+        shot = next((row for row in project['shots'] if row['id'] == shot_id), None)
+        primary = shot.get('primary_frame_asset_id') if shot else None
+        if primary is None:
+            return
+        asset = next((row for row in project['assets'] if row['id'] == primary), None)
+        if (asset is None or primary not in shot['asset_ids']
+                or asset['kind'] not in {'character', 'scene', 'prop', 'image'} or not asset.get('path')):
+            raise WorkshopError('主参考首帧已不可用，请重新绑定当前分镜的项目图片', 409)
+        first_image = next((row for row in spec.get('references', []) if row['kind'] == 'image'), None)
+        if first_image is None:
+            raise WorkshopError('当前分镜已选择主参考首帧，制作请求必须包含一致的首张图片，尚未提交生成', 409)
+        # Derive evidence from the selected file's current bytes with the same
+        # scoped, no-symlink reader used for plan references, not stored metadata.
+        from easel.video_generation_references import freeze_references
+        selected = freeze_references(self.outputs, [{'kind': 'image', 'path': asset['path']}])[0]
+        if selected['sha256'] != first_image['sha256']:
+            raise WorkshopError('制作请求的首张图片与当前主参考首帧不一致，请核对制作计划，尚未提交生成', 409)
 
     def _owned_project(self, identifier):
         self._safe(self.store.directory / (identifier + ".json"))
@@ -439,6 +441,10 @@ class VideoGenerationService:
             value["workspacePath"] = "outputs/" + record["artifact"]["path"]
         if record.get("sourceFile"):
             value["sourceWorkspacePath"] = "outputs/" + record["sourceFile"]["path"]
+        if record.get('submitAttempted') and not record.get('taskId'):
+            value['submissionError'] = submission_error_metadata(record.get('submissionError'))
+            value['tracking'] = {'canPoll': False, 'nextAction': 'operator_investigation',
+                'message': '尚未获得模型任务编号，当前无法查询生成进度；需核对原提交，请勿重复提交。'}
         return value
 
     def _budget(self, record):
@@ -467,6 +473,7 @@ class VideoGenerationService:
         if shot is None:
             return None
         return {**{key: shot[key] for key in ('id', 'prompt', 'seconds', 'asset_ids')},
+            **({'primary_frame_asset_id': shot['primary_frame_asset_id']} if 'primary_frame_asset_id' in shot else {}),
             'assets': [{key: asset.get(key) for key in ('id', 'sha256')} for asset in project['assets']
                        if asset['id'] in shot['asset_ids']]}
 
@@ -483,6 +490,7 @@ class VideoGenerationService:
         shot_id = plan_clip.get('shotId', payload['clipId']) if plan_id else payload.get('shotId', payload['clipId'])
         if plan_id and payload.get('shotId', shot_id) != shot_id:
             raise WorkshopError('返工分镜必须与批准计划一致', 409)
+        self._verify_primary_reference(project, shot_id, spec)
         if record:
             if record.get('shotId') != shot_id or record['spec'] != spec or record.get('planId') != plan_id:
                 raise WorkshopError('原片段已绑定不同制作参数，请创建新的候选任务', 409)
@@ -492,7 +500,7 @@ class VideoGenerationService:
             values = {'script': project['script'],
                 'assets': [{key: row[key] for key in ('id', 'kind', 'name', 'description', 'path') if key in row}
                            for row in project['assets']],
-                'shots': [{key: row[key] for key in ('id', 'title', 'prompt', 'seconds', 'asset_ids')} for row in project['shots']]}
+                'shots': [{key: row[key] for key in ('id', 'title', 'prompt', 'seconds', 'asset_ids', 'primary_frame_asset_id') if key in row} for row in project['shots']]}
             values['shots'].append({'id': shot_id, 'title': payload['clipId'], 'prompt': spec['prompt'],
                                    'seconds': spec['seconds'], 'asset_ids': []})
             project = self.store.production(project['id'], project['revision'], values)
@@ -514,6 +522,7 @@ class VideoGenerationService:
             raise WorkshopError('该镜头或参考素材已被修改，未提交旧生成请求，请读取当前版本', 409)
         self._validate_spec(record['spec'], project)
         self._verify_references(record['spec'])
+        self._verify_primary_reference(project, record['shotId'], record['spec'])
         return {'operationId': record['operationId'], 'modelId': record['spec']['modelId']}
 
     def _observe(self, record, path, **_):
@@ -546,14 +555,18 @@ class VideoGenerationService:
         try:
             self.authorize()
             result = self.client.submit(record['spec'], record['operationId'], self.outputs)
-            task_id = result.get('id')
+            task_id = result.get('id') if isinstance(result, dict) else None
             if not isinstance(task_id, str) or not re.fullmatch(_H3_JOB, task_id):
-                raise ValueError
+                raise VideoProviderError('invalid_receipt')
             record['taskId'] = task_id
             self._save(path, record)
-        except WorkshopError:
+        except VideoProviderError as error:
+            record['submissionError'] = {**error.diagnostic, 'observedAt': int(time.time() * 1000)}
+            self._save(path, record)
             return self._public(record)
-        except (ValueError, TypeError):
+        except (WorkshopError, ValueError, TypeError):
+            record['submissionError'] = {'code': 'request_error', 'observedAt': int(time.time() * 1000)}
+            self._save(path, record)
             return self._public(record)
         self._observe(record, path)
         return self._public(record)

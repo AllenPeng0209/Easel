@@ -1,0 +1,23 @@
+[Unit]
+Description=Chirpiva creator workspace
+Wants=network-online.target
+After=network-online.target
+# Initial activation is a deliberate cutover step; install does not enable/start.
+ConditionPathExists=/srv/chirpiva/app/web/frontend/dist/index.html
+
+[Service]
+Type=simple
+User=chirpiva
+Group=chirpiva
+WorkingDirectory=/srv/chirpiva/app
+EnvironmentFile=/etc/chirpiva/environment
+ExecStartPre=/usr/bin/test -s /srv/chirpiva/app/web/frontend/dist/index.html
+ExecStart=/srv/chirpiva/app/.venv/bin/python -m uvicorn web.app:app --host 127.0.0.1 --port 7860 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1 --timeout-graceful-shutdown 120 --log-level warning --no-access-log
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=150
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

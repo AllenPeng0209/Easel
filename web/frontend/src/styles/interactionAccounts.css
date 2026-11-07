@@ -36,3 +36,6 @@
 .accounts-page > div:first-child,.connected-accounts { max-width:1100px; }
 @media(max-width:720px) { .accounts-page { padding:22px 18px 40px; } }
 @container interaction-accounts (max-width:420px) { .connected-account-labels,.connected-account-row { grid-template-columns:minmax(0,1fr) 80px 52px; gap:8px; padding:14px 10px; } .connected-account-labels > :nth-child(2),.connected-account-row > :nth-child(2) { display:none; } .connected-accounts-heading { gap:8px; } .connected-accounts-heading h2 { font-size:14px; } .connected-account-person { gap:8px; } .connected-account-avatar { width:32px; height:32px; border-radius:10px; } }
+
+.connected-account-state small { display:block; margin-top:4px; color:var(--text-tertiary); font-size:10px; }
+.account-connect-dialog .account-login-saved { padding:10px 12px; border-radius:8px; background:var(--accent-soft); color:var(--text-primary); }

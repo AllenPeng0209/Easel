@@ -5,7 +5,7 @@ import ipaddress
 from typing import Literal
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from easel.access import AccessStore, ROLES, SESSION_COOKIE, SESSION_SECONDS
@@ -41,6 +41,12 @@ class MemberRole(Input):
 
 class NewMember(MemberRole):
     user_id: str = Field(min_length=1, max_length=64)
+
+
+class OwnershipTransfer(Input):
+    user_id: str = Field(min_length=1, max_length=64)
+    expected_owner_id: str = Field(min_length=1, max_length=64)
+    confirmation: str = Field(min_length=1, max_length=60)
 
 
 def _origin_tuple(value: str):
@@ -137,6 +143,15 @@ def create_router(get_root, get_projects) -> APIRouter:
         _session_cookie(response, request, token)
         return {"user": user}
 
+    @router.post('/api/auth/register')
+    def register(req: SetupInput, request: Request, response: Response):
+        _write_origin(request)
+        current_store = store()
+        peer = request.client.host if request.client else 'unknown'
+        user, token = current_store.register(req.username, req.password, req.display_name, peer=peer)
+        _session_cookie(response, request, token)
+        return {'user': user}
+
     @router.get("/api/auth/me")
     def me(request: Request, response: Response):
         response.headers["Cache-Control"] = "no-store"
@@ -196,7 +211,6 @@ def create_router(get_root, get_projects) -> APIRouter:
         _write_origin(request)
         current_store, actor = ip_actor(request, identifier, {"owner"})
         member = current_store.set_member(identifier, req.user_id, req.role, actor_id=actor["id"])
-        current_store.audit(actor["id"], "member.set", identifier, req.user_id)
         return member
 
     @router.patch("/api/projects/{identifier}/members/{user_id}")
@@ -206,7 +220,6 @@ def create_router(get_root, get_projects) -> APIRouter:
         if not any(member["user_id"] == user_id for member in current_store.members(identifier)):
             raise HTTPException(404, "成员不存在")
         member = current_store.set_member(identifier, user_id, req.role, actor_id=actor["id"])
-        current_store.audit(actor["id"], "member.set", identifier, user_id)
         return member
 
     @router.delete("/api/projects/{identifier}/members/{user_id}")
@@ -214,7 +227,33 @@ def create_router(get_root, get_projects) -> APIRouter:
         _write_origin(request)
         current_store, actor = ip_actor(request, identifier, {"owner"})
         current_store.remove_member(identifier, user_id, actor_id=actor["id"])
-        current_store.audit(actor["id"], "member.remove", identifier, user_id)
         return {"ok": True}
+
+    @router.post('/api/projects/{identifier}/transfer')
+    def transfer(identifier: str, req: OwnershipTransfer, request: Request):
+        _write_origin(request)
+        current_store, actor = ip_actor(request, identifier, {'owner'})
+        # Use the same lock as renaming so a stale project name cannot confirm a transfer.
+        from easel.projects import _registry_lock
+        with _registry_lock:
+            project = next((project for project in get_projects() if project['id'] == identifier), None)
+            if project is None or req.confirmation != project.get('name'):
+                raise HTTPException(409, '请输入当前项目的完整名称以确认转移')
+            return current_store.transfer_owner(identifier, req.user_id, actor_id=actor['id'],
+                                                expected_owner_id=req.expected_owner_id)
+
+    @router.post('/api/projects/{identifier}/leave')
+    def leave(identifier: str, request: Request):
+        _write_origin(request)
+        current_store, actor = ip_actor(request, identifier, ROLES)
+        current_store.leave_project(identifier, actor_id=actor['id'])
+        return {'ok': True}
+
+    @router.get('/api/projects/{identifier}/activity')
+    def activity(identifier: str, request: Request, response: Response,
+                 before: int | None = Query(default=None, ge=1), limit: int = Query(default=30, ge=1, le=100)):
+        current_store, actor = ip_actor(request, identifier, {'owner'})
+        response.headers['Cache-Control'] = 'no-store'
+        return current_store.activity(identifier, actor_id=actor['id'], before=before, limit=limit)
 
     return router

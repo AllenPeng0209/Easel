@@ -29,6 +29,7 @@ else:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import login_state  # noqa: E402
+import login_remote_debug
 
 PROJECT_ROOT = Path(os.environ.get("EASEL_ROOT") or Path(__file__).resolve().parents[3])
 LOGIN_DIR = PROJECT_ROOT / "outputs" / "_login"
@@ -146,7 +147,7 @@ def _proxy(explicit, disable):
     return None
 
 
-def _launch(p, headed, base, proxy):
+def _launch(p, headed, base, proxy, *, remote=False):
     prof = _profile_dir(base)
     prof.mkdir(parents=True, exist_ok=True)
     lock = _lock_profile(prof)
@@ -157,7 +158,8 @@ def _launch(p, headed, base, proxy):
     if proxy:
         kw["proxy"] = {"server": proxy}
     try:
-        ctx = p.chromium.launch_persistent_context(str(prof), **kw)
+        ctx = (login_remote_debug.launch_persistent_context(p.chromium, prof, **kw)
+               if remote else p.chromium.launch_persistent_context(str(prof), **kw))
     except Exception:
         _unlock_profile(lock)
         raise
@@ -210,6 +212,18 @@ def _account_identity(page):
         if identity["name"] or identity["avatar"]:
             break
     return identity
+
+
+
+def _verified_login_account(page):
+    """A URL token needs the visible current-account control as corroboration."""
+    if not _extract_token(page.url):
+        return None
+    try:
+        identity = _account_identity(page)
+    except Exception:
+        return None
+    return identity if identity.get("name") else None
 
 
 def _capture_qr(page, qr_out, attempts=25, fallback=True):
@@ -266,22 +280,29 @@ def _run_login(a):
     status = a.status_file
     qr_out = a.qr_out or str(LOGIN_DIR / "wechat-oa-mp.png")
     login_state.write_status(status, "starting", "启动 mp 后台登录…")
+    remote_mode = login_remote_debug.enabled()
     with sync_playwright() as p:
-        ctx = _launch(p, a.headed, a.profile_base, _proxy(a.proxy, a.no_proxy))
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        launch_args = (p, a.headed, a.profile_base, _proxy(a.proxy, a.no_proxy))
+        ctx = _launch(*launch_args, remote=True) if remote_mode else _launch(*launch_args)
         try:
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            login_remote_debug.publish_page(ctx, page)
             page.goto(MP_HOME, wait_until="commit", timeout=60000)
             page.wait_for_timeout(1500)
             # 已登录（持久化会话仍有效）→ 直接成功
-            if _extract_token(page.url):
+            if _verified_login_account(page):
                 ctx.close()
                 ctx = None
                 login_state.write_status(status, "success", "已登录（复用会话）")
                 print("already logged in, token acquired")
                 return 0
-            if not _capture_qr(page, qr_out):
+            qr_available = _capture_qr(page, qr_out)
+            if not qr_available and not remote_mode:
                 raise RuntimeError("二维码截图失败")
-            if a.headed:
+            if remote_mode:
+                login_state.write_status(status, "qr_ready" if qr_available else "window_login",
+                    "请在下方平台页面用管理员微信扫码，并完成需要的验证", qr=str(qr_out) if qr_available else "")
+            elif a.headed:
                 login_state.write_status(
                     status, "window_login",
                     "请在弹出的浏览器窗口里用管理员微信扫码，不要关掉那个窗口。也可以扫下面这张图。",
@@ -292,7 +313,7 @@ def _run_login(a):
             next_capture = time.monotonic() + 5
             while time.time() < deadline:
                 page.wait_for_timeout(1000)
-                if any(_extract_token(candidate.url) for candidate in ctx.pages):
+                if any(_verified_login_account(candidate) for candidate in ctx.pages):
                     ctx.close()
                     ctx = None
                     login_state.write_status(status, "success", "登录成功")
@@ -825,14 +846,15 @@ def cmd_whoami(a):
                 page.goto(MP_HOME, wait_until="commit", timeout=10000)
                 deadline = time.monotonic() + 12
                 while time.monotonic() < deadline:
-                    if _extract_token(page.url):
-                        out.update(loggedIn=True, **_account_identity(page))
+                    identity = _verified_login_account(page)
+                    if identity:
+                        out.update(loggedIn=True, **identity)
                         if out["name"] and out["avatar"]:
                             break
                     elif page.query_selector("img.login__type__container__scan__qrcode, img[src*='qrcode']"):
                         break
                     page.wait_for_timeout(500)
-                out["loggedIn"] = bool(_extract_token(page.url))
+                out["loggedIn"] = _verified_login_account(page) is not None
                 if not out["loggedIn"] and not page.query_selector(
                         "img.login__type__container__scan__qrcode, img[src*='qrcode']"):
                     out["error"] = "公众号账号页面尚未就绪，请稍后重试"

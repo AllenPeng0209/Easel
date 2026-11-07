@@ -16,6 +16,7 @@ import time
 from urllib.parse import unquote, urlparse
 
 import login_state
+import login_remote_debug
 
 
 PLATFORMS: dict[str, dict] = {
@@ -53,14 +54,14 @@ PLATFORMS: dict[str, dict] = {
     },
     "x": {
         "name": "X (Twitter)", "profile": "XProfile",
-        "login_url": "https://x.com/i/flow/login",
+        "login_url": "https://x.com/login",
         "home_url": "https://x.com/home", "domains": ("x.com", "twitter.com"),
         "cookies": (("auth_token",),),
         "authenticated": ('a[data-testid="AppTabBar_Profile_Link"]',
                           '[data-testid="SideNav_AccountSwitcher_Button"]'),
-        "logged_out": ('input[autocomplete="username"]', 'input[name="password"]',
-                       'a[data-testid="loginButton"]'),
-        "login_paths": ("/i/flow/login", "/login", "/i/flow/signup"),
+        "logged_out": ('input[autocomplete~="username"]', 'input[name="username_or_email"]',
+                       'input[name="username"]', 'input[name="password"]', 'a[data-testid="loginButton"]'),
+        "login_paths": ("/i/flow/login", "/login", "/i/flow/signup", "/i/jf/onboarding"),
         "challenge_paths": ("/account/access", "/i/flow/consent"),
     },
     "youtube": {
@@ -102,9 +103,12 @@ def browser_options(*, headless: bool) -> dict:
     return options
 
 
-def _launch_context(playwright, platform: str, base: str | None, *, headless: bool):
+def _launch_context(playwright, platform: str, base: str | None, *, headless: bool, remote: bool = False):
     profile = profile_dir(platform, base)
     profile.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if remote:
+        return login_remote_debug.launch_persistent_context(
+            playwright.chromium, profile, **browser_options(headless=headless))
     return playwright.chromium.launch_persistent_context(str(profile), **browser_options(headless=headless))
 
 
@@ -173,6 +177,29 @@ def _browser_error(error: Exception) -> str:
     return "平台登录浏览器未能完成操作，请关闭窗口后重试"
 
 
+
+def _visible_official_login_page(page, cfg: dict) -> bool:
+    """A slow document can remain interactive; this is never login proof."""
+    try:
+        parsed = urlparse(page.url)
+        host = (parsed.hostname or "").lower()
+        login_host = urlparse(cfg["login_url"]).hostname
+        official = host == login_host or any(
+            host == domain or host.endswith("." + domain) for domain in cfg["domains"])
+        if not (parsed.scheme == "https" and parsed.port in (None, 443)
+                and not parsed.username and not parsed.password and official and not page.is_closed()):
+            return False
+        body = page.locator("body")
+        if not body.is_visible():
+            return False
+        if (body.inner_text(timeout=1000) or "").strip():
+            return True
+        return any(element.is_visible() for element in
+                   body.locator("img, canvas, iframe, input, button, select, video").all()[:20])
+    except Exception:
+        return False
+
+
 def cmd_login(args) -> int:
     cfg = PLATFORMS[args.platform]
     status = args.status_file
@@ -184,16 +211,24 @@ def cmd_login(args) -> int:
 
     signal.signal(signal.SIGTERM, terminate)
     try:
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
 
         with sync_playwright() as playwright:
-            context = _launch_context(playwright, args.platform, args.profile_base, headless=False)
+            context = _launch_context(playwright, args.platform, args.profile_base, headless=False, remote=True)
             succeeded = False
             try:
                 page = context.pages[0] if context.pages else context.new_page()
+                login_remote_debug.publish_page(context, page)
                 login_state.write_status(status, "window_login",
                     "密码与验证码请直接在平台官网输入")
-                response = page.goto(cfg["login_url"], wait_until="domcontentloaded", timeout=45000)
+                try:
+                    response = page.goto(cfg["login_url"], wait_until="domcontentloaded", timeout=45000)
+                except BrowserTimeout:
+                    if not login_remote_debug.enabled() or not _visible_official_login_page(page, cfg):
+                        raise
+                    response = None
+                    login_state.write_status(status, "window_login",
+                        "平台页面加载较慢，你可以在下方已打开的页面继续登录；完成验证后会自动保存")
                 if response is not None and response.status >= 400:
                     login_state.write_status(status, "window_login",
                         f"平台暂时限制访问（HTTP {response.status}），请在浏览器中检查网络或完成安全验证后重试")

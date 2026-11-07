@@ -16,6 +16,7 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _PROJECT_ID = re.compile(r"default|[a-f0-9]{16}")
 _PUBLIC = frozenset({("GET", "/api/auth/bootstrap"),
                      ("POST", "/api/auth/login"),
+                     ("POST", "/api/auth/register"),
                      ("POST", "/api/auth/setup")})
 
 
@@ -25,6 +26,8 @@ def role_permissions(role: str | None, is_admin: bool = False) -> dict[str, bool
     operator = role in {"owner", "operator"}
     return {"view": member, "operate": operator, "manage_accounts": role == "owner",
             "manage_members": role == "owner", "manage_ip": role == "owner",
+            "transfer_ownership": role == 'owner', "view_activity": role == 'owner',
+            "leave_project": member and role != 'owner',
             "manage_platform": bool(is_admin), "export_chat_logs": operator and bool(is_admin)}
 
 
@@ -41,6 +44,8 @@ def _project_resource(path: str) -> tuple[str | None, str, str]:
             return identifier, "", "project"
         if resource == "members" or resource.startswith("members/"):
             return identifier, resource, "members"
+        if resource in {'transfer', 'leave', 'activity'}:
+            return identifier, resource, 'repository'
         # Registry routes must never be recursively reinterpreted after a rewrite.
         if resource == "projects" or resource.startswith("projects/"):
             return None, "", "invalid"
@@ -120,6 +125,15 @@ def _is_global(resource: str) -> bool:
 def _capability(method: str, resource: str, kind: str) -> str | None:
     """Classify existing endpoints, including GETs that start tools or write state."""
     read = method in {"GET", "HEAD"}
+    if kind == 'repository':
+        if resource == 'transfer' and method == 'POST':
+            return 'transfer_ownership'
+        if resource == 'leave' and method == 'POST':
+            # An Owner reaches the route to receive the explicit transfer-first explanation.
+            return 'view'
+        if resource == 'activity' and read:
+            return 'view_activity'
+        return None
     if resource == 'superagent/tasks' and method == 'GET':
         return 'view'
     if method == 'POST' and re.fullmatch(r'superagent/tasks(?:/(?:publish|[a-f0-9]{32}/(?:answer|stop|retry)))?', resource):
@@ -175,6 +189,9 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return 'view' if read else None
     if re.fullmatch(r'accounts/directory/(?:native:[1-9][0-9]*|legacy:[a-z0-9_-]{1,80})(?::[a-f0-9]{20})?/(?:verify|logout|open-backend)', resource):
         return 'manage_accounts' if method == 'POST' else None
+    if re.fullmatch(r'accounts/[a-z0-9_-]+/remote/[a-f0-9]{32}/(?:frame|input|close|qrcode(?:/refresh)?)', resource):
+        action = resource.rsplit('/', 1)[-1]
+        return 'manage_accounts' if (action in {'frame', 'qrcode'} and method == 'GET') or (action in {'input', 'close', 'refresh'} and method == 'POST') else None
     if (resource.startswith(("login/", "logout/"))
             or re.fullmatch(r"accounts/[^/]+/(?:credentials|mp-login(?:/status)?)", resource)
             or (not read and re.fullmatch(r"interactions/channels(?:/[^/]+)?", resource))):

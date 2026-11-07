@@ -1024,7 +1024,8 @@ async def _run_login(task_id: str, creator: bool = False, account_id: int | None
                      browser_runtime_id: str = "",
                      fingerprint_overrides: dict | None = None,
                      force_reauth: bool | None = None,
-                     before_persist=None):
+                     before_persist=None, context_callback=None,
+                     timeout_seconds: int | None = None):
     """扫码登录。多账号隔离模型:一账号=一持久 profile。
     - 传 account_id:登录进该账号自己的 profile(重新登录/补创作者登录)。
     - 不传:用「临时 profile」登录,**只有登录成功才建账号**;关窗/超时/取消都不留残号。"""
@@ -1035,6 +1036,7 @@ async def _run_login(task_id: str, creator: bool = False, account_id: int | None
         status="waiting", platform=platform, creator=creator,
         account_id=account_id)
     fresh_account = account_id is None
+    identity = None
     tmp_profile = ""
     proxy_reservation_key = ""
     new_fields = None
@@ -1163,6 +1165,10 @@ async def _run_login(task_id: str, creator: bool = False, account_id: int | None
             reauth_options = ({"force_reauth": bool(force_reauth)}
                               if force_reauth is not None else
                               {"force_reauth": True} if account_id else {})
+            if context_callback is not None:
+                reauth_options["context_callback"] = context_callback
+            if timeout_seconds is not None:
+                reauth_options["timeout_seconds"] = max(1, min(600, int(timeout_seconds)))
             if platform == "xhs":
                 if creator:
                     ok, state_json, nickname = await interactive_xhs_creator_login(
@@ -1185,9 +1191,9 @@ async def _run_login(task_id: str, creator: bool = False, account_id: int | None
                             environment=login_environment,
                         )
                     reauth_options["status_callback"] = _xhs_verification_status
+                    reauth_options.setdefault("timeout_seconds", 300)
                     ok, state_json, nickname = await interactive_xhs_login(
-                        browser, identity, timeout_seconds=300,
-                        **reauth_options)
+                        browser, identity, **reauth_options)
             elif platform == "kuaishou":
                 if creator:
                     ok, state_json, nickname = await interactive_ks_creator_login(
@@ -1448,6 +1454,12 @@ async def _run_login(task_id: str, creator: bool = False, account_id: int | None
             account_id=account_id, error=f"{type(e).__name__}: {e}",
             environment=login_environment)
     finally:
+        if (context_callback is not None and identity is not None
+                and login_tasks.get(task_id, {}).get("status") != "confirmed"):
+            # The remote view owns this login only. Flush and release that
+            # account's context on cancellation/timeout without deleting auth.
+            with suppress(Exception):
+                await browser.close_context(identity.key)
         if proxy_reservation_key:
             release_proxy_reservation(proxy_reservation_key)
 

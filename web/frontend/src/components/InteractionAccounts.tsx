@@ -1,17 +1,30 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ACTIVE_PROJECT_ID, projectFetch } from '../lib/projectScope';
-import type { AccountDirectory, AccountDirectoryItem, AccountItem } from '../lib/api';
+import type { AccountDirectory, AccountDirectoryItem, AccountItem, RemoteLoginDescriptor } from '../lib/api';
 import { useModalLayer } from '../vendor/deepseek-harness/navigation/useModalLayer';
 import { useIpPermissions } from './ProjectSpace';
+import { closeRemoteLogin } from './RemoteLoginView';
+import PlatformLoginView from './PlatformLoginView';
 import '../styles/interactionAccounts.css';
 
 type NativePlatform = 'douyin' | 'xhs';
 interface Login {
   platform: NativePlatform;
   accountId?: number;
+  requestedAccountId?: number;
   taskId: string;
   status: string;
   message: string;
+  remote?: RemoteLoginDescriptor;
+  loginSaved?: boolean;
+  stage?: string;
+  capabilities?: AccountDirectoryItem['capabilities'];
+}
+const awaitingNativeScan = (state: { stage?: string; status: string; loginSaved?: boolean }) =>
+  state.stage === 'read' && ['opening', 'waiting'].includes(state.status) && state.loginSaved !== true;
+function connectionProgress(result: { loginSaved?: boolean; stage?: string; account_id?: number; capabilities?: AccountDirectoryItem['capabilities'] }, previous?: Login) {
+  return { loginSaved: result.loginSaved ?? previous?.loginSaved, stage: result.stage ?? previous?.stage,
+    capabilities: result.capabilities ?? previous?.capabilities, accountId: result.account_id ?? previous?.accountId };
 }
 const nativePlatform = (platform: string): NativePlatform | undefined => platform === 'douyin' ? 'douyin' : ['xhs', 'xiaohongshu'].includes(platform) ? 'xhs' : undefined;
 const platformName = (platform: NativePlatform) => platform === 'douyin' ? '抖音' : '小红书';
@@ -57,11 +70,31 @@ export default function InteractionAccounts({ refreshToken = 0, onPlatformLogin,
   connectedCallback.current = onConnected;
   managePermission.current = canManageAccounts;
   const dialog = useRef<HTMLElement>(null);
+  const loginRef = useRef(login);
+  loginRef.current = login;
+  const replacement = useRef({ taskId: '', revision: 0 });
+  const closingLogin = useRef<{ remote: RemoteLoginDescriptor; version: number } | null>(null);
+  const refreshAfterClose = useRef<() => Promise<void>>(async () => {});
+  const closedRemotes = useRef(new Map<string, boolean>());
+  const settledRemote = useRef<(remote: RemoteLoginDescriptor, acknowledged: boolean) => void>(() => {});
   const closeConnect = useCallback(() => {
-    actionVersion.current++;
+    const previousLogin = loginRef.current;
+    const version = ++actionVersion.current;
     connectOpen.current = false;
     setAdding(false); setLogin(undefined);
-    setBusy(previous => previous === 'login' ? '' : previous);
+    if (previousLogin?.remote && managePermission.current) {
+      closingLogin.current = { remote: previousLogin.remote, version };
+      setBusy('closing-login');
+      const acknowledged = closedRemotes.current.get(previousLogin.remote.id);
+      if (acknowledged !== undefined) {
+        const remote = previousLogin.remote;
+        queueMicrotask(() => settledRemote.current(remote, acknowledged));
+      }
+    } else {
+      if (!managePermission.current) closingLogin.current = null;
+      setBusy(previous => previous === 'login' ? '' : previous);
+      if (previousLogin) void refreshAfterClose.current();
+    }
   }, []);
   const dialogOpen = canManageAccounts && adding;
   useModalLayer(dialog, dialogOpen, closeConnect);
@@ -95,6 +128,25 @@ export default function InteractionAccounts({ refreshToken = 0, onPlatformLogin,
       if (current()) setError(cause instanceof Error ? cause.message : '读取账号失败');
     } finally { if (current()) setLoading(false); }
   }, []);
+  refreshAfterClose.current = load;
+  const remoteSettled = useCallback(async (remote: RemoteLoginDescriptor, acknowledged: boolean) => {
+    if (!mounted.current) return;
+    closedRemotes.current.set(remote.id, acknowledged);
+    if (closedRemotes.current.size > 64) closedRemotes.current.delete(closedRemotes.current.keys().next().value!);
+    const closing = closingLogin.current;
+    if (closing?.remote.id === remote.id && closing.remote.platform === remote.platform
+        && closing.version === actionVersion.current) {
+      if (!acknowledged) {
+        setError('登录窗口尚未结束，请重试关闭后再添加账号。已保存的登录不会退出。');
+        return;
+      }
+      closingLogin.current = null;
+      setBusy(previous => previous === 'closing-login' ? '' : previous);
+      setNotice('登录窗口已关闭，请查看下方账号状态。');
+    }
+    await load();
+  }, [load]);
+  settledRemote.current = remoteSettled;
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
@@ -105,13 +157,22 @@ export default function InteractionAccounts({ refreshToken = 0, onPlatformLogin,
   useEffect(() => {
     if (!loginTaskId) return;
     const version = actionVersion.current;
-    let active = true;
+    const controller = new AbortController();
+    const deadline = Date.now() + 620000;
+    const visible = () => document.visibilityState !== 'hidden';
+    let active = true, polling = false, finished = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
+      if (!active || polling || finished || !visible()
+          || version !== actionVersion.current || !managePermission.current) return;
+      if (replacement.current.taskId === loginTaskId) { timer = setTimeout(poll, 1800); return; }
+      const revision = replacement.current.revision;
+      clearTimeout(timer); polling = true;
       try {
-        const result = await accountRequest(`/api/operations/api/accounts/connect/poll?task_id=${encodeURIComponent(loginTaskId)}`);
-        if (!active || version !== actionVersion.current || !managePermission.current) return;
+        const result = await accountRequest(`/api/operations/api/accounts/connect/poll?task_id=${encodeURIComponent(loginTaskId)}`, { signal: controller.signal });
+        if (!active || version !== actionVersion.current || !managePermission.current || revision !== replacement.current.revision) return;
         if (result.status === 'confirmed') {
+          finished = true;
           setLogin(undefined); setAdding(false); connectOpen.current = false;
           setNotice(result.capabilities?.creator === 'verified' && result.capabilities?.comments === 'verified'
             ? '账号已连接，内容后台与主站登录已完成检查。'
@@ -119,21 +180,33 @@ export default function InteractionAccounts({ refreshToken = 0, onPlatformLogin,
           connectedCallback.current?.();
           await load();
         } else if (['error', 'expired'].includes(result.status)) {
-          setLogin(previous => previous?.taskId === loginTaskId ? { ...previous, status: result.status, message: result.hint || result.error || result.message || '本次登录未完成，请重试。' } : previous);
+          finished = true;
+          setLogin(previous => previous?.taskId === loginTaskId ? { ...previous, ...connectionProgress(result, previous), remote: result.remote || previous.remote, status: result.status, message: result.hint || result.error || result.message || '本次登录未完成，请重试。' } : previous);
+        } else if (Date.now() > deadline) {
+          // Hidden tabs can finish login on the phone. Check the real result
+          // above before treating an old, still-pending attempt as timed out.
+          finished = true;
+          setLogin(previous => previous?.taskId === loginTaskId ? { ...previous, ...connectionProgress(result, previous), status: 'expired', message: '登录等待超时，请重新连接。' } : previous);
         } else {
-          setLogin(previous => previous?.taskId === loginTaskId ? { ...previous, status: result.status, message: result.hint || '在打开的浏览器中完成登录，响芽 会自动检查可用功能。' } : previous);
-          timer = setTimeout(poll, 1800);
+          setLogin(previous => previous?.taskId === loginTaskId ? { ...previous, ...connectionProgress(result, previous), remote: result.remote || previous.remote, status: result.status, message: result.hint || '在打开的浏览器中完成登录，响芽 会自动检查可用功能。' } : previous);
         }
       } catch (cause) {
+        if (revision !== replacement.current.revision) return;
+        finished = true;
         if (active && version === actionVersion.current && managePermission.current) setLogin(previous => previous?.taskId === loginTaskId ? { ...previous, status: 'error', message: cause instanceof Error ? cause.message : '读取登录状态失败' } : previous);
+      } finally {
+        polling = false;
+        if (active && !finished && visible()) timer = setTimeout(poll, 1800);
       }
     };
-    timer = setTimeout(poll, 800);
-    return () => { active = false; clearTimeout(timer); };
+    const visibility = () => { clearTimeout(timer); if (visible()) void poll(); };
+    document.addEventListener('visibilitychange', visibility);
+    if (visible()) timer = setTimeout(poll, 800);
+    return () => { active = false; controller.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', visibility); };
   }, [loginTaskId, load]);
 
   const connect = async (platform: NativePlatform, accountId?: number) => {
-    if (!mounted.current || !managePermission.current || busy) return;
+    if (!mounted.current || !managePermission.current || busy) return false;
     const version = ++actionVersion.current;
     const current = () => mounted.current && version === actionVersion.current && managePermission.current;
     setBusy('login'); setError('');
@@ -143,11 +216,42 @@ export default function InteractionAccounts({ refreshToken = 0, onPlatformLogin,
     try {
       const path = `/api/operations/api/accounts/connect/start?platform=${platform}${accountId ? `&account_id=${accountId}` : ''}`;
       const result = await accountRequest(path, { method: 'POST' });
-      if (!current()) return;
-      setLogin({ platform, accountId, taskId: result.task_id, status: result.status || 'opening', message: result.hint || '响芽 正在检查已有登录，平台需要验证时会提示。' });
+      if (!current()) {
+        if (result.remote) void closeRemoteLogin(result.remote);
+        return false;
+      }
+      setLogin({ platform, requestedAccountId: accountId, ...connectionProgress(result, { platform, accountId, taskId: '', status: '', message: '' }), remote: result.remote, taskId: result.task_id, status: result.status || 'opening', message: result.hint || '响芽 正在检查已有登录，平台需要验证时会提示。' });
+      return !!result.task_id;
     } catch (cause) {
       if (current()) setLogin({ platform, accountId, taskId: '', status: 'error', message: cause instanceof Error ? cause.message : '启动登录失败' });
+      return false;
     } finally { if (current()) setBusy(''); }
+  };
+
+  const restartLogin = async (remote: RemoteLoginDescriptor, closeOld: () => Promise<boolean>) => {
+    const original = loginRef.current;
+    const version = actionVersion.current;
+    const current = () => mounted.current && managePermission.current && connectOpen.current && version === actionVersion.current
+      && loginRef.current?.remote?.id === remote.id && loginRef.current.remote.platform === remote.platform
+      && awaitingNativeScan(loginRef.current);
+    if (!original?.taskId || replacement.current.taskId || !current()) return false;
+    const taskId = original.taskId;
+    const progress = () => accountRequest(`/api/operations/api/accounts/connect/poll?task_id=${encodeURIComponent(taskId)}`);
+    replacement.current = { taskId, revision: replacement.current.revision + 1 };
+    try {
+      const before = await progress();
+      if (!current() || before.task_id !== taskId || before.platform !== original.platform
+          || before.remote?.id !== remote.id || before.remote?.platform !== remote.platform || !awaitingNativeScan(before)) return false;
+      if (!await closeOld() || !current()) return false;
+      // A phone confirmation can race cancellation. Only replace a cancelled,
+      // unsaved native task. A proved account is kept by the existing flow.
+      const after = await progress();
+      if (!current() || after.task_id !== taskId || after.platform !== original.platform || after.loginSaved
+          || after.status !== 'error' || after.stage !== 'canceled') return false;
+      return await connect(original.platform, original.requestedAccountId);
+    } finally {
+      if (replacement.current.taskId === taskId) replacement.current.taskId = '';
+    }
   };
 
   const operateAccount = async (account: AccountDirectoryItem, action: 'verify' | 'logout') => {
@@ -206,7 +310,12 @@ export default function InteractionAccounts({ refreshToken = 0, onPlatformLogin,
   return <section className="connected-accounts" aria-label="平台账号">
     <div className="connected-accounts-heading"><div><h2>已添加账号</h2><p>{loading && !directory ? '正在读取账号…' : directory ? `${accounts.length} 个账号 · 支持 ${platforms.length} 个平台` : '账号暂时无法读取'}</p></div>
       {canManageAccounts && <button className="btn btn-primary btn-sm" disabled={!!busy || loading || !directory || !!error || !platforms.length} onClick={() => { if (!mounted.current || !managePermission.current) return; actionVersion.current++; connectOpen.current = true; setLogin(undefined); setAdding(true); }}>＋ 添加账号</button>}</div>
-    {error && <p className="account-feedback error" role="alert">{error}<button className="btn btn-sm btn-ghost" onClick={() => void load()}>重新读取</button></p>}
+    {error && <p className="account-feedback error" role="alert">{error}<button className="btn btn-sm btn-ghost" onClick={() => {
+      const closing = closingLogin.current;
+      if (closing) void closeRemoteLogin(closing.remote).then(acknowledged => remoteSettled(closing.remote, acknowledged));
+      else void load();
+    }}>{closingLogin.current ? '重试关闭' : '重新读取'}</button></p>}
+    {busy === 'closing-login' && <p className="account-feedback" role="status">正在结束本次验证并更新账号状态…</p>}
     {notice && <p className="account-feedback" role="status">{notice}</p>}
     <div className="connected-account-table" role="table" aria-label="平台账号列表">
       <div className="connected-account-labels" role="row"><span role="columnheader">账号</span><span role="columnheader">平台</span><span role="columnheader">登录状态</span><span role="columnheader">操作</span></div>
@@ -218,22 +327,30 @@ export default function InteractionAccounts({ refreshToken = 0, onPlatformLogin,
             <div className="connected-account-person" role="cell"><Avatar url={account.avatar} name={account.name || account.platformName} />
               <div><strong>{account.name || '平台账号'}</strong><small>{account.platformName}{account.current ? ' · 当前账号' : !account.identityVerified ? ' · 身份待核实' : ''}</small></div></div>
             <span role="cell">{account.platformName}</span>
-            <span role="cell" className={`connected-account-state ${ready ? 'ready' : ''}`}><i />{account.status === 'unknown' ? '待核实' : ready ? '已登录' : '需要登录'}</span>
+            <span role="cell" className={`connected-account-state ${ready ? 'ready' : ''}`}><i /><span>{account.status === 'unknown' ? '待核实' : ready ? '已登录' : '需要登录'}
+              {ready && account.capabilities.creator === 'needs_verification' && <small>创作后台待验证</small>}</span></span>
             <div role="cell"><button className="btn btn-sm btn-ghost" aria-expanded={expanded === account.key} onClick={() => setExpanded(expanded === account.key ? undefined : account.key)}>{expanded === account.key ? '收起' : '管理'}</button></div>
           </div>
           {expanded === account.key && <div className="connected-account-detail"><div><p>同一账号由 响芽 各功能统一使用。</p>
             {capabilities.length ? <p className="connected-account-capabilities">{capabilities.map(([key, label]) => <span key={key}>{label}：{capabilityLabel(account.capabilities[key])}</span>)}</p>
               : <p className="connected-account-capabilities">此平台当前提供账号登录，可用操作由相应功能页面检查。</p>}</div>
-            {canManageAccounts && <div><button className="btn btn-sm" disabled={!!busy} onClick={() => checkAccount(account)}>{busy === `verify:${account.key}` ? '检查中…' : '检查登录'}</button>
+            {canManageAccounts && <div><button className="btn btn-sm" disabled={!!busy} onClick={() => checkAccount(account)}>{busy === `verify:${account.key}` ? '检查中…' : ready && hasNativeAccount(account) && account.capabilities.creator === 'needs_verification' ? '补充验证' : '检查登录'}</button>
               {hasNativeAccount(account) && <button className="btn btn-sm btn-ghost" disabled={!!busy} onClick={() => void openBackend(account)}>{busy === `open-backend:${account.key}` ? '打开中…' : '打开平台后台'}</button>}
               <button className="btn btn-sm btn-ghost" disabled={!!busy} onClick={() => void operateAccount(account, 'logout')}>{busy === `logout:${account.key}` ? '退出中…' : '退出登录'}</button></div>}</div>}
         </div>;
       })}
       {directory && !loading && !error && !accounts.length && <div className="connected-account-empty"><strong>当前 IP 还没有账号</strong><p>{canManageAccounts ? '添加一个平台账号，登录后在 响芽 中统一使用。' : '平台账号由当前 IP 的负责人添加。'}</p></div>}
     </div>
-    {dialogOpen && <div className="account-connect-backdrop"><section ref={dialog} role="dialog" aria-modal="true" aria-label="连接平台账号" className="account-connect-dialog" tabIndex={-1}>
-      <div><h2>{login ? `登录${platformName(login.platform)}` : '添加平台账号'}</h2><button className="icon-btn" data-modal-autofocus={login ? true : undefined} aria-label="关闭账号连接" onClick={closeConnect}>×</button></div>
-      {login ? <><p role="status">{login.message}</p><small>如需补充验证，请在 响芽 打开的平台窗口中完成。</small>
+    {dialogOpen && <div className="account-connect-backdrop"><section ref={dialog} role="dialog" aria-modal="true" aria-label="连接平台账号" className={`account-connect-dialog${login?.remote ? ' account-connect-remote' : ''}`} tabIndex={-1}>
+      <div><h2>{login ? login.loginSaved ? `${platformName(login.platform)}已登录` : `登录${platformName(login.platform)}` : '添加平台账号'}</h2><button className="icon-btn" data-modal-autofocus={login ? true : undefined} aria-label="关闭账号连接" onClick={closeConnect}>×</button></div>
+      {login ? <><p role="status">{login.remote && !login.loginSaved && !['error', 'expired'].includes(login.status)
+        ? '请先扫码连接；如平台需要额外验证，可按提示继续。' : login.message}</p>
+        {login.loginSaved && <p className="account-login-saved" role="status">主站登录已保存。{login.capabilities?.creator === 'verified'
+          ? '正在检查其余可用功能。' : '创作后台仍待补充验证。'}可以关闭此窗口，稍后继续验证。</p>}
+        {login.remote && !['error', 'expired'].includes(login.status) ? <PlatformLoginView remote={login.remote} onSettled={remoteSettled}
+          onRestart={awaitingNativeScan(login) ? restartLogin : undefined} />
+          : <small>如需补充验证，请在 响芽 打开的平台窗口中完成。</small>}
+        {login.loginSaved && <button className="btn" onClick={closeConnect}>保留登录并关闭</button>}
         {['error', 'expired'].includes(login.status) && <button className="btn btn-primary" disabled={!!busy} onClick={() => void connect(login.platform, login.accountId)}>重试登录</button>}</>
         : <><p>共 {platforms.length} 个平台，选择平台后完成登录。</p><label>平台<select className="field" data-modal-autofocus value={selectedPlatform} onChange={event => setSelectedPlatform(event.target.value)}>
           {platforms.map(item => <option key={item.platform} value={item.platform} disabled={!item.supported}>{item.name}{!item.supported ? '（暂不可用）' : ''}</option>)}

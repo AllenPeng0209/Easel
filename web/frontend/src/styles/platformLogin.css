@@ -1,0 +1,14 @@
+.platform-login { min-width:0; width:100%; }
+.platform-login-qr-card { display:flex; flex-direction:column; align-items:center; text-align:center; gap:14px; padding:16px 6px; }
+.platform-login-qr-card img,.platform-login-qr-placeholder { width:min(256px,70vw); aspect-ratio:1; object-fit:contain; border-radius:12px; background:#fff; }
+.platform-login-qr-card img { padding:10px; border:1px solid var(--border); }
+.platform-login-qr-placeholder { display:flex; align-items:center; justify-content:center; font-size:48px; color:var(--text-tertiary); border:1px dashed var(--border); background:var(--bg-secondary); }
+.platform-login-qr-card strong { color:var(--text-primary); font-size:16px; }
+.platform-login-qr-card p { margin:0!important; max-width:32em; font-size:13px; color:var(--text-secondary); line-height:1.7; }
+.platform-login-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:10px; margin:10px 0; }
+.account-connect-dialog.account-connect-remote:has(.platform-login--qr) { width:min(440px,96vw); }
+.modal:has(> .platform-login--qr) { width:min(440px,96vw)!important; }
+@media(max-width:720px) {
+  .account-connect-dialog.account-connect-remote:has(.platform-login--qr) { width:100%; }
+  .platform-login-actions { flex-direction:column; align-items:stretch; }
+}

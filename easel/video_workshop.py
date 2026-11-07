@@ -342,6 +342,18 @@ class WorkshopStore:
                 raise WorkshopError('素材和分镜编号不能重复', 422)
             if any(set(shot['asset_ids']) - set(ids) for shot in values['shots']):
                 raise WorkshopError('分镜只能绑定本项目的素材', 422)
+            raw_assets = {row['id']: row for row in values['assets']}
+            merged_shots = []
+            for raw in values['shots']:
+                previous = old_shots.get(raw['id'], {})
+                shot = {**{key: previous[key] for key in ('primary_frame_asset_id',) if key in previous}, **raw}
+                primary = shot.get('primary_frame_asset_id')
+                if primary is not None:
+                    asset = raw_assets.get(primary) if isinstance(primary, str) else None
+                    if (asset is None or primary not in shot['asset_ids']
+                            or asset['kind'] not in {'character', 'scene', 'prop', 'image'} or not asset.get('path')):
+                        raise WorkshopError('主参考首帧须为本分镜绑定的当前项目图片；解绑前请明确清空或更换首帧', 422)
+                merged_shots.append(shot)
             assets = []
             for raw in values['assets']:
                 previous = old_assets.get(raw['id'], {})
@@ -363,7 +375,7 @@ class WorkshopStore:
                 assets.append(asset)
             shots = [{**{key: old_shots.get(raw['id'], {}).get(key, '') for key in ('description', 'atmosphere')}, **raw, 'candidates': old_shots.get(raw['id'], {}).get('candidates', []),
                       'selected_candidate_id': old_shots.get(raw['id'], {}).get('selected_candidate_id')}
-                     for raw in values['shots']]
+                     for raw in merged_shots]
             raw_content = values.get('raw_content', project['raw_content'])
             if (project['raw_content'], project['script'], project['assets'], project['shots']) != (raw_content, values['script'], assets, shots):
                 project.update(raw_content=raw_content, script=values['script'], assets=assets, shots=shots)

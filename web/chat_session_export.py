@@ -31,7 +31,7 @@ _LINE_BYTES = 1024 * 1024
 _CHUNK = 64 * 1024
 _LEGACY_SCAN = 10_000
 _EVENTS = frozenset({"admitted", "token", "thinking", "reasoning_summary", "answer_completed", "activity",
-                     "agent_event", "question", "question_closed", "error", "done", "heartbeat", "ping"})
+                     "agent_event", "question", "question_closed", "error", "done", "heartbeat", "ping", "execution_state"})
 _KINDS = frozenset({"tool", "plan", "usage", "context", "decision", "artifact", "task", "publication",
                     "business", "steer", "steer_capability", "subagent"})
 _STATUSES = frozenset({"preparing", "running", "pending", "completed", "failed", "interrupted", "declined",
@@ -40,7 +40,8 @@ _STATUSES = frozenset({"preparing", "running", "pending", "completed", "failed",
                        "submitted", "confirmed", "draft_created", "exported", "scheduled", "approved",
                        "rejected", "invalidated", "executing", "unknown"})
 _ERROR_CODES = frozenset({"authentication", "model_unavailable", "rate_limit", "quota_exhausted", "network",
-                          "timeout", "permission_denied", "session_conflict", "storage", "unknown"})
+                          "timeout", "permission_denied", "session_conflict", "storage", "unknown",
+                          "server_queue_full", "server_owner_queue_full", "server_queue_timeout", "server_unavailable"})
 _TOOL_NAMES = frozenset({"bash", "apply_patch", "web_search", "read_image", "present",
                          "easel_ask_user", "easel_business_objects", "easel_publish", "easel_publication_status"})
 
@@ -116,6 +117,13 @@ def _safe_event(record, session, turn_ref):
             for field in ("retryable", "unconfirmed"):
                 if type(data.get(field)) is bool:
                     projected[field] = data[field]
+        elif kind == "execution_state":
+            state = _safe_enum(data.get("executionState"), ("queued", "running"))
+            if state:
+                projected["executionState"] = state
+                position = data.get("queuePosition")
+                if state == "queued" and type(position) is int and 1 <= position <= 256:
+                    projected["queuePosition"] = position
         elif kind in ("question", "question_closed", "answer_completed"):
             field = "itemId" if kind == "answer_completed" else "id"
             value = data.get(field)

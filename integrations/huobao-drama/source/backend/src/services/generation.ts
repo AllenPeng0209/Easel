@@ -13,6 +13,8 @@ import { now } from '../utils/response.js'
 import { downloadFile, fetchImageAsCompressedDataUrl, generateImageThumb, readImageAsCompressedDataUrl, readImageAsDataUrl, saveBase64Image } from '../utils/storage.js'
 import { extractVideoPoster } from '../utils/video-poster.js'
 import { getImageAdapter, getVideoAdapter } from './adapters/registry'
+import { isLocalMiniMaxVideoConfig } from './adapters/minimax-video.js'
+import { compileStoryboardVideoPrompt } from './storyboard-video-prompt.js'
 import type { AIConfig } from './adapters/types'
 import { logTaskError, logTaskPayload, logTaskProgress, logTaskStart, logTaskSuccess, logTaskWarn, redactUrl } from '../utils/task-logger.js'
 
@@ -66,11 +68,13 @@ interface GenerateVideoParams {
   duration?: number
   aspectRatio?: string
   resolution?: string
+  episodeResolution?: string
   seed?: number
   promptExtend?: boolean
   watermark?: boolean
   configId?: number
   forceNew?: boolean
+  promptCompilation?: unknown
 }
 
 export async function generateImage(params: GenerateImageParams): Promise<number> {
@@ -128,6 +132,22 @@ export async function generateVideo(params: GenerateVideoParams): Promise<number
       : await getActiveConfig('video')
     if (!config) throw new Error('未配置视频模型，请先到「设置」页添加并启用 AI 服务')
 
+    if (params.promptCompilation === undefined) {
+      // Non-route callers have no authoritative storyboard context. Literal
+      // prompts stay intact; unresolved U references must not reach a model.
+      const compiled = compileStoryboardVideoPrompt(params.prompt, { storyboardId: params.storyboardId || 0, characters: [] })
+      params = { ...params, prompt: compiled.prompt, promptCompilation: compiled.provenance }
+    }
+    // Build only: reject impossible native parameters before a sys_task exists.
+    // Image bytes are resolved later, and this preflight never sends a request.
+    if (config.provider.toLowerCase() === 'minimax' && isLocalMiniMaxVideoConfig(config)) {
+      getVideoAdapter(config.provider).buildGenerateRequest(config, {
+        ...params, id: 0, model: params.model || config.model,
+        referenceImageUrls: JSON.stringify(params.referenceImageUrls || []),
+        referenceVideoUrls: JSON.stringify(params.referenceVideoUrls || []),
+        referenceAudioUrls: JSON.stringify(params.referenceAudioUrls || []),
+      })
+    }
     params.referenceAudioUrls = await prepareReferenceAudio(params.referenceAudioUrls, config.provider)
 
     const id = await createTask('video', config, {
@@ -150,9 +170,11 @@ export async function generateVideo(params: GenerateVideoParams): Promise<number
       aspectRatio: params.aspectRatio,
       // 统一存为项目内部格式，各适配器再转换为官方大小写与枚举。
       resolution: normalizeStoredVideoResolution(params.resolution),
+      episodeResolution: params.episodeResolution,
       seed: params.seed,
       promptExtend: params.promptExtend,
       watermark: params.watermark,
+      promptCompilation: params.promptCompilation,
     })
 
     logTaskStart('VideoTask', 'enqueue', {
@@ -355,7 +377,7 @@ async function processTask(id: number, config: AIConfig) {
     const [current] = await db.select().from(schema.sysTask).where(eq(schema.sysTask.id, id))
     const uncertain = current?.type === 'video' && !current.taskId && !current.resultUrl
       && (err instanceof TypeError || /timeout|abort|No task_id|API error 5/i.test(err.message))
-    await failTask(id, safeTaskError(err), uncertain ? 'submission_unknown' : undefined)
+    await failTask(id, err, uncertain ? 'submission_unknown' : undefined)
   }
 }
 
@@ -366,11 +388,11 @@ async function markPolling(id: number, taskId: string | undefined) {
   logTaskProgress('SysTask', 'poll-start', { id, taskId })
 }
 
-async function failTask(id: number, message: string, code?: string) {
-  message = safeTaskError(message)
+async function failTask(id: number, error: unknown, code?: string) {
+  const message = safeTaskError(error)
   logTaskError('SysTask', 'failed', { id, error: message })
   await db.update(schema.sysTask)
-    .set({ status: 'failed', errorMsg: safeTaskError(message), ...(code ? { errorCode: code } : {}), updatedAt: now() })
+    .set({ status: 'failed', errorMsg: message, ...(code ? { errorCode: code } : {}), updatedAt: now() })
     .where(eq(schema.sysTask.id, id))
 }
 
@@ -526,7 +548,7 @@ async function handleVideoComplete(record: SysTaskRecord, videoUrl: string, dura
       const newer = record.storyboardId ? tx.select({ id: schema.sysTask.id }).from(schema.sysTask)
         .where(and(eq(schema.sysTask.storyboardId, record.storyboardId), eq(schema.sysTask.type, 'video'), gt(schema.sysTask.id, record.id))).get() : null
       if (record.storyboardId && !newer) tx.update(schema.storyboards)
-        .set({ videoUrl: localPath, duration: duration || undefined, updatedAt: now() })
+        .set({ videoUrl: localPath, updatedAt: now() })
         .where(eq(schema.storyboards.id, record.storyboardId)).run()
       tx.update(schema.sysTask).set({ localPath, status: 'completed', stage: 'completed', errorCode: null,
         errorMsg: null, completedAt: now(), updatedAt: now() }).where(eq(schema.sysTask.id, record.id)).run()
@@ -702,7 +724,7 @@ function resolvePublicMediaUrls(refs: string[] | null | undefined, kind: 'video'
 
 function normalizeStoredVideoResolution(resolution: string | null | undefined): string | undefined {
   const value = String(resolution || '').trim().toLowerCase()
-  if (value === '480p' || value === '720p' || value === '1080p') return value
+  if (value === '480p' || value === '720p' || value === '768p' || value === '1080p') return value
   if (value === '2k') return '2K'
   return undefined
 }

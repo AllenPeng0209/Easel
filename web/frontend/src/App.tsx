@@ -16,7 +16,7 @@ import PublishPage from './components/PublishingPage';
 import OnboardingWizard from './components/OnboardingWizard';
 import SettingsPanel from './components/SettingsPanel';
 import { useChatSuperagent } from './components/SuperagentPage';
-import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession, forkChatSession, forkPrefixHash, fetchEarlierChatTurns, fetchCompleteChatSession, fetchSessionModels, type SessionModelCapability } from './lib/api';
+import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, fetchLastTurnStatus, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession, forkChatSession, forkPrefixHash, fetchEarlierChatTurns, fetchCompleteChatSession, fetchSessionModels, type SessionModelCapability } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed, ChatTurnOutcome } from './lib/api';
 import { reduceAgentEvents } from './lib/agentEvents';
 import { observeAgentTimeline, recoverAgentTimeline, type AgentTimelineObservation } from './lib/agentTimeline';
@@ -24,6 +24,7 @@ import { fetchBusinessObject, parseBusinessHash } from './lib/businessObjectApi'
 import type { BusinessTarget } from './lib/businessObjectApi';
 import type { WorkshopReference } from './lib/workshop';
 import type { AgentEvent } from './lib/agentEvents';
+import { applyPublicationHandoff } from './lib/publicationDraft';
 import { PUBLICATION_HANDOFF_EVENT, normalizePublicationHandoff, type PublicationHandoff } from './lib/publicationHandoff';
 import { validateChatCommand, type ChatCommand } from './lib/chatCommands';
 import { trimChatReferenceText, toWireSessionReferences, type ChatReference, type ChatSessionReference } from './lib/chatReferences';
@@ -36,6 +37,8 @@ import { applyPromptAdmission, forgetPromptAttempt, loadPromptAttempt, sameCompo
 import { questionStatus } from './lib/api';
 import {
   loadSessions,
+  loadPublishDraft,
+  savePublishDraft,
   saveSessions,
   createSession,
   updateSessionTitle,
@@ -116,7 +119,7 @@ export default function App() {
   const [selectedPersona, setSelectedPersona] = useState('');
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [workshopPanel, setWorkshopPanel] = useState<{ id: string; sessionId: string; artifactId?: string } | null>(null);
+  const [workshopPanel, setWorkshopPanel] = useState<{ id: string; sessionId: string; artifactId?: string; reference?: WorkshopReference } | null>(null);
   const chatOrigin = useRef<string | null>(null);
   chatOrigin.current = currentPage === 'chat' ? activeSessionId : null;
   const [gatewayStatus, setGatewayStatus] = useState('connecting');
@@ -900,6 +903,11 @@ export default function App() {
       },
       prompt?.message.planRef,
       modelOverride,
+      (state) => {
+        if (streamAcc.current[sessionId] !== owner) return;
+        setStreams(previous => previous[sessionId] ? { ...previous, [sessionId]: { ...previous[sessionId],
+          executionState: state.executionState, queuePosition: state.queuePosition } } : previous);
+      },
     );
     return owner;
   }, [finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage, confirmPromptAdmission, failPromptAdmission]);
@@ -1027,6 +1035,12 @@ export default function App() {
         owner.answerCompletion = answerCompletion;
         setStreams(p => p[sessionId] ? { ...p, [sessionId]: { ...p[sessionId], answerCompletion } } : p);
       },
+      undefined, undefined,
+      (state) => {
+        if (streamAcc.current[sessionId] !== owner) return;
+        setStreams(previous => previous[sessionId] ? { ...previous, [sessionId]: { ...previous[sessionId],
+          executionState: state.executionState, queuePosition: state.queuePosition } } : previous);
+      },
     );
   }, [appendAssistant, clearStream, finalizeStream, closeQuestion, receiveQuestion, receiveAgentEvent, confirmQueuedMessage,
     confirmPromptAdmission, failQueuedAdmission, failPromptAdmission]);
@@ -1119,9 +1133,10 @@ export default function App() {
   const handleSendMessage = useCallback((sessionId: string, displayText: string, attachments?: UploadedFile[], references?: ChatReference[], sessionReferences?: ChatSessionReference[], command?: ChatCommand) => {
     const session = sessionsRef.current.find(item => item.id === sessionId);
     if (!session || (!displayText.trim() && !attachments?.length) || (command && !validateChatCommand(displayText, command))) return false;
+    const workshopRef = workshopPanel?.sessionId === sessionId ? workshopPanel.reference : undefined;
     const prior = loadPromptAttempt(sessionId);
     if (prior && prior.state !== 'accepted') {
-      return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, true, references, sessionReferences, command);
+      return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, workshopRef, true, references, sessionReferences, command);
     }
     if (prior && sameComposerDraft(prior, displayText, attachments || [], references, sessionReferences, command)) {
       // A cold or remounted composer may still hold the already admitted draft.
@@ -1144,7 +1159,8 @@ export default function App() {
     if (streamCtl.current[sessionId] || streamAcc.current[sessionId] || session.queued?.length) {
       const trimmed = trimChatReferenceText(displayText, references, sessionReferences);
       const queued = { id: crypto.randomUUID(), text: trimmed.text, attachments, references: trimmed.references,
-        sessionReferences: toWireSessionReferences(trimmed.sessionReferences), command, modelOverride: session.nextModel, created: Date.now() };
+        sessionReferences: toWireSessionReferences(trimmed.sessionReferences), command, modelOverride: session.nextModel,
+        ...(workshopRef ? { workshopRef: { ...workshopRef } } : {}), created: Date.now() };
       setSessions(previous => {
         const next = previous.map(item => item.id === sessionId ? enqueueMessage(item, queued) : item);
         saveSessions(next);
@@ -1152,8 +1168,8 @@ export default function App() {
       });
       return true;
     }
-    return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, undefined, true, references, sessionReferences, command);
-  }, [sendUserAndStream]);
+    return sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, workshopRef, true, references, sessionReferences, command);
+  }, [sendUserAndStream, workshopPanel]);
 
   const reconcilePromptAttempt = useCallback((sessionId: string) => {
     const pending = loadPromptAttempt(sessionId);
@@ -1231,7 +1247,7 @@ export default function App() {
       if (loadPromptAttempt(session.id)?.state === 'unconfirmed') continue;
       const next = nextQueuedMessage(session, Boolean(streamAcc.current[session.id] || streamCtl.current[session.id] || session.pendingTurnId));
       if (!next || queueEdits.current[session.id]) continue;
-      sendUserAndStream(session.id, next.text, next.attachments || [], undefined, `queue-${next.id}`, undefined, false, next.references, next.sessionReferences, next.command);
+      sendUserAndStream(session.id, next.text, next.attachments || [], undefined, `queue-${next.id}`, next.workshopRef, false, next.references, next.sessionReferences, next.command);
     }
   }, [sessions, streams, queueEditRevision, historyReady, canOperate, resumePendingTurn, sendUserAndStream]);
 
@@ -1289,7 +1305,7 @@ export default function App() {
         || last?.events?.some(event => event.kind === 'publication' && event.publication)) return;
     const failed = last?.status === 'failed' || !!last?.failure;
     if (failed && (last?.failure?.retryable !== true || last.failure.phase !== 'startup'
-      || !['network', 'timeout', 'rate_limit'].includes(last.failure.code))) return;
+      || !['network', 'timeout', 'rate_limit', 'server_queue_full', 'server_owner_queue_full', 'server_queue_timeout'].includes(last.failure.code))) return;
     sendUserAndStream(sessionId, original.content, original.attachments, original.agentContent, undefined,
       original.workshopRef, false, original.references, original.sessionReferences, original.command);
   }, [canOperate, sendUserAndStream]);
@@ -1299,12 +1315,38 @@ export default function App() {
       if (!canOperate) return;
       const accepted = normalizePublicationHandoff((event as CustomEvent).detail);
       if (!accepted) return;
+      const merged = applyPublicationHandoff(loadPublishDraft(), accepted);
+      if (merged.status === 'invalid') { setBusinessNotice(merged.message); return; }
+      if (merged.status === 'updated' && !savePublishDraft(merged.draft)) {
+        setBusinessNotice('发布草稿未能保存，请检查浏览器存储空间后重试。');
+        return;
+      }
       setPublicationHandoff(accepted);
       setCurrentPage('publish');
     };
     window.addEventListener(PUBLICATION_HANDOFF_EVENT, usePublication);
     return () => window.removeEventListener(PUBLICATION_HANDOFF_EVENT, usePublication);
   }, [canOperate]);
+
+  // Opening the editor is navigation. Only the user's later Send starts AI work.
+  const handleOpenWorkshopChat = useCallback((reference: WorkshopReference, origin?: string) => {
+    if (!canOperate) return;
+    const existing = sessionsRef.current.find(session => !session.archived && (origin
+      ? session.id === origin : session.messages.some(message => message.workshopRef?.id === reference.id)));
+    const target = existing ?? createSession(selectedPersona || undefined);
+    if (!existing) {
+      setSessions(previous => {
+        const next = [target, ...previous];
+        saveSessions(next);
+        return next;
+      });
+    }
+    setActiveSessionId(target.id);
+    setSelectedPersona(target.persona || '');
+    setWorkshopPanel({ id: reference.id, sessionId: target.id, artifactId: reference.artifactId, reference: { ...reference } });
+    setCurrentPage('chat');
+    setBusinessNotice('已关联当前视频项目。输入要求并发送后，AI 才会开始执行。');
+  }, [canOperate, selectedPersona]);
 
   const handleUseWorkshop = useCallback((reference: WorkshopReference, origin?: string) => {
     if (!canOperate) return;
@@ -1473,7 +1515,7 @@ export default function App() {
         turnId: local?.turnId ?? target.pendingTurnId, remote: !local });
       return true;
     }
-    const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
+    const latest = await fetchLastTurnStatus(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
     if (archiveGeneration.current !== generation) return false;
     const current = sessionsRef.current.find(session => session.id === id);
     if (!current || current.archived) return false;
@@ -1506,12 +1548,12 @@ export default function App() {
         if (owner) await handleStopStream(id, owner);
         else await confirmChatStop(() => stopChat(id, turnId));
       } catch { /* A final snapshot can still confirm the original turn. */ }
-      const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
+      const latest = await fetchLastTurnStatus(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
       if (!matches() || latest?.status !== 'done' || latest.turn_id !== turnId
           || (latest.outcome !== 'stopped' && latest.outcome !== 'completed'
             && !(latest.outcome === undefined && latest.clean_end === true))) return false;
     } else if (remote && turnId) {
-      const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
+      const latest = await fetchLastTurnStatus(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
       if (!matches() || latest?.turn_id !== turnId
           || (latest.status !== 'running' && latest.status !== 'done')) return false;
     }
@@ -1614,7 +1656,7 @@ export default function App() {
     const owner = streamAcc.current[id];
     let expectedTurnId = owner ? owner.turnId : target.pendingTurnId;
     if (!owner && !streamCtl.current[id] && !expectedTurnId) {
-      const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
+      const latest = await fetchLastTurnStatus(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
       if (latest?.status === 'running') {
         if (!latest.turn_id) return false;
         expectedTurnId = latest.turn_id;
@@ -1628,7 +1670,7 @@ export default function App() {
         setHistoryNotice('停止尚未确认，原对话仍可查看。');
         return false;
       }
-      const latest = await fetchLastTurn(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
+      const latest = await fetchLastTurnStatus(id, undefined, AbortSignal.timeout(5000)).catch(() => undefined);
       const currentOwner = streamAcc.current[id];
       const currentPending = sessionsRef.current.find(session => session.id === id)?.pendingTurnId;
       if ((currentOwner && currentOwner !== owner) || (currentPending && currentPending !== expectedTurnId)
@@ -1801,7 +1843,7 @@ export default function App() {
         return <Suspense fallback={<div className="dash-empty">正在打开视频工坊…</div>}><VideoWorkshopPage key={workshopEntry}
           initialProjectId={businessEntry?.kind === 'workshop' ? businessEntry.id : undefined}
           initialArtifactId={businessEntry?.artifactId}
-          onUseWorkshop={handleUseWorkshop} /></Suspense>;
+          onUseWorkshop={handleUseWorkshop} onOpenChat={handleOpenWorkshopChat} /></Suspense>;
       case 'interactions':
         return <Suspense fallback={<div className="dash-empty">正在打开互动中心…</div>}><InteractionCenterPage key={interactionEntry} onManageAccounts={() => setCurrentPage('accounts')} /></Suspense>;
       case 'outputs':
@@ -1897,7 +1939,8 @@ export default function App() {
               <VideoWorkshopPage key={visibleWorkshop.id + ':' + (visibleWorkshop.artifactId || '')}
                 initialProjectId={visibleWorkshop.id} initialArtifactId={visibleWorkshop.artifactId}
                 initialView={!visibleWorkshop.artifactId ? 'production' : 'review'}
-                onUseWorkshop={reference => handleUseWorkshop(reference, visibleWorkshop.sessionId)} />
+                onUseWorkshop={reference => handleUseWorkshop(reference, visibleWorkshop.sessionId)}
+                onOpenChat={reference => handleOpenWorkshopChat(reference, visibleWorkshop.sessionId)} />
             </Suspense>
           </aside>}
         </div>

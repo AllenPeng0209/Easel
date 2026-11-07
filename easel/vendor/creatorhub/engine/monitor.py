@@ -630,13 +630,17 @@ class MonitorEngine:
             and acc.proxy_status in {"bad", "auth_error", "blocked"}
         )
 
-    def _native_write_environment_error(
+    async def _native_write_environment_error(
             self, acc, *, headed: bool = True,
             browser_mode: bool = True) -> str:
         """Run the BrowserManager's native-only hard gate when supported."""
         checker = getattr(self.browser, "native_write_gate_error", None)
         if not callable(checker) or acc is None:
             return ""
+        prepare = getattr(self.browser, "ensure_started", None)
+        if callable(prepare) and getattr(acc, "identity_mode", "legacy") == "native" \
+                and getattr(self.browser, "native_write_gate_enabled", True):
+            await prepare()
         return str(checker(
             acc, headed=headed, browser_mode=browser_mode) or "")
 
@@ -3753,7 +3757,7 @@ class MonitorEngine:
                 if platform == "douyin" else None)
             api_only = bool(dy_publish_transport and
                             dy_publish_transport["configured_mode"] == "api")
-            environment_error = self._native_write_environment_error(
+            environment_error = await self._native_write_environment_error(
                 acc, headed=not api_only, browser_mode=not api_only)
             if environment_error:
                 self._defer_row(t, environment_error, fallback_seconds=300)
@@ -4629,7 +4633,7 @@ class MonitorEngine:
                              if platform == "douyin" else "browser")
             api_only = platform == "douyin" and dy_write_mode == "api"
             environment_error = ("" if api_only else
-                                 self._native_write_environment_error(
+                                 await self._native_write_environment_error(
                                      acc, headed=True, browser_mode=True))
             if environment_error:
                 self._defer_row(t, environment_error, fallback_seconds=300)
@@ -5087,7 +5091,7 @@ class MonitorEngine:
                              if platform == "douyin" else "browser")
             api_only = platform == "douyin" and dy_write_mode == "api"
             environment_error = ("" if api_only else
-                                 self._native_write_environment_error(
+                                 await self._native_write_environment_error(
                                      acc, headed=True, browser_mode=True))
             if environment_error:
                 self._defer_row(t, environment_error, fallback_seconds=300)

@@ -13,6 +13,7 @@ from starlette.exceptions import HTTPException
 
 from easel.host_state import publication_state_directory
 from easel.projects import project_id
+from easel.request_identity import current_user
 from easel.publication_approvals import (
     PublicationApprovalError,
     PublicationApprovalStore,
@@ -268,6 +269,21 @@ class OperationsMount:
 
                 receive = replay_body
             if path == '/api/accounts/connect/start' and request.method == 'POST':
+                from easel.access import AccessStore, SESSION_COOKIE
+
+                login_actor = current_user()
+                if login_actor is None:
+                    raise HTTPException(401, '请先登录')
+                access = AccessStore(manager.root)
+                request_token = request.cookies.get(SESSION_COOKIE)
+
+                def authorize_login():
+                    fresh = access.authenticate_token(request_token)
+                    if fresh is None or fresh['id'] != login_actor['id']:
+                        raise HTTPException(401, '登录已失效，请重新登录')
+                    access.require_role(login_actor['id'], project, {'owner'})
+
+                authorize_login()
                 platform = request.query_params.get('platform', '')
                 if platform not in {'douyin', 'xhs'}:
                     raise ValueError('该平台暂不支持统一互动连接')
@@ -278,10 +294,19 @@ class OperationsMount:
                 if self.before_account_change is not None:
                     self.before_account_change(platform)
                 await runtime.start()
-                result = await runtime.connections.start(platform, account_id=account_id, new_account=account_id is None)
+                authorize_login()
+                result = await runtime.connections.start(platform, account_id=account_id,
+                    new_account=account_id is None, actor_id=login_actor['id'], authorize=authorize_login)
+                authorize_login()
                 return await JSONResponse(result)(scope, receive, send)
             if path == '/api/accounts/connect/poll' and request.method == 'GET':
-                result = runtime.connections.poll(request.query_params.get('task_id', ''))
+                from easel.access import AccessStore
+
+                login_actor = current_user()
+                if login_actor is None:
+                    raise HTTPException(401, '请先登录')
+                AccessStore(manager.root).require_role(login_actor['id'], project, {'owner'})
+                result = runtime.connections.poll(request.query_params.get('task_id', ''), actor_id=login_actor['id'])
                 return await JSONResponse(result)(scope, receive, send)
             if path == "/approvals" and request.method == "POST":
                 method, target, payload = body["method"], body["path"], body["body"]

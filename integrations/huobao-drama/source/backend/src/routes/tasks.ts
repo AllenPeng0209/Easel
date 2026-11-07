@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, isNull } from 'drizzle-orm'
 import { db, schema } from '../db/index.js'
 import { success, created, badRequest } from '../utils/response.js'
 import { generateImage, generateVideo, recoverVideoTask } from '../services/generation.js'
@@ -7,6 +7,9 @@ import { safeTaskError } from '../services/video-download.js'
 import { getActiveConfig, getConfigById } from '../services/ai.js'
 import { getDramaStylePrompt } from '../services/style-preset.js'
 import { resolveStoryboardVoiceReferences } from '../services/character-voice-references.js'
+import { compileStoryboardVideoPrompt, type StoryboardVideoPromptContext } from '../services/storyboard-video-prompt.js'
+import { isLocalMiniMaxVideoConfig } from '../services/adapters/minimax-video.js'
+import { primaryReferenceKey } from '../services/primary-reference.js'
 import { logTaskError, logTaskPayload, logTaskStart, logTaskSuccess } from '../utils/task-logger.js'
 
 const app = new Hono()
@@ -149,15 +152,38 @@ app.post('/', async (c) => {
     // 未指定才回退到集锁定配置，避免锁定配置与所选模型错配（如锁定 Seedance 却传 MiniMax 模型名）
     let configId: number | undefined = body.config_id
     let episodeResolution: string | undefined
+    let videoResolution: string | undefined
     let storyboardDramaId: number | undefined
+    let promptContext: StoryboardVideoPromptContext | undefined
+    let promptCompilation: unknown
+    let storyboardPrimaryImage: string | null | undefined
     if (body.storyboard_id) {
       const [sb] = await db.select().from(schema.storyboards).where(eq(schema.storyboards.id, Number(body.storyboard_id)))
+      if (type === 'video' && (!sb || sb.deletedAt)) return badRequest(c, '当前分镜不存在或已删除')
       if (sb) {
         const [ep] = await db.select().from(schema.episodes).where(eq(schema.episodes.id, sb.episodeId))
         const locked = type === 'image' ? ep?.imageConfigId : ep?.videoConfigId
         if (locked != null && configId == null) configId = locked
         if (type === 'video' && ep?.resolution) episodeResolution = ep.resolution
         storyboardDramaId = ep?.dramaId ?? undefined
+        if (type === 'video') {
+          if (!ep || ep.deletedAt) return badRequest(c, '分镜所属剧集不存在或已删除')
+          if (body.drama_id != null && Number(body.drama_id) !== ep.dramaId) return badRequest(c, '分镜不属于指定作品')
+          const characters = await db.select({ id: schema.characters.id, name: schema.characters.name,
+            description: schema.characters.description, appearance: schema.characters.appearance,
+            styling: schema.characters.styling })
+            .from(schema.storyboardCharacters)
+            .innerJoin(schema.characters, eq(schema.characters.id, schema.storyboardCharacters.characterId))
+            .where(and(eq(schema.storyboardCharacters.storyboardId, sb.id),
+              eq(schema.characters.dramaId, ep.dramaId), isNull(schema.characters.deletedAt)))
+          const siblingDescriptions = await db.select({ id: schema.storyboards.id, description: schema.storyboards.description })
+            .from(schema.storyboards).where(and(eq(schema.storyboards.episodeId, ep.id), isNull(schema.storyboards.deletedAt)))
+          promptContext = { storyboardId: sb.id, storyboardUpdatedAt: sb.updatedAt,
+            description: sb.description, savedVideoPrompt: sb.videoPrompt,
+            episodeScript: ep.scriptContent || ep.content, duration: videoBody?.duration,
+            characters, siblingDescriptions }
+          storyboardPrimaryImage = sb.firstFrameImage
+        }
       }
     }
 
@@ -165,8 +191,37 @@ app.post('/', async (c) => {
       const effectiveConfig = configId
         ? (await getConfigById(configId)) ?? await getActiveConfig('video')
         : await getActiveConfig('video')
+      const native = effectiveConfig?.provider.toLowerCase() === 'minimax' && isLocalMiniMaxVideoConfig(effectiveConfig)
+      // Episode presets are not input parameters for fixed-geometry native H3.
+      // Pika supports a native resolution explicitly; external provider behavior
+      // keeps the existing episode-preset priority.
+      videoResolution = native
+        ? (videoBody.model || effectiveConfig.model) === 'pika-h3-flex-6step'
+          ? videoBody.resolution ?? episodeResolution
+          : videoBody.resolution
+        : episodeResolution || videoBody.resolution
       const validationError = validateVideoRequest(videoBody, effectiveConfig?.provider)
       if (validationError) return badRequest(c, validationError)
+      if (storyboardPrimaryImage && effectiveConfig?.provider.toLowerCase() === 'minimax'
+          && isLocalMiniMaxVideoConfig(effectiveConfig)
+          && (videoBody.model || effectiveConfig.model) === 'pika-h3-flex-6step') {
+        const currentKey = primaryReferenceKey(storyboardPrimaryImage)
+        if (!currentKey) return badRequest(c, '当前主参考图片不可用，请刷新并重新选择')
+        const supplied = [...videoBody.reference_image_urls,
+          ...[videoBody.first_frame_url, videoBody.image_url].filter(value => value != null && value !== '')]
+        if (supplied.some(value => primaryReferenceKey(value) !== currentKey)) {
+          return badRequest(c, '主参考已变化，请刷新后使用当前选中的主参考图片')
+        }
+        // A saved primary image is authoritative, including for a stale page
+        // that omitted references. Canonicalize equivalent static URL forms.
+        videoBody.reference_image_urls = [storyboardPrimaryImage]
+        videoBody.first_frame_url = undefined
+        videoBody.image_url = undefined
+      }
+      if (typeof videoBody.prompt !== 'string') return badRequest(c, '视频提示词必须为文本')
+      const compiled = compileStoryboardVideoPrompt(videoBody.prompt, promptContext || { storyboardId: 0, characters: [] })
+      videoBody.prompt = compiled.prompt
+      promptCompilation = compiled.provenance
       const voices = await resolveStoryboardVoiceReferences(String(videoBody.prompt || ''), Number(body.storyboard_id) || undefined, videoBody.reference_audio_urls)
       videoBody.prompt = voices.prompt
       videoBody.reference_audio_urls = voices.audioUrls
@@ -210,6 +265,7 @@ app.post('/', async (c) => {
         storyboardId: body.storyboard_id,
         dramaId: body.drama_id,
         prompt: videoPrompt,
+        promptCompilation,
         model: videoBody!.model,
         referenceMode: 'reference',
         imageUrl: videoBody!.image_url,
@@ -223,7 +279,8 @@ app.post('/', async (c) => {
         generateAudio: videoBody!.generate_audio,
         duration: videoBody!.duration,
         aspectRatio: videoBody!.aspect_ratio,
-        resolution: episodeResolution || videoBody!.resolution,
+        resolution: videoResolution,
+        episodeResolution,
         seed: videoBody!.seed,
         promptExtend: videoBody!.prompt_extend,
         watermark: videoBody!.watermark,

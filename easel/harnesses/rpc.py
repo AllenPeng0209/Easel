@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import signal
 from contextlib import asynccontextmanager
@@ -31,6 +32,73 @@ MAX_IDLE_PROCESSES = 8
 MAX_CLIENT_REQUESTS = 64
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 
+_LOG = logging.getLogger(__name__)
+_DIAGNOSTIC_PHASES = frozenset({
+    'client_request', 'protocol_read', 'notification_result', 'notification_client_error',
+    'notification_reader', 'rpc_close', 'codex_request', 'codex_terminal', 'codex_steer_release',
+    'native_turn_startup', 'native_turn_execution', 'native_turn_finalization',
+})
+_DIAGNOSTIC_METHODS = frozenset({
+    'initialize', 'thread/start', 'thread/resume', 'thread/fork', 'thread/read',
+    'turn/start', 'turn/steer', 'turn/interrupt', 'turn/completed', 'error',
+    'item/tool/call', 'item/tool/requestUserInput', 'item/permissions/requestApproval',
+    'item/commandExecution/requestApproval', 'item/fileChange/requestApproval',
+    'item/mcpToolCall/requestApproval', 'account/chatgptAuthTokens/refresh',
+    'session/new', 'session/load', 'session/prompt', 'session/request_permission',
+})
+_DIAGNOSTIC_EXCEPTIONS = frozenset({
+    'Exception', 'ExceptionGroup', 'OSError', 'TimeoutError', 'BrokenPipeError', 'ConnectionResetError',
+    'KeyError', 'NameError', 'TypeError', 'ValueError', 'RuntimeError', 'AssertionError', 'AttributeError',
+    'LookupError', 'MemoryError', 'JSONDecodeError', 'HarnessError', 'RpcRejected', 'ChatFailure', 'HTTPException',
+})
+
+
+def record_native_failure(error: BaseException, phase: str, method: object = None) -> None:
+    """Failure-only breadcrumbs: never format exception text, arguments or traceback."""
+    kind = type(error).__name__
+    try:
+        _LOG.warning('native_failure phase=%s exception=%s method=%s',
+                     phase if phase in _DIAGNOSTIC_PHASES else 'other',
+                     kind if kind in _DIAGNOSTIC_EXCEPTIONS else 'OtherException',
+                     'none' if method is None else method if isinstance(method, str)
+                     and method in _DIAGNOSTIC_METHODS else 'other')
+    except Exception:
+        # Observability must not replace the original runtime result.
+        pass
+
+
+def _idle_limits(environment: dict[str, str]) -> tuple[int, float]:
+    """Host settings for the shared Codex/ACP pool; zero disables retention."""
+    def integer(name, default, minimum, maximum):
+        value = environment.get(name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return default
+        if isinstance(value, str):
+            text = value.strip()
+            if len(text) <= 4 and text.isascii() and text.isdecimal():
+                parsed = int(text)
+                if minimum <= parsed <= maximum:
+                    return parsed
+        # Do not echo a misconfigured environment value into tool output.
+        raise HarnessError(f"{name} 必须是 {minimum}–{maximum} 之间的整数")
+
+    return (integer("EASEL_RPC_MAX_IDLE_PROCESSES", MAX_IDLE_PROCESSES, 0, 8),
+            integer("EASEL_RPC_IDLE_SECONDS", IDLE_SECONDS, 1, 3600))
+
+
+async def _close_pooled_entry(loop, pool, key, entry, *, idle_only=False):
+    """Automatic cleanup owns one exact entry, never another busy transport."""
+    if (_POOLS.get(loop) is not pool or pool.get(key) is not entry
+            or (idle_only and entry["busy"])):
+        return
+    pool.pop(key)
+    timer, entry["timer"] = entry["timer"], None
+    if timer and timer is not asyncio.current_task():
+        timer.cancel()
+    if not pool:
+        _POOLS.pop(loop, None)
+    await entry["rpc"].__aexit__()
+
 
 async def close_sessions(session_key: str | None = None):
     loop = asyncio.get_running_loop()
@@ -53,6 +121,7 @@ async def connection(request: RunRequest, command: list[str], notify, respond, *
         async with RPC(request, command, notify, respond, acp=acp) as rpc:
             yield rpc
         return
+    max_idle, idle_seconds = _idle_limits(request.env)
     loop = asyncio.get_running_loop()
     pool = _POOLS.setdefault(loop, {})
     key = (acp, request.session_key)
@@ -80,12 +149,21 @@ async def connection(request: RunRequest, command: list[str], notify, respond, *
         try:
             if previous:
                 await previous["rpc"].__aexit__()
-            idle = [(old_key, value) for old_key, value in pool.items() if not value["busy"]]
-            if len(idle) >= MAX_IDLE_PROCESSES:
-                await close_sessions(idle[0][0][1])
+            while True:
+                idle = [(old_key, value) for old_key, value in pool.items() if not value["busy"]]
+                if not idle or len(idle) < max_idle:
+                    break
+                await _close_pooled_entry(loop, pool, *idle[0], idle_only=True)
+            if _POOLS.get(loop) is not pool or pool.get(key) is not entry:
+                raise HarnessError("Agent 会话已关闭，未启动新进程")
             await rpc.__aenter__()
+            if _POOLS.get(loop) is not pool or pool.get(key) is not entry:
+                # close_sessions may have run while subprocess creation awaited.
+                # This child must not survive outside the pool after that stop.
+                await rpc.__aexit__()
+                raise HarnessError("Agent 会话已关闭，已回收新进程")
         except BaseException:
-            await close_sessions(request.session_key)
+            await _close_pooled_entry(loop, pool, key, entry)
             raise
     rpc = entry["rpc"]
     if entry["timer"]:
@@ -98,15 +176,17 @@ async def connection(request: RunRequest, command: list[str], notify, respond, *
     try:
         yield rpc
     except BaseException:
-        await close_sessions(request.session_key)
+        await _close_pooled_entry(loop, pool, key, entry)
         raise
     else:
+        if _POOLS.get(loop) is not pool or pool.get(key) is not entry:
+            return
         while True:
             idle = [(old_key, value) for old_key, value in pool.items()
                     if not value["busy"] and old_key != key]
-            if len(idle) < MAX_IDLE_PROCESSES:
+            if not idle or len(idle) < max_idle:
                 break
-            await close_sessions(idle[0][0][1])
+            await _close_pooled_entry(loop, pool, *idle[0], idle_only=True)
         if pool.get(key) is not entry:
             return
         rpc.notify = lambda method, params: None
@@ -115,14 +195,16 @@ async def connection(request: RunRequest, command: list[str], notify, respond, *
             raise HarnessError("会话空闲时不允许执行工具")
 
         rpc.respond = reject_idle
+        entry["busy"] = False
+        if max_idle == 0:
+            await _close_pooled_entry(loop, pool, key, entry, idle_only=True)
+            return
 
         async def expire():
-            await asyncio.sleep(IDLE_SECONDS)
-            entry["timer"] = None
-            await close_sessions(request.session_key)
+            await asyncio.sleep(idle_seconds)
+            await _close_pooled_entry(loop, pool, key, entry, idle_only=True)
 
         entry["timer"] = asyncio.create_task(expire())
-        entry["busy"] = False
 
 
 class RPC:
@@ -194,7 +276,8 @@ class RPC:
             await self.send({"id": message["id"], "result": result})
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            record_native_failure(error, 'client_request', message.get('method'))
             self.client_error = HarnessError("Agent 请求了当前操作不支持的交互或工具，请使用流式对话确认权限")
             try:
                 await self.send({"id": message["id"], "error": {
@@ -204,8 +287,10 @@ class RPC:
 
     async def _read(self):
         failure = HarnessError("Agent 协议连接已断开，请检查 CLI 登录、模型与版本")
+        method = None
         try:
             while True:
+                method = None
                 try:
                     line = await self.process.stdout.readline()
                 except ValueError:
@@ -221,6 +306,7 @@ class RPC:
                 except ValueError:
                     raise HarnessError("Agent 返回了无效 JSON-RPC 数据") from None
                 if "method" in message:
+                    method = message["method"]
                     if "id" in message:
                         self.tasks.difference_update([task for task in self.tasks if task.done()])
                         if len(self.tasks) >= MAX_CLIENT_REQUESTS:
@@ -258,6 +344,7 @@ class RPC:
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            record_native_failure(error, 'protocol_read', method)
             failure = error if isinstance(error, HarnessError) else HarnessError(
                 f"Agent 协议读取失败（{type(error).__name__}）")
         finally:
@@ -273,13 +360,27 @@ class RPC:
     async def wait_notification(self, future: asyncio.Future):
         finished, _ = await asyncio.wait((future, self.reader), return_when=asyncio.FIRST_COMPLETED)
         if future in finished:
-            result = await future
+            try:
+                result = await future
+            except Exception as error:
+                record_native_failure(error, 'notification_result')
+                raise
             if self.client_error:
+                record_native_failure(self.client_error, 'notification_client_error')
                 raise self.client_error
             return result
-        raise self.reader_error or HarnessError("Agent 在本轮完成前退出，请检查 CLI 登录与模型配置")
+        failure = self.reader_error or HarnessError("Agent 在本轮完成前退出，请检查 CLI 登录与模型配置")
+        record_native_failure(failure, 'notification_reader')
+        raise failure
 
     async def __aexit__(self, *arguments):
+        try:
+            await self._shutdown()
+        except Exception as error:
+            record_native_failure(error, 'rpc_close')
+            raise
+
+    async def _shutdown(self):
         for task in self.tasks:
             task.cancel()
         if self.tasks:

@@ -28,7 +28,12 @@ export function switchProject(id: string): void {
   // sessionStorage is authoritative per tab; localStorage is only the next new tab's preference.
   sessionStorage.setItem(userKey('easel_project'), id);
   try { localStorage.setItem(userKey('easel_last_project'), id); } catch { /* tab switch still works */ }
-  window.location.hash = '';
+  window.location.hash = '#workspace';
+  window.location.reload();
+}
+
+export function openProjectHome(): void {
+  window.location.hash = '#projects';
   window.location.reload();
 }
 

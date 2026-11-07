@@ -1,7 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
-import { createSchedule, executeSkill, exportManualPackage, fetchOutputs, mediaUrl, runAgent, streamChat } from '../lib/api';
+import { useEffect, useRef, useState, type SetStateAction } from 'react';
+import { createSchedule, executeSkill, exportManualPackage, fetchOutputs, fetchPublicationApproval, mediaUrl, runAgent, streamChat } from '../lib/api';
 import type { OutputFile } from '../lib/api';
 import { loadPublishDraft, savePublishDraft } from '../lib/store';
+import { applyPublicationHandoff, editPublicationDraft, type PublicationEditorDraft } from '../lib/publicationDraft';
+import type { PublicationHandoff } from '../lib/publicationHandoff';
+import type { PublicationApprovalRecord } from '../lib/publicationApproval';
+import { publicationReceiptInScope } from '../lib/publicationReceipt';
+import { PublicationSubjectView } from './PublicationApprovalDialog';
 import { renderMarkdown } from '../lib/sanitize';
 import { IconCalendar, IconCheck, IconCopy, IconEdit, IconPublish, IconSkills, IconStop, IconTrash } from './icons';
 
@@ -28,15 +33,29 @@ function today() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export default function ManualPublishPage({ persona }: { persona: string }) {
-  const initial = useRef(loadPublishDraft()).current;
-  const [title, setTitle] = useState(initial.title);
-  const [body, setBody] = useState(initial.body);
-  const [platforms, setPlatforms] = useState<string[]>(initial.platforms);
-  const [overrides, setOverrides] = useState<Record<string, string>>(initial.overrides);
-  const [tags, setTags] = useState(initial.tags || '');
+export default function ManualPublishPage({ persona, handoff, onHandoffConsumed }: {
+  persona: string; handoff?: PublicationHandoff | null; onHandoffConsumed?: () => void;
+}) {
+  const [draft, setDraft] = useState<PublicationEditorDraft>(() => loadPublishDraft());
+  const { title, body, platforms, overrides, tags, approvalReference } = draft;
+  const selectedMedia = draft.mediaPaths || [];
+  const selectedArtifacts = draft.mediaReferences || [];
+  const aiGenerated = draft.aiGenerated === true;
+  const updateField = <K extends keyof PublicationEditorDraft,>(key: K, value: SetStateAction<PublicationEditorDraft[K]>) => {
+    setDraft(current => editPublicationDraft(current, { [key]: typeof value === 'function'
+      ? (value as (previous: PublicationEditorDraft[K]) => PublicationEditorDraft[K])(current[key]) : value }));
+  };
+  const setTitle = (value: string) => updateField('title', value);
+  const setBody = (value: string) => updateField('body', value);
+  const setPlatforms = (value: SetStateAction<string[]>) => updateField('platforms', value);
+  const setOverrides = (value: SetStateAction<Record<string, string>>) => updateField('overrides', value);
+  const setTags = (value: string) => updateField('tags', value);
   const [mediaFiles, setMediaFiles] = useState<OutputFile[]>([]);
-  const [selectedMedia, setSelectedMedia] = useState<string[]>([]);
+  const [handoffMessage, setHandoffMessage] = useState('');
+  const [saveFailed, setSaveFailed] = useState(false);
+  const [handoffError, setHandoffError] = useState('');
+  const [linkedApproval, setLinkedApproval] = useState<PublicationApprovalRecord | null>(null);
+  const [approvalError, setApprovalError] = useState('');
   const [showPicker, setShowPicker] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [reviewed, setReviewed] = useState<Record<string, string>>({});
@@ -51,7 +70,33 @@ export default function ManualPublishPage({ persona }: { persona: string }) {
   const [saving, setSaving] = useState(false);
   const ctl = useRef<AbortController | null>(null);
 
-  useEffect(() => { savePublishDraft({ title, body, platforms, overrides, tags }); }, [title, body, platforms, overrides, tags]);
+  useEffect(() => { setSaveFailed(!savePublishDraft(draft)); }, [draft]);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  useEffect(() => {
+    if (!handoff) return;
+    const result = applyPublicationHandoff(draftRef.current, handoff);
+    setHandoffError(result.status === 'invalid' ? result.message : '');
+    if (result.status === 'updated') {
+      ctl.current?.abort(); setAdapting(false);
+      setDraft(result.draft); setHandoffMessage(result.message);
+      setReviewed({}); setRecorded({}); setLinks({}); setCheckResult('');
+    }
+    onHandoffConsumed?.();
+  }, [handoff, onHandoffConsumed]);
+  useEffect(() => {
+    let active = true;
+    setLinkedApproval(null); setApprovalError('');
+    if (approvalReference) {
+      fetchPublicationApproval(approvalReference.approvalId).then(record => {
+        if (!active) return;
+        if (!publicationReceiptInScope(record) || record.id !== approvalReference.approvalId
+            || record.payloadHash !== approvalReference.payloadHash) throw new Error('确认对象或固定版本不匹配，请回原对话重新选择。');
+        setLinkedApproval(record);
+      }).catch(error => { if (active) setApprovalError(error instanceof Error ? error.message : '无法读取固定版本。'); });
+    }
+    return () => { active = false; };
+  }, [approvalReference]);
   useEffect(() => () => ctl.current?.abort(), []);
   useEffect(() => {
     fetchOutputs().then((roots) => {
@@ -66,12 +111,12 @@ export default function ManualPublishPage({ persona }: { persona: string }) {
   }, []);
 
   const effective = (key: string) => overrides[key] ?? body;
-  const snapshot = (key: string) => JSON.stringify([title, effective(key), tags, selectedMedia]);
+  const snapshot = (key: string) => JSON.stringify([title, effective(key), tags, selectedMedia, selectedArtifacts, aiGenerated]);
   const approved = (key: string) => reviewed[key] === snapshot(key) && !adapting;
   const empty = !title.trim() && !body.trim() && !Object.values(overrides).some((text) => text.trim());
   const showToast = (text: string) => { setToast(text); window.setTimeout(() => setToast(''), 4000); };
   const toggle = (key: string) => setPlatforms((prev) => prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]);
-  const toggleMedia = (path: string) => setSelectedMedia((prev) => prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]);
+  const toggleMedia = (path: string) => updateField('mediaPaths', selectedMedia.includes(path) ? selectedMedia.filter(p => p !== path) : [...selectedMedia, path]);
   const bodyWithTags = (key: string) => {
     const text = effective(key);
     const extra = tags.split(/[,，]/).map((t) => t.trim().replace(/^#+/, '')).filter((t) => t && !text.includes(`#${t}`));
@@ -178,6 +223,16 @@ export default function ManualPublishPage({ persona }: { persona: string }) {
       <div className="panel" style={{ marginBottom: 16, fontSize: 13 }}>
         <strong>最终提交由你完成。</strong> 本页不自动登录、上传或点击发布。官方页面的登录与 响芽 账号页相互独立。
       </div>
+      {saveFailed && <p role="alert">浏览器未能保存草稿。请先复制文案并下载素材，再刷新或离开页面。</p>}
+      {handoffError && <p role="alert" className="publication-approval-error">{handoffError}</p>}
+      {handoffMessage && <p role="status">{handoffMessage}</p>}
+      {approvalReference && <section className="panel">
+        <h2 className="panel-title">原发布确认的固定版本</h2>
+        <p className="pv-hint">此处只读取原确认，不提交发布。下方人工草稿需要独立审核；修改稿件会解除原确认关联。</p>
+        {approvalError ? <p role="alert">{approvalError}</p> : linkedApproval
+          ? <PublicationSubjectView subject={linkedApproval.subject} /> : <p role="status">正在读取固定版本…</p>}
+        <button className="btn btn-sm" onClick={() => updateField('approvalReference', undefined)}>解除确认关联，编辑人工草稿</button>
+      </section>}
       <label className="field-label" htmlFor="manual-title">标题</label>
       <input id="manual-title" className="field" value={title} placeholder="请输入标题" onChange={(e) => setTitle(e.target.value)} />
       <label className="field-label" htmlFor="manual-body">正文（母版）</label>
@@ -186,7 +241,20 @@ export default function ManualPublishPage({ persona }: { persona: string }) {
       <input id="manual-tags" className="field" value={tags} placeholder="AI,职场,干货" onChange={(e) => setTags(e.target.value)} />
       <label className="field-label">目标平台</label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>{PLATFORMS.map((p) => <button key={p.key} className={`chip ${platforms.includes(p.key) ? 'active' : ''}`} onClick={() => toggle(p.key)}>{p.label}</button>)}</div>
-      <label className="field-label" style={{ marginTop: 16 }}>媒体素材 · 已选 {selectedMedia.length} 个</label>
+      <label className="draft-toggle">
+        <input type="checkbox" aria-label="AI生成内容" checked={aiGenerated} onChange={event => updateField('aiGenerated', event.target.checked)} />
+        <span>AI生成内容（请在官方平台保留此声明）</span>
+      </label>
+      <label className="field-label" style={{ marginTop: 16 }}>媒体素材 · 已选 {selectedMedia.length + selectedArtifacts.length} 个</label>
+      {selectedArtifacts.map(reference => <div className="media-chip" key={reference.artifactId}
+        style={{ width: 'auto', padding: 8, gap: 8 }} title={`固定版本 V${reference.revision} · SHA-256 ${reference.sha256}`}>
+        <span>{reference.name} · V{reference.revision}</span>
+        <a href={reference.url} target="_blank" rel="noopener noreferrer">预览</a>
+        <a href={`${reference.url}?download=1`} download={reference.name}>下载此版本</a>
+        <button type="button" className="btn btn-sm btn-ghost" aria-label={`移除 ${reference.name}`}
+          onClick={() => updateField('mediaReferences', selectedArtifacts.filter(item => item.artifactId !== reference.artifactId))}>×</button>
+      </div>)}
+      {!!selectedArtifacts.length && <p className="pv-hint">成片保留固定版本，请使用上方链接单独下载。稿件 ZIP 仅包含文案和从内容库选择的素材。</p>}
       <p className="pv-hint">从内容库选择图片 / 视频打包导出，也可稍后在官方页面手动选择电脑上的文件。</p>
       <button className="btn btn-sm" onClick={() => setShowPicker((v) => !v)}>{showPicker ? '收起素材' : '选择媒体'}</button>
       {selectedMedia.length > 0 && <ul style={{ fontSize: 12 }}>{selectedMedia.map((path) => <li key={path}><button className="pv-copy" onClick={() => toggleMedia(path)} title="移除素材">×</button> {path.split('/').pop()}</li>)}</ul>}
@@ -204,7 +272,7 @@ export default function ManualPublishPage({ persona }: { persona: string }) {
         <button className="btn btn-sm" disabled={empty || saving || adapting} onClick={() => addToCalendar(platforms[0] || 'xiaohongshu')}><IconCalendar size={14} /> 存草稿并排期</button>
         <button className="btn btn-sm btn-ghost" disabled={empty || adapting} onClick={() => { setTitle(''); setBody(''); setTags(''); setOverrides({}); setReviewed({}); setCheckResult(''); }}><IconTrash size={13} /> 清空文案</button>
       </div>
-      <p className="publish-saved-note">文案自动保存到当前浏览器。审核只针对当前版本；修改标题、正文、标签或素材后，需重新审核。AI 检查仅作参考。</p>
+      <p className="publish-saved-note">{saveFailed ? '草稿尚未保存。' : '稿件与素材选择自动保存到当前浏览器。'}审核只针对当前版本；修改标题、正文、标签或素材后，需重新审核。AI 检查仅作参考。</p>
       {checkResult && <div className="panel"><div className="panel-title">AI 辅助检查</div><div className="skill-body-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(checkResult) }} /></div>}
     </div>
     <div className="publish-previews">
@@ -229,7 +297,7 @@ export default function ManualPublishPage({ persona }: { persona: string }) {
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {(['title', 'body', 'all'] as const).map((part) => <button key={part} className="btn btn-sm" disabled={!ready} onClick={() => copyFor(p.key, part)}><IconCopy size={13} />{copied === `${p.key}:${part}` ? '已复制' : part === 'title' ? '复制标题' : part === 'body' ? '复制正文' : '复制全文'}</button>)}
               {p.key === 'wechat-oa' && <button className="btn btn-sm" disabled={!ready} onClick={copyRichText}>复制公众号排版</button>}
-              <button className="btn btn-sm" disabled={!ready || !!exporting} onClick={() => exportFor(p.key)}>{exporting === p.key ? '打包中…' : '导出稿件和素材 ZIP'}</button>
+              <button className="btn btn-sm" disabled={!ready || !!exporting} onClick={() => exportFor(p.key)}>{exporting === p.key ? '打包中…' : selectedArtifacts.length ? '导出文案 / 内容库素材 ZIP' : '导出稿件和素材 ZIP'}</button>
               {ready ? <a className="btn btn-sm btn-primary" href={p.url} target="_blank" rel="noopener noreferrer">打开官方发布页 ↗</a> : <button className="btn btn-sm" disabled>审核后打开官方发布页</button>}
             </div>
             <p className="pv-hint" style={{ margin: '14px 0' }}>导出不代表已发布。请解压 ZIP，在官方页面粘贴稿件、上传素材、检查预览，并按平台要求标注 AI 辅助创作，最后由你点击发布。</p>

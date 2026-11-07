@@ -43,6 +43,13 @@
 .agent-status-dot[data-state='completed'] { background: #6baf91; }
 .agent-status-dot[data-state='failed'] { background: var(--red, #c25757); }
 .agent-tool__details { padding: 8px 2px 4px 22px; display: grid; gap: 10px; min-width: 0; }
+.agent-tool__key-summary { margin: 4px 0 8px 22px; display: grid; gap: 8px; }
+.agent-tool__key-summary section { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.agent-tool__key-summary section > div { display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; }
+.agent-tool__key-summary strong { font-size: 13px; overflow-wrap: anywhere; }
+.agent-tool__key-summary p, .agent-tool__key-summary [role='status'] { margin: 4px 0; color: var(--text-secondary); font-size: 12px; }
+.agent-tool__key-summary a { margin-right: 12px; font-size: 12px; }
+.chat-work-details-hint { color: var(--text-tertiary); font-size: 11px; }
 .agent-tool__details h4 { font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin: 0 0 5px; }
 .agent-tool pre, .agent-events > details pre, .agent-plan pre { margin: 0; padding: 10px 12px; max-height: 340px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 7px; background: var(--bg); color: var(--text-secondary); }
 .agent-tool__exit, .agent-event__note { margin: 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.6; }
@@ -68,6 +75,8 @@
 .question-resolution { margin: 10px 0 20px; }
 .question-resolution__status { color: var(--text-tertiary); font-size: 11px; text-align: right; margin-bottom: 6px; }
 .question-resolution > .agent-event__note { text-align: right; }
+.question-resolution__answers > summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.question-resolution__answers[open] > summary { margin-bottom: 8px; }
 @media (max-width: 600px) {
   .user-attachment { width: min(250px, 100%); }
   .agent-tool__details { padding-left: 0; }

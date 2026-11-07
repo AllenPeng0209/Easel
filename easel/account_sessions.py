@@ -274,9 +274,25 @@ def session_generation(workspace: Path, platform: str) -> int:
     return value["generation"] if value else 0
 
 
-def revoke_session(workspace: Path, platform: str) -> None:
+def revoke_session(workspace: Path, platform: str, *, expected_generation: int | None = None) -> bool | None:
     """Fence delayed login completions and remove persisted browser secrets."""
-    begin_generation(workspace, platform)
+    if expected_generation is None:
+        begin_generation(workspace, platform)
+        return None
+    if type(expected_generation) is not int or expected_generation < 1:
+        raise SessionValidationError("账号会话代次无效")
+    platform = _platform(platform)
+    directory = _directory(workspace, create=False)
+    if directory is None:
+        return False
+    with _locked(directory, platform):
+        path = directory / f"{platform}.json"
+        previous = _read(path, platform)
+        if previous is None or previous["generation"] != expected_generation:
+            return False
+        _write(path, {"schema": 1, "platform": platform,
+                      "generation": expected_generation + 1, "revoked": True})
+    return True
 
 
 def apply_session(context, platform: str) -> bool:

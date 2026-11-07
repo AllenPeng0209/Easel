@@ -1,0 +1,23 @@
+.remote-login { position:relative; min-width:0; width:100%; text-align:left; }
+.remote-login-toolbar { display:flex; align-items:center; justify-content:space-between; gap:14px; margin:10px 0; }
+.remote-login .remote-login-toolbar p { margin:0; font-size:12px; line-height:1.6; color:var(--text-secondary); }
+.remote-login-toolbar > div { display:flex; flex-shrink:0; gap:6px; }
+.remote-login-error { margin:10px 0; padding:10px 12px; color:var(--red); background:var(--red-soft); border-radius:8px; font-size:12px; }
+.remote-login-scroll { overflow:auto; max-height:66dvh; border:1px solid var(--border); border-radius:10px; background:#fff; overscroll-behavior:contain; }
+.remote-login-surface { width:100%; margin-inline:auto; position:relative; touch-action:none; user-select:none; -webkit-user-select:none; overflow:hidden; }
+.remote-login-updating { position:absolute; top:8px; right:8px; z-index:1; padding:5px 9px; border-radius:6px; background:rgba(30,30,30,.8); color:#fff; font-size:12px; pointer-events:none; }
+.remote-login-surface img { display:block; width:100%; height:100%; pointer-events:none; object-fit:fill; }
+.remote-login-keyboard { position:absolute; width:1px; height:1px; bottom:0; left:0; padding:0; border:0; opacity:0; overflow:hidden; resize:none; pointer-events:none; font-size:16px; }
+.remote-login-wait { display:flex; align-items:center; justify-content:center; gap:12px; padding:36px 20px; min-height:130px; font-size:13px; color:var(--text-secondary); text-align:center; }
+.remote-login-pages { display:flex; align-items:center; gap:10px; margin:8px 0; font-size:12px; }
+.remote-login-pages select { width:auto; max-width:70%; margin:0!important; padding:6px 8px; border:1px solid var(--border); border-radius:6px; color:var(--text-primary); background:var(--surface); }
+.remote-login-cancel { margin-top:12px; }
+.account-connect-dialog.account-connect-remote { width:min(1120px,96vw); }
+.account-connect-dialog.account-connect-remote > p { margin:8px 0; }
+@media(max-width:720px) {
+  .account-connect-backdrop:has(.account-connect-remote) { padding:8px; }
+  .account-connect-dialog.account-connect-remote { width:100%; max-height:calc(100dvh - 16px); padding:14px; }
+  .remote-login-toolbar { align-items:flex-start; flex-direction:column; gap:8px; }
+  .remote-login-surface { min-width:640px; }
+  .remote-login-scroll { max-height:58dvh; }
+}

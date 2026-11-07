@@ -160,7 +160,7 @@ class BusinessObjectService:
         safe['script'] = project.get('script', '')
         safe['assets'] = [{key: row[key] for key in ('id', 'name', 'kind', 'description', 'path', 'sha256', 'image_prompt', 'appearance', 'styling', 'lighting') if key in row}
                           for row in project.get('assets', [])]
-        safe['shots'] = [{key: row[key] for key in ('id', 'title', 'description', 'atmosphere', 'prompt', 'seconds', 'asset_ids', 'selected_candidate_id', 'candidates') if key in row}
+        safe['shots'] = [{key: row[key] for key in ('id', 'title', 'description', 'atmosphere', 'prompt', 'seconds', 'asset_ids', 'primary_frame_asset_id', 'selected_candidate_id', 'candidates') if key in row}
                          for row in project.get('shots', [])]
         safe['comments'] = project.get('comments', [])
         details = {'project': safe, 'publishEligibility': 'unverified',

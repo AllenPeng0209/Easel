@@ -27,6 +27,13 @@ async def _focus(page):
         pass
 
 
+async def _bind_login_context(callback, context, page):
+    if callback is not None:
+        result = callback(context, page=page)
+        if asyncio.iscoroutine(result):
+            await result
+
+
 async def _open_first_environment_check(
         mgr: BrowserManager, identity: Identity, ctx) -> None:
     """Best-effort first-run diagnostic; never block the platform login flow."""
@@ -52,14 +59,21 @@ async def _reuse_or_create_login_page(ctx):
 
 async def interactive_login(mgr: BrowserManager, identity: Identity,
                             timeout_seconds: int = 180,
-                            start_url: str = "https://www.douyin.com/",
+                            start_url: str | None = None,
                             force_reauth: bool = False,
+                            context_callback=None,
                             ) -> Tuple[bool, str, str]:
     """返回 (是否成功, storage_state_json, nickname)。
     在账号专属持久 profile(独立 UA/视口/时区/代理/指纹)里有头扫码,
     登录态直接落盘到该 profile;同时返回 storage_state 供库内展示/兜底。
     start_url 用 creator.douyin.com 即为创作中心登录(其登录态因 .douyin.com 共享 Cookie,
     同样可用于 www 公开抓取)。"""
+    if start_url is None:
+        # The cloud consumer homepage can render an inert Login control. The
+        # official creator entry exposes the QR/phone form directly; the caller
+        # still verifies the main-site identity before accepting this session.
+        start_url = ("https://creator.douyin.com/" if context_callback is not None
+                     else "https://www.douyin.com/")
     ctx = await mgr.open_headed(identity)
     if force_reauth:
         # “重新登录”必须从干净的认证态开始。持久 profile 和数据库快照里可能
@@ -74,7 +88,9 @@ async def interactive_login(mgr: BrowserManager, identity: Identity,
     state_json = ""
 
     try:
-        await page.goto(start_url, wait_until="domcontentloaded", timeout=30000)
+        await _bind_login_context(context_callback, ctx, page)
+        await page.goto(start_url, wait_until="commit" if context_callback is not None
+                        else "domcontentloaded", timeout=30000)
         await _focus(page)
         # 尝试自动弹出登录框(失败也没关系,用户可自行点“登录”)
         for sel in ('text=登录', '[data-e2e="login-button"]', 'button:has-text("登录")'):
@@ -122,12 +138,14 @@ async def interactive_login(mgr: BrowserManager, identity: Identity,
 
 async def interactive_creator_login(mgr: BrowserManager, identity: Identity,
                                     timeout_seconds: int = 180,
-                                    force_reauth: bool = False):
+                                    force_reauth: bool = False,
+                                    context_callback=None):
     """创作中心登录。返回 (ok, storage_state_json, nickname)。"""
     return await interactive_login(
         mgr, identity, timeout_seconds,
         start_url="https://creator.douyin.com/",
         force_reauth=force_reauth,
+        context_callback=context_callback,
     )
 
 
@@ -279,6 +297,7 @@ async def interactive_xhs_login(mgr: BrowserManager, identity: Identity,
                                 timeout_seconds: int = 180,
                                 force_reauth: bool = False,
                                 status_callback=None,
+                                context_callback=None,
                                 ) -> Tuple[bool, str, str]:
     """小红书扫码登录。打开真实窗口让用户扫码,落地登录态。
     返回 (是否成功, storage_state_json, nickname)。
@@ -357,6 +376,7 @@ async def interactive_xhs_login(mgr: BrowserManager, identity: Identity,
     next_page_identity_poll_at = 0.0
     async with mgr.visible_page(identity) as page:
         await _focus(page)
+        await _bind_login_context(context_callback, ctx, page)
         observe(page)
         context_on = getattr(ctx, "on", None)
         if callable(context_on):
@@ -364,11 +384,13 @@ async def interactive_xhs_login(mgr: BrowserManager, identity: Identity,
                 context_on("page", observe)
             except Exception:
                 pass
-        # 从官网首页进入登录流程。直接访问 /explore 会让全新隔离 profile
-        # 更容易被重定向到 website-login/captcha 的设备安全验证页。
+        # Keep the desktop homepage strategy; the explicit cloud login route
+        # avoids redirecting the overseas homepage to the rednote landing site.
         await page.goto(
-            "https://www.xiaohongshu.com/",
-            wait_until="domcontentloaded", timeout=30000)
+            "https://www.xiaohongshu.com/login" if context_callback is not None
+            else "https://www.xiaohongshu.com/",
+            wait_until="commit" if context_callback is not None
+            else "domcontentloaded", timeout=30000)
         security_verification_seen = _is_xhs_security_verification_url(page.url)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0, timeout_seconds)
@@ -477,6 +499,7 @@ async def interactive_xhs_login(mgr: BrowserManager, identity: Identity,
 async def interactive_xhs_creator_login(mgr: BrowserManager, identity: Identity,
                                         timeout_seconds: int = 180,
                                         force_reauth: bool = False,
+                                        context_callback=None,
                                         ) -> Tuple[bool, str, str]:
     """小红书「创作服务平台」登录(发布/已发布列表用)。打开 creator.xiaohongshu.com/login
     扫码,落地含创作者会话的登录态。返回 (是否成功, storage_state_json, nickname)。
@@ -490,9 +513,11 @@ async def interactive_xhs_creator_login(mgr: BrowserManager, identity: Identity,
     state_json = ""
     async with mgr.visible_page(identity) as page:
         await _focus(page)
+        await _bind_login_context(context_callback, ctx, page)
         await page.goto(
             "https://creator.xiaohongshu.com/login",
-            wait_until="domcontentloaded", timeout=30000)
+            wait_until="commit" if context_callback is not None
+            else "domcontentloaded", timeout=30000)
         init_ws = await _xhs_web_session(ctx)
         deadline = asyncio.get_running_loop().time() + max(0, timeout_seconds)
         while asyncio.get_running_loop().time() < deadline:

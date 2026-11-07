@@ -152,6 +152,7 @@ export interface WorkshopAsset {
 export interface WorkshopCandidate { id: string; path: string; sha256: string; created_at?: string; prompt?: string; }
 export interface WorkshopShot {
   id: string; title: string; prompt: string; seconds: number; asset_ids: string[];
+  primary_frame_asset_id?: string | null;
   candidates: WorkshopCandidate[]; selected_candidate_id?: string | null;
 }
 export const publicationResultLabel = (status?: string) => ({ executing: '正在发布', submitted: '已提交，等待平台回执',

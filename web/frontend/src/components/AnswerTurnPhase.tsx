@@ -6,6 +6,7 @@
 import css from './AnswerTurnPhase.module.css';
 
 const liveLabels: Record<string, string> = {
+  queued: '本轮等待服务器资源',
   running: '本轮进行中', recovering: '本轮正在恢复', waiting_input: '本轮等待输入',
   stopping: '本轮正在停止', stop_failed: '本轮停止待核实',
 };

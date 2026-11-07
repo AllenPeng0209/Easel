@@ -135,6 +135,7 @@ class Shot(RequestModel):
     atmosphere: str | None = Field(default=None, max_length=4000)
     seconds: int = Field(strict=True, ge=1, le=60)
     asset_ids: list[str] = Field(default_factory=list, max_length=24)
+    primary_frame_asset_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,80}$")
 
 
 class Production(Versioned):
@@ -142,6 +143,15 @@ class Production(Versioned):
     script: str = Field(default='', max_length=100000)
     assets: list[Asset] = Field(default_factory=list, max_length=200)
     shots: list[Shot] = Field(default_factory=list, max_length=200)
+
+    def production_values(self):
+        # Keep existing optional-field semantics; only an explicitly supplied
+        # null primary is a clear operation, not an omitted/default field.
+        values = self.model_dump(exclude={'expected_revision'}, exclude_none=True)
+        for source, target in zip(self.shots, values['shots']):
+            if 'primary_frame_asset_id' in source.model_fields_set:
+                target['primary_frame_asset_id'] = source.primary_frame_asset_id
+        return values
 
 
 class Candidate(Versioned):
@@ -211,7 +221,7 @@ def create_router(outputs_provider: Callable[[], Path], *, publication_workflow=
     @router.put('/projects/{identifier}/production')
     def production(identifier: str, request: Production):
         return perform(store().production, identifier, request.expected_revision,
-                       request.model_dump(exclude={'expected_revision'}, exclude_none=True))
+                       request.production_values())
 
     @router.post('/projects/{identifier}/assets/upload')
     async def upload_asset(identifier: str, file: UploadFile = File(...), expected_revision: int = Form(...),
@@ -243,7 +253,7 @@ def create_router(outputs_provider: Callable[[], Path], *, publication_workflow=
             assets.append(asset)
             return perform(current_store.production, identifier, expected_revision, {
                 'script': current['script'], 'assets': assets,
-                'shots': [{key: row[key] for key in ('id', 'title', 'prompt', 'seconds', 'asset_ids')} for row in current['shots']]})
+                'shots': [{key: row[key] for key in ('id', 'title', 'prompt', 'seconds', 'asset_ids', 'primary_frame_asset_id') if key in row} for row in current['shots']]})
         except ValidationError:
             raise HTTPException(422, '素材名称或类型无效') from None
         finally:

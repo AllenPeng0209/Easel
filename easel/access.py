@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import hashlib
 import hmac
+import json
 import os
 from pathlib import Path
 import re
@@ -26,6 +27,7 @@ PASSWORD_ITERATIONS = 600_000
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_FAILURE_LIMIT = 6
 ROLES = frozenset({"owner", "operator", "viewer"})
+COLLABORATOR_ROLES = frozenset({"operator", "viewer"})
 _schema_lock = threading.Lock()
 
 
@@ -119,8 +121,44 @@ class AccessStore:
                         project_id TEXT,
                         target_id TEXT
                     );
+                    CREATE INDEX IF NOT EXISTS access_audit_project ON access_audit(project_id,id);
+                    CREATE TABLE IF NOT EXISTS project_ownership (
+                        project_id TEXT PRIMARY KEY,
+                        owner_id TEXT NOT NULL REFERENCES users(id),
+                        created_by TEXT NOT NULL REFERENCES users(id),
+                        created_at REAL NOT NULL
+                    );
                 """)
+                if 'details' not in {row['name'] for row in database.execute('PRAGMA table_info(access_audit)')}:
+                    database.execute("ALTER TABLE access_audit ADD COLUMN details TEXT NOT NULL DEFAULT '{}'")
+            self._migrate_ownership()
             self.path.chmod(0o600)
+
+    def _migrate_ownership(self):
+        """Retain the earliest active legacy owner and preserve everyone as members."""
+        with self._connect(immediate=True) as database:
+            indexed = database.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name='memberships_single_owner'").fetchone()
+            missing = database.execute("""SELECT 1 FROM memberships m LEFT JOIN project_ownership p
+                ON p.project_id=m.project_id WHERE m.role='owner' AND p.project_id IS NULL LIMIT 1""").fetchone()
+            if indexed and not missing:
+                return
+            rows = database.execute("""SELECT m.*,u.active FROM memberships m JOIN users u ON u.id=m.user_id
+                WHERE m.role='owner' ORDER BY m.project_id,u.active DESC,m.created_at,u.created_at,u.id""").fetchall()
+            grouped = {}
+            for row in rows:
+                grouped.setdefault(row['project_id'], []).append(row)
+            for project_id, owners in grouped.items():
+                prior = database.execute('SELECT * FROM project_ownership WHERE project_id=?', (project_id,)).fetchone()
+                chosen = next((row for row in owners if prior and row['user_id'] == prior['owner_id'] and row['active']), owners[0])
+                database.execute("UPDATE memberships SET role='operator' WHERE project_id=? AND role='owner' AND user_id<>?",
+                                 (project_id, chosen['user_id']))
+                database.execute("""INSERT INTO project_ownership VALUES(?,?,?,?)
+                    ON CONFLICT(project_id) DO UPDATE SET owner_id=excluded.owner_id""",
+                    (project_id, chosen['user_id'], prior['created_by'] if prior else chosen['user_id'], chosen['created_at']))
+                if len(owners) > 1:
+                    self._audit(database, None, 'ownership.migrate', project_id, chosen['user_id'],
+                                {'previous_owners': [row['user_id'] for row in owners]})
+            database.execute("CREATE UNIQUE INDEX IF NOT EXISTS memberships_single_owner ON memberships(project_id) WHERE role='owner'")
 
     @contextmanager
     def _connect(self, *, immediate: bool = False):
@@ -164,9 +202,38 @@ class AccessStore:
                              (identifier, username, name, password_hash, 1, 1, now))
             for project_id in set(project_ids):
                 database.execute("INSERT INTO memberships VALUES(?,?,?,?)", (project_id, identifier, "owner", now))
+                database.execute("INSERT INTO project_ownership VALUES(?,?,?,?)", (project_id, identifier, identifier, now))
             token = self._new_session(database, identifier)
             row = database.execute("SELECT * FROM users WHERE id=?", (identifier,)).fetchone()
             return _public_user(row), token
+
+    def register(self, username: str, password: str, display_name: str = '', *, peer: str = '') -> tuple[dict, str]:
+        """Self-service users start with zero memberships and no platform privileges."""
+        key = hashlib.sha256(f'register\0{peer}'.encode()).hexdigest()
+        # Count both completed and rejected registrations, before expensive hashing.
+        with self._connect(immediate=True) as database:
+            now = time.time()
+            if not database.execute('SELECT 1 FROM users WHERE active=1 AND is_admin=1 LIMIT 1').fetchone():
+                raise HTTPException(503, '平台尚未初始化，请联系管理员')
+            database.execute('DELETE FROM login_attempts WHERE window_start < ?', (now - LOGIN_WINDOW_SECONDS,))
+            attempt = database.execute('SELECT failures FROM login_attempts WHERE identifier=?', (key,)).fetchone()
+            if attempt and attempt['failures'] >= LOGIN_FAILURE_LIMIT:
+                raise HTTPException(429, '注册尝试过多，请在 15 分钟后重试', headers={'Retry-After': '900'})
+            database.execute('''INSERT INTO login_attempts VALUES(?,?,?)
+                ON CONFLICT(identifier) DO UPDATE SET failures=failures+1''', (key, 1, now))
+        normalized = _username(username)
+        name = _display_name(display_name, normalized)
+        password_hash = _password_hash(password)
+        identifier = uuid.uuid4().hex
+        try:
+            with self._connect(immediate=True) as database:
+                database.execute('INSERT INTO users VALUES(?,?,?,?,?,?,?)',
+                                 (identifier, normalized, name, password_hash, 0, 1, time.time()))
+                token = self._new_session(database, identifier)
+                self._audit(database, identifier, 'auth.register')
+                return _public_user(database.execute('SELECT * FROM users WHERE id=?', (identifier,)).fetchone()), token
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, '用户名已存在，请登录或换一个用户名') from None
 
     def login(self, username: str, password: str, *, peer: str = "") -> tuple[dict, str]:
         # Invalid usernames receive the same response and derivation as unknown users.
@@ -272,7 +339,7 @@ class AccessStore:
             if active is False and row["active"]:
                 owned = database.execute("SELECT project_id FROM memberships WHERE user_id=? AND role='owner'", (user_id,))
                 if any(self._active_owners(database, item["project_id"]) <= 1 for item in owned):
-                    raise HTTPException(409, "该用户是某个 IP 的最后一位 owner，请先添加其他 owner")
+                    raise HTTPException(409, "该用户拥有 IP 项目，请先转移项目所有权")
             if row["active"] and row["is_admin"] and (active is False or is_admin is False):
                 count = database.execute("SELECT count(*) FROM users WHERE active=1 AND is_admin=1").fetchone()[0]
                 if count <= 1:
@@ -308,6 +375,19 @@ class AccessStore:
                 ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'operator' THEN 1 ELSE 2 END,m.created_at,u.username""", (project_id,))
             return [{**dict(row), "active": bool(row["active"]), "is_admin": bool(row["is_admin"])} for row in rows]
 
+    def project_access(self, project_id: str) -> dict:
+        with self._connect() as database:
+            row = database.execute('''SELECT p.*,o.username AS owner_username,o.display_name AS owner_name,
+                c.username AS creator_username,c.display_name AS creator_name,
+                (SELECT count(*) FROM memberships m WHERE m.project_id=p.project_id) AS member_count
+                FROM project_ownership p JOIN users o ON o.id=p.owner_id JOIN users c ON c.id=p.created_by
+                WHERE p.project_id=?''', (project_id,)).fetchone()
+            if not row:
+                raise HTTPException(409, '项目所有权记录缺失，请联系管理员检查迁移')
+            return {'owner': {'id': row['owner_id'], 'username': row['owner_username'], 'display_name': row['owner_name']},
+                    'created_by': {'id': row['created_by'], 'username': row['creator_username'], 'display_name': row['creator_name']},
+                    'member_count': row['member_count'], 'visibility': 'private'}
+
     def set_member(self, project_id: str, user_id: str, role: str, *, actor_id: str | None = None) -> dict:
         if role not in ROLES:
             raise HTTPException(400, "角色必须为 owner、operator 或 viewer")
@@ -317,15 +397,55 @@ class AccessStore:
             if not user or not user["active"]:
                 raise HTTPException(404, "用户不存在或已停用")
             current = database.execute("SELECT role FROM memberships WHERE project_id=? AND user_id=?", (project_id, user_id)).fetchone()
-            if current and current["role"] == "owner" and role != "owner" and self._active_owners(database, project_id) <= 1:
-                raise HTTPException(409, "不能降级 IP 的最后一位 owner")
+            if current and current['role'] == 'owner':
+                if role == 'owner':
+                    return {**{key: user[key] for key in ('username', 'display_name')}, 'user_id': user_id,
+                            'role': 'owner', 'active': bool(user['active']), 'is_admin': bool(user['is_admin'])}
+                raise HTTPException(409, 'Owner 不能通过成员角色变更，请先转移项目所有权')
+            if role == 'owner':
+                # Only trusted creation/migration may establish the initial owner.
+                if actor_id is not None or database.execute('SELECT 1 FROM project_ownership WHERE project_id=?', (project_id,)).fetchone():
+                    raise HTTPException(409, '每个 IP 只有一位 Owner，请使用所有权转移')
+                database.execute('INSERT INTO project_ownership VALUES(?,?,?,?)', (project_id, user_id, user_id, time.time()))
             database.execute("""INSERT INTO memberships VALUES(?,?,?,?)
                 ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role""", (project_id, user_id, role, time.time()))
+            if actor_id is not None:
+                self._audit(database, actor_id, 'member.role_change' if current else 'member.add', project_id, user_id,
+                            {'from_role': current['role'], 'role': role} if current else {'role': role})
             return {"user_id": user_id, "username": user["username"], "display_name": user["display_name"],
                     "role": role, "active": bool(user["active"]), "is_admin": bool(user["is_admin"])}
 
     def add_owner(self, project_id: str, user_id: str):
         return self.set_member(project_id, user_id, "owner")
+
+    def transfer_owner(self, project_id: str, user_id: str, *, actor_id: str, expected_owner_id: str):
+        with self._connect(immediate=True) as database:
+            self._require_actor(database, actor_id, project_id=project_id)
+            ownership = database.execute('SELECT owner_id FROM project_ownership WHERE project_id=?', (project_id,)).fetchone()
+            if not ownership or ownership['owner_id'] != expected_owner_id or expected_owner_id != actor_id:
+                raise HTTPException(409, '项目 Owner 已变化，请刷新后重新确认')
+            if user_id == actor_id:
+                raise HTTPException(400, '请选择其他成员接收项目')
+            target = database.execute('''SELECT m.role,u.active FROM memberships m JOIN users u ON u.id=m.user_id
+                WHERE m.project_id=? AND m.user_id=?''', (project_id, user_id)).fetchone()
+            if not target or not target['active']:
+                raise HTTPException(409, '请先将有效用户添加为项目成员，再转移所有权')
+            database.execute("UPDATE memberships SET role='operator' WHERE project_id=? AND user_id=?", (project_id, actor_id))
+            database.execute("UPDATE memberships SET role='owner' WHERE project_id=? AND user_id=?", (project_id, user_id))
+            database.execute('UPDATE project_ownership SET owner_id=? WHERE project_id=?', (user_id, project_id))
+            self._audit(database, actor_id, 'ownership.transfer', project_id, user_id, {'previous_owner_id': actor_id})
+        return self.project_access(project_id)
+
+    def leave_project(self, project_id: str, *, actor_id: str):
+        with self._connect(immediate=True) as database:
+            self._require_actor(database, actor_id)
+            membership = database.execute('SELECT role FROM memberships WHERE project_id=? AND user_id=?', (project_id, actor_id)).fetchone()
+            if not membership:
+                raise HTTPException(404, 'IP 不存在或没有访问权限')
+            if membership['role'] == 'owner':
+                raise HTTPException(409, 'Owner 需要先转移项目所有权才能退出')
+            database.execute('DELETE FROM memberships WHERE project_id=? AND user_id=?', (project_id, actor_id))
+            self._audit(database, actor_id, 'member.leave', project_id, actor_id, {'role': membership['role']})
 
     def remove_member(self, project_id: str, user_id: str, *, actor_id: str | None = None):
         with self._connect(immediate=True) as database:
@@ -334,16 +454,38 @@ class AccessStore:
                 WHERE m.project_id=? AND m.user_id=?""", (project_id, user_id)).fetchone()
             if not current:
                 raise HTTPException(404, "成员不存在")
-            if current["role"] == "owner" and current["active"] and self._active_owners(database, project_id) <= 1:
-                raise HTTPException(409, "不能移除 IP 的最后一位 owner")
+            if current['role'] == 'owner':
+                raise HTTPException(409, '不能移除项目 Owner，请先转移所有权')
             database.execute("DELETE FROM memberships WHERE project_id=? AND user_id=?", (project_id, user_id))
+            if actor_id is not None:
+                self._audit(database, actor_id, 'member.remove', project_id, user_id, {'role': current['role']})
 
     def remove_project(self, project_id: str):
         with self._connect(immediate=True) as database:
             database.execute("DELETE FROM memberships WHERE project_id=?", (project_id,))
+            database.execute('DELETE FROM project_ownership WHERE project_id=?', (project_id,))
+
+    @staticmethod
+    def _audit(database, actor_id=None, action='', project_id=None, target_id=None, details=None):
+        database.execute('INSERT INTO access_audit(at,actor_id,action,project_id,target_id,details) VALUES(?,?,?,?,?,?)',
+                         (time.time(), actor_id, action[:100], project_id, target_id, json.dumps(details or {}, ensure_ascii=False)))
+
+    def activity(self, project_id: str, *, actor_id: str, before: int | None = None, limit: int = 30):
+        limit = max(1, min(limit, 100))
+        with self._connect() as database:
+            self._require_actor(database, actor_id, project_id=project_id)
+            rows = database.execute('''SELECT a.*,u.username AS actor_username,u.display_name AS actor_name,
+                t.username AS target_username,t.display_name AS target_name FROM access_audit a
+                LEFT JOIN users u ON u.id=a.actor_id LEFT JOIN users t ON t.id=a.target_id
+                WHERE a.project_id=? AND (? IS NULL OR a.id<?) ORDER BY a.id DESC LIMIT ?''',
+                (project_id, before, before, limit + 1)).fetchall()
+            items = [{'id': row['id'], 'at': row['at'], 'project_id': row['project_id'], 'action': row['action'],
+                      'actor': {'id': row['actor_id'], 'username': row['actor_username'], 'display_name': row['actor_name']},
+                      'target': {'id': row['target_id'], 'username': row['target_username'], 'display_name': row['target_name']},
+                      'details': json.loads(row['details'])} for row in rows[:limit]]
+            return {'items': items, 'next_cursor': items[-1]['id'] if len(rows) > limit else None}
 
     def audit(self, actor_id: str | None = None, action: str = "", project_id: str | None = None,
-              target_id: str | None = None):
+              target_id: str | None = None, details: dict | None = None):
         with self._connect() as database:
-            database.execute("INSERT INTO access_audit(at,actor_id,action,project_id,target_id) VALUES(?,?,?,?,?)",
-                             (time.time(), actor_id, action[:100], project_id, target_id))
+            self._audit(database, actor_id, action, project_id, target_id, details)

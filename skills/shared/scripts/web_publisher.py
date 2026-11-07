@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import login_state  # noqa: E402
 import login_qr
 import login_transport
+import login_remote_debug
 import content_guard  # noqa: E402  出站内容安全闸门
 import platform_readback  # noqa: E402  发布读回对账（快手已接入，注册表见 _READBACK_VERIFIERS）
 import human_pace  # noqa: E402  人类节奏（提交前双停顿；EASEL_PACE_SKIP=1 跳过）
@@ -349,7 +350,7 @@ PLATFORMS: dict[str, dict] = {
     },
     "twitter-x": {
         "name": "推特 X",
-        "login_url": "https://x.com/i/flow/login",
+        "login_url": "https://x.com/login",
         "login_probe_url": "https://x.com/home",
         "publish_url": "https://x.com/compose/post",
         "profile": "TwitterXProfile",
@@ -365,7 +366,10 @@ PLATFORMS: dict[str, dict] = {
         # 已登录标志：左侧导航底部账号切换按钮只在登录后渲染；data-testid 是 X 上最稳定的锚点
         "login_check": "[data-testid='SideNav_AccountSwitcher_Button']",
         "login_strict": True,
-        "logged_out_selector": "[data-testid='loginButton'], a[href='/i/flow/login'], a[href='/login']",
+        "logged_out_selector": "[data-testid='loginButton'], a[href='/i/flow/login'], a[href='/login'], "
+                               "input[autocomplete~='username'], input[name='username_or_email'], "
+                               "input[name='username'], input[name='password'], input[type='password']",
+        "login_paths": ("/i/flow/login", "/i/flow/signup", "/i/jf/onboarding", "/i/flow/consent"),
         "whoami_url": "https://x.com/home",
         # 账号切换按钮里第一个 div[dir] 是显示名（第二个是 @handle）；头像是按钮内 img
         "me_name_selector": "[data-testid='SideNav_AccountSwitcher_Button'] div[dir] span",
@@ -1300,15 +1304,19 @@ def _authenticated_account(browser, cfg: dict, *, fresh: bool = False) -> dict |
             if response.status != 200:
                 return None
             payload = response.json()
-            if not isinstance(payload, dict) or payload.get("err_no") != 0:
+            if not isinstance(payload, dict) or type(payload.get("err_no")) is not int or payload["err_no"] != 0:
                 return None
             data = payload.get("data")
             if not isinstance(data, dict):
                 return None
-            name = (data.get("user_name") or "").strip()
-            if not name:
+            name = data.get("user_name")
+            identifier = data.get("user_id")
+            if isinstance(identifier, int) and not isinstance(identifier, bool) and identifier > 0:
+                identifier = str(identifier)
+            if (not isinstance(name, str) or not name.strip() or not isinstance(identifier, str)
+                    or not identifier.isascii() or not identifier.isdigit() or int(identifier) <= 0):
                 return None
-            return {"id": str(data.get("user_id") or ""), "name": name,
+            return {"id": identifier, "name": name.strip(),
                     "avatar_url": data.get("avatar_large") or ""}
         except Exception:
             return None
@@ -1383,8 +1391,20 @@ def _is_logged_in(page, cfg: dict) -> bool:
         url = (page.url or "").lower().rstrip("/")
     except Exception:
         url = ""
+    try:
+        parsed = urlparse(url)
+        hosts = {urlparse(cfg[key]).hostname for key in
+                 ("login_url", "publish_url", "whoami_url", "login_probe_url") if cfg.get(key)}
+        if cfg.get("profile") == "TwitterXProfile":
+            hosts.update({"x.com", "www.x.com", "twitter.com", "www.twitter.com"})
+        if (parsed.scheme != "https" or parsed.hostname not in hosts
+                or parsed.port not in (None, 443) or parsed.username or parsed.password):
+            return False
+    except (TypeError, ValueError):
+        return False
     # 1. URL 明确在登录/验证页（视频号→login.html、知乎→signin，实测）
-    if any(m in url for m in _LOGIN_MARKERS):
+    if (any(m in url for m in _LOGIN_MARKERS)
+            or any(parsed.path.startswith(path) for path in cfg.get("login_paths", ()))):
         return False
     # 2. 登出浮层/二维码可见 → 未登录（快手停在发布页但弹登录浮层，实测）
     out_sel = cfg.get("logged_out_selector")
@@ -1396,6 +1416,10 @@ def _is_logged_in(page, cfg: dict) -> bool:
                     return False
             except Exception:
                 pass
+    # Public avatars and cached dashboard shells do not prove the current
+    # account. These platforms already have authenticated-self readers.
+    if cfg.get("profile") in {"ZhihuProfile", "JuejinProfile", "ChannelsProfile"}:
+        return _authenticated_account(getattr(page, "context", None), cfg) is not None
     # 3. 强选择器（login_check）命中 → 已登录（最可靠，优先于 URL 启发式）
     #    必须「可见」才算：快手等 SPA 登出后重定向到同域营销落地页，复用同一份前端 bundle，
     #    创作者中心的 .user-line/.vertical-menu 等外壳节点可能仍存在于 DOM 但被隐藏 →
@@ -1406,6 +1430,12 @@ def _is_logged_in(page, cfg: dict) -> bool:
             try:
                 el = page.query_selector(s) if s else None
                 if el and el.is_visible():
+                    if cfg.get("profile") == "KuaishouProfile":
+                        return bool(_visible_account_identity(page, cfg).get("name")
+                                    and _probe_publish_auth(page, cfg) == "ok")
+                    if cfg.get("profile") == "TwitterXProfile":
+                        return any(cookie.get("name") == "auth_token" and cookie.get("value")
+                                   for cookie in page.context.cookies([page.url]))
                     return True
             except Exception:
                 pass
@@ -1460,6 +1490,15 @@ def _probe_publish_auth(page, cfg: dict) -> str:
         return "expired"
     if r.get("status") in (401, 403):
         return "expired"
+    if type(r.get("status")) is not int or not 200 <= r["status"] < 300:
+        return "unknown"
+    try:
+        destination, expected = urlparse(final), urlparse(probe["url"])
+        if (destination.scheme != "https" or destination.netloc != expected.netloc
+                or destination.path.rstrip("/") != expected.path.rstrip("/")):
+            return "unknown"
+    except ValueError:
+        return "unknown"
     body = r.get("body") or ""
     ok_results = probe.get("ok_result") or []
     try:
@@ -1468,7 +1507,7 @@ def _probe_publish_auth(page, cfg: dict) -> str:
         d = None
     if isinstance(d, dict):
         res = d.get("result", d.get("code"))
-        if res in ok_results:
+        if type(res) is int and res in ok_results:
             return "ok"
         if res in _PROBE_LOGOUT_RESULTS:
             return "expired"
@@ -1709,6 +1748,7 @@ def cmd_login_qr(a) -> int:
     timeout_s = a.timeout or 180
     # 窗口登录：平台配置（X 无扫码）或显式 --headed 都弹有头窗口
     window_mode = cfg.get("login_mode") == "window" or bool(getattr(a, "headed", False))
+    remote_mode = login_remote_debug.enabled()
 
     login_state.write_status(sf, "starting")
     with sync_playwright() as p:
@@ -1719,9 +1759,10 @@ def cmd_login_qr(a) -> int:
 
         try:
             signal.signal(signal.SIGTERM, stop_login)
-            browser = p.chromium.launch_persistent_context(
-                str(profile), headless=not window_mode, locale="zh-CN", **_launch_kwargs(cfg, a.platform, headless=not window_mode))
+            browser = login_remote_debug.launch_persistent_context(
+                p.chromium, profile, headless=not window_mode, locale="zh-CN", **_launch_kwargs(cfg, a.platform, headless=not window_mode))
             page = browser.pages[0] if browser.pages else browser.new_page()
+            login_remote_debug.publish_page(browser, page)
             _block_heavy(browser, a.platform)
             _observe_channels_account(browser, cfg)
             _navigate_login(page, cfg["login_url"],
@@ -1745,7 +1786,8 @@ def cmd_login_qr(a) -> int:
             if window_mode and cfg.get("login_mode") == "window":
                 login_state.write_status(
                     sf, "window_login",
-                    f"请在运行 响芽 的电脑弹出的浏览器窗口里登录 {cfg['name']}，完成后窗口会自动关闭。该方式需要图形桌面。")
+                    (f"请在下方平台页面登录 {cfg['name']}，完成后会自动保存。" if remote_mode
+                     else f"请在运行 响芽 的电脑弹出的浏览器窗口里登录 {cfg['name']}，完成后窗口会自动关闭。该方式需要图形桌面。"))
                 print(f"🪟 {cfg['name']} 请在弹出的浏览器窗口完成登录…", file=sys.stderr)
                 deadline = time.time() + timeout_s
                 while time.time() < deadline:
@@ -1789,21 +1831,27 @@ def cmd_login_qr(a) -> int:
             # 截二维码为 PNG。视频号等把码放在跨域 iframe 里（主页面找不到）→ 截 iframe 元素本体；
             # 其余平台在主页面异步渲染（base64/canvas）→ 先等渲染再按打分裁剪。统一走 _capture_qr。
             qr_out.parent.mkdir(parents=True, exist_ok=True)
+            qr_available = True
             try:
                 if cfg.get("login_qr_switch"):
                     login_qr.prepare_qr(page, qr_out, cfg["login_qr_selector"], cfg["login_qr_switch"])
                 else:
                     _capture_qr(page, qr_out, cfg)
             except Exception:
-                if not _is_logged_in(page, cfg) and _authenticated_account(browser, cfg) is None:
+                if _is_logged_in(page, cfg) or _authenticated_account(browser, cfg) is not None:
+                    browser.close()
+                    browser = None
+                    login_state.write_status(sf, "success", "已登录")
+                    print(f"✅ {cfg['name']} 已登录（登录态在持久化目录）")
+                    return 0
+                if not remote_mode:
                     raise
-                browser.close()
-                browser = None
-                login_state.write_status(sf, "success", "已登录")
-                print(f"✅ {cfg['name']} 已登录（登录态在持久化目录）")
-                return 0
-            login_state.write_status(sf, "qr_ready", f"扫码登录 {cfg['name']}", qr=str(qr_out))
-            print(f"📱 {cfg['name']} 登录页/二维码已保存：{qr_out}", file=sys.stderr)
+                qr_available = False
+            if qr_available:
+                login_state.write_status(sf, "qr_ready", f"扫码登录 {cfg['name']}", qr=str(qr_out))
+                print(f"📱 {cfg['name']} 登录页/二维码已保存：{qr_out}", file=sys.stderr)
+            else:
+                login_state.write_status(sf, "window_login", "请在下方平台页面完成登录或安全验证")
             print(f"⏳ 等待扫码（最长 {timeout_s}s）...", file=sys.stderr)
 
             confirmed = False
@@ -1827,7 +1875,9 @@ def cmd_login_qr(a) -> int:
                     login_state.write_status(sf, "scanned", "扫码成功，请在手机上确认登录")
                 elif qr_state == "expired":
                     scanned = False
-                    if cfg.get("profile") == "ChannelsProfile":
+                    if remote_mode:
+                        login_state.write_status(sf, "window_login", "二维码已过期，请在下方平台页面刷新后继续登录")
+                    elif cfg.get("profile") == "ChannelsProfile":
                         login_state.write_status(sf, "expired", "微信二维码已过期，请关闭后重新登录")
                         return 1
                 # 扫码页仍停在 passport/login 域时深探：用辅助页 goto 发布页判登录态
@@ -1854,7 +1904,7 @@ def cmd_login_qr(a) -> int:
                         if _probe_logged_in(browser, cfg):
                             confirmed = True
                             break
-                if cfg.get("strict_login_qr") and not scanned and time.monotonic() >= next_refresh:
+                if cfg.get("strict_login_qr") and not remote_mode and not scanned and time.monotonic() >= next_refresh:
                     try:
                         if qr_state == "expired":
                             if refresh_count >= 3 or not _refresh_login_qr(page, qr_out, cfg):
@@ -1884,8 +1934,10 @@ def cmd_login_qr(a) -> int:
             print(f"⏱️ {timeout_s}s 内未检测到登录成功（二维码可能过期）", file=sys.stderr)
             return 1
         except Exception as e:  # noqa: BLE001 — 任何异常都写 error 终态，否则前端轮询会卡在 starting/qr_ready
-            login_state.write_status(sf, "error", f"登录异常：{e}")
-            print(f"❌ {cfg['name']} 登录异常：{e}", file=sys.stderr)
+            message = (f"登录页面未能完成操作（{type(e).__name__}），请检查网络后重试"
+                       if remote_mode else f"登录异常：{e}")
+            login_state.write_status(sf, "error", message)
+            print(f"❌ {cfg['name']} {message}", file=sys.stderr)
             return 1
         finally:
             try:

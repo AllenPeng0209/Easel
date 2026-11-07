@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -233,19 +234,22 @@ class HuobaoRuntime:
         if not destination.exists(): shutil.copyfile(source, destination)
         return destination.relative_to(self.store.outputs).as_posix()
 
-    def _snapshot(self, binding):
-        with self.database() as db:
-            episode = dict(db.execute('SELECT * FROM episodes WHERE id=?', (binding['episode_id'],)).fetchone())
-            result = {'episode': {key: episode[key] for key in ('content','script_content','resolution')}, 'assets': {}, 'shots': [], 'tasks': [], 'merges': []}
-            for kind, table in [('character','characters'), ('scene','scenes'), ('prop','props')]:
-                result['assets'][kind] = [dict(row) for row in db.execute(f'SELECT * FROM {table} WHERE drama_id=? AND deleted_at IS NULL ORDER BY id', (binding['drama_id'],))]
-            result['shots'] = [dict(row) for row in db.execute('SELECT * FROM storyboards WHERE episode_id=? ORDER BY storyboard_number,id', (binding['episode_id'],))]
-            for shot in result['shots']:
-                shot['character_ids'] = [row[0] for row in db.execute('SELECT character_id FROM storyboard_characters WHERE storyboard_id=? ORDER BY character_id', (shot['id'],))]
-                shot['prop_ids'] = [row[0] for row in db.execute('SELECT prop_id FROM storyboard_props WHERE storyboard_id=? ORDER BY prop_id', (shot['id'],))]
-            result['tasks'] = [dict(row) for row in db.execute("SELECT id,storyboard_id,drama_id,prompt,task_id,local_path,status,created_at,updated_at FROM sys_task WHERE (drama_id=? OR storyboard_id IN (SELECT id FROM storyboards WHERE episode_id=?)) AND type='video' AND status='completed' ORDER BY id", (binding['drama_id'],binding['episode_id']))]
-            result['merges'] = [dict(row) for row in db.execute("SELECT * FROM video_merges WHERE episode_id=? AND status='completed' AND deleted_at IS NULL ORDER BY id", (binding['episode_id'],))]
-            return result
+    def _snapshot(self, binding, database=None):
+        if database is None:
+            with self.database() as db:
+                return self._snapshot(binding, db)
+        db = database
+        episode = dict(db.execute('SELECT * FROM episodes WHERE id=?', (binding['episode_id'],)).fetchone())
+        result = {'episode': {key: episode[key] for key in ('content','script_content','resolution')}, 'assets': {}, 'shots': [], 'tasks': [], 'merges': []}
+        for kind, table in [('character','characters'), ('scene','scenes'), ('prop','props')]:
+            result['assets'][kind] = [dict(row) for row in db.execute(f'SELECT * FROM {table} WHERE drama_id=? AND deleted_at IS NULL ORDER BY id', (binding['drama_id'],))]
+        result['shots'] = [dict(row) for row in db.execute('SELECT * FROM storyboards WHERE episode_id=? ORDER BY storyboard_number,id', (binding['episode_id'],))]
+        for shot in result['shots']:
+            shot['character_ids'] = [row[0] for row in db.execute('SELECT character_id FROM storyboard_characters WHERE storyboard_id=? ORDER BY character_id', (shot['id'],))]
+            shot['prop_ids'] = [row[0] for row in db.execute('SELECT prop_id FROM storyboard_props WHERE storyboard_id=? ORDER BY prop_id', (shot['id'],))]
+        result['tasks'] = [dict(row) for row in db.execute("SELECT id,storyboard_id,drama_id,prompt,task_id,local_path,status,created_at,updated_at FROM sys_task WHERE (drama_id=? OR storyboard_id IN (SELECT id FROM storyboards WHERE episode_id=?)) AND type='video' AND status='completed' ORDER BY id", (binding['drama_id'],binding['episode_id']))]
+        result['merges'] = [dict(row) for row in db.execute("SELECT * FROM video_merges WHERE episode_id=? AND status='completed' AND deleted_at IS NULL ORDER BY id", (binding['episode_id'],))]
+        return result
 
     def open(self, identifier):
         self.ensure()
@@ -267,22 +271,26 @@ class HuobaoRuntime:
                            'merge_map': {}, 'native_revision': 0, 'engine_digest': None, 'collected_merges': []}
                 bindings[identifier] = binding
                 _json(self.bindings_path, bindings)
-            current_digest = _fingerprint(self._snapshot(binding))
+            snapshot = self._snapshot(binding)
+            current_digest = _fingerprint(snapshot)
             if binding['engine_digest'] and current_digest != binding['engine_digest']:
                 if project['revision'] != binding['native_revision']:
                     raise WorkshopError('对话制作与火宝工程同时有新修改，请先保留双方版本后核对', 409)
-                project = self._pull(identifier, binding)
-            self._canonical_selection(project,binding)
+                project = self._pull(identifier, binding, snapshot=snapshot, project=project)
+                binding['native_revision'] = project['revision']
             if project['revision'] != binding['native_revision']:
-                self._push(project, binding)
+                snapshot = self._push(project, binding, expected_engine_digest=current_digest)
             # Record only the revision actually imported. A newer native edit
             # can arrive while artwork is extracted and must be pushed next time.
             binding['native_revision'] = project['revision']
-            binding['engine_digest'] = _fingerprint(self._snapshot(binding))
+            self._canonical_selection(project, binding, snapshot)
+            # Track exactly the snapshot consumed/imported. A later UI change
+            # must remain dirty for the next pull, including during artwork I/O.
+            binding['engine_digest'] = _fingerprint(snapshot)
             _json(self.bindings_path, bindings)
             return binding
 
-    def _canonical_selection(self, project, binding):
+    def _canonical_selection(self, project, binding, snapshot):
         with self.database() as db:
             for shot in project['shots']:
                 candidate=next((row for row in shot['candidates'] if row['id']==shot['selected_candidate_id']),None)
@@ -294,12 +302,44 @@ class HuobaoRuntime:
                 try:
                     before=self.data_root/current[0];after=self.data_root/row[0]
                     if before.is_file() and after.is_file() and _digest(before)==_digest(after)==candidate['sha256']:
-                        db.execute('UPDATE storyboards SET video_url=? WHERE id=?',(row[0],binding['shot_map'][shot['id']]))
+                        storyboard_id = binding['shot_map'][shot['id']]
+                        changed = db.execute('UPDATE storyboards SET video_url=? WHERE id=? AND video_url=?',
+                                             (row[0], storyboard_id, current[0])).rowcount
+                        if changed:
+                            # Apply only our proven alias normalization to the
+                            # consumed snapshot, never absorb newer UI fields.
+                            observed = next((item for item in snapshot['shots'] if item['id'] == storyboard_id), None)
+                            if observed is not None and observed['video_url'] == current[0]:
+                                observed['video_url'] = row[0]
                 except (OSError,TypeError):pass
 
-    def _push(self, project, binding):
+    @staticmethod
+    def _scene_bindings(asset_ids, binding):
+        return [identifier for identifier in asset_ids
+                if binding['asset_map'].get(identifier, {}).get('kind') == 'scene']
+
+    @staticmethod
+    def _planned_seconds(value, previous):
+        # Provider frame-grid durations (for example 5.166...) are observations,
+        # not new editorial plans. Never round/clamp them into a replacement.
+        for candidate in (value, previous):
+            if type(candidate) in (int, float) and 1 <= candidate <= 60 and int(candidate) == candidate:
+                return int(candidate)
+        # Keep an already-invalid legacy plan visible for manual correction.
+        # Admission validates it separately; do not replace it with another
+        # observation or make the whole existing workbench inaccessible.
+        if type(previous) in (int, float) and math.isfinite(previous):
+            return previous
+        raise WorkshopError('火宝分镜缺少有效的整数计划时长；请保留实际视频时长并设置计划时长', 409)
+
+    def _push(self, project, binding, *, expected_engine_digest=None):
         artwork=[]
+        asset_files = {}
+        primary_scenes = binding.setdefault('primary_scene_map', {})
         with self.database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if expected_engine_digest is not None and _fingerprint(self._snapshot(binding, db)) != expected_engine_digest:
+                raise WorkshopError('制作页在同步期间有新修改，未覆盖任何一方，请刷新后核对', 409)
             db.execute('UPDATE dramas SET title=?,description=?,aspect_ratio=?,updated_at=? WHERE id=?',
                 (project['title'], project['brief'], project['aspect_ratio'], _now(), binding['drama_id']))
             db.execute('UPDATE episodes SET content=?,script_content=?,updated_at=? WHERE id=?',
@@ -312,6 +352,7 @@ class HuobaoRuntime:
                     'scene':('scenes','episode_scenes','scene_id'), 'prop':('props','episode_props','prop_id')}[kind]
                 mapped = binding['asset_map'].get(asset['id'])
                 media = self._asset_file(asset.get('path'))
+                asset_files[asset['id']] = media
                 if media:artwork.append(media)
                 if not mapped:
                     if kind == 'scene':
@@ -344,7 +385,19 @@ class HuobaoRuntime:
                         (binding['episode_id'],index,_now(),_now())).lastrowid
                     binding['shot_map'][shot['id']] = shot_id
                 references = [binding['asset_map'][value] for value in shot['asset_ids'] if value in binding['asset_map']]
-                scene = next((row['id'] for row in references if row['kind']=='scene'),None)
+                scene_ids = self._scene_bindings(shot['asset_ids'], binding)
+                primary = primary_scenes.get(shot['id'])
+                if shot['id'] not in primary_scenes or (primary is not None and primary not in scene_ids):
+                    primary = next(iter(scene_ids), None)
+                # Huobao has one logical scene slot. Additional native scene
+                # attachments are not implicit replacements for that slot.
+                if scene_ids:
+                    primary_scenes[shot['id']] = primary
+                else:
+                    # No native scene is different from an explicit UI clear
+                    # while supplemental scene attachments remain bound.
+                    primary_scenes.pop(shot['id'], None)
+                scene = binding['asset_map'][primary]['id'] if primary is not None else None
                 for table,column,kind in [('storyboard_characters','character_id','character'),('storyboard_props','prop_id','prop')]:
                     db.execute(f'DELETE FROM {table} WHERE storyboard_id=?',(shot_id,))
                     for ref in references:
@@ -361,6 +414,12 @@ class HuobaoRuntime:
                     if candidate['id']==shot['selected_candidate_id']:selected=media
                 db.execute('UPDATE storyboards SET storyboard_number=?,title=?,description=?,atmosphere=?,video_prompt=?,duration=?,scene_id=?,video_url=?,updated_at=? WHERE id=?',
                     (index,shot['title'],shot.get('description',''),shot.get('atmosphere',''),shot['prompt'],shot['seconds'],scene,selected,_now(),shot_id))
+                if 'primary_frame_asset_id' in shot:
+                    primary_frame = shot['primary_frame_asset_id']
+                    image = asset_files.get(primary_frame) if primary_frame is not None else None
+                    if primary_frame is not None and (primary_frame not in shot['asset_ids'] or not image):
+                        raise WorkshopError('分镜的主参考首帧已不可用，请重新绑定当前项目图片', 422)
+                    db.execute('UPDATE storyboards SET first_frame_image=? WHERE id=?', (image, shot_id))
                 active_shots.add(shot['id'])
             for native, shot_id in binding['shot_map'].items():
                 if native not in active_shots:db.execute('DELETE FROM storyboards WHERE id=?',(shot_id,))
@@ -372,8 +431,10 @@ class HuobaoRuntime:
                     (binding['episode_id'],binding['drama_id'],project['title'],media,_now(),_now())).lastrowid
                 binding['merge_map'][artifact['id']]=merge
                 binding['collected_merges'].append(merge)
+            imported_snapshot = self._snapshot(binding, db)
         if artwork:
             self.request('POST','/api/v1/xiangya/artwork',{'paths':list(dict.fromkeys(artwork))})
+        return imported_snapshot
 
     def pull(self, identifier):
         if not self.bindings_path.is_file():return self.store.get(identifier)
@@ -383,17 +444,63 @@ class HuobaoRuntime:
             # A failed first import has no engine baseline to reconcile. The
             # native project remains authoritative until open() retries it.
             if not binding.get('engine_digest'):return self.store.get(identifier)
-            digest=_fingerprint(self._snapshot(binding))
+            snapshot = self._snapshot(binding)
+            digest=_fingerprint(snapshot)
             if digest==binding['engine_digest']:return self.store.get(identifier)
-            if self.store.get(identifier)['revision']!=binding['native_revision']:
+            project = self.store.get(identifier)
+            if project['revision']!=binding['native_revision']:
                 raise WorkshopError('对话与制作页同时有新修改，未覆盖任何一方',409)
-            project=self._pull(identifier,binding)
-            binding.update(native_revision=project['revision'],engine_digest=_fingerprint(self._snapshot(binding)))
+            project=self._pull(identifier,binding,snapshot=snapshot,project=project)
+            binding.update(native_revision=project['revision'],engine_digest=digest)
             _json(self.bindings_path,bindings)
             return project
 
-    def _pull(self, identifier, binding):
-        snapshot=self._snapshot(binding);project=self.store.get(identifier)
+    def _primary_frame_asset(self, native, row, previous, assets, refs, digests):
+        """Carry the exact engine image into the typed current-project contract."""
+        image = row.get('first_frame_image')
+        if not image:
+            return {'primary_frame_asset_id': None} if 'primary_frame_asset_id' in previous else {}
+        relative = self._native_file(image)
+        if not relative:
+            # Legacy opaque/remote UI choices were never managed by this field.
+            # Preserve those without inventing a clear or a guessed replacement.
+            if 'primary_frame_asset_id' in previous:
+                raise WorkshopError('制作页的主参考首帧无法读回，请重新绑定可用的项目图片', 409)
+            return {}
+        source = self.store._content_path(relative)
+        self.store._validate_asset(source, 'image')
+        digest = _digest(source)
+        matching = set()
+        for asset in assets:
+            path = asset.get('path')
+            if asset['kind'] not in {'character','scene','prop','image'} or not path:
+                continue
+            # A UI edit can have changed the path before production() updates
+            # its stored SHA. Compare current bytes, never that stale metadata.
+            if path not in digests:
+                digests[path] = _digest(self.store._content_path(path))
+            if digests[path] == digest:
+                matching.add(asset['id'])
+        preferred = previous.get('primary_frame_asset_id')
+        selected = preferred if preferred in matching else next((value for value in refs if value in matching), None)
+        if selected is None:
+            selected = next((asset['id'] for asset in assets if asset['id'] in matching), None)
+        if selected is None:
+            selected = 'huobao-primary-' + hashlib.sha256((native + ':' + digest).encode()).hexdigest()[:24]
+            if any(asset['id'] == selected for asset in assets):
+                raise WorkshopError('主参考首帧的素材编号冲突，请保留项目后核对', 409)
+            assets.append({'id': selected, 'kind': 'image', 'name': ((row.get('title') or '分镜') + ' · 首帧')[:120],
+                           'path': relative})
+        if selected not in refs:
+            refs.append(selected)
+        return {'primary_frame_asset_id': selected}
+
+    def _pull(self, identifier, binding, *, snapshot=None, project=None):
+        if project is None:
+            project = self.store.get(identifier)
+        else:
+            self.store._expect(self.store.get(identifier), project['revision'])
+        snapshot = self._snapshot(binding) if snapshot is None else snapshot
         old_assets={row['id']:row for row in project['assets']}
         old_shots={row['id']:row for row in project['shots']}
         reverse_assets={(value['kind'],value['id']):key for key,value in binding['asset_map'].items()}
@@ -431,18 +538,29 @@ class HuobaoRuntime:
         assets.extend(pulled_assets.values())
         available={row['id'] for row in assets}
         reverse_shots={value:key for key,value in binding['shot_map'].items()}
+        primary_scenes=binding.setdefault('primary_scene_map',{})
+        primary_digests = {}
         shots=[]
         for row in snapshot['shots']:
             native=reverse_shots.get(row['id'],f"huobao-shot-{row['id']}");binding['shot_map'][native]=row['id']
             upstream_refs=[key for key,value in binding['asset_map'].items() if key in available and ((value['kind']=='character' and value['id'] in row['character_ids'])
                   or (value['kind']=='scene' and value['id']==row['scene_id']) or (value['kind']=='prop' and value['id'] in row['prop_ids']))]
             previous=old_shots.get(native,{})
+            old_primary=primary_scenes.get(native, next(iter(self._scene_bindings(previous.get('asset_ids',[]),binding)),None))
             refs=[key for key in previous.get('asset_ids',[]) if key in available
-                  and (key not in represented or key in upstream_refs)]
+                  and (key not in represented or key in upstream_refs
+                       or (binding['asset_map'].get(key,{}).get('kind')=='scene' and key!=old_primary))]
             refs.extend(key for key in upstream_refs if key not in refs)
+            primary=next(iter(self._scene_bindings(upstream_refs,binding)),None)
+            if primary is not None or self._scene_bindings(refs,binding):
+                primary_scenes[native]=primary
+            else:
+                primary_scenes.pop(native,None)
             shots.append({**previous,'id':native,'title':row.get('title') or f"分镜 {row['storyboard_number']:02d}",
                 'description':row.get('description') or '', 'atmosphere':row.get('atmosphere') or '',
-                'prompt':row.get('video_prompt') or '', 'seconds':max(1,min(60,row.get('duration') or 5)), 'asset_ids':refs})
+                'prompt':row.get('video_prompt') or '',
+                'seconds':self._planned_seconds(row.get('duration'),previous.get('seconds')), 'asset_ids':refs,
+                **self._primary_frame_asset(native, row, previous, assets, refs, primary_digests)})
         content=snapshot['episode']['content'] or ''
         raw_content=project['raw_content'] if content==(project.get('raw_content') or project['brief']) else content
         script=snapshot['episode']['script_content'] or ''

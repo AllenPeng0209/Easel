@@ -1,0 +1,17 @@
+# Install as /etc/chirpiva/environment (root:chirpiva, 0640). No credentials here.
+# These values must be process environment before importing web.app.
+EASEL_PORT=7860
+EASEL_EXTRA_HOSTS=chirpiva.com,www.chirpiva.com
+EASEL_EXTRA_ORIGINS=https://chirpiva.com,https://www.chirpiva.com
+# This deployment's operator opted into automatic native execution approvals.
+EASEL_AUTO_ALLOW_AI_TOOLS=1
+XDG_STATE_HOME=/var/lib/chirpiva
+NO_PROXY=127.0.0.1,localhost,::1
+no_proxy=127.0.0.1,localhost,::1
+PYTHONUNBUFFERED=1
+# Native CLIs installed for this service user must be on this controlled PATH.
+PATH=/srv/chirpiva/app/.venv/bin:/srv/chirpiva/.local/bin:/srv/chirpiva/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+# Configure the actual selected engine and API credentials separately after review.
+# Do not copy Mac absolute paths, localhost model tunnels, native login tokens,
+# or macOS browser profiles without validating their Linux replacement.
+# DISPLAY=:99 is appropriate only after a protected desktop session is running.

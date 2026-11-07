@@ -271,13 +271,19 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
     || references.length > 0 || sessionReferences.length > 0 || !!command;
   const canSend = (backgroundExecution ? !!input.trim() && !backgroundBlocked : !!input.trim() || attachments.length > 0)
     && !uploading && !failedUploads && !restorePending && !sending && !selectingFile;
-  const showSteer = !backgroundExecution && isStreaming && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0 && sessionReferences.length === 0 && !command;
+  const serverQueued = isStreaming && stream?.executionState === 'queued';
+  const queuePosition = serverQueued && Number.isInteger(stream.queuePosition)
+    && stream.queuePosition! >= 1 && stream.queuePosition! <= 256 ? stream.queuePosition : undefined;
+  const showSteer = !backgroundExecution && isStreaming && !serverQueued && onSteer && uploadItems.length === 0 && interruptedFiles.length === 0 && sessionReferences.length === 0 && !command;
   const sendLabel = backgroundExecution ? '发送到后台' : isStreaming ? '加入队列' : '发送';
   const waitingApproval = stream?.questions?.some(question => (!question.status || question.status === 'pending')
     && (question.requiresHuman || question.kind === 'approval' || question.publication));
-  const lifecycleLabel = stream?.lifecycle === 'waiting_input' ? (waitingApproval ? '等待你批准' : '等待补充信息')
-    : stream?.lifecycle === 'stopping' ? '正在停止'
-    : stream?.lifecycle === 'stop_failed' ? (stream.stopFeedback?.kind === 'failed' ? '停止请求失败' : '停止未确认')
+  const lifecycleLabel = stream?.lifecycle === 'stopping' ? (serverQueued ? '正在取消排队' : '正在停止')
+    : stream?.lifecycle === 'stop_failed' ? (serverQueued
+      ? (stream.stopFeedback?.kind === 'failed' ? '取消排队请求失败' : '取消排队未确认')
+      : (stream.stopFeedback?.kind === 'failed' ? '停止请求失败' : '停止未确认'))
+    : serverQueued ? (queuePosition ? `资源排队 · 入队第 ${queuePosition} 位` : '等待服务器资源')
+    : stream?.lifecycle === 'waiting_input' ? (waitingApproval ? '等待你批准' : '等待补充信息')
     : isStreaming ? '任务进行中' : apiDirect ? '文字与附件分析' : '自主执行';
 
   useEffect(() => {
@@ -484,9 +490,10 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
         {(uploading || selectingFile || sending || backgroundExecution) && <span className="composer-hint">{uploading ? '附件全部就绪后可发送' : selectingFile ? '正在准备所选文件…' : sending ? '正在接收…'
           : '任务发送后可离开对话'}</span>}
         <div className="composer-send-controls">
-          {isStreaming && <button className="composer-stop-btn" onClick={onStop} title="停止当前任务"
+          {isStreaming && <button className="composer-stop-btn" onClick={onStop} title={serverQueued ? '取消排队' : '停止当前任务'}
             disabled={stream?.lifecycle === 'stopping' || queue.some(item => item.delivery === 'sending')}>
-            <IconStop size={14} /><span>{stream?.lifecycle === 'stopping' ? '停止中' : stream?.lifecycle === 'stop_failed' ? '重试停止' : '停止'}</span></button>}
+            <IconStop size={14} /><span>{stream?.lifecycle === 'stopping' ? (serverQueued ? '取消中' : '停止中')
+              : stream?.lifecycle === 'stop_failed' ? (serverQueued ? '重试取消' : '重试停止') : serverQueued ? '取消排队' : '停止'}</span></button>}
           {showSteer && <button type="button" className="composer-attach-btn" title="立即指导"
             onClick={() => submitDraft('steer')} disabled={!canSend}>立即指导</button>}
           {(modelCapability || modelLoading || onReloadModels) && <SessionModelControl capability={modelCapability}
@@ -637,13 +644,8 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
             <option value="compact">简洁</option>
             <option value="detailed">详细</option>
           </select></label>
-          <label><span>简洁模式自动折叠</span><select aria-label="简洁模式自动折叠" value={workDetails.collapseTiming}
-            onChange={event => changeWorkDetails({ ...workDetails,
-              collapseTiming: event.target.value === 'next-input' ? 'next-input' : 'completion' })}>
-            <option value="completion">完成时</option>
-            <option value="next-input">下一次提问时</option>
-          </select></label>
-          <span className={`chat-session-status ${isStreaming ? 'is-active' : ''} ${stream?.lifecycle === 'waiting_input' ? 'is-waiting' : ''}
+          {workDetails.mode === 'compact' && <span className="chat-work-details-hint">工具详情默认收起</span>}
+          <span className={`chat-session-status ${isStreaming ? 'is-active' : ''} ${stream?.lifecycle === 'waiting_input' || serverQueued ? 'is-waiting' : ''}
           ${stream?.lifecycle === 'stop_failed' ? 'is-error' : ''}`} aria-live="polite">
             <i />{lifecycleLabel}</span>
         </div>
@@ -651,6 +653,10 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
       <div className="chat-messages" data-reading-detached={!reading.following || undefined} ref={reading.scrollRef} onScroll={onHistoryScroll} onWheel={reading.onWheel}
         onTouchStart={reading.interrupt} onPointerDown={reading.interrupt} onKeyDown={reading.onKeyDown} tabIndex={0} aria-label="对话消息">
         <div className="chat-thread" ref={reading.threadRef}>
+          {serverQueued && <p role="status" className="chat-history-notice" data-server-queue-notice>
+            本轮正在等待服务器资源，尚未调用模型。轮到后会自动开始；可以取消排队。
+            {queuePosition && '显示的是入队时的位置。'}
+          </p>}
           {onLoadEarlier && historyBefore && <div className="chat-history-page">
             <button type="button" className="btn" data-load-earlier-turns
               disabled={historyLoad?.key === historyKey && historyLoad.pending}
@@ -714,10 +720,10 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
                 isStreaming={live}
                 inheritedForkText={inherited}
                 detailMode={workDetails.mode}
-                foldWorkDetails={isFinal && (workDetails.collapseTiming === 'completion' || i < lastUserIndex)}
                 reasoningSummary={live ? stream!.reasoningSummary : undefined}
                 answerCompletion={live ? stream!.answerCompletion : undefined}
-                turnLifecycle={live ? stream!.lifecycle : undefined}
+                turnLifecycle={live ? serverQueued && stream!.lifecycle !== 'stopping' && stream!.lifecycle !== 'stop_failed'
+                  ? 'queued' : stream!.lifecycle : undefined}
                 activity={live ? stream!.stopFeedback?.message ?? stream!.activity : ''}
                 stillWorking={live ? stream!.stillWorking : ''}
                 events={live ? stream!.events : msg.events}
@@ -730,12 +736,12 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onSendSup
                 onOpenDeliverable={openDeliverable}
                 onOpenSubagent={openSubagent}
               />
-              {!live && msg.questions && <QuestionCards historical sessionId={session.id} questions={msg.questions} onDone={onQuestionAnswered} />}
+              {!live && msg.questions && <QuestionCards historical compact={workDetails.mode === 'compact'} sessionId={session.id} questions={msg.questions} onDone={onQuestionAnswered} />}
               </div>
             );
           })}
           {isStreaming && (stream!.questions?.length ?? 0) > 0 && (
-            <QuestionCards sessionId={session.id} questions={stream!.questions || []} onDone={onQuestionAnswered} />
+            <QuestionCards compact={workDetails.mode === 'compact'} sessionId={session.id} questions={stream!.questions || []} onDone={onQuestionAnswered} />
           )}
           {superagentTasks}
         </div>

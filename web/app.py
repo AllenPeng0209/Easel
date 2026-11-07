@@ -21,6 +21,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -28,7 +29,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
-from contextlib import asynccontextmanager, closing, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, closing, contextmanager
 from contextvars import copy_context
 import ipaddress
 from itertools import islice
@@ -62,9 +63,11 @@ from easel.direct_api import (DirectAPIError, SYSTEM_PROMPT, api_config, api_mod
                               history_path, read_settings, stream_chat)
 from easel.request_identity import current_user, actor_key, ActorMap, ActorSet
 from easel import harnesses
+from easel.agent_capacity import AgentCapacityError, agent_slot
 from easel.harnesses import store as harness_store
 from easel.harnesses.base import HarnessError, RunRequest, Steer, SteerRejected
 from easel.harnesses.models import codex_model_profile, valid_model_id
+from easel.harnesses.rpc import record_native_failure
 from easel.harnesses.diagnostics import ChatFailure, chat_failure, classify_provider_failure, normalize_chat_failure
 from easel.harnesses.codex_subagents import read_subagent
 from easel.chat_artifacts import ArtifactError, ChatArtifactStore, is_private_output_part
@@ -74,6 +77,7 @@ from web.publication_workflow import PublicationWorkflow
 from easel.agent_policy import autonomy_instructions, question_policy, public_questions, requests_secret
 from web.chat_history import ChatHistoryStore, ChatSessionDeletedError, validated_session
 from web.chat_history_window import ChatHistoryWindowConflict
+from web.chat_journal import JournalCursor, scan_journal
 from web.chat_artifact_compare import compare_artifact_snapshots
 from web.chat_commands import ChatCommand, chat_command_catalog, chat_command_message, validate_chat_command
 from web.chat_session_references import (
@@ -632,6 +636,8 @@ _WHOAMI_LOCK = threading.Lock()
 _WHOAMI_TASKS: dict[str, asyncio.Task] = ProjectMap()
 _LOGIN_START_LOCKS: dict[str, asyncio.Lock] = ProjectMap()
 _UNIFIED_LOGIN_TASKS: dict[str, str] = ProjectMap()
+# Explicit scope keys also work in lifecycle tasks after a request has ended.
+_LOGIN_REMOTE_RUNNERS: dict[tuple[str, str, str], dict] = {}
 
 LOGIN_RUNNERS: dict[str, dict] = {
     "xiaohongshu": {"name": "小红书", "backend": "xhs", "profile": "XiaohongshuProfile"},
@@ -889,7 +895,7 @@ async def _lifespan(_app: FastAPI):
     from easel.projects import _registry, project_context
     for entry in _registry(PROJECT_ROOT):
         with project_context(entry['id'], PROJECT_ROOT):
-            _stop_mp_login_on_shutdown()
+            await _stop_login_processes_on_shutdown()
 
 
 app = FastAPI(title="响芽 Xiangya", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -1535,16 +1541,16 @@ async def api_chat_models(sessionId: str):
     _require_operation()
     if not valid_session_reference_id(sessionId):
         raise HTTPException(422, "无效的会话标识")
-    if ChatHistoryStore(_sessions_dir()).is_deleted(sessionId):
+    directory = _sessions_dir()
+    if await asyncio.to_thread(lambda: ChatHistoryStore(directory).is_deleted(sessionId)):
         raise HTTPException(404, "会话已删除")
     selected = "api" if _direct_api_enabled() else _harness_settings()["runtime"]
-    owner, snapshot_only = _chat_session_runtime_owner(sessionId, selected)
-    try:
-        observed = json.loads(_turn_file(f"web:{sessionId}").read_text(encoding="utf-8"))
-        if not isinstance(observed, dict):
-            observed = {}
-    except (OSError, ValueError):
-        observed = {}
+    owner, snapshot_only = await asyncio.to_thread(_chat_session_runtime_owner, sessionId, selected)
+    observed = await asyncio.to_thread(_load_chat_snapshot, _turn_file(f"web:{sessionId}"), None, True)
+    if observed.get('statusUnavailable'):
+        return {'runtime': owner or selected, 'model': None, 'options': [], 'canSelect': False,
+                'stateUnavailable': True,
+                'reason': '暂时无法轻量核对这条历史会话的状态，已保留历史；请新建对话选择模型'}
     observed_runtime = observed.get("runtime")
     requested = _safe_chat_model(observed.get("requestedModel"))
     if snapshot_only and observed_runtime in ("codex", "acp", "opencode"):
@@ -2477,7 +2483,9 @@ class HarnessSettingsRequest(BaseModel):
 async def api_harness_settings():
     config = _harness_settings()
     agents = await asyncio.to_thread(lambda: [_describe_harness(runtime) for runtime in harness_store.IDS])
-    return {**config, "agents": agents,
+    tool_approval_mode = ("all" if os.environ.get("EASEL_AUTO_ALLOW_AI_TOOLS") == "1"
+                          else "ordinary" if config["codex_auto_approve"] else "manual")
+    return {**config, "agents": agents, "tool_approval_mode": tool_approval_mode,
             "locked": "EASEL_AGENT_RUNTIME" in read_settings(ENV_FILE)}
 
 
@@ -4153,9 +4161,41 @@ def _save_turn(sk: str, status: str, text: str, extra: dict | None = None) -> No
             payload.update(extra)
         tmp = _turn_file(sk).with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, _turn_file(sk))
+        target = _turn_file(sk)
+        os.replace(tmp, target)
+        # A small separately namespaced status file lets polling avoid loading
+        # the potentially large text/event snapshot. Stat binding rejects an
+        # old sidecar if a crash occurs between the two atomic replacements.
+        status_path = _turn_status_file(target)
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        observed = target.stat()
+        status_payload = _compact_turn_status(payload)
+        status_payload['_snapshot'] = {'size': observed.st_size, 'mtimeNs': observed.st_mtime_ns}
+        status_tmp = status_path.with_suffix('.tmp')
+        status_tmp.write_text(json.dumps(status_payload, ensure_ascii=False), encoding='utf-8')
+        os.replace(status_tmp, status_path)
     except Exception:
         pass
+
+
+def _turn_status_file(target: Path) -> Path:
+    return target.parent / 'turn-status' / target.name
+
+
+def _compact_turn_status(payload: dict) -> dict:
+    result = {'status': payload.get('status', 'none'), 'text': ''}
+    for key in ('at', 'turn_id', 'runtime', 'outcome', 'clean_end', 'stop_reason', 'executionState'):
+        value = payload.get(key)
+        if type(value) is bool or (isinstance(value, str) and len(value) <= 512):
+            result[key] = value
+    if type(payload.get('queuePosition')) is int and 0 < payload['queuePosition'] <= 256:
+        result['queuePosition'] = payload['queuePosition']
+    requested = _safe_chat_model(payload.get('requestedModel'))
+    if requested:
+        result['requestedModel'] = requested
+    if 'error' in payload:
+        result['error'] = normalize_chat_failure(payload['error'])
+    return result
 
 
 # 后台 supervisor 任务集合：持有强引用防被 GC；每个对话流的 openclaw run 跑在这里，
@@ -4430,6 +4470,26 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
     privilege_watch = None
     permission_revoked = False
     output_changes = None
+    capacity_stack = AsyncExitStack()
+    storage_interrupted = False
+    finalizing = False
+
+    def deliver(kind, value):
+        nonlocal failure, storage_interrupted
+        try:
+            emit(kind, value)
+        except ChatFailure as error:
+            if error.payload.get('code') == 'storage':
+                failure = error.payload
+                storage_interrupted = True
+                if not finalizing:
+                    # A reverse-RPC handler may catch ordinary Exceptions.
+                    # Cancel the real background owner and propagate cancellation
+                    # so a lost approval cannot become a recoverable tool reply.
+                    if asyncio.current_task() is not task:
+                        proc.terminate()
+                    raise asyncio.CancelledError from None
+            raise
 
     def receive(kind, text):
         nonlocal failure, reasoning_summary, answer_completed
@@ -4441,18 +4501,18 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             summary_text = _scrub_secrets(text["text"])
             reasoning_summary = {"text": summary_text[:4000],
                                  "truncated": text.get("truncated") is True or len(summary_text) > 4000}
-            emit(kind, reasoning_summary)
+            deliver(kind, reasoning_summary)
             return
         if kind == "answer_completed":
             item_id = text.get("itemId") if isinstance(text, dict) else None
             if (runtime == "codex" and isinstance(item_id, str) and item_id.strip() and len(item_id) <= 256
                     and not re.search(r"[\x00-\x1f\x7f-\x9f]", item_id) and _scrub_secrets(item_id) == item_id):
                 answer_completed = {"itemId": item_id}
-                emit(kind, answer_completed)
+                deliver(kind, answer_completed)
             return
         if kind == "error":
             failure = normalize_chat_failure(text)
-            emit(kind, failure)
+            deliver(kind, failure)
             return
         # Preserve a structured event as an object through live SSE, replay and
         # final snapshot. Scrub known secrets without converting it to a string.
@@ -4463,7 +4523,7 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
             safe["runId"] = run_id  # The Host owns run identity across all native engines.
             if safe.get("kind") != "steer_capability":
                 agent_events.append(safe)
-        emit(kind, safe)
+        deliver(kind, safe)
 
     def record_subagent(update: dict):
         try:
@@ -4807,6 +4867,23 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
                              record_subagent=record_subagent if runtime == "codex" and interactive else None,
                              rebind_active_writer=rebind_active_writer if (
                                  runtime == "codex" and interactive and binding_actor_id) else None)
+        def capacity_queued(notice):
+            _save_turn(pk, 'running', '', {'turn_id': turn_id, 'runtime': runtime,
+                'executionState': 'queued', 'queuePosition': notice['position'],
+                **({'requestedModel': requested_model} if requested_model else {})})
+            emit('execution_state', {'executionState': 'queued', 'queuePosition': notice['position']})
+            emit('activity', f"服务器正在处理其他 AI 任务，当前排队第 {notice['position']} 位；可以停止本轮取消等待。")
+
+        await capacity_stack.enter_async_context(agent_slot(env,
+            owner_id=binding_actor_id or 'local', session_id=_native_session_key(sk),
+            turn_id=turn_id, on_queued=capacity_queued))
+        # Permissions may have changed during the wait. The registered proc and
+        # privilege watcher also let Stop cancel a queued task before execution.
+        _require_host_tools()
+        _save_turn(pk, 'running', '', {'turn_id': turn_id, 'runtime': runtime,
+            'executionState': 'running',
+            **({'requestedModel': requested_model} if requested_model else {})})
+        emit('execution_state', {'executionState': 'running'})
         if interactive and config["sandbox"] == "workspace-write":
             output_changes = await _begin_output_turn_changes()
         await asyncio.wait_for(harnesses.adapter(runtime).run(
@@ -4815,54 +4892,89 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
         clean_end = failure is None
         reason = "completed" if clean_end else "error"
     except asyncio.CancelledError:
-        reason = "permission_revoked" if permission_revoked else "stopped" if sk in _STOPPED_CHAT else "shutdown"
-        if permission_revoked:
-            receive("error", chat_failure("permission_denied"))
-        emit("activity", "权限已变更，本轮已停止" if permission_revoked else "已停止" if reason == "stopped" else "服务关闭，本轮已取消")
+        if storage_interrupted:
+            reason = 'error'
+        else:
+            reason = "permission_revoked" if permission_revoked else "stopped" if sk in _STOPPED_CHAT else "shutdown"
+            if permission_revoked:
+                receive("error", chat_failure("permission_denied"))
+            emit("activity", "权限已变更，本轮已停止" if permission_revoked else "已停止" if reason == "stopped" else "服务关闭，本轮已取消")
     except asyncio.TimeoutError:
         reason = "timeout"
         receive("error", chat_failure("timeout", "execution" if claimed else "startup"))
+    except AgentCapacityError as error:
+        emit('activity', error.message)
+        code = {
+            'queue_full': 'server_queue_full',
+            'owner_queue_full': 'server_owner_queue_full',
+            'wait_timeout': 'server_queue_timeout',
+            'duplicate_turn': 'session_conflict',
+        }.get(error.code, 'server_unavailable')
+        receive('error', chat_failure(code, 'startup', safe_to_retry=error.code in {
+            'queue_full', 'owner_queue_full', 'wait_timeout'}))
     except ChatFailure as error:
         receive("error", error.payload)
     except HTTPException as error:
         code = {401: "authentication", 403: "permission_denied", 409: "session_conflict"}.get(error.status_code, "unknown")
         receive("error", chat_failure(code, "execution" if claimed else "startup"))
-    except Exception:
+    except Exception as error:
+        record_native_failure(error, 'native_turn_execution' if claimed else 'native_turn_startup')
         receive("error", chat_failure(phase="execution" if claimed else "startup"))
     finally:
-        bind_steer(None)
-        if proc.steer_task is not None:
-            # Acknowledgements must enter the live journal and final snapshot
-            # before the turn's terminal event. The native wait is bounded.
-            await asyncio.gather(proc.steer_task, return_exceptions=True)
-        if privilege_watch is not None:
-            privilege_watch.cancel()
-            await asyncio.gather(privilege_watch, return_exceptions=True)
-        if claimed:
-            snapshot = "".join(full_text)
-            outcome = _chat_snapshot_outcome(stopped=reason == "stopped", failed=failure is not None or permission_revoked,
-                                             completed=clean_end)
-            if output_changes is not None:
-                await _finish_output_turn_changes(output_changes, sk, turn_id, outcome.get("outcome"), receive)
-            _save_turn(pk, "done", snapshot, {
-                "turn_id": turn_id, "stop_turn_id": stop_turn_id, "runtime": runtime,
-                "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
-                **({"requestedModel": requested_model} if requested_model else {}),
-                **({"reasoning_summary": reasoning_summary} if reasoning_summary is not None else {}),
-                **({"answer_completed": answer_completed} if answer_completed is not None else {}),
-                **({"error": failure} if failure is not None else {}),
-                **outcome})
-        # 注意：claim 失败（锁被占/底座已切换）时刻意**不**落盘——保留上一轮的
-        # 结果快照不被失败轮覆盖（见 test_failed_ownership_check_does_not_overwrite_
-        # previous_result）；错误经 SSE 事件流（job log）回放可见。
-        proc.finish()
-        xlock.release()
-        if locked:
-            lock.release()
-        if _RUNNING_CHAT.get(sk) is proc:
-            _STOPPED_CHAT.discard(sk)
-            _RUNNING_CHAT.pop(sk, None)
-        _HARNESS_TASKS.discard(task)
+        finalizing = True
+        try:
+            try:
+                if storage_interrupted:
+                    try:
+                        receive('error', failure)
+                    except ChatFailure:
+                        pass  # The sidecar still records persistent storage failures.
+                try:
+                    bind_steer(None)
+                except Exception as error:
+                    # Closing a capability may emit into a failed journal. Keep
+                    # failure evidence, but never let that skip process/lock cleanup.
+                    record_native_failure(error, 'native_turn_finalization')
+                    failure = failure or (error.payload if isinstance(error, ChatFailure)
+                                          else chat_failure(phase='finalization'))
+                    clean_end = False
+                    if reason == 'completed':
+                        reason = 'error'
+                if proc.steer_task is not None:
+                    # Acknowledgements must enter the live journal and final snapshot
+                    # before the turn's terminal event. The native wait is bounded.
+                    await asyncio.gather(proc.steer_task, return_exceptions=True)
+                if privilege_watch is not None:
+                    privilege_watch.cancel()
+                    await asyncio.gather(privilege_watch, return_exceptions=True)
+                if claimed:
+                    snapshot = "".join(full_text)
+                    outcome = _chat_snapshot_outcome(stopped=reason == "stopped", failed=failure is not None or permission_revoked,
+                                                     completed=clean_end)
+                    if output_changes is not None:
+                        await _finish_output_turn_changes(output_changes, sk, turn_id, outcome.get("outcome"), receive)
+                    _save_turn(pk, "done", snapshot, {
+                        "turn_id": turn_id, "stop_turn_id": stop_turn_id, "runtime": runtime,
+                        "clean_end": clean_end, "stop_reason": reason, "events": agent_events,
+                        **({"requestedModel": requested_model} if requested_model else {}),
+                        **({"reasoning_summary": reasoning_summary} if reasoning_summary is not None else {}),
+                        **({"answer_completed": answer_completed} if answer_completed is not None else {}),
+                        **({"error": failure} if failure is not None else {}),
+                        **outcome})
+                # 注意：claim 失败（锁被占/底座已切换）时刻意**不**落盘——保留上一轮的
+                # 结果快照不被失败轮覆盖（见 test_failed_ownership_check_does_not_overwrite_
+                # previous_result）；错误经 SSE 事件流（job log）回放可见。
+            finally:
+                proc.finish()
+                xlock.release()
+                if locked:
+                    lock.release()
+                if _RUNNING_CHAT.get(sk) is proc:
+                    _STOPPED_CHAT.discard(sk)
+                    _RUNNING_CHAT.pop(sk, None)
+                _HARNESS_TASKS.discard(task)
+        finally:
+            await capacity_stack.aclose()
     return "".join(full_text)
 
 
@@ -4932,6 +5044,9 @@ async def _run_direct_chat(req: ChatRequest, sk: str, content, system: str, emit
         reason = "user_stopped" if sk in _STOPPED_CHAT else "cancelled"
         if reason != "user_stopped":
             raise
+    except ChatFailure as error:
+        failure = error.payload
+        emit('error', failure)
     except DirectAPIError as error:
         failure = chat_failure(error.code, error.phase, safe_to_retry=True)
         emit("error", failure)
@@ -5625,14 +5740,30 @@ async def api_chat_session_delete(session_id: str):
     return {"ok": True, "sessionId": deleted_id, "catalogDeleted": True, "nativeHistoryDeleted": False}
 
 
-@app.get("/api/chat/last/{session_id}")
-async def api_chat_last(session_id: str, turn_id: str | None = None):
-    """取某会话最近一轮的完整结果（SSE 断线后前端据此取回，避免丢结果）。"""
-    f = _turn_file(f"web:{session_id}")
+def _load_chat_snapshot(f: Path, turn_id: str | None, status_only: bool) -> dict:
     if not f.is_file():
         return {"status": "none", "text": ""}
     try:
-        payload = json.loads(f.read_text(encoding="utf-8"))
+        payload = None
+        if status_only:
+            metadata_path = _turn_status_file(f)
+            try:
+                if metadata_path.is_file() and metadata_path.stat().st_size <= 16 * 1024:
+                    metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
+                    observed = f.stat()
+                    expected = {'size': observed.st_size, 'mtimeNs': observed.st_mtime_ns}
+                    if isinstance(metadata, dict) and metadata.pop('_snapshot', None) == expected:
+                        payload = metadata
+            except (OSError, ValueError, UnicodeError):
+                pass  # A damaged optional sidecar does not mean the turn is absent.
+            if payload is None and f.stat().st_size > 1024 * 1024:
+                # Historical large snapshots have no status sidecar. Do not
+                # guess their outcome or materialize them during cheap polling.
+                return {'status': 'unconfirmed', 'text': '', 'statusUnavailable': True}
+        if payload is None:
+            payload = json.loads(f.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError
         if turn_id and payload.get("turn_id") != turn_id:
             return {"status": "stale", "text": "", "turn_id": payload.get("turn_id")}
         payload.pop("thinking", None)
@@ -5640,23 +5771,27 @@ async def api_chat_last(session_id: str, turn_id: str | None = None):
         if "error" in payload:
             payload["error"] = normalize_chat_failure(payload["error"])
         elif (payload.get("outcome") == "failed" or payload.get("stop_reason") in ("error", "timeout", "spawn_failed")) and isinstance(payload.get("text"), str):
-            # Older native/direct snapshots appended diagnostic strings to the answer.
-            # Keep the answer prefix but do not expose that historical payload again.
             answer, separator, _ = payload["text"].partition("\n\n❌ ")
             if separator:
                 payload["text"] = answer
             elif payload.get("stop_reason") == "spawn_failed":
                 payload["text"] = ""
             payload["error"] = chat_failure()
-        return payload
+        return _compact_turn_status(payload) if status_only else payload
     except Exception:
         return {"status": "none", "text": ""}
+
+
+@app.get("/api/chat/last/{session_id}")
+async def api_chat_last(session_id: str, turn_id: str | None = None, status_only: bool = False):
+    """Recover the saved result, or poll bounded status without the full event payload."""
+    return await asyncio.to_thread(_load_chat_snapshot, _turn_file(f"web:{session_id}"), turn_id, status_only)
 
 
 @app.get("/api/chat/jobs/{turn_id}/stream")
 async def api_chat_job_stream(turn_id: str, after: int = 0, legacyAdmission: bool = False):
     """Replay missed events, then tail this turn until its terminal event arrives."""
-    return _job_stream_response(turn_id, after, recover_legacy_admission=legacyAdmission)
+    return await _job_stream_response(turn_id, after, recover_legacy_admission=legacyAdmission)
 
 
 def _job_owner_alive(claim: dict, turn_id: str) -> bool:
@@ -5676,51 +5811,56 @@ def _turn_admission_event(turn_id: str, session_id: str) -> dict:
     return {"id": 1, "event": "admitted", "data": {"turnId": turn_id, "sessionId": session_id}}
 
 
-def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = None,
-                         recover_legacy_admission: bool = False):
+async def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = None,
+                               recover_legacy_admission: bool = False):
     replay = claim is not None
-    if not _job_event_file(turn_id).is_file():
+    path = _job_event_file(turn_id)
+    if not path.is_file():
         if replay:
             raise HTTPException(409, "已接收的任务记录不完整，未重新执行；请先核对原任务结果")
         raise HTTPException(404, "对话任务记录不存在或已失效")
-
     if claim is None:
-        claim = ChatHistoryStore(_sessions_dir()).turn_claim(turn_id)
+        directory = _sessions_dir()
+        claim = await asyncio.to_thread(lambda: ChatHistoryStore(directory).turn_claim(turn_id))
     owner_alive = claim is not None and _job_owner_alive(claim, turn_id)
-    initial = _read_job_events(turn_id)
     admission = _turn_admission_event(turn_id, claim["sessionId"]) if claim is not None else None
-    has_admission = bool(initial and initial[0] == admission)
-    last = initial[-1] if initial else {}
-    completion = last.get("data")
-    legacy_recovery = (
-        recover_legacy_admission and admission is not None and not has_admission
-        and last.get("event") == "done" and isinstance(completion, dict)
-        and completion.get("sessionKey") == claim["sessionId"]
-        and all(event["id"] == index and event["event"] not in ("admitted", "done")
-                for index, event in enumerate(initial[:-1], 1))
-        and last["id"] == len(initial)
-    )
-    if legacy_recovery:
-        # A completed old journal and its durable claim prove admission. Keep
-        # the original file immutable and offset only this negotiated stream.
-        initial = [admission, *[{**event, "id": event["id"] + 1} for event in initial]]
-        has_admission = True
-    terminal = any(event["event"] == "done" or (not owner_alive and event["event"] == "error")
-                   for event in initial)
+    after = max(0, after)
+    try:
+        summary = await asyncio.to_thread(scan_journal, path, after=after, admission=admission)
+    except (OSError, ValueError):
+        raise HTTPException(409, "原任务日志暂时无法读取，未重新执行；请核对原任务记录") from None
+    legacy_recovery = recover_legacy_admission and summary.legacy_recoverable
+    has_admission = summary.has_admission or legacy_recovery
+    terminal = summary.has_done or (not owner_alive and summary.has_error)
     if claim is not None and not owner_alive and not terminal and not has_admission:
         if replay:
             raise HTTPException(409, "原任务执行状态未确认，未重新执行；请先核对已有产物和发布回执")
         raise HTTPException(404, "原任务状态未确认，请核对已有产物和发布回执")
+    reader = JournalCursor(path, identity=summary.identity,
+        offset=summary.legacy_replay_offset if legacy_recovery else summary.replay_offset)
 
     async def events():
-        cursor = max(0, after)
-        batch = [event for event in initial if event["id"] > cursor]
-        saw_error = any(event["event"] == "error" and event["id"] <= cursor for event in initial)
+        cursor = after
+        saw_error = summary.legacy_error_before_cursor if legacy_recovery else summary.error_before_cursor
         idle_since = time.monotonic()
+        heartbeat_since = idle_since
+        if legacy_recovery and cursor == 0:
+            yield {"id": "1", "event": "admitted", "data": json.dumps(admission['data'], ensure_ascii=False)}
+            cursor = 1
         while True:
+            try:
+                batch = await asyncio.to_thread(reader.read_batch)
+            except (OSError, ValueError):
+                failure = {**chat_failure('storage', 'finalization'), 'unconfirmed': True}
+                yield {"event": "error", "data": json.dumps(failure, ensure_ascii=False)}
+                return
             if batch:
                 idle_since = time.monotonic()
-                for event in batch:
+                heartbeat_since = idle_since
+                for stored in batch:
+                    event = {**stored, 'id': stored['id'] + 1} if legacy_recovery else stored
+                    if event['id'] <= cursor:
+                        continue
                     if event["event"] == "admitted" and (event != admission or cursor != 0):
                         cursor = max(cursor, event["id"])
                         continue
@@ -5731,43 +5871,58 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
                     if event["event"] == "error":
                         saw_error = True
                         raw = normalize_chat_failure(raw)
-                    # job 日志里 question 的 data 已是序列化 JSON 字符串（实时流
-                    # forward() 对 question 原样透传），这里若再 json.dumps 会双层
-                    # 转义 → 前端 JSON.parse 拿到字符串而非对象 → ask_user 选项
-                    # 卡片渲染成空壳。其余事件存原文/dict，与实时流的 dumps 规则
-                    # 一致。因此仅 question 按实时流规则原样透传。
                     if event["event"] in ("question", "question_closed") and isinstance(raw, str):
                         data_out = raw
                     else:
                         data_out = json.dumps(raw, ensure_ascii=False)
-                    yield {
-                        "id": str(cursor),
-                        "event": event["event"],
-                        "data": data_out,
-                    }
+                    yield {"id": str(cursor), "event": event["event"], "data": data_out}
                     if event["event"] == "done":
                         return
+            if not reader.eof:
+                # Catch up in bounded batches without a full-history list.
+                await asyncio.sleep(0)
+                continue
             if terminal or (claim is None and saw_error):
-                return  # This cursor had already passed the terminal event.
+                return
+            if claim is None:
+                # No durable owner can complete an unterminated legacy tail.
+                # Do not invent a committed done event or poll it indefinitely.
+                failure = {**chat_failure(phase='finalization'), 'unconfirmed': True}
+                yield {'event': 'error', 'data': json.dumps(failure, ensure_ascii=False)}
+                return
             if claim is not None and not _job_owner_alive(claim, turn_id):
-                # The owner can append the terminal event between the last read
-                # and the liveness check. Drain that final batch before reporting.
-                batch = _read_job_events(turn_id, cursor)
-                if batch:
+                # A final append can race owner cleanup. Drain it once before
+                # reporting uncertainty; never start another agent here.
+                try:
+                    final_batch = await asyncio.to_thread(reader.read_batch)
+                except (OSError, ValueError):
+                    final_batch = []
+                if final_batch:
+                    # Re-read only this bounded suffix on the next iteration.
+                    reader.offset = reader.positions[0]
                     continue
                 if not saw_error:
-                    failure = {**chat_failure(phase="finalization"), "unconfirmed": True}
+                    # A journal write failure stops execution and can prevent
+                    # even the error/done record from being appended. Its small
+                    # scoped snapshot can still explain that failure safely.
+                    snapshot = await asyncio.to_thread(_load_chat_snapshot,
+                        _turn_file('web:' + claim['sessionId']), turn_id, True)
+                    saved_error = snapshot.get('error') if snapshot.get('status') == 'done' else None
+                    failure = {**(normalize_chat_failure(saved_error) if isinstance(saved_error, dict)
+                                  else chat_failure(phase="finalization")), "unconfirmed": True}
                     yield {"event": "error", "data": json.dumps(failure, ensure_ascii=False)}
                 return
+            if time.monotonic() - heartbeat_since >= 30:
+                yield {"event": "heartbeat", "data": json.dumps(
+                    "仍在处理中，未卡住…（复杂或制作类任务会花点时间）", ensure_ascii=False)}
+                heartbeat_since = time.monotonic()
             if time.monotonic() - idle_since >= 15:
                 yield {"event": "ping", "data": "{}"}
                 idle_since = time.monotonic()
             await asyncio.sleep(0.25)
-            batch = _read_job_events(turn_id, cursor)
 
     return EventSourceResponse(events(), headers={
-        "Cache-Control": "no-cache, no-transform",
-        "X-Accel-Buffering": "no",
+        "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
         "Content-Encoding": "identity",
         **({"X-Easel-Legacy-Admission": "1"} if legacy_recovery else {}),
     })
@@ -5776,7 +5931,7 @@ def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = N
 async def _replay_claimed_turn(claim: dict, session_id: str, payload_hash: str, turn_id: str):
     if claim["sessionId"] != session_id or claim["payloadHash"] != payload_hash:
         raise HTTPException(409, "同一任务标识已绑定不同的会话或请求，请新建任务")
-    return _job_stream_response(turn_id, claim=claim, recover_legacy_admission=True)
+    return await _job_stream_response(turn_id, claim=claim, recover_legacy_admission=True)
 
 
 @app.post("/api/chat/stream")
@@ -5897,13 +6052,9 @@ async def api_chat_stream(req: ChatRequest):
         raise HTTPException(409, "任务准入事件不可用，未启动执行；请核对原任务记录") from None
     _ACTIVE_TURN_IDS.add(req.turnId)
 
-    # supervisor（跑 openclaw run）与 forward（转发 SSE 给浏览器）之间的事件通道。
-    # 关键：run 跑在独立后台任务里，客户端断开只结束 forward，不取消 supervisor →
-    # openclaw 照常跑到底、结果落盘，前端断线后 /api/chat/last 取回。
+    # The journal is the live and reconnect transport. Detached clients retain
+    # no in-memory event queue, while the independent supervisor keeps running.
     loop = asyncio.get_event_loop()
-    client_q: asyncio.Queue = asyncio.Queue()
-    client_q.put_nowait({"t": admission["event"], "text": admission["data"], "id": admission["id"]})
-    CLIENT_DONE = object()
 
     async def supervisor():
         sk = req.sessionId or f"web-{int(time.time() * 1000)}"
@@ -5932,15 +6083,17 @@ async def api_chat_stream(req: ChatRequest):
                     ef.write(json.dumps(event, ensure_ascii=False) + "\n")
                     ef.flush()
             except OSError:
-                pass
-            client_q.put_nowait({"t": kind, "text": text, "id": event_seq})
+                stream_failure = chat_failure('storage', 'execution')
+                # The journal is now the sole transport. Losing a control
+                # event must halt the run, never leave a hidden approval or
+                # allow the next model/tool operation to continue silently.
+                raise ChatFailure('storage', 'execution') from None
 
         def finish_stream(outcome=None):
             to_client("done", {"sessionKey": sk, "outcome": outcome or "unconfirmed"})
-            client_q.put_nowait(CLIENT_DONE)
 
         async def finish_saved_stream():
-            snapshot = await api_chat_last(sk, turn_id)
+            snapshot = await api_chat_last(sk, turn_id, status_only=True)
             outcome = snapshot.get("outcome") if isinstance(snapshot, dict) and snapshot.get("status") == "done" else None
             finish_stream(outcome if outcome in ("completed", "failed", "stopped") else None)
 
@@ -6168,9 +6321,45 @@ async def api_chat_stream(req: ChatRequest):
         # Ending a thin CLI or HTTP transport cannot prove the gateway agent stopped.
         proc.stop_requires_gateway = is_http or "--local" not in cmd
         _RUNNING_CHAT[sk] = proc
+
+        async def stop_owned_gateway_process():
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+                try:
+                    await asyncio.to_thread(proc.wait, timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        proc.kill()
+                        await asyncio.to_thread(proc.wait, timeout=2)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+
+        def release_owned_gateway_session():
+            nonlocal locked
+            xlock.release()
+            if locked:
+                lock.release()
+                locked = False
+            if _RUNNING_CHAT.get(sk) is proc:
+                _STOPPED_CHAT.discard(sk)
+                _RUNNING_CHAT.pop(sk, None)
+
         # 经 gateway 后客户端 stdout 没有 model-fetch 标记（那是独立跑 agent 才有），先立刻
         # 给一个「正在思考」活动指示，随后 token 从共享 raw stream 流进来接管显示。
-        to_client("activity", "🧠 正在思考…")
+        try:
+            to_client("activity", "🧠 正在思考…")
+        except ChatFailure:
+            try:
+                await stop_owned_gateway_process()
+                _save_turn(pk, 'done', ''.join(full_text), {'turn_id': turn_id,
+                    'clean_end': False, 'stop_reason': 'error', 'error': stream_failure,
+                    'outcome': 'failed', 'events': structured_events})
+            finally:
+                release_owned_gateway_session()
+            return
 
         q = asyncio.Queue()
         SENTINEL = object()
@@ -6397,85 +6586,76 @@ async def api_chat_stream(req: ChatRequest):
                     full_text.append(note)
                     to_client("token", note)
         finally:
-            # 只有真的在 HTTP 上跑出了内容，才把这个会话钉到 http 上。钉早了（比如选路时就钉）
-            # 会把一个其实没跑成的会话锁死在 http，之后每轮都往一条不通的路上撞；而钉住之后
-            # 就绝不能再换回 cli —— 网关那份 transcript 我们按名字找不回来，换边即丢历史。
-            if is_http and emitted:
-                _pin_transport(sk, "http")
-            user_stopped = _RUNNING_CHAT.get(sk) is proc and sk in _STOPPED_CHAT
-            # Reaching finally while the child is alive means timeout, explicit
-            # stop, cancellation, or an internal stream failure. Never release
-            # the session locks while such a process can still write history.
-            if proc.poll() is None:
-                try:
-                    proc.terminate()
-                except OSError:
-                    pass
-                try:
-                    await asyncio.to_thread(proc.wait, timeout=5)
-                except subprocess.TimeoutExpired:
-                    try:
-                        proc.kill()
-                        await asyncio.to_thread(proc.wait, timeout=2)
-                    except (OSError, subprocess.TimeoutExpired):
-                        pass
-            question_stop.set()
-            question_events_open = False
-            while not q.empty():
-                queued = q.get_nowait()
-                if queued is not SENTINEL and queued["t"] in ("question", "question_closed", "agent_event"):
-                    to_client(queued["t"], queued["text"])
-            # 诊断日志：每次对话流收尾都记一行，供事后定位「莫名停下」到底是哪种情况。
             try:
-                _debug_dir().mkdir(parents=True, exist_ok=True)
-                tail = clean_agent_output("".join(stdout_lines))[-800:]
-                with (_debug_dir() / "chat-stream.jsonl").open("a", encoding="utf-8") as lf:
-                    lf.write(json.dumps({
-                        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                        "session": sk,
-                        "rc": proc.poll(),
-                        "stop_reason": run_info["stop_reason"],
-                        "last_ev": run_info["last_ev"],
-                        "clean_end": run_info["last_ev"] == "assistant_message_end",
-                        "saw_message_end": run_info["saw_message_end"],
-                        "fetch_count": run_info["fetch_count"],
-                        "token_chars": run_info["token_chars"],
-                        "thinking_chars": run_info["thinking_chars"],
-                        "delegated": run_info["delegated"],
-                        "ignored_foreign_events": run_info["ignored_foreign_events"],
-                        "text_tail": run_info.get("text_tail", ""),
-                        "stdout_tail": tail,
-                    }, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
-            # 落盘完整结果：后端跑完整轮不依赖客户端连接，断线后前端用 /api/chat/last 取回
-            clean_end = run_info.get("last_ev") == "assistant_message_end"
-            final_rc = proc.poll()
-            failed = (stream_failure is not None or timed_out or final_rc not in (0, None)
-                      or run_info.get("http_failed", False)
-                      or run_info.get("stop_reason") in ("max_tokens", "length", "model_length", "tool_use"))
-            completed = final_rc == 0 and (run_info.get("http_completed", False) if is_http else clean_end)
-            outcome = _chat_snapshot_outcome(stopped=user_stopped, failed=failed, completed=completed)
-            if outcome.get("outcome") == "failed" and stream_failure is None:
-                to_client("error", chat_failure(phase="finalization"))
-            if output_changes is not None:
-                if final_rc is not None:
-                    await _finish_output_turn_changes(output_changes, sk, turn_id, outcome.get("outcome"), to_client)
-                else:
-                    output_changes.close()
-            _save_turn(pk, "done", "".join(full_text), {
-                "turn_id": turn_id, "stop_turn_id": turn_id,
-                "clean_end": clean_end,
-                "stop_reason": "user_stopped" if user_stopped else run_info.get("stop_reason"),
-                "events": structured_events,
-                **({"error": stream_failure} if stream_failure is not None else {}),
-                **outcome,
-            })
-            xlock.release()
-            lock.release()
-            if _RUNNING_CHAT.get(sk) is proc:
-                _STOPPED_CHAT.discard(sk)
-                _RUNNING_CHAT.pop(sk, None)
+                # 只有真的在 HTTP 上跑出了内容，才把这个会话钉到 http 上。钉早了（比如选路时就钉）
+                # 会把一个其实没跑成的会话锁死在 http，之后每轮都往一条不通的路上撞；而钉住之后
+                # 就绝不能再换回 cli —— 网关那份 transcript 我们按名字找不回来，换边即丢历史。
+                if is_http and emitted:
+                    _pin_transport(sk, "http")
+                user_stopped = _RUNNING_CHAT.get(sk) is proc and sk in _STOPPED_CHAT
+                # Reaching finally while the child is alive means timeout, explicit
+                # stop, cancellation, or an internal stream failure. Never release
+                # the session locks while such a process can still write history.
+                await stop_owned_gateway_process()
+                question_stop.set()
+                question_events_open = False
+                while not q.empty():
+                    queued = q.get_nowait()
+                    if queued is not SENTINEL and queued["t"] in ("question", "question_closed", "agent_event"):
+                        to_client(queued["t"], queued["text"])
+                # 诊断日志：每次对话流收尾都记一行，供事后定位「莫名停下」到底是哪种情况。
+                try:
+                    _debug_dir().mkdir(parents=True, exist_ok=True)
+                    tail = clean_agent_output("".join(stdout_lines))[-800:]
+                    with (_debug_dir() / "chat-stream.jsonl").open("a", encoding="utf-8") as lf:
+                        lf.write(json.dumps({
+                            "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "session": sk,
+                            "rc": proc.poll(),
+                            "stop_reason": run_info["stop_reason"],
+                            "last_ev": run_info["last_ev"],
+                            "clean_end": run_info["last_ev"] == "assistant_message_end",
+                            "saw_message_end": run_info["saw_message_end"],
+                            "fetch_count": run_info["fetch_count"],
+                            "token_chars": run_info["token_chars"],
+                            "thinking_chars": run_info["thinking_chars"],
+                            "delegated": run_info["delegated"],
+                            "ignored_foreign_events": run_info["ignored_foreign_events"],
+                            "text_tail": run_info.get("text_tail", ""),
+                            "stdout_tail": tail,
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                # 落盘完整结果：后端跑完整轮不依赖客户端连接，断线后前端用 /api/chat/last 取回
+                clean_end = run_info.get("last_ev") == "assistant_message_end"
+                final_rc = proc.poll()
+                failed = (stream_failure is not None or timed_out or final_rc not in (0, None)
+                          or run_info.get("http_failed", False)
+                          or run_info.get("stop_reason") in ("max_tokens", "length", "model_length", "tool_use"))
+                completed = final_rc == 0 and (run_info.get("http_completed", False) if is_http else clean_end)
+                outcome = _chat_snapshot_outcome(stopped=user_stopped, failed=failed, completed=completed)
+                if outcome.get("outcome") == "failed" and stream_failure is None:
+                    to_client("error", chat_failure(phase="finalization"))
+                if output_changes is not None:
+                    if final_rc is not None:
+                        await _finish_output_turn_changes(output_changes, sk, turn_id, outcome.get("outcome"), to_client)
+                    else:
+                        output_changes.close()
+                _save_turn(pk, "done", "".join(full_text), {
+                    "turn_id": turn_id, "stop_turn_id": turn_id,
+                    "clean_end": clean_end,
+                    "stop_reason": "user_stopped" if user_stopped else run_info.get("stop_reason"),
+                    "events": structured_events,
+                    **({"error": stream_failure} if stream_failure is not None else {}),
+                    **outcome,
+                })
+            finally:
+                if stream_failure and stream_failure.get('code') == 'storage':
+                    _save_turn(pk, 'done', ''.join(full_text), {'turn_id': turn_id,
+                        'clean_end': False, 'stop_reason': 'error', 'error': stream_failure,
+                        'events': structured_events,
+                        **_chat_snapshot_outcome(stopped=sk in _STOPPED_CHAT, failed=True)})
+                release_owned_gateway_session()
             finish_stream(outcome.get("outcome"))
 
     # 把 run 跑在独立后台任务里（持强引用防 GC）——客户端断开不取消它。
@@ -6485,59 +6665,15 @@ async def api_chat_stream(req: ChatRequest):
     def _bg_done(t):
         _ACTIVE_TURN_IDS.discard(req.turnId)
         _BG_TASKS.discard(t)
-        if t.cancelled():
-            client_q.put_nowait(CLIENT_DONE)
-            return
-        try:
-            exc = t.exception()   # 取出异常避免「never retrieved」告警
-        except Exception:
-            exc = None
-        if exc is not None:
-            # supervisor 意外崩溃：解锁 forward，别让它空等
+        if not t.cancelled():
+            # Retrieve unexpected exceptions. The journal reader observes owner
+            # loss and reports uncertainty without discarding prior receipts.
             try:
-                client_q.put_nowait(CLIENT_DONE)
+                t.exception()
             except Exception:
                 pass
     task.add_done_callback(_bg_done)
-
-    async def forward():
-        """纯转发：从 client_q 取事件 yield 给浏览器。
-
-        客户端断开（关标签/代理掐断）只会结束本生成器，supervisor 任务不受影响，
-        继续把 openclaw run 跑完并落盘 → 前端断线后 /api/chat/last 取回完整结果。
-        """
-        idle_since = time.monotonic()
-        while True:
-            try:
-                item = await asyncio.wait_for(client_q.get(), timeout=10)
-            except asyncio.TimeoutError:
-                # 长时间无输出（等模型长回复 / 制作类长任务）→ 发心跳，让用户知道没卡死。
-                # 用独立的 `heartbeat` 事件，不走 `activity`：否则会覆盖掉真实的
-                # 「🧠 正在思考…/🛠️ 制作中…」状态与思考流（防呆消息把思考设计顶掉的根因）。
-                # 发出后重置 idle_since → 心跳按 30s 一次的节奏，不再每 10s 重复刷屏。
-                if time.monotonic() - idle_since >= 30:
-                    idle_since = time.monotonic()
-                    yield {"event": "heartbeat", "data": json.dumps(
-                        "仍在处理中，未卡住…（复杂或制作类任务会花点时间）", ensure_ascii=False)}
-                continue
-            if item is CLIENT_DONE:
-                break
-            idle_since = time.monotonic()
-            t = item["t"]
-            if t == "token":
-                yield {"id": str(item["id"]), "event": "token", "data": json.dumps(item["text"], ensure_ascii=False)}
-            elif t == "activity":
-                yield {"id": str(item["id"]), "event": "activity", "data": json.dumps(item["text"], ensure_ascii=False)}
-            elif t in ("question", "question_closed"):
-                yield {"id": str(item["id"]), "event": t, "data": item["text"]}
-            elif t in ("admitted", "agent_event", "reasoning_summary", "answer_completed"):
-                yield {"id": str(item["id"]), "event": t, "data": json.dumps(item["text"], ensure_ascii=False)}
-            elif t == "error":
-                yield {"id": str(item["id"]), "event": "error", "data": json.dumps(item["text"], ensure_ascii=False)}
-            elif t == "done":
-                yield {"id": str(item["id"]), "event": "done", "data": json.dumps(item["text"], ensure_ascii=False)}
-
-    return EventSourceResponse(forward(), headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "Content-Encoding": "identity"})
+    return await _job_stream_response(req.turnId, claim=claim)
 
 
 class QuestionAnswerRequest(BaseModel):
@@ -7293,8 +7429,14 @@ def _unified_login_response(info: dict) -> dict:
         message = (info.get('hint') or info.get('message') or info.get('error')
                    or ('本次登录未完成，请重新连接账号。' if state in {'error', 'expired'}
                        else '请在同一个浏览器窗口完成登录及平台验证。'))
-    return {'mode': 'browser', 'state': state, 'message': message,
-            'qr': '', 'qrTs': 0, 'capabilities': capabilities}
+    result = {'mode': 'browser', 'state': state, 'message': message,
+              'qr': '', 'qrTs': 0, 'capabilities': capabilities}
+    remote = info.get('remote')
+    if (state not in {'success', 'error', 'expired'} and isinstance(remote, dict)
+            and re.fullmatch(r'[a-f0-9]{32}', str(remote.get('id', '')))
+            and remote.get('platform') in {'douyin', 'xhs', 'xiaohongshu'}):
+        result['remote'] = {key: remote[key] for key in ('id', 'platform')}
+    return result
 
 
 def _account_logged_in(platform: str, cfg: dict) -> bool:
@@ -7560,17 +7702,268 @@ async def api_account_directory_logout(key: str):
     return {'ok': True, 'key': key}
 
 
+def _remote_runner_key(process_key: str):
+    return (str(PROJECT_ROOT.resolve()), project_id(), process_key)
+
+
+def _remote_owner_binding(process_key: str):
+    binding = _LOGIN_REMOTE_RUNNERS.get(_remote_runner_key(process_key))
+    if binding is not None:
+        actor = current_user()
+        if not actor or actor.get('id') != binding['actor_id']:
+            raise HTTPException(409, '该平台的登录正在由其他负责人完成')
+    return binding
+
+
+def _remote_login_alive(binding: dict) -> bool:
+    if _LOGIN_REMOTE_RUNNERS.get(binding['key']) is not binding:
+        return False
+    if binding.get('authorize') is not None:
+        binding['authorize']()
+    proc = binding.get('process')
+    if proc is None or proc.poll() is not None:
+        return False
+    try:
+        state = json.loads(binding['status_file'].read_text(encoding='utf-8'))
+        if state.get('state') in {'success', 'expired', 'error'}:
+            return False
+    except (OSError, ValueError, TypeError):
+        pass
+    endpoint_file = binding['endpoint_file']
+    if not binding.get('endpoint_bound') and endpoint_file.is_file():
+        try:
+            if endpoint_file.is_symlink() or endpoint_file.stat().st_size > 4096:
+                return False
+            descriptor = json.loads(endpoint_file.read_text(encoding='utf-8'))
+            if (not isinstance(descriptor, dict) or descriptor.get('pid') != proc.pid
+                    or not isinstance(descriptor.get('endpoint'), str)):
+                return False
+            target = descriptor.get('page_target_id')
+            if not isinstance(target, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', target):
+                return True  # The helper publishes the exact login page after launch.
+            binding['session'].bind_cdp(descriptor['endpoint'], page_target_id=target)
+            binding['endpoint_bound'] = True
+        except (OSError, ValueError, TypeError, AttributeError):
+            return False
+    return True
+
+
+async def _cancel_remote_process(binding: dict):
+    """Cancel this login attempt without erasing any saved account profile."""
+    if _LOGIN_REMOTE_RUNNERS.get(binding['key']) is not binding:
+        return
+    if binding.get('browserless'):
+        try:
+            status = json.loads(binding['status_file'].read_text(encoding='utf-8'))
+            if isinstance(status, dict) and status.get('state') == 'success':
+                return  # Completed API QR login is not a logout/cancellation.
+        except (OSError, ValueError, TypeError):
+            pass
+    proc = binding.get('process')
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            await asyncio.to_thread(proc.wait, timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            await asyncio.to_thread(proc.wait, timeout=5)
+
+
+def _cleanup_remote_login(binding: dict):
+    if _LOGIN_REMOTE_RUNNERS.get(binding['key']) is binding:
+        _LOGIN_REMOTE_RUNNERS.pop(binding['key'], None)
+    shutil.rmtree(binding['directory'], ignore_errors=True)
+
+
+async def _finish_remote_login(binding: dict, *, cancel=False):
+    await binding['session'].stop(cancel=cancel)
+    _cleanup_remote_login(binding)
+
+
+def _prepare_remote_login(platform: str, process_key: str, env: dict, *, authorize=None):
+    from easel.login_remote import enabled, registry
+    actor = current_user()
+    if not enabled() or not actor:
+        return None
+    directory = Path(tempfile.mkdtemp(prefix='easel-login-'))
+    directory.chmod(0o700)
+    binding = {
+        'key': _remote_runner_key(process_key), 'actor_id': actor['id'],
+        'authorize': authorize,
+        'browserless': platform == 'bilibili',
+        'directory': directory, 'endpoint_file': directory / 'endpoint.json',
+        'status_file': _login_dir() / f'{process_key}.json',
+    }
+    try:
+        session = registry.create(project_id=project_id(), actor_id=actor['id'], platform=platform,
+            task_id=uuid.uuid4().hex, is_active=lambda: _remote_login_alive(binding),
+            cancel=lambda: _cancel_remote_process(binding),
+            on_close=lambda: _cleanup_remote_login(binding))
+    except BaseException:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+    binding['session'] = session
+    _LOGIN_REMOTE_RUNNERS[binding['key']] = binding
+    if not binding['browserless']:
+        env['EASEL_LOGIN_REMOTE_ENDPOINT_FILE'] = str(binding['endpoint_file'])
+    return binding
+
+
+def _bind_remote_process(binding: dict | None, process):
+    if binding is not None:
+        binding['process'] = process
+
+
+async def _with_remote_login(process_key: str, status: dict):
+    binding = _remote_owner_binding(process_key)
+    if binding is None:
+        return status
+    if status.get('state') in {'success', 'expired', 'error'} or not _remote_login_alive(binding):
+        await _finish_remote_login(binding)
+        return status
+    return {**status, ('attempt' if binding.get('browserless') else 'remote'): binding['session'].public()}
+
+
+def _remote_request_authorizer(request: Request):
+    from easel.access import AccessStore, SESSION_COOKIE
+    actor = current_user()
+    if not actor or not isinstance(actor.get('id'), str):
+        raise HTTPException(401, '请先登录')
+    actor_id, project = actor['id'], project_id()
+    repository, workspace = PROJECT_ROOT.resolve(), _workspace_root().resolve()
+    token = request.cookies.get(SESSION_COOKIE, '')
+
+    def authorize():
+        if (PROJECT_ROOT.resolve() != repository or project_id() != project
+                or _workspace_root().resolve() != workspace
+                or (current_user() or {}).get('id') != actor_id):
+            raise HTTPException(403, '登录操作的工作空间已变化')
+        store = AccessStore(repository)
+        fresh = store.authenticate_token(token)
+        if not fresh or fresh['id'] != actor_id:
+            raise HTTPException(401, '登录已失效，请重新登录工作空间')
+        store.require_role(actor_id, project, {'owner'})
+
+    authorize()
+    return actor_id, project, authorize
+
+
+@app.get('/api/accounts/{platform}/remote/{remote_id}/frame')
+async def api_login_remote_frame(platform: str, remote_id: str, request: Request):
+    from easel.login_remote import registry
+    actor, project, authorize = _remote_request_authorizer(request)
+    session = registry.get(remote_id, project_id=project, actor_id=actor, platform=platform)
+    try:
+        result = await session.frame(authorize=authorize)
+        authorize()
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, '登录画面暂时不可用，请稍后重试') from None
+
+
+@app.post('/api/accounts/{platform}/remote/{remote_id}/input')
+async def api_login_remote_input(platform: str, remote_id: str, request: Request):
+    from easel.login_remote import registry
+    actor, project, authorize = _remote_request_authorizer(request)
+    session = registry.get(remote_id, project_id=project, actor_id=actor, platform=platform)
+    size, chunks = 0, []
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > 32768:
+            raise HTTPException(413, '输入内容过长')
+        chunks.append(chunk)
+    try:
+        payload = json.loads(b''.join(chunks))
+        if not isinstance(payload, dict):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(422, '输入内容格式无效') from None
+    try:
+        authorize()
+        result = await session.input(payload, authorize=authorize)
+        authorize()
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, '登录操作未完成，请刷新画面后重试') from None
+
+
+@app.get('/api/accounts/{platform}/remote/{remote_id}/qrcode')
+async def api_login_remote_qrcode(platform: str, remote_id: str, request: Request):
+    from easel.login_remote import registry
+    actor, project, authorize = _remote_request_authorizer(request)
+    session = registry.get(remote_id, project_id=project, actor_id=actor, platform=platform)
+    try:
+        result = await session.qrcode(authorize=authorize)
+        authorize()
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, '二维码暂时不可用，请稍后重试或打开验证窗口') from None
+
+
+@app.post('/api/accounts/{platform}/remote/{remote_id}/qrcode/refresh')
+async def api_login_remote_qrcode_refresh(platform: str, remote_id: str, request: Request):
+    from easel.login_remote import registry
+    actor, project, authorize = _remote_request_authorizer(request)
+    session = registry.get(remote_id, project_id=project, actor_id=actor, platform=platform)
+    size, chunks = 0, []
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > 2048:
+            raise HTTPException(413, '刷新请求过长')
+        chunks.append(chunk)
+    try:
+        payload = json.loads(b''.join(chunks))
+        if not isinstance(payload, dict):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(422, '刷新请求格式无效') from None
+    try:
+        result = await session.refresh_qrcode(payload, authorize=authorize)
+        authorize()
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, '刷新结果暂未确认，请重新读取二维码') from None
+
+
+@app.post('/api/accounts/{platform}/remote/{remote_id}/close')
+async def api_login_remote_close(platform: str, remote_id: str, request: Request):
+    from easel.login_remote import registry
+    actor, project, authorize = _remote_request_authorizer(request)
+    session = registry.get(remote_id, project_id=project, actor_id=actor, platform=platform)
+    try:
+        await session.stop(cancel=True, authorize=authorize)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, '登录窗口暂时无法关闭，请稍后重试') from None
+    return {'ok': True}
+
+
 @app.post("/api/login/{platform}")
-async def api_login_start(platform: str, restart: bool = False):
+async def api_login_start(platform: str, restart: bool = False, request: Request = None):
     if platform not in LOGIN_RUNNERS:
         raise HTTPException(404, '未知平台')
     lock = _LOGIN_START_LOCKS.setdefault(platform, asyncio.Lock())
+    authorize = _remote_request_authorizer(request)[2] if request is not None else lambda: _require_operation(roles=('owner',))
     async with lock:
-        return await _start_login(platform, restart)
+        authorize()
+        result = await _start_login(platform, restart, authorize=authorize)
+        authorize()
+        return result
 
 
-async def _start_login(platform: str, restart: bool = False):
+async def _start_login(platform: str, restart: bool = False, *, authorize=None):
     """启动后台登录并立即返回，二维码由前端状态轮询获取。"""
+    authorize = authorize or (lambda: _require_operation(roles=('owner',)))
+    authorize()
     _require_publication_profile_idle(platform)
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg:
@@ -7591,25 +7984,34 @@ async def _start_login(platform: str, restart: bool = False):
                 await asyncio.to_thread(previous.wait, timeout=8)
             except subprocess.TimeoutExpired:
                 raise HTTPException(409, '上一次登录仍在退出，请稍后重试') from None
+        authorize()
         runtime = await (await _operations_manager()).get(project_id())
+        authorize()
         try:
-            info = await runtime.connections.start('xhs' if platform == 'xiaohongshu' else platform)
+            actor = current_user()
+            info = await runtime.connections.start('xhs' if platform == 'xiaohongshu' else platform,
+                **({'actor_id': actor['id'], 'authorize': authorize} if actor else {}))
         except ValueError as error:
             raise HTTPException(409, str(error)) from None
         _UNIFIED_LOGIN_TASKS[platform] = info['task_id']
         with _WHOAMI_LOCK:
             _WHOAMI_CACHE.pop(platform, None)
         return _unified_login_response(info)
+    binding = _remote_owner_binding(platform)
     existing = LOGIN_PROCESSES.get(platform)
     if existing is not None and existing.poll() is None:
         if not restart:
-            return {'mode': mode, **_login_status(platform)}
+            return await _with_remote_login(platform, {'mode': mode, **_login_status(platform)})
         try:
             existing.terminate()
             await asyncio.to_thread(existing.wait, timeout=8)
         except subprocess.TimeoutExpired:
             raise HTTPException(409, '上一次登录仍在退出，请稍后重试') from None
         LOGIN_PROCESSES.pop(platform, None)
+        authorize()
+    if binding is not None:
+        await _finish_remote_login(binding)
+        authorize()
     _login_dir().mkdir(parents=True, exist_ok=True)
     qr = _login_dir() / f'{platform}.png'
     status = _login_dir() / f'{platform}.json'
@@ -7659,18 +8061,24 @@ async def _start_login(platform: str, restart: bool = False):
     login_env = _proxy_env()
     login_env['PYTHONIOENCODING'] = 'utf-8'
     login_env['PYTHONUTF8'] = '1'
+    binding = _prepare_remote_login(platform, platform, login_env, authorize=authorize)
     try:
         proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=login_env,
                                 stdout=log_file, stderr=subprocess.STDOUT)
+    except BaseException:
+        if binding is not None:
+            await _finish_remote_login(binding)
+        raise
     finally:
         log_file.close()
     LOGIN_PROCESSES[platform] = proc
+    _bind_remote_process(binding, proc)
     s = _login_status(platform)
     mode = cfg.get('loginMode', 'qr')
     if s['state'] == 'unknown':
         s.update(state='starting', message='正在打开平台登录浏览器…' if mode == 'browser'
                  else '正在启动浏览器并准备二维码…')
-    return {'mode': mode, **s}
+    return await _with_remote_login(platform, {'mode': mode, **s})
 
 
 @app.get("/api/login/{platform}/status")
@@ -7680,7 +8088,9 @@ async def api_login_status(platform: str):
     if platform in {'douyin', 'xiaohongshu'} and platform in _UNIFIED_LOGIN_TASKS:
         runtime = await (await _operations_manager()).get(project_id(), start=False)
         try:
-            info = runtime.connections.poll(_UNIFIED_LOGIN_TASKS[platform])
+            actor = current_user()
+            info = runtime.connections.poll(_UNIFIED_LOGIN_TASKS[platform],
+                **({'actor_id': actor['id']} if actor else {}))
         except (KeyError, ValueError):
             return _unified_login_response({'status': 'error', 'hint': '登录流程已结束，请重新连接账号。'})
         except HTTPException as error:
@@ -7699,7 +8109,7 @@ async def api_login_status(platform: str):
         # 只清缓存、不改任何登录/检测逻辑。
         with _WHOAMI_LOCK:
             _WHOAMI_CACHE.pop(platform, None)
-    return {'mode': LOGIN_RUNNERS[platform].get('loginMode', 'qr'), **s}
+    return await _with_remote_login(platform, {'mode': LOGIN_RUNNERS[platform].get('loginMode', 'qr'), **s})
 
 
 class SmsCodeRequest(BaseModel):
@@ -7809,8 +8219,35 @@ def _stop_mp_login_on_shutdown() -> None:
         _write_login_marker("wechat-oa-mp", "expired", "服务已重启，请重新扫码登录")
 
 
+async def _stop_login_processes_on_shutdown():
+    """Reap every owned login subprocess; stored account profiles stay intact."""
+    for key, binding in list(_LOGIN_REMOTE_RUNNERS.items()):
+        if key[:2] == (str(PROJECT_ROOT.resolve()), project_id()):
+            await _finish_remote_login(binding, cancel=True)
+    for key, proc in list(LOGIN_PROCESSES.items()):
+        LOGIN_PROCESSES.pop(key, None)
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                await asyncio.to_thread(proc.wait, timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                await asyncio.to_thread(proc.wait, timeout=5)
+            _write_login_marker(key, 'expired', '服务已重启，请重新连接账号')
+
+
 @app.post("/api/accounts/{platform}/mp-login")
-async def api_mp_login_start(platform: str):
+async def api_mp_login_start(platform: str, request: Request = None):
+    authorize = _remote_request_authorizer(request)[2] if request is not None else lambda: _require_operation(roles=('owner',))
+    lock = _LOGIN_START_LOCKS.setdefault('wechat-oa-mp', asyncio.Lock())
+    async with lock:
+        authorize()
+        result = await _start_mp_login(platform, authorize=authorize)
+        authorize()
+        return result
+
+
+async def _start_mp_login(platform: str, *, authorize):
     """启动「公众号后台」扫码登录（数据中心取数用，管理员级会话，独立于 AppID 凭证）。
     默认直连起 Playwright 出二维码；受限网络可设 EASEL_PROXY / https_proxy 走正向代理。"""
     cfg = LOGIN_RUNNERS.get(platform)
@@ -7818,9 +8255,13 @@ async def api_mp_login_start(platform: str):
         raise HTTPException(404, "该平台不使用公众号后台登录")
     _require_publication_profile_idle(platform)
     # 重复点击复用正在进行的登录，不能删除其二维码或启动第二个 Chromium。
+    binding = _remote_owner_binding('wechat-oa-mp')
     proc = LOGIN_PROCESSES.get("wechat-oa-mp")
     if proc is not None and proc.poll() is None:
-        return {"mode": "qr", **_mp_login_status()}
+        return await _with_remote_login('wechat-oa-mp', {"mode": "qr", **_mp_login_status()})
+    if binding is not None:
+        await _finish_remote_login(binding)
+        authorize()
     _login_dir().mkdir(parents=True, exist_ok=True)
     for f in (_login_dir() / "wechat-oa-mp.png", _login_dir() / "wechat-oa-mp.json"):
         try:
@@ -7834,14 +8275,22 @@ async def api_mp_login_start(platform: str):
     log_file = (_login_dir() / "wechat-oa-mp.log").open("a", encoding="utf-8")
     env = _proxy_env()
     env.update(PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
-    proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=env,
-                            stdout=log_file, stderr=subprocess.STDOUT)
-    log_file.close()
+    binding = _prepare_remote_login(platform, 'wechat-oa-mp', env, authorize=authorize)
+    try:
+        proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=env,
+                                stdout=log_file, stderr=subprocess.STDOUT)
+    except BaseException:
+        if binding is not None:
+            await _finish_remote_login(binding)
+        raise
+    finally:
+        log_file.close()
     LOGIN_PROCESSES["wechat-oa-mp"] = proc
+    _bind_remote_process(binding, proc)
     status = _mp_login_status()
     if status["state"] == "unknown":
         status.update(state="starting", message="正在启动浏览器并准备二维码…")
-    return {"mode": "qr", **status}
+    return await _with_remote_login('wechat-oa-mp', {"mode": "qr", **status})
 
 
 @app.get("/api/accounts/{platform}/mp-login/status")
@@ -7849,7 +8298,7 @@ async def api_mp_login_status(platform: str):
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg or cfg.get("backend") != "wechat-oa":
         raise HTTPException(404, "该平台不使用公众号后台登录")
-    return {"mode": "qr", **_mp_login_status()}
+    return await _with_remote_login('wechat-oa-mp', {"mode": "qr", **_mp_login_status()})
 
 
 @app.get("/api/accounts/{platform}/whoami")

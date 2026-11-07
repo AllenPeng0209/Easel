@@ -19,6 +19,7 @@ import time
 import urllib.parse
 import urllib.request
 import os
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -125,7 +126,54 @@ def _write_cookie(data: dict, cookie_file: Path) -> None:
         "sso": data.get("sso"),
         "token_info": data.get("token_info"),
     }
-    cookie_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    fd, temporary = tempfile.mkstemp(prefix=".bili-cookie-", dir=cookie_file.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            os.fchmod(output.fileno(), 0o600)
+            json.dump(payload, output, ensure_ascii=False)
+        os.replace(temporary, cookie_file)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+
+def _verify_login_candidate(data: dict) -> bool:
+    """Admit a TV login only after its cookies prove the same live web identity."""
+    try:
+        if not isinstance(data, dict) or not isinstance(data.get("token_info"), dict):
+            return False
+        token = data["token_info"]
+        identifier = token.get("mid")
+        if isinstance(identifier, int) and not isinstance(identifier, bool) and identifier > 0:
+            identifier = str(identifier)
+        if (not isinstance(identifier, str) or not identifier.isascii() or not identifier.isdigit()
+                or int(identifier) <= 0 or not isinstance(token.get("access_token"), str)
+                or not token["access_token"]):
+            return False
+        entries = data.get("cookie_info", {}).get("cookies")
+        if not isinstance(entries, list):
+            return False
+        cookies = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return False
+            name, value = entry.get("name"), entry.get("value")
+            if (not isinstance(name, str) or not name or not isinstance(value, str)
+                    or any(character in name + value for character in "\r\n;") or name in cookies):
+                return False
+            cookies[name] = value
+        if not all(cookies.get(key) for key in ("SESSDATA", "bili_jct", "DedeUserID")):
+            return False
+        if cookies["DedeUserID"] != str(int(identifier)):
+            return False
+        header = "; ".join(f"{name}={value}" for name, value in cookies.items())
+        payload = _api("https://api.bilibili.com/x/web-interface/nav", header, timeout=8)
+        if not isinstance(payload, dict) or type(payload.get("code")) is not int or payload["code"] != 0:
+            return False
+        identity = _account_binding(payload.get("data"))
+        return identity["accountIdentityStatus"] == "verified" and identity["accountId"] == str(int(identifier))
+    except Exception:
+        return False
 
 
 def cmd_login(a) -> int:
@@ -144,7 +192,10 @@ def cmd_login(a) -> int:
     scanned = False
     while time.time() < deadline:
         code, data = _poll(auth_code)
-        if code == 0:
+        if type(code) is int and code == 0:
+            if not _verify_login_candidate(data):
+                login_state.write_status(sf, "error", "已扫码，但账号身份未能核实，请检查网络后重新登录")
+                return 1
             _write_cookie(data, cookie_file)
             login_state.write_status(sf, "success", "登录成功")
             print(f"✅ B站登录成功，cookie 已写入 {cookie_file}")

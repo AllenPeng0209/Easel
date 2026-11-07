@@ -8,10 +8,11 @@ import type { PublicationApprovalRecord } from '../lib/publicationApproval';
 import PublicationApprovalDialog, { PublicationSubjectView } from './PublicationApprovalDialog';
 import PublicationReceiptCard from './PublicationReceiptCard';
 import { publicationReceiptInScope } from '../lib/publicationReceipt';
-import { normalizePublicationHandoff, publicationMediaReferenceMatches, validPublicationMediaReference,
+import { publicationMediaReferenceMatches, validPublicationMediaReference,
   validPublicationApprovalReference, type PublicationHandoff, type PublicationMediaReference,
   type PublicationApprovalReference } from '../lib/publicationHandoff';
 import { loadPublishDraft, savePublishDraft } from '../lib/store';
+import { applyPublicationHandoff, type PublicationEditorDraft } from '../lib/publicationDraft';
 import { renderMarkdown } from '../lib/sanitize';
 import { IconPublish, IconCopy, IconCheck, IconCalendar, IconSkills, IconEdit, IconStop, IconTrash } from './icons';
 
@@ -55,7 +56,7 @@ function parseSections(text: string): Record<string, string> {
 type PubState = { status: 'publishing' | 'ok' | 'fail' | 'pending'; msg: string };
 
 export default function PublishPage({ persona, handoff, onHandoffConsumed }: PublishPageProps) {
-  const draft0 = loadPublishDraft();
+  const [draft0] = useState<PublicationEditorDraft>(() => loadPublishDraft());
   const [title, setTitle] = useState(draft0.title);
   const [body, setBody] = useState(draft0.body);
   const [platforms, setPlatforms] = useState<string[]>(draft0.platforms);
@@ -78,11 +79,13 @@ export default function PublishPage({ persona, handoff, onHandoffConsumed }: Pub
   // 发布相关
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [mediaFiles, setMediaFiles] = useState<OutputFile[]>([]);
-  const [selectedMedia, setSelectedMedia] = useState<string[]>([]);
+  const [selectedMedia, setSelectedMedia] = useState<string[]>(draft0.mediaPaths || []);
   const [selectedArtifacts, setSelectedArtifacts] = useState<PublicationMediaReference[]>(draft0.mediaReferences || []);
   const [approvalReference, setApprovalReference] = useState<PublicationApprovalReference | undefined>(draft0.approvalReference);
   const [linkedApproval, setLinkedApproval] = useState<PublicationApprovalRecord | null>(null);
   const [handoffError, setHandoffError] = useState('');
+  const [handoffMessage, setHandoffMessage] = useState('');
+  const [saveFailed, setSaveFailed] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [pub, setPub] = useState<Record<string, PubState>>({});
   const [publishing, setPublishing] = useState(false);
@@ -98,28 +101,28 @@ export default function PublishPage({ persona, handoff, onHandoffConsumed }: Pub
   const [pubSmsCode, setPubSmsCode] = useState('');
   const [pubSmsBusy, setPubSmsBusy] = useState(false);
 
-  // 草稿持久化：任何改动即写 localStorage，切页/刷新回来都在
+  // Persist the complete shared draft so changing publication mode keeps its media and disclosure.
+  const currentDraft: PublicationEditorDraft = { title, body, platforms, overrides, tags, aiGenerated,
+    mediaReferences: selectedArtifacts, mediaPaths: selectedMedia, approvalReference };
+  const currentDraftRef = useRef(currentDraft);
+  currentDraftRef.current = currentDraft;
   useEffect(() => {
-    savePublishDraft({ title, body, platforms, overrides, tags, aiGenerated, mediaReferences: selectedArtifacts, approvalReference });
-  }, [title, body, platforms, overrides, tags, aiGenerated, selectedArtifacts, approvalReference]);
+    setSaveFailed(!savePublishDraft(currentDraftRef.current));
+  }, [title, body, platforms, overrides, tags, aiGenerated, selectedArtifacts, selectedMedia, approvalReference]);
 
   useEffect(() => {
     if (!handoff) return;
-    const accepted = normalizePublicationHandoff(handoff);
-    if (!accepted) { setHandoffError('此发布入口已过期或不属于当前用户 / IP，请回原对话重新选择。'); onHandoffConsumed?.(); return; }
-    setHandoffError(''); setApprovals([]); setPub({});
-    if (accepted.kind === 'approval') {
-      setApprovalReference({ actorId: accepted.actorId, projectId: accepted.projectId,
-        approvalId: accepted.approvalId, payloadHash: accepted.payloadHash });
-      onHandoffConsumed?.();
-      return;
+    const result = applyPublicationHandoff(currentDraftRef.current, handoff);
+    setHandoffError(result.status === 'invalid' ? result.message : '');
+    if (result.status === 'updated') {
+      const next = result.draft;
+      adaptCtl.current?.abort(); setAdapting(false);
+      setApprovals([]); setPub({}); setLinkedApproval(null); setHandoffMessage(result.message);
+      setApprovalReference(next.approvalReference);
+      setSelectedMedia(next.mediaPaths || []); setSelectedArtifacts(next.mediaReferences || []);
+      setTitle(next.title); setBody(next.body); setTags(next.tags); setOverrides(next.overrides);
+      setPlatforms(next.platforms); setAiGenerated(next.aiGenerated === true); setAsDraft(false); setCheckResult('');
     }
-    setApprovalReference(undefined); setLinkedApproval(null);
-    setSelectedMedia([]); setSelectedArtifacts(accepted.media);
-    setTitle(accepted.copy.title || ''); setBody(accepted.copy.body || ''); setTags(accepted.copy.tags || '');
-    setOverrides({}); setAsDraft(false); setAiGenerated(false); setCheckResult('');
-    // A media card cannot silently choose either an account or another platform.
-    setPlatforms(accepted.copy.platform && PUBLISHABLE.has(accepted.copy.platform) ? [accepted.copy.platform] : []);
     onHandoffConsumed?.();
   }, [handoff, onHandoffConsumed]);
 
@@ -430,6 +433,7 @@ export default function PublishPage({ persona, handoff, onHandoffConsumed }: Pub
         <h1 className="page-title"><IconPublish size={21} /> 发布中心</h1>
         <p className="page-subtitle">已载入 AI 对话中的同一次发布确认。账号、文案和媒体版本保持固定。</p>
         {approvalBusy && !linkedApproval && <p role="status">正在读取此固定版本…</p>}
+        {saveFailed && <p role="alert">浏览器未能保存草稿。请先复制文案并下载素材，再刷新或离开页面。</p>}
         {handoffError && <p className="publication-approval-error" role="alert">{handoffError}</p>}
         {linkedApproval && <>
           <PublicationSubjectView subject={linkedApproval.subject} />
@@ -443,7 +447,9 @@ export default function PublishPage({ persona, handoff, onHandoffConsumed }: Pub
       </div> : <div className="publish-editor">
         <h1 className="page-title"><IconPublish size={21} /> 发布中心</h1>
         <p className="page-subtitle">编辑文案与媒体，核对实际账号和固定版本后提交；发布结果以平台回执为准。</p>
+        {saveFailed && <p role="alert">浏览器未能保存草稿。请先复制文案并下载素材，再刷新或离开页面。</p>}
         {handoffError && <p className="publication-approval-error" role="alert">{handoffError}</p>}
+        {handoffMessage && <p role="status">{handoffMessage}</p>}
 
         <label className="field-label">标题</label>
         <input className="field" value={title} placeholder="标题（部分平台需要）"

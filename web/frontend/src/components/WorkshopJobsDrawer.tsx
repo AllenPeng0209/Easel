@@ -65,7 +65,7 @@ function WorkshopCancelConfirmation({ confirmation, pending, valid, onClose, onC
       aria-label={title} tabIndex={-1} data-workshop-cancel-confirmation>
       <h2>{title}</h2>
       <dl>
-        <dt>IP</dt><dd>{ACTIVE_PROJECT_ID === 'default' ? '默认 IP' : ACTIVE_PROJECT_ID}</dd>
+        <dt>IP</dt><dd>{ACTIVE_PROJECT_ID === 'default' ? '当前 IP 项目' : ACTIVE_PROJECT_ID}</dd>
         <dt>任务类型</dt><dd>原生成片合成</dd>
         <dt>工坊</dt><dd>{confirmation.job.title}</dd>
         <dt>任务 ID</dt><dd><code>{confirmation.job.taskId}</code></dd>

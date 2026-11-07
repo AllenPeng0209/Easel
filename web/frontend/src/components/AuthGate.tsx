@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AccessError, createUser, fetchAuthBootstrap, fetchAuthUser, fetchUsers,
-  loginAccount, logoutAccount, patchUser, setupAccount,
+  loginAccount, logoutAccount, patchUser, registerAccount, setupAccount,
 } from '../lib/access';
 import type { User } from '../lib/access';
 import '../styles/access.css';
@@ -38,11 +38,13 @@ export default function AuthGate({ children, onAuthenticated }: {
   children: ReactNode;
   onAuthenticated?: (user: User | null) => void;
 }) {
-  const [phase, setPhase] = useState<'loading' | 'setup' | 'login' | 'ready'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'setup' | 'login' | 'register' | 'ready'>('loading');
   const [user, setUser] = useState<User | null>(null);
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const callback = useRef(onAuthenticated);
@@ -56,6 +58,7 @@ export default function AuthGate({ children, onAuthenticated }: {
     generation.current += 1;
     setUser(null);
     setPassword('');
+    setConfirmPassword('');
     setPhase('login');
     clearMarker();
     callback.current?.(null);
@@ -80,6 +83,7 @@ export default function AuthGate({ children, onAuthenticated }: {
     }
     setUser(account);
     setPassword('');
+    setConfirmPassword('');
     setError('');
     setPhase('ready');
     return true;
@@ -161,15 +165,19 @@ export default function AuthGate({ children, onAuthenticated }: {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy || !username.trim() || !password || (phase === 'setup' && password.length < 10)) return;
+    if (busy || !username.trim() || !password || (phase !== 'login' && password.length < 10)) return;
+    if (phase === 'register' && password !== confirmPassword) { setError('两次输入的密码不一致'); return; }
     setBusy(true); setError('');
     const version = generation.current;
     try {
       const result = phase === 'setup'
         ? await setupAccount({ username: username.trim(), display_name: displayName.trim(), password })
-        : await loginAccount({ username: username.trim(), password });
+        : phase === 'register'
+          ? await registerAccount({ username: username.trim(), display_name: displayName.trim(), password })
+          : await loginAccount({ username: username.trim(), password });
       if (version !== generation.current) return;
       channel.current?.postMessage({ type: 'changed' });
+      window.location.hash = '#projects';
       accepted(result.user);
     } catch (error) { if (version === generation.current) setError(errorMessage(error)); }
     finally { setBusy(false); }
@@ -179,31 +187,54 @@ export default function AuthGate({ children, onAuthenticated }: {
     <Fragment key={user.id}>{children}</Fragment>
   </AuthContext.Provider>;
 
-  return <main className="auth-screen">
-    <div className="auth-brand"><span>芽</span><strong>响芽</strong></div>
-    <section className="auth-card" aria-labelledby="auth-title">
-      <div className="access-eyebrow">CREATOR WORKSPACE</div>
-      <h1 id="auth-title">{phase === 'loading' ? '正在验证身份…' : phase === 'setup' ? '创建平台管理员' : '登录工作空间'}</h1>
-      <p className="auth-intro">{phase === 'setup' ? '先创建你的管理账号，再添加团队成员，并为每个 IP 分配角色。' : '一个 IP，连接多个社交平台；每位成员按角色协作。'}</p>
+  const registering = phase === 'register';
+  const switchMode = (mode: 'login' | 'register') => { if (busy) return; generation.current += 1; setPhase(mode); setPassword(''); setConfirmPassword(''); setError(''); };
+  return <main className="auth-screen auth-landing">
+    <header className="auth-site-header"><a className="chirpiva-wordmark" href="#" aria-label="Chirpiva 响芽首页"><span className="chirpiva-mark" aria-hidden="true">c</span><strong>Chirpiva<span>响芽</span></strong></a>
+      <span className="auth-header-note">为每一个认真创作的 IP</span></header>
+    <div className="auth-landing-grid">
+    <section className="auth-story" aria-labelledby="auth-story-title">
+      <div className="auth-story-eyebrow"><span />YOUR IP. YOUR SPACE.</div>
+      <h1 id="auth-story-title">让好内容生长，<br /><em>让你的 IP 发声。</em></h1>
+      <p className="auth-story-description">从一个想法，到一个持续生长的品牌。<br />把 AI 创作、内容发布和团队协作，放进属于你的 IP 项目。</p>
+      <div className="auth-project-preview" aria-label="IP 项目协作示意">
+        <div className="auth-preview-head"><span className="auth-preview-icon" aria-hidden="true">✳</span><div><small>你的名字 /</small><strong>下一个好 IP</strong></div><span className="repo-private">私有项目</span></div>
+        <div className="auth-preview-workflow"><span>灵感选题</span><i>→</i><span>AI 创作</span><i>→</i><span>多平台发布</span></div>
+        <div className="auth-preview-foot"><div className="auth-preview-avatars"><span>你</span><span>创</span><span>运</span></div><span>你来拥有，与伙伴一起运营。</span><b>Owner</b></div>
+      </div>
+      <div className="auth-story-points"><span>项目独立</span><span>按角色协作</span><span>内容与账号归项目</span></div>
+    </section>
+    <section className="auth-card" aria-labelledby="auth-title" aria-busy={busy || phase === 'loading'}>
+      {phase !== 'setup' && phase !== 'loading' && <div className="auth-mode-tabs" aria-label="账号入口">
+        <button type="button" data-auth-mode="login" aria-pressed={!registering} disabled={busy} onClick={() => switchMode('login')}>登录</button>
+        <button type="button" data-auth-mode="register" aria-pressed={registering} disabled={busy} onClick={() => switchMode('register')}>注册</button>
+      </div>}
+      <h2 id="auth-title">{phase === 'loading' ? '正在打开你的空间…' : phase === 'setup' ? '初始化 Chirpiva' : registering ? '开启你的创作事业' : '欢迎回来'}</h2>
+      <p className="auth-intro">{phase === 'setup' ? '创建平台管理员，完成首次初始化。' : registering ? '创建账号后，建立你的第一个 IP 项目。' : '登录后，继续经营你的 IP 项目。'}</p>
       {phase !== 'loading' && <form className="access-form" onSubmit={submit}>
         <label htmlFor="auth-username">用户名</label>
         <input id="auth-username" name="username" autoComplete="username" required minLength={3} maxLength={64} autoFocus value={username}
-          disabled={busy} onChange={event => setUsername(event.target.value)} placeholder="输入用户名" />
-        {phase === 'setup' && <><label htmlFor="auth-display-name">显示名称</label>
+          disabled={busy} onChange={event => setUsername(event.target.value)} placeholder={registering ? '3–64 个字符，用于登录和成员查找' : '输入你的用户名'} />
+        {(phase === 'setup' || registering) && <><label htmlFor="auth-display-name">怎么称呼你 <span className="auth-optional">选填</span></label>
           <input id="auth-display-name" name="display_name" autoComplete="nickname" maxLength={80} value={displayName}
-            disabled={busy} onChange={event => setDisplayName(event.target.value)} placeholder="例如：团队管理员" /></>}
+            disabled={busy} onChange={event => setDisplayName(event.target.value)} placeholder="你的名字或创作昵称" /></>}
         <label htmlFor="auth-password">密码</label>
-        <input id="auth-password" name="password" type="password" autoComplete={phase === 'setup' ? 'new-password' : 'current-password'} required
-          minLength={phase === 'setup' ? 10 : undefined} maxLength={256} value={password} disabled={busy}
-          onChange={event => setPassword(event.target.value)} placeholder={phase === 'setup' ? '至少 10 个字符' : '输入密码'} />
+        <div className="auth-password-field"><input id="auth-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={phase === 'login' ? 'current-password' : 'new-password'} required
+          minLength={phase === 'login' ? undefined : 10} maxLength={1024} value={password} disabled={busy}
+          onChange={event => setPassword(event.target.value)} placeholder={phase === 'login' ? '输入密码' : '至少 10 个字符'} />
+          <button type="button" aria-label={showPassword ? '隐藏密码' : '显示密码'} aria-pressed={showPassword} disabled={busy} onClick={() => setShowPassword(!showPassword)}>{showPassword ? '隐藏' : '显示'}</button></div>
+        {registering && <><label htmlFor="auth-confirm-password">确认密码</label><input id="auth-confirm-password" name="confirm_password" type="password" autoComplete="new-password" required minLength={10} maxLength={1024}
+          disabled={busy} value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="再输入一次密码" /></>}
         {error && <p className="access-error" role="alert">{error}</p>}
-        <button className="btn btn-primary auth-submit" disabled={busy || !username.trim() || !password || (phase === 'setup' && password.length < 10)}>
-          {busy ? '正在验证…' : phase === 'setup' ? '创建管理员并进入' : '登录'}
+        <button className="btn btn-primary auth-submit" disabled={busy || !username.trim() || !password || (phase !== 'login' && password.length < 10) || (registering && !confirmPassword)}>
+          {busy ? registering ? '正在创建账号…' : '正在验证…' : phase === 'setup' ? '完成初始化' : registering ? '注册并创建我的 IP' : '登录我的工作台'}<span aria-hidden="true">↗</span>
         </button>
-        <p className="auth-footnote">{phase === 'setup' ? '现有 IP 与内容会保留，并归属这个初始管理账号。' : '需要账号或忘记密码，请联系你的平台管理员。'}</p>
+        <p className="auth-footnote">{phase === 'setup' ? '此入口仅限服务器本机。已有内容会保留。' : registering ? '你的项目由你拥有，协作者由你授权。' : '忘记密码？请联系平台管理员重置。'}</p>
       </form>}
       {phase === 'loading' && error && <div className="auth-retry"><p className="access-error" role="alert">{error}</p><button className="btn" onClick={() => { void bootstrap(); }}>重试</button></div>}
     </section>
+    </div>
+    <footer className="auth-site-footer"><span>© {new Date().getFullYear()} Chirpiva 响芽</span><span>一个 IP，一处专属的创作空间。</span></footer>
   </main>;
 }
 

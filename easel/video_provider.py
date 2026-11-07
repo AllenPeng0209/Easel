@@ -11,11 +11,34 @@ import httpx
 from easel.video_workshop import WorkshopError
 
 MODELS = {
-    'easel-ppu-h3-local::minimax-h3-dense8': ('H3_BASE_URL', 'http://127.0.0.1:8878', 'MiniMax H3 Dense8', 1, 15),
-    'easel-ppu-h3-local::minimax-h3-base': ('H3_BASE_URL', 'http://127.0.0.1:8878', 'MiniMax H3 Base', 1, 15),
+    'easel-ppu-h3-local::minimax-h3-dense8': ('H3_BASE_URL', 'http://127.0.0.1:8878', 'MiniMax H3 Dense8', 1, 14),
+    'easel-ppu-h3-local::minimax-h3-base': ('H3_BASE_URL', 'http://127.0.0.1:8878', 'MiniMax H3 Base', 1, 14),
     'easel-ppu-h3-ref11-local::minimax-h3-ref2va-ref11-8step': ('H3_REF11_BASE_URL', 'http://127.0.0.1:8881', 'MiniMax H3 全参考', 1, 14),
     'easel-ppu-pika-h3-local::pika-h3-flex-6step': ('PIKA_H3_BASE_URL', 'http://127.0.0.1:8882', 'Pika H3 Flex', 5, 15),
 }
+
+
+def submission_error_metadata(value):
+    """Only typed Host classifications cross into a public generation receipt."""
+    codes = {'http_error', 'timeout', 'transport_error', 'invalid_response',
+             'invalid_receipt', 'request_error', 'reason_unavailable'}
+    if (not isinstance(value, dict) or not isinstance(value.get('code'), str)
+            or value['code'] not in codes):
+        return {'code': 'reason_unavailable'}
+    result = {'code': value['code']}
+    status, observed = value.get('httpStatus'), value.get('observedAt')
+    if type(status) is int and 100 <= status <= 599:
+        result['httpStatus'] = status
+    if type(observed) is int and 0 < observed < 10**16:
+        result['observedAt'] = observed
+    return result
+
+
+class VideoProviderError(WorkshopError):
+    def __init__(self, code, *, http_status=None):
+        # Never retain response bodies, headers, URLs or the transport exception.
+        self.diagnostic = submission_error_metadata({'code': code, 'httpStatus': http_status})
+        super().__init__('视频服务未返回可核对回执，请保留原提交排查', 503)
 
 
 class NativeVideoClient:
@@ -83,15 +106,31 @@ class NativeVideoClient:
                 'cost': 'unknown', 'readiness': 'not_checked'})
         return models
 
-    def _request(self, method, model_id, path, body=None):
+    def _request(self, method, model_id, path, body=None, *, require_task_id=False):
+        response = None
         try:
             with httpx.Client(base_url=self._base(model_id), headers={'Authorization': 'Bearer ' + self._credential(model_id)},
                     trust_env=False, follow_redirects=False, timeout=120, transport=self.transport) as client:
                 response = client.request(method, path, json=body)
                 response.raise_for_status()
-                return response.json()
-        except (httpx.HTTPError, ValueError):
-            raise WorkshopError('视频服务请求未取得可核对回执，请查询原任务', 503) from None
+                result = response.json()
+                if not isinstance(result, dict):
+                    raise ValueError
+                if require_task_id:
+                    try:
+                        self._task(result.get('id'))
+                    except WorkshopError:
+                        raise VideoProviderError('invalid_receipt', http_status=response.status_code) from None
+                return result
+        except httpx.HTTPStatusError as error:
+            raise VideoProviderError('http_error', http_status=error.response.status_code) from None
+        except httpx.TimeoutException:
+            raise VideoProviderError('timeout') from None
+        except httpx.HTTPError:
+            raise VideoProviderError('transport_error') from None
+        except ValueError:
+            raise VideoProviderError('invalid_response',
+                http_status=response.status_code if response is not None else None) from None
 
     def submit(self, spec, operation_id, outputs):
         from easel.video_generation_references import verify_references
@@ -105,7 +144,7 @@ class NativeVideoClient:
                 body.setdefault(reference['kind'] + 's', []).append({'data_url': value})
             else:
                 body['image'] = value
-        return self._request('POST', spec['modelId'], '/v1/videos', body)
+        return self._request('POST', spec['modelId'], '/v1/videos', body, require_task_id=True)
 
     @staticmethod
     def _task(task_id):

@@ -11,6 +11,10 @@ const failures = {
   authentication: { title: '模型认证未通过', hint: '请在设置中核对引擎登录状态或 API 凭据。' },
   model_unavailable: { title: '所选模型不可用', hint: '请在设置中核对模型和账号的可用范围。' },
   rate_limit: { title: '模型请求受到频率限制', hint: '请检查模型服务的请求频率限制。' },
+  server_queue_full: { title: '服务器的 AI 队列已满', hint: '本轮尚未调用模型。请稍后重试，已有任务会继续处理。' },
+  server_owner_queue_full: { title: '你的排队任务已达上限', hint: '本轮尚未调用模型。请等待或取消你已有的排队任务后重试。' },
+  server_queue_timeout: { title: '等待服务器资源超时', hint: '本轮尚未调用模型。可以稍后重试。' },
+  server_unavailable: { title: '服务器暂时无法接收任务', hint: '本轮尚未调用模型。请稍后再试；若持续出现，请联系管理员检查服务器资源设置。' },
   quota_exhausted: { title: '模型服务额度不足', hint: '请检查模型服务的额度设置。' },
   network: { title: '连接未成功', hint: '请检查网络连接或本机引擎服务。' },
   timeout: { title: '等待引擎响应超时', hint: '请检查引擎服务状态。' },
@@ -21,7 +25,7 @@ const failures = {
 };
 const phaseLabels = { startup: '启动阶段', execution: '执行阶段', finalization: '结果写入阶段' };
 const settingsCodes = new Set(['authentication', 'model_unavailable', 'quota_exhausted']);
-const retryCodes = new Set(['rate_limit', 'network', 'timeout']);
+const retryCodes = new Set(['rate_limit', 'network', 'timeout', 'server_queue_full', 'server_owner_queue_full', 'server_queue_timeout']);
 
 export default function ChatFailureNotice({ failure, onOpenSettings, onRetry }: {
   failure?: ChatFailure;

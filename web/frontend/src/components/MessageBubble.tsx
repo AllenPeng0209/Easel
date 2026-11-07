@@ -146,10 +146,11 @@ function visibleAssistantContent(message: ChatMessage): string {
   return error === -1 ? message.content : message.content.slice(0, error);
 }
 
-export default function MessageBubble({ message, sessionId, isStreaming, inheritedForkText, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, detailMode, foldWorkDetails, actions, onOpenFailureSettings, onQuoteAnswer, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
+export default function MessageBubble({ message, sessionId, isStreaming, inheritedForkText, reasoningSummary, answerCompletion, turnLifecycle, activity, stillWorking, events, timeline, pendingTimelineQuestions, detailMode, actions, onOpenFailureSettings, onQuoteAnswer, onOpenDeliverable, onOpenSubagent }: MessageBubbleProps) {
   const toolLocator = useRef<AgentToolLocator>(null);
   const inheritedAssistant = message.role === 'assistant' && inheritedForkText === true;
   const effEvents = inheritedAssistant ? EMPTY_EVENTS : isStreaming ? events || EMPTY_EVENTS : message.events || EMPTY_EVENTS;
+  const toolEvents = useMemo(() => effEvents.filter(event => event.kind !== 'artifact' && event.kind !== 'changes'), [effEvents]);
   const recordedTimeline = isStreaming ? timeline : message.timeline;
   const effTimeline = Array.isArray(recordedTimeline) ? recordedTimeline : undefined;
   const waitingQuestions = isStreaming ? pendingTimelineQuestions
@@ -203,7 +204,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, inherit
   const uncertainTurn = !isStreaming && message.status === 'unconfirmed';
   const hasPublicationReceipt = effEvents.some(event => event.kind === 'publication' && event.publication);
   const suppliedSummary = isStreaming ? reasoningSummary : message.reasoningSummary;
-  const workDetailsOpen = detailMode === undefined ? undefined : detailMode === 'detailed' || foldWorkDetails === false;
+  const workDetailsOpen = detailMode === 'detailed';
   const publicSummary = typeof suppliedSummary?.text === 'string' && typeof suppliedSummary.truncated === 'boolean'
     && (suppliedSummary.text.trim() || suppliedSummary.truncated) ? suppliedSummary : undefined;
   const liveActivity = isStreaming ? (activity || '') : '';
@@ -257,7 +258,7 @@ export default function MessageBubble({ message, sessionId, isStreaming, inherit
           {publicSummary && <ReasoningSummaryDisclosure summary={publicSummary} defaultOpen={workDetailsOpen} />}
           {showTimeline && effTimeline ? <AgentTimeline observations={effTimeline} pendingQuestions={waitingQuestions} defaultOpen={workDetailsOpen}
             onLocateTool={(runId, callId) => toolLocator.current?.locate(runId, callId) ?? false} /> : null}
-          <AgentEventPanel toolLocatorRef={toolLocator} defaultOpen={workDetailsOpen} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={effEvents.filter(event => event.kind !== 'artifact' && event.kind !== 'changes')} settled={!isStreaming} />
+          <AgentEventPanel toolLocatorRef={toolLocator} defaultOpen={workDetailsOpen} sessionId={sessionId} onOpenSubagent={onOpenSubagent} events={toolEvents} settled={!isStreaming} />
           {assistantContent && <AnswerQuoteSelection blocks={rendered.blocks} highlightCode={!isStreaming} settled={!isStreaming}
             onQuoteAnswer={isStreaming ? undefined : onQuoteAnswer} />}
           {rejectedPaths.length > 0 && <p className="artifact-hint" role="alert">交付版本信息不完整，已停用相关预览和下载。</p>}

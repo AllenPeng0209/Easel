@@ -211,7 +211,8 @@ class BrowserManager:
                  fingerprint_chromium_platform: str = "auto",
                  fingerprint_chromium_runtimes: list[dict] | None = None,
                  fingerprint_default_runtime_id: str = "",
-                 douyin_read_session_callback=None):
+                 douyin_read_session_callback=None,
+                 lazy_driver: bool | None = None):
         self.default_ua = default_ua
         self.profiles_root = profiles_root
         self.max_live = max(1, max_live)
@@ -282,6 +283,13 @@ class BrowserManager:
         # Compatibility alias retained for callers/tests written for one runtime.
         self._fingerprint_backend = self._default_fingerprint_backend()
         self._pw = None
+        self._lazy_driver = (os.environ.get('EASEL_BROWSER_LAZY_DRIVER') == '1'
+                             if lazy_driver is None else bool(lazy_driver))
+        self._started = False
+        self._stopping = False
+        self._driver_lock = asyncio.Lock()
+        self._stop_task: asyncio.Task | None = None
+        self._stop_generation = 0
         self._contexts: Dict[Any, BrowserContext] = {}   # key -> 持久化 context
         self._startup_pages: Dict[Any, tuple] = {}
         self._douyin_api_observers: Dict[Any, tuple] = {}
@@ -500,26 +508,93 @@ class BrowserManager:
             raise
 
     async def start(self):
-        self._pw = await async_playwright().start()
-        self._chrome_major = await self._detect_chrome_major()
-        self._cdp_backend = XhsCdpBackend(
-            self._pw, self.profiles_root)
+        generation = self._stop_generation
+        if self._stop_task is not None:
+            await asyncio.shield(self._stop_task)
+        async with self._cv_lock:
+            if generation != self._stop_generation:
+                raise RuntimeError('浏览器管理器正在停止')
+            self._stop_task = None
+            self._started = True
+            self._stopping = False
+        if not self._lazy_driver:
+            await self.ensure_started()
 
-    async def _detect_chrome_major(self) -> Optional[int]:
+    @staticmethod
+    async def _settle_owned(task):
+        """Keep ownership through repeated cancellation until cleanup settles."""
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        return task.result()
+
+    async def ensure_started(self):
+        """Initialize this IP's driver once, only for an actual browser use."""
+        async with self._driver_lock:
+            if self._stopping:
+                raise RuntimeError('浏览器管理器正在停止')
+            if self._pw is not None:
+                return
+            if not self._started:
+                raise RuntimeError('浏览器管理器尚未启动')
+            launcher = async_playwright()
+            startup = asyncio.create_task(launcher.start())
+            driver = None
+            try:
+                driver = await asyncio.shield(startup)
+                if self._stopping:
+                    raise RuntimeError('浏览器管理器正在停止')
+                major = await self._detect_chrome_major(driver)
+                if self._stopping:
+                    raise RuntimeError('浏览器管理器正在停止')
+                backend = XhsCdpBackend(driver, self.profiles_root)
+            except BaseException:
+                async def cleanup():
+                    owned = driver
+                    if owned is None:
+                        with suppress(Exception, asyncio.CancelledError):
+                            owned = await startup
+                    if owned is not None:
+                        await owned.stop()
+                    else:
+                        # The context manager owns a transport even when its
+                        # start() raises before returning a Playwright object.
+                        await launcher.__aexit__(None, None, None)
+                await self._settle_owned(asyncio.create_task(cleanup()))
+                self._browser_channel = None
+                raise
+            # A native write gate must never observe half-finished UA/channel
+            # detection as a ready browser environment.
+            self._pw = driver
+            self._chrome_major = major
+            self._cdp_backend = backend
+
+    async def _detect_chrome_major(self, driver=None) -> Optional[int]:
         """选择可用浏览器并探测其 Chromium 大版本。
 
         优先系统稳定版 Chrome，缺失时使用 Patchright bundled Chromium。
         账号 UA 池写死了 Chrome 版本,但真实内核可能是另一版本 —— 二者不一致时,
         Sec-CH-UA 请求头 / navigator.userAgentData 由真实内核发出,会和 UA 字符串对不上,
         成为自动化特征。这里读一次真实 UA,后续把账号 UA 的版本号归一到它。"""
+        driver = driver or self._pw
         for channel in ("chrome", None):
             launch_kwargs: Dict[str, Any] = {
                 "headless": True,
             }
             if channel:
                 launch_kwargs["channel"] = channel
+            launch = asyncio.create_task(driver.chromium.launch(**launch_kwargs))
             try:
-                browser = await self._pw.chromium.launch(**launch_kwargs)
+                browser = await asyncio.shield(launch)
+            except asyncio.CancelledError:
+                async def cleanup_probe():
+                    with suppress(Exception, asyncio.CancelledError):
+                        owned = await launch
+                        await owned.close()
+                await self._settle_owned(asyncio.create_task(cleanup_probe()))
+                raise
             except Exception:
                 continue
             self._browser_channel = channel
@@ -531,10 +606,12 @@ class BrowserManager:
             except Exception:
                 return None
             finally:
+                closing = asyncio.create_task(browser.close())
                 try:
-                    await browser.close()
-                except Exception:
-                    pass
+                    await asyncio.shield(closing)
+                except asyncio.CancelledError:
+                    await self._settle_owned(closing)
+                    raise
         self._browser_channel = None
         return None
 
@@ -636,14 +713,33 @@ class BrowserManager:
                 "sec-ch-ua-platform": platform}
 
     async def stop(self):
+        self._stop_generation += 1
+        self._started = False
+        self._stopping = True
+        if self._stop_task is None or self._stop_task.done():
+            self._stop_task = asyncio.create_task(self._stop_driver())
+        try:
+            await asyncio.shield(self._stop_task)
+        except asyncio.CancelledError:
+            await self._settle_owned(self._stop_task)
+            raise
+
+    async def _stop_driver(self):
+        # context_for takes these locks in this same order.
         async with self._cv_lock:
-            for key in list(self._contexts):
-                await self._close_key_unlocked(key)
-        if self._pw:
-            await self._pw.stop()
-        self._pw = None
-        for key in list(self._profile_process_locks):
-            self._release_profile_lock(key)
+            async with self._driver_lock:
+                try:
+                    for key in list(self._contexts):
+                        await self._close_key_unlocked(key)
+                finally:
+                    if self._pw is not None:
+                        await self._pw.stop()
+                    self._pw = None
+                    self._cdp_backend = None
+                    self._browser_channel = None
+                    self._chrome_major = None
+                    for key in list(self._profile_process_locks):
+                        self._release_profile_lock(key)
 
     # ── 画像 ──
     def identity_for(self, acc) -> Identity:
@@ -977,6 +1073,7 @@ class BrowserManager:
     # ── 持久化 context ──
     async def _launch_persistent(self, identity: Identity, headless: bool = True
                                  ) -> BrowserContext:
+        await self.ensure_started()
         effective_backend = self.effective_browser_backend(identity)
         fingerprint_backend = None
         runtime_id = ""
@@ -1001,146 +1098,179 @@ class BrowserManager:
         if fingerprint_backend is not None and was_empty:
             self._seed_fingerprint_profile_preferences(pdir)
         self._acquire_profile_lock(identity, pdir)
-        ua = self._normalize_ua(identity.ua or self.default_ua)
-        fingerprint_plan = None
-        if effective_backend == FINGERPRINT_CHROMIUM_BACKEND:
-            try:
+        owned_lock = self._profile_process_locks.get(identity.key)
+        ctx = None
+        launch_task = None
+        relay = None
+        try:
+            ua = self._normalize_ua(identity.ua or self.default_ua)
+            fingerprint_plan = None
+            if effective_backend == FINGERPRINT_CHROMIUM_BACKEND:
                 fingerprint_plan = fingerprint_backend.launch_plan(
                     identity, requested_headless=headless)
-            except BrowserBackendUnavailableError:
-                self._release_profile_lock(identity.key)
-                raise
-            headless = fingerprint_plan.headless
-        kwargs: Dict[str, Any] = dict(
-            user_data_dir=str(pdir), headless=headless,
-        )
-        # Patchright 默认会添加 --no-sandbox。Windows 的 Chrome 可以正常
-        # 使用沙箱，新旧账号都显式开启，避免安全警告和不必要的启动差异。
-        if os.name == "nt":
-            kwargs["chromium_sandbox"] = True
-        if fingerprint_plan is not None:
-            kwargs["executable_path"] = fingerprint_plan.executable_path
-            # Fingerprint Chromium provides its own native automation surface.
-            # Patchright's Chromium default would otherwise add this switch,
-            # expose an unsupported-command-line warning, and make the first
-            # site navigation differ from a normal user-opened window.
-            kwargs["ignore_default_args"] = [
-                "--disable-blink-features=AutomationControlled",
-            ]
-        elif self._browser_channel:
-            kwargs["channel"] = self._browser_channel
-        # Engine-level fingerprint runtimes own the entire identity surface;
-        # mixing the legacy JS hooks into them would make the profile drift.
-        legacy = (
-            identity.identity_mode != "native"
-            and fingerprint_plan is None
-        )
-        if legacy:
-            kwargs.update(
-                args=list(_LEGACY_ARGS),
-                viewport={"width": identity.viewport_w, "height": identity.viewport_h},
-                locale=identity.locale or "zh-CN",
-                timezone_id=identity.timezone_id or "Asia/Shanghai",
-                user_agent=ua,
-                # 存量账号保持既有画像，避免已建立的 profile 突然漂移。
-                geolocation=identity.geolocation,
-                permissions=["geolocation"],
+                headless = fingerprint_plan.headless
+            kwargs: Dict[str, Any] = dict(
+                user_data_dir=str(pdir), headless=headless,
             )
-        proxy_plan = try_proxy_plan(identity.proxy)
-        proxy = proxy_plan.playwright() if proxy_plan else None
-        relay = None
-        if (proxy_plan is not None and proxy_plan.scheme in {"http", "https"}
-                and proxy_plan.authenticated):
-            relay = HttpProxyAuthRelay(proxy_plan)
-            await relay.start()
-            proxy = {"server": relay.chrome_server}
-        if fingerprint_plan is not None:
-            args = list(fingerprint_plan.args)
-            args.append(
-                f"--window-size={int(identity.viewport_w)},{int(identity.viewport_h)}")
-            if proxy and str(identity.fp_webrtc_mode or "conceal") != "allow":
-                for item in _PROXY_WEBRTC_ARGS:
-                    if item not in args:
-                        args.append(item)
-            geo_permission = str(
-                identity.fp_geolocation_permission or "allow").lower()
-            if geo_permission == "deny":
-                args.append("--deny-permission-prompts")
-            kwargs["args"] = args
-            kwargs["no_viewport"] = True
-            if geo_permission != "deny":
-                kwargs["geolocation"] = identity.geolocation
-            if geo_permission == "allow":
-                kwargs["permissions"] = ["geolocation"]
-        elif not legacy:
-            # native 账号使用 Chrome/操作系统自己的视口、语言、时区与硬件画像。
-            # 仅在显式配置代理时约束 WebRTC，避免 UDP 绕过代理出口。
-            kwargs["no_viewport"] = True
+            # Patchright 默认会添加 --no-sandbox。Windows 的 Chrome 可以正常
+            # 使用沙箱，新旧账号都显式开启，避免安全警告和不必要的启动差异。
+            if os.name == "nt":
+                kwargs["chromium_sandbox"] = True
+            if fingerprint_plan is not None:
+                kwargs["executable_path"] = fingerprint_plan.executable_path
+                # Fingerprint Chromium provides its own native automation surface.
+                # Patchright's Chromium default would otherwise add this switch,
+                # expose an unsupported-command-line warning, and make the first
+                # site navigation differ from a normal user-opened window.
+                kwargs["ignore_default_args"] = [
+                    "--disable-blink-features=AutomationControlled",
+                ]
+            elif self._browser_channel:
+                kwargs["channel"] = self._browser_channel
+            # Engine-level fingerprint runtimes own the entire identity surface;
+            # mixing the legacy JS hooks into them would make the profile drift.
+            legacy = (
+                identity.identity_mode != "native"
+                and fingerprint_plan is None
+            )
+            if legacy:
+                kwargs.update(
+                    args=list(_LEGACY_ARGS),
+                    viewport={"width": identity.viewport_w, "height": identity.viewport_h},
+                    locale=identity.locale or "zh-CN",
+                    timezone_id=identity.timezone_id or "Asia/Shanghai",
+                    user_agent=ua,
+                    # 存量账号保持既有画像，避免已建立的 profile 突然漂移。
+                    geolocation=identity.geolocation,
+                    permissions=["geolocation"],
+                )
+            proxy_plan = try_proxy_plan(identity.proxy)
+            proxy = proxy_plan.playwright() if proxy_plan else None
+            if (proxy_plan is not None and proxy_plan.scheme in {"http", "https"}
+                    and proxy_plan.authenticated):
+                relay = HttpProxyAuthRelay(proxy_plan)
+                await relay.start()
+                proxy = {"server": relay.chrome_server}
+            if fingerprint_plan is not None:
+                args = list(fingerprint_plan.args)
+                args.append(
+                    f"--window-size={int(identity.viewport_w)},{int(identity.viewport_h)}")
+                if proxy and str(identity.fp_webrtc_mode or "conceal") != "allow":
+                    for item in _PROXY_WEBRTC_ARGS:
+                        if item not in args:
+                            args.append(item)
+                geo_permission = str(
+                    identity.fp_geolocation_permission or "allow").lower()
+                if geo_permission == "deny":
+                    args.append("--deny-permission-prompts")
+                kwargs["args"] = args
+                kwargs["no_viewport"] = True
+                if geo_permission != "deny":
+                    kwargs["geolocation"] = identity.geolocation
+                if geo_permission == "allow":
+                    kwargs["permissions"] = ["geolocation"]
+            elif not legacy:
+                # native 账号使用 Chrome/操作系统自己的视口、语言、时区与硬件画像。
+                # 仅在显式配置代理时约束 WebRTC，避免 UDP 绕过代理出口。
+                kwargs["no_viewport"] = True
+                if proxy:
+                    kwargs["args"] = list(_PROXY_WEBRTC_ARGS)
             if proxy:
-                kwargs["args"] = list(_PROXY_WEBRTC_ARGS)
-        if proxy:
-            kwargs["proxy"] = proxy
-        try:
-            ctx = await self._pw.chromium.launch_persistent_context(**kwargs)
-        except Exception as exc:
-            if relay is not None:
-                with suppress(Exception):
-                    await relay.close()
-            # 浏览器可能在预检查之后、真正启动之前抢先取得原生锁。此时 Chrome
-            # 会把启动转发给现有会话，Patchright 抛出 TargetClosedError。将其
-            # 转换为明确的 Profile 冲突，避免向上层暴露误导性的自动化错误。
-            if profile_is_locked(pdir):
-                await asyncio.sleep(0.25)
+                kwargs["proxy"] = proxy
+            try:
+                launch_task = asyncio.create_task(
+                    self._pw.chromium.launch_persistent_context(**kwargs))
+                # Cancelling this caller must not discard a browser that Chromium
+                # has spawned before the protocol returns its Context object.
+                ctx = await asyncio.shield(launch_task)
+            except Exception as exc:
+                # 浏览器可能在预检查之后、真正启动之前抢先取得原生锁。此时 Chrome
+                # 会把启动转发给现有会话，Patchright 抛出 TargetClosedError。将其
+                # 转换为明确的 Profile 冲突，避免向上层暴露误导性的自动化错误。
                 if profile_is_locked(pdir):
-                    self._release_profile_lock(identity.key)
-                    raise BrowserProfileConflictError(
-                        f"Chrome profile is already in use: {pdir}") from exc
-            self._release_profile_lock(identity.key)
+                    await asyncio.sleep(0.25)
+                    if profile_is_locked(pdir):
+                        raise BrowserProfileConflictError(
+                            f"Chrome profile is already in use: {pdir}") from exc
+                raise
+            if relay is not None:
+                previous = self._proxy_relays.pop(identity.key, None)
+                if previous is not None and previous is not relay:
+                    with suppress(Exception):
+                        await previous.close()
+                self._proxy_relays[identity.key] = relay
+            with suppress(Exception):
+                ctx.on("close", lambda *_: self._forget_closed_context(ctx))
+            if not legacy:
+                # Persist the UA exposed by this exact native context. It is
+                # diagnostic state only; native launches still omit any override.
+                await self._capture_context_ua(ctx, identity)
+            # Client Hints 与归一后的 UA 保持一致(否则内核按真实版本发 Sec-CH-UA,和 UA 打架)
+            sec = self._sec_ch_ua_headers(ua) if legacy else None
+            if sec:
+                try:
+                    await ctx.set_extra_http_headers(sec)
+                except Exception:
+                    pass
+            if legacy and identity.fp_seed:
+                try:
+                    await ctx.add_init_script(fingerprint_script(identity.fp_seed, ua))
+                except Exception:
+                    pass
+            # 登录态桥接:
+            # 1) 全新 profile 注入 DB storage_state，兼容旧账号迁移；
+            # 2) 非空 profile 也补回“磁盘中缺失”的 Cookie。Chromium 关闭 context
+            #    时会丢弃 session cookie，视频号刚扫码成功后从有头切到无头 context
+            #    正好会经过这条路径。只补缺失项，不覆盖 profile 中更新过的 Cookie。
+            await self._bridge_identity_cookies(
+                ctx, identity, assume_empty=was_empty)
+            if (identity.platform == "douyin" and identity.account_id is not None
+                    and self._douyin_read_session_callback is not None):
+                from .douyin_api_session import observe_douyin_api_session
+                observer = observe_douyin_api_session(ctx, identity, self._douyin_read_session_callback)
+                self._douyin_api_observers[identity.key] = (ctx, observer)
+
+                def forget_observer(*_):
+                    entry = self._douyin_api_observers.get(identity.key)
+                    if entry and entry[0] is ctx:
+                        self._douyin_api_observers.pop(identity.key, None)
+
+                ctx.on("close", forget_observer)
+            return ctx
+
+        except BaseException:
+            async def cleanup_owned_launch():
+                owned = ctx
+                try:
+                    if owned is None and launch_task is not None:
+                        # The shielded launch can still return after cancellation.
+                        # Retain the profile lock until that exact browser closes.
+                        with suppress(BaseException):
+                            owned = await launch_task
+                    if owned is not None:
+                        with suppress(Exception):
+                            await owned.close()
+                finally:
+                    observer = self._douyin_api_observers.get(identity.key)
+                    if observer is not None and observer[0] is owned:
+                        self._douyin_api_observers.pop(identity.key, None)
+                    if relay is not None:
+                        if self._proxy_relays.get(identity.key) is relay:
+                            self._proxy_relays.pop(identity.key, None)
+                        with suppress(Exception):
+                            await relay.close()
+                    if self._profile_process_locks.get(identity.key) is owned_lock:
+                        self._release_profile_lock(identity.key)
+
+            cleanup = asyncio.create_task(cleanup_owned_launch())
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    # Closing a login twice must not abandon Chrome mid-flush.
+                    continue
+            cleanup.result()
             raise
-        if relay is not None:
-            previous = self._proxy_relays.pop(identity.key, None)
-            if previous is not None and previous is not relay:
-                with suppress(Exception):
-                    await previous.close()
-            self._proxy_relays[identity.key] = relay
-        with suppress(Exception):
-            ctx.on("close", lambda *_: self._forget_closed_context(ctx))
-        if not legacy:
-            # Persist the UA exposed by this exact native context. It is
-            # diagnostic state only; native launches still omit any override.
-            await self._capture_context_ua(ctx, identity)
-        # Client Hints 与归一后的 UA 保持一致(否则内核按真实版本发 Sec-CH-UA,和 UA 打架)
-        sec = self._sec_ch_ua_headers(ua) if legacy else None
-        if sec:
-            try:
-                await ctx.set_extra_http_headers(sec)
-            except Exception:
-                pass
-        if legacy and identity.fp_seed:
-            try:
-                await ctx.add_init_script(fingerprint_script(identity.fp_seed, ua))
-            except Exception:
-                pass
-        # 登录态桥接:
-        # 1) 全新 profile 注入 DB storage_state，兼容旧账号迁移；
-        # 2) 非空 profile 也补回“磁盘中缺失”的 Cookie。Chromium 关闭 context
-        #    时会丢弃 session cookie，视频号刚扫码成功后从有头切到无头 context
-        #    正好会经过这条路径。只补缺失项，不覆盖 profile 中更新过的 Cookie。
-        await self._bridge_identity_cookies(
-            ctx, identity, assume_empty=was_empty)
-        if (identity.platform == "douyin" and identity.account_id is not None
-                and self._douyin_read_session_callback is not None):
-            from .douyin_api_session import observe_douyin_api_session
-            observer = observe_douyin_api_session(ctx, identity, self._douyin_read_session_callback)
-            self._douyin_api_observers[identity.key] = (ctx, observer)
-
-            def forget_observer(*_):
-                entry = self._douyin_api_observers.get(identity.key)
-                if entry and entry[0] is ctx:
-                    self._douyin_api_observers.pop(identity.key, None)
-
-            ctx.on("close", forget_observer)
-        return ctx
 
     @staticmethod
     async def _bridge_identity_cookies(
@@ -1309,8 +1439,7 @@ class BrowserManager:
                 await self._evict_if_needed()
                 if self._uses_xhs_cdp(identity):
                     if self._cdp_backend is None:
-                        if self._pw is None:
-                            raise CdpLaunchError("浏览器管理器尚未启动")
+                        await self.ensure_started()
                         self._cdp_backend = XhsCdpBackend(
                             self._pw, self.profiles_root)
                     try:
@@ -1326,12 +1455,24 @@ class BrowserManager:
                         self._backend_by_key[key] = "patchright"
                     else:
                         ctx = session.context
-                        await self._capture_context_ua(ctx, identity)
-                        if plan is not None and plan.scheme in {"http", "https"} \
-                                and plan.authenticated:
-                            session.auth_controller = CdpProxyAuthController(
-                                ctx, plan)
-                        await self._bridge_identity_cookies(ctx, identity)
+                        try:
+                            await self._capture_context_ua(ctx, identity)
+                            if plan is not None and plan.scheme in {"http", "https"} \
+                                    and plan.authenticated:
+                                session.auth_controller = CdpProxyAuthController(
+                                    ctx, plan)
+                            await self._bridge_identity_cookies(ctx, identity)
+                        except BaseException:
+                            # The CDP backend already owns a native process,
+                            # but this session is not in our cache yet.
+                            cleanup = asyncio.create_task(self._cdp_backend.close(session))
+                            while not cleanup.done():
+                                try:
+                                    await asyncio.shield(cleanup)
+                                except asyncio.CancelledError:
+                                    continue
+                            cleanup.result()
+                            raise
                         self._cdp_sessions[key] = session
                         self._backend_by_key[key] = "cdp"
                 else:
@@ -1395,8 +1536,7 @@ class BrowserManager:
     async def probe_fingerprint_runtime(
             self, runtime_id: str, profile_root: str | Path) -> Dict[str, Any]:
         """Launch one registered runtime with an isolated disposable profile."""
-        if self._pw is None:
-            raise RuntimeError("浏览器管理器尚未启动")
+        await self.ensure_started()
         runtime_id = str(runtime_id or "").strip()
         status = self.backend_status(FINGERPRINT_CHROMIUM_BACKEND, runtime_id)
         if not status["available"]:
@@ -1840,20 +1980,49 @@ class BrowserManager:
             self.effective_fingerprint_runtime_id(identity)
             if effective_backend == FINGERPRINT_CHROMIUM_BACKEND else "")
         proxy_signature = self.proxy_signature(identity.proxy)
-        async with self._cv_lock:
-            self._contexts[identity.key] = ctx
-            self._startup_pages[identity.key] = tuple(
-                page for page in (getattr(ctx, "pages", ()) or ())
-                if getattr(page, "url", "") == "about:blank")
-            self._last_used[identity.key] = time.time()
-            self._backend_by_key[identity.key] = (
-                FINGERPRINT_CHROMIUM_BACKEND
-                if effective_backend == FINGERPRINT_CHROMIUM_BACKEND
-                else "patchright")
-            if runtime_id:
-                self._runtime_by_key[identity.key] = runtime_id
-            self._proxy_signature_by_key[identity.key] = self._context_signature(
-                identity, effective_backend, runtime_id, proxy_signature)
+        try:
+            async with self._cv_lock:
+                self._contexts[identity.key] = ctx
+                self._startup_pages[identity.key] = tuple(
+                    page for page in (getattr(ctx, "pages", ()) or ())
+                    if getattr(page, "url", "") == "about:blank")
+                self._last_used[identity.key] = time.time()
+                self._backend_by_key[identity.key] = (
+                    FINGERPRINT_CHROMIUM_BACKEND
+                    if effective_backend == FINGERPRINT_CHROMIUM_BACKEND
+                    else "patchright")
+                if runtime_id:
+                    self._runtime_by_key[identity.key] = runtime_id
+                self._proxy_signature_by_key[identity.key] = self._context_signature(
+                    identity, effective_backend, runtime_id, proxy_signature)
+        except BaseException:
+            # Another account may hold the cache lock after this browser has
+            # launched. Cancellation while acquiring it still owns this ctx.
+            relay = self._proxy_relays.get(identity.key)
+            profile_lock = self._profile_process_locks.get(identity.key)
+
+            async def discard_unregistered():
+                try:
+                    with suppress(Exception):
+                        await ctx.close()
+                finally:
+                    self._forget_closed_context(ctx)
+                    if relay is not None:
+                        if self._proxy_relays.get(identity.key) is relay:
+                            self._proxy_relays.pop(identity.key, None)
+                        with suppress(Exception):
+                            await relay.close()
+                    if self._profile_process_locks.get(identity.key) is profile_lock:
+                        self._release_profile_lock(identity.key)
+
+            cleanup = asyncio.create_task(discard_unregistered())
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    continue
+            cleanup.result()
+            raise
         with suppress(Exception):
             ctx.on("close", lambda *_: self._forget_closed_context(ctx))
         await asyncio.to_thread(bring_window_to_front, snapshot,

@@ -1,9 +1,10 @@
 import { Hono } from 'hono'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { db, getInsertId, schema } from '../db/index.js'
 import { success, created, now, badRequest } from '../utils/response.js'
 import { toSnakeCase } from '../utils/transform.js'
 import { logTaskPayload, logTaskStart, logTaskSuccess } from '../utils/task-logger.js'
+import { primaryReferenceKey } from '../services/primary-reference.js'
 
 const app = new Hono()
 
@@ -76,6 +77,34 @@ async function validateStoryboardBindings(episodeId: number, sceneId: number | n
   }
 }
 
+async function primaryReferenceError(storyboard: typeof schema.storyboards.$inferSelect, value: unknown): Promise<string | null> {
+  const key = value === null ? null : primaryReferenceKey(value)
+  if (value !== null && key === null) return '主参考图片须为有效图片地址或当前 static 路径；清空请传 null'
+  const [episode] = await db.select({ dramaId: schema.episodes.dramaId }).from(schema.episodes)
+    .innerJoin(schema.dramas, eq(schema.dramas.id, schema.episodes.dramaId))
+    .where(and(eq(schema.episodes.id, storyboard.episodeId), isNull(schema.episodes.deletedAt), isNull(schema.dramas.deletedAt)))
+  if (storyboard.deletedAt || !episode) return '当前分镜或剧集不可用，不能保存主参考图片'
+  if (value === null) return null
+
+  // Existing frame images belong to this exact shot. Other references must be
+  // explicitly associated with this episode and still belong to its project.
+  const own = [storyboard.composedImage, storyboard.firstFrameImage]
+  if (own.some(reference => primaryReferenceKey(reference) === key)) return null
+  const [characters, scenes, props] = await Promise.all([
+    db.select({ imageUrl: schema.characters.imageUrl }).from(schema.episodeCharacters)
+      .innerJoin(schema.characters, eq(schema.characters.id, schema.episodeCharacters.characterId))
+      .where(and(eq(schema.episodeCharacters.episodeId, storyboard.episodeId), eq(schema.characters.dramaId, episode.dramaId), isNull(schema.characters.deletedAt))),
+    db.select({ imageUrl: schema.scenes.imageUrl }).from(schema.episodeScenes)
+      .innerJoin(schema.scenes, eq(schema.scenes.id, schema.episodeScenes.sceneId))
+      .where(and(eq(schema.episodeScenes.episodeId, storyboard.episodeId), eq(schema.scenes.dramaId, episode.dramaId), isNull(schema.scenes.deletedAt))),
+    db.select({ imageUrl: schema.props.imageUrl }).from(schema.episodeProps)
+      .innerJoin(schema.props, eq(schema.props.id, schema.episodeProps.propId))
+      .where(and(eq(schema.episodeProps.episodeId, storyboard.episodeId), eq(schema.props.dramaId, episode.dramaId), isNull(schema.props.deletedAt))),
+  ])
+  return [...characters, ...scenes, ...props].some(reference => primaryReferenceKey(reference.imageUrl) === key)
+    ? null : '主参考图片必须来自当前集已关联素材或本镜已有图片'
+}
+
 // POST /storyboards
 app.post('/', async (c) => {
   const body = await c.req.json()
@@ -120,12 +149,17 @@ app.put('/:id', async (c) => {
   const body = await c.req.json()
   const [storyboard] = await db.select().from(schema.storyboards).where(eq(schema.storyboards.id, id))
   if (!storyboard) return badRequest(c, '镜头不存在')
+  if ('first_frame_image' in body) {
+    const error = await primaryReferenceError(storyboard, body.first_frame_image)
+    if (error) return badRequest(c, error)
+  }
   logTaskStart('StoryboardAPI', 'update', {
     storyboardId: id,
     episodeId: storyboard.episodeId,
     fields: Object.keys(body),
   })
-  logTaskPayload('StoryboardAPI', 'update body', body)
+  logTaskPayload('StoryboardAPI', 'update body', 'first_frame_image' in body
+    ? { ...body, first_frame_image: body.first_frame_image === null ? null : '[selected primary image]' } : body)
 
   const fieldMap: Record<string, string> = {
     title: 'title', description: 'description', shot_type: 'shotType',
@@ -134,7 +168,7 @@ app.put('/:id', async (c) => {
     image_prompt: 'imagePrompt', scene_id: 'sceneId', location: 'location',
     time: 'time', atmosphere: 'atmosphere', result: 'result',
     bgm_prompt: 'bgmPrompt', sound_effect: 'soundEffect',
-    video_url: 'videoUrl',
+    video_url: 'videoUrl', first_frame_image: 'firstFrameImage',
   }
 
   const updates: Record<string, any> = { updatedAt: now() }

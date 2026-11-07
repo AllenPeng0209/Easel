@@ -7,8 +7,10 @@ from contextlib import suppress
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
+import time
 from urllib.parse import urlsplit
 import uuid
 
@@ -101,6 +103,7 @@ class AccountConnections:
         self.runtime = runtime
         self._records = {}
         self._runners = {}
+        self._remote_finalizers = set()
         self._lock = asyncio.Lock()
         self._closed = False
 
@@ -120,9 +123,12 @@ class AccountConnections:
             db.expunge(account)
             return account
 
-    async def start(self, platform, account_id=None, *, new_account=False):
+    async def start(self, platform, account_id=None, *, new_account=False, actor_id=None, authorize=None):
         platform = self._platform(platform)
+        actor_id = str(actor_id or "")
         async with self._lock:
+            if authorize is not None:
+                authorize()
             if self._closed or self.runtime.module.browser is None:
                 raise HTTPException(503, "账号连接服务尚未就绪")
             if account_id is not None:
@@ -130,6 +136,8 @@ class AccountConnections:
             for identifier, runner in self._runners.items():
                 if not runner.done():
                     record = self._records[identifier]
+                    if record.get("_actor_id", "") != actor_id:
+                        raise HTTPException(409, "另一位负责人正在连接账号，请等待其完成或取消")
                     if (
                         record["platform"] == platform
                         and record.get("_new_account") == bool(new_account)
@@ -137,7 +145,7 @@ class AccountConnections:
                             account_id is None or record.get("account_id") == account_id
                         )
                     ):
-                        return self.poll(identifier)
+                        return self.poll(identifier, actor_id=actor_id)
                     raise HTTPException(409, "请先完成当前账号的登录验证")
             if self.runtime.module._active_login_task() is not None:
                 raise HTTPException(409, "请先完成当前账号的登录验证")
@@ -158,11 +166,8 @@ class AccountConnections:
                         ).all()
                         if len(accounts) == 1:
                             account_id = accounts[0].id
-            generation = account_sessions.begin_generation(
-                self.runtime.workspace, platform
-            )
             identifier = uuid.uuid4().hex
-            self._records[identifier] = {
+            record = {
                 "task_id": identifier,
                 "platform": platform,
                 "account_id": account_id,
@@ -170,17 +175,119 @@ class AccountConnections:
                 "stage": "read",
                 "hint": "正在连接账号并检查可用功能。",
                 "capabilities": _capabilities(),
+                "loginSaved": False,
                 "can_send": False,
-                "_generation": generation,
                 "_leaves": [],
                 "_new_account": bool(new_account),
+                "_actor_id": actor_id,
+                "_authorize": authorize,
             }
-            self._runners[identifier] = asyncio.create_task(self._run(identifier))
-            return self.poll(identifier)
+            if actor_id:
+                from easel.login_remote import enabled, registry
 
-    def poll(self, task_id):
+                if enabled():
+                    def active():
+                        return (self._records.get(identifier) is record
+                                and record["status"] not in {"confirmed", "error", "expired"}
+                                and self._active(record))
+
+                    def cancel():
+                        self._stop_login(record)
+
+                    async def closed():
+                        runner = self._runners.get(identifier)
+                        if runner is not None and runner is not asyncio.current_task():
+                            await asyncio.gather(runner, return_exceptions=True)
+
+                    record["_remote"] = registry.create(
+                        self.runtime.project, actor_id, platform, identifier,
+                        is_active=active, cancel=cancel, on_close=closed,
+                    )
+                    record["_remote_deadline"] = time.monotonic() + 600
+            # Reserve browser capacity before invalidating a verified session.
+            # No await separates this reservation from the generation and task.
+            try:
+                record["_generation"] = account_sessions.begin_generation(
+                    self.runtime.workspace, platform
+                )
+                self._records[identifier] = record
+                runner = asyncio.create_task(self._run(identifier))
+                self._runners[identifier] = runner
+            except BaseException:
+                self._records.pop(identifier, None)
+                if record.get("_remote"):
+                    with suppress(Exception):
+                        await record["_remote"].stop(cancel=False)
+                raise
+            if record.get("_remote"):
+                def finish_remote(_runner):
+                    task = asyncio.create_task(record["_remote"].stop(cancel=False))
+                    self._remote_finalizers.add(task)
+
+                    def finished(finalizer):
+                        self._remote_finalizers.discard(finalizer)
+                        if not finalizer.cancelled():
+                            finalizer.exception()
+
+                    task.add_done_callback(finished)
+
+                # A session finalizer may wait for this runner. Start it only
+                # after the runner's browser/profile cleanup has completed.
+                runner.add_done_callback(finish_remote)
+            return self.poll(identifier, actor_id=actor_id)
+
+    def _stop_login(self, record):
+        # Closing the interactive window ends optional verification. A main-site
+        # identity already proved and saved is not a logout operation.
+        active = self._active(record)
+        if active and record.get("_mismatch"):
+            checkpoint = bool(record.get("loginSaved"))
+            removed = (not checkpoint or account_sessions.revoke_session(
+                self.runtime.workspace, record["platform"], expected_generation=record["_generation"]))
+            record.update(loginSaved=False, status="error", stage="identity_mismatch",
+                          capabilities=_capabilities(),
+                          _invalidate_mismatch_generation=(record["_generation"] + int(checkpoint)) if removed else None,
+                          hint="主站与内容后台账号不一致，请使用同一账号完成验证。")
+        saved = bool(record.get("loginSaved") and not record.get("_mismatch") and active)
+        record["_revoked"] = True
+        if record["status"] not in {"confirmed", "error", "expired"}:
+            if saved:
+                record.update(status="confirmed", stage="complete",
+                              hint="主站登录已保存；未完成的功能可稍后继续验证。")
+            else:
+                record.update(status="error", stage="canceled", hint="本次账号连接已取消。")
+        runner = self._runners.get(record["task_id"])
+        if runner is not None and not runner.done() and not runner.cancelling():
+            runner.cancel()
+
+    def _save_read_checkpoint(self, record, expected, snapshot, *, creator=False):
+        if not self._active(record):
+            raise _Unverified("该连接已取消")
+        name = ("user_id" if record["platform"] == "xhs"
+                else "uid" if "uid" in expected else "sec_uid")
+        identity = {"accountId": expected[name], "accountIdKind": name,
+                    "accountIdentityStatus": "verified", **expected}
+        capabilities = _capabilities(True, creator)
+        module = self.runtime.module
+        with module.get_session() as db:
+            account = db.get(module.DouyinAccount, record["account_id"])
+            if account is None or account.platform != record["platform"] or not self._active(record):
+                raise _Unverified("该连接已取消")
+            account.status = "active"
+            account.storage_state = json.dumps(snapshot)
+            if creator:
+                account.creator_storage_state = json.dumps(snapshot)
+            db.add(account)
+            db.commit()
+        account_sessions.save_session(self.runtime.workspace, record["platform"], record["account_id"],
+            snapshot, identity=identity, capabilities=capabilities,
+            expected_generation=record["_generation"])
+        record.update(loginSaved=True, capabilities=capabilities,
+                      completion="full" if creator else "partial")
+
+    def poll(self, task_id, *, actor_id=None):
         record = self._records.get(task_id)
-        if record is None:
+        if record is None or record.get("_actor_id", "") != str(actor_id or ""):
             raise HTTPException(404, "连接任务不存在或不属于当前 IP")
         result = {
             key: value for key, value in record.items() if not key.startswith("_")
@@ -198,13 +305,25 @@ class AccountConnections:
                 result["status"] = state["status"]
                 if state["status"] == "verification":
                     result["hint"] = "请在当前平台窗口完成账号安全验证。"
+        if record.get("_remote") and record["status"] not in {"confirmed", "error", "expired"}:
+            result["remote"] = record["_remote"].public()
         return deepcopy(result)
 
     def _active(self, record):
+        if self._closed or record.get("_revoked"):
+            return False
+        if record.get("_authorize") is not None:
+            try:
+                record["_authorize"]()
+            except Exception:
+                record.update(_revoked=True, status="error", stage="authorization",
+                              hint="登录会话或账号管理权限已变化，请重新登录后连接账号。")
+                runner = self._runners.get(record["task_id"])
+                if runner is not None and not runner.done() and runner is not asyncio.current_task():
+                    runner.cancel()
+                return False
         return (
-            not self._closed
-            and not record.get("_revoked")
-            and account_sessions.session_generation(
+            account_sessions.session_generation(
                 self.runtime.workspace, record["platform"]
             )
             == record["_generation"]
@@ -316,15 +435,30 @@ class AccountConnections:
             proof.update(profile=profile, subject=subject, state=snapshot)
             return profile
 
+        remote_options = {}
+        proxy_choice = ""
+        if record.get("_remote"):
+            remaining = record["_remote_deadline"] - time.monotonic()
+            if remaining <= 0:
+                raise _Unverified("本次账号连接已超时，请重新登录")
+            remote_options = {
+                "context_callback": record["_remote"].bind_context,
+                "timeout_seconds": max(1, min(600, int(remaining))),
+            }
+            if record["platform"] == "xhs":
+                # Server-owned opt-in only. The vendor preserves this network
+                # on the new account identity for the creator-stage hand-off.
+                proxy_choice = os.environ.get("EASEL_XHS_LOGIN_PROXY", "").strip()
         await module._run_login(
             leaf,
             platform=record["platform"],
             account_id=record.get("account_id"),
             creator=creator,
-            proxy_choice="",
+            proxy_choice=proxy_choice,
             browser_backend="local",
             force_reauth=False,
             before_persist=before_persist,
+            **remote_options,
         )
         if not self._active(record):
             raise _Unverified("该连接已取消")
@@ -416,12 +550,15 @@ class AccountConnections:
                     record, creator=False, expected=expected, snapshots=snapshots
                 )
                 read_ok = True
+            if read_ok and not record.get("_mismatch"):
+                self._save_read_checkpoint(record, expected, snapshots[-1], creator=creator_ok)
             if read_ok and not creator_ok and not record.get("_mismatch"):
                 try:
                     await self._phase(
                         record, creator=True, expected=expected, snapshots=snapshots
                     )
                     creator_ok = True
+                    self._save_read_checkpoint(record, expected, snapshots[-1], creator=True)
                 except _Unverified:
                     pass
             if not self._active(record):
@@ -461,7 +598,8 @@ class AccountConnections:
                     raise
                 except Exception:
                     read_ok = False
-                    await self._invalidate(record["account_id"], clear=False)
+                    if self._active(record):
+                        await self._invalidate(record["account_id"], clear=False)
             if not self._active(record):
                 return
             capabilities = _capabilities(read_ok, creator_ok, dm_ok)
@@ -507,6 +645,7 @@ class AccountConnections:
             )
             record.update(
                 status="confirmed",
+                loginSaved=read_ok,
                 stage="complete",
                 completion="full" if read_ok and creator_ok else "partial",
                 capabilities=capabilities,
@@ -515,21 +654,29 @@ class AccountConnections:
                 else "账号已连接，部分功能仍需在同一账号下补充验证。",
             )
         except asyncio.CancelledError:
+            invalidation_generation = record.get("_invalidate_mismatch_generation")
+            if (invalidation_generation is not None and record.get("account_id")
+                    and account_sessions.session_generation(self.runtime.workspace, record["platform"])
+                    == invalidation_generation):
+                await self._invalidate(record["account_id"], clear=False)
             if record["status"] not in {"confirmed", "error", "expired"}:
                 record.update(
                     status="error", stage="canceled", hint="本次账号连接已取消。"
                 )
             raise
         except _Mismatch:
-            if record.get("account_id"):
-                await self._invalidate(record["account_id"], clear=False)
-            if self._active(record):
-                record.update(
-                    status="error",
-                    stage="identity_mismatch",
-                    capabilities=_capabilities(),
-                    hint="主站与内容后台账号不一致，请使用同一账号完成验证。",
-                )
+            active = self._active(record)
+            if active:
+                checkpoint = bool(record.get("loginSaved"))
+                removed = (not checkpoint or account_sessions.revoke_session(
+                    self.runtime.workspace, record["platform"], expected_generation=record["_generation"]))
+                record.update(loginSaved=False, status="error", stage="identity_mismatch",
+                              capabilities=_capabilities(),
+                              hint="主站与内容后台账号不一致，请使用同一账号完成验证。")
+                if (removed and record.get("account_id")
+                        and account_sessions.session_generation(self.runtime.workspace, record["platform"])
+                        == record["_generation"] + int(checkpoint)):
+                    await self._invalidate(record["account_id"], clear=False)
         except Exception:
             if self._active(record):
                 record.update(
@@ -669,7 +816,7 @@ class AccountConnections:
                     continue
                 record.update(
                     _revoked=True, status="error", stage="canceled",
-                    hint="该账号已退出。", capabilities=_capabilities(),
+                    hint="该账号已退出。", capabilities=_capabilities(), loginSaved=False,
                 )
                 runner = self._runners.get(identifier)
                 if runner is not None and not runner.done():
@@ -702,6 +849,7 @@ class AccountConnections:
                         stage="canceled",
                         hint="账号连接已退出。",
                         capabilities=_capabilities(),
+                        loginSaved=False,
                     )
                     runner = self._runners[identifier]
                     if not runner.done():
@@ -733,3 +881,4 @@ class AccountConnections:
             if not runner.done():
                 runner.cancel()
         await asyncio.gather(*self._runners.values(), return_exceptions=True)
+        await asyncio.gather(*tuple(self._remote_finalizers), return_exceptions=True)

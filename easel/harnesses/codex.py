@@ -14,7 +14,7 @@ from .commands import base_command, codex_override
 from .diagnostics import ChatFailure, codex_failure
 from .events import EventProjector, native_subagent_descriptors, valid_native_subagent_id
 from .permissions import can_auto_approve
-from .rpc import RpcRejected, connection
+from .rpc import RpcRejected, connection, record_native_failure
 from .workspace import harness_instructions
 
 
@@ -200,7 +200,9 @@ EASEL_VIDEO_GENERATION_TOOL = {
         'approve_plan(workshopId,planId). Only the Host manual human question can approve this frozen paid scope; '
         'silence/default answers cannot approve. Use prepare(workshopId,clipId,planId) to load each exact approved '
         'specification. Never send replacement prompts or references with planId. Each approved clip can be '
-        'submitted once; uncertain submissions are only queried, never purchased again. Planned collect returns '
+        'submitted once; uncertain submissions are never purchased again. Query only receipts with taskId. '
+        'If tracking.canPoll is false or taskId is missing after submission, report that provider admission '
+        'needs operator investigation; do not claim the video is queued, generating or being polled. Planned collect returns '
         'a production_segment, NOT the complete film or a final workshop delivery. Assemble real segments and '
         'deliver the complete film through easel_workshop_delivery; preserve the actual soundtrack/subtitles. '
         'The legacy no-plan prepare(modelId,aspectRatio,seconds,prompt) keeps at most one new video per session. '
@@ -292,6 +294,35 @@ def _business_objects_payload(arguments) -> dict:
                         or re.search(r'[\x00-\x1f\x7f-\x9f]', value)):
                     raise ValueError('invalid business query text')
     return dict(arguments)
+
+
+def _video_host_business_failure(error: Exception) -> dict | None:
+    """Report only fixed public validation reasons; never serialize an exception."""
+    from easel.video_production_plans import VideoProductionPlanError
+    from easel.video_workshop import WorkshopError
+
+    if type(error) is VideoProductionPlanError:
+        status = getattr(error, 'status_code', None)
+        reasons = {
+            (409, '同一工坊已有已批准制作范围，请明确替换原计划'): 'production_scope_conflict',
+            (400, '制作计划字段无效'): 'production_plan_invalid',
+        }
+    elif type(error) is WorkshopError:
+        status = getattr(error, 'status', None)
+        reasons = {
+            (409, '原计划已提交片段尚未核实真实收取，只能查询原任务'): 'original_collection_unverified',
+            (422, '制作参数不符合当前模型能力或工坊画幅'): 'production_spec_invalid',
+        }
+    else:
+        return None
+    if type(status) is not int or len(error.args) != 1 or type(error.args[0]) is not str:
+        return None
+    for (known_status, message), code in reasons.items():
+        if status == known_status and error.args[0] == message:
+            return {'success': False, 'contentItems': [{'type': 'inputText', 'text':
+                json.dumps({'error': {'code': code, 'httpStatus': known_status,
+                                     'message': message}}, ensure_ascii=False)}]}
+    return None
 
 
 def _business_objects_failure() -> dict:
@@ -455,6 +486,59 @@ def _dynamic_questions(arguments) -> list[dict]:
     return normalized
 
 
+def _permission_text(value) -> bool:
+    return (isinstance(value, str) and bool(value.strip())
+            and not re.search(r'[\x00-\x1f\x7f-\x9f]', value))
+
+
+def _permission_path(value) -> bool:
+    """Recognize 0.166 filesystem path tags without guessing future semantics."""
+    if not isinstance(value, dict):
+        return False
+    kind = value.get('type')
+    if kind in ('path', 'glob_pattern'):
+        field = 'path' if kind == 'path' else 'pattern'
+        return set(value) == {'type', field} and _permission_text(value[field])
+    if kind != 'special' or set(value) != {'type', 'value'} or not isinstance(value['value'], dict):
+        return False
+    special = value['value']
+    if special.get('kind') in ('root', 'minimal', 'tmpdir', 'slash_tmp'):
+        return set(special) == {'kind'}
+    if special.get('kind') == 'project_roots':
+        return (not (set(special) - {'kind', 'subpath'})
+                and (special.get('subpath') is None or _permission_text(special['subpath'])))
+    return False
+
+
+def _requested_permission_profile(value) -> dict:
+    """Validate the requested subset; never add filesystem or network grants."""
+    if not isinstance(value, dict) or set(value) - {'network', 'fileSystem'}:
+        raise ValueError('Invalid permission profile')
+    network = value.get('network')
+    if network is not None and (not isinstance(network, dict)
+            or set(network) - {'enabled'}
+            or (network.get('enabled') is not None and type(network['enabled']) is not bool)):
+        raise ValueError('Invalid network permissions')
+    filesystem = value.get('fileSystem')
+    if filesystem is not None:
+        if not isinstance(filesystem, dict) or set(filesystem) - {'entries', 'read', 'write', 'globScanMaxDepth'}:
+            raise ValueError('Invalid filesystem permissions')
+        for name in ('read', 'write'):
+            paths = filesystem.get(name)
+            if paths is not None and (not isinstance(paths, list) or not all(_permission_text(path) for path in paths)):
+                raise ValueError('Invalid filesystem paths')
+        depth = filesystem.get('globScanMaxDepth')
+        if depth is not None and (type(depth) is not int or depth < 1):
+            raise ValueError('Invalid filesystem glob depth')
+        entries = filesystem.get('entries')
+        if entries is not None and (not isinstance(entries, list) or any(
+                not isinstance(entry, dict) or set(entry) != {'access', 'path'}
+                or entry['access'] not in ('read', 'write', 'deny') or not _permission_path(entry['path'])
+                for entry in entries)):
+            raise ValueError('Invalid filesystem entries')
+    return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
+
+
 class CodexAdapter:
     descriptor = Descriptor("codex", "Codex", "app-server", "npm install -g @openai/codex；codex login")
 
@@ -464,10 +548,15 @@ class CodexAdapter:
         except RpcRejected as error:
             # Rejected initialize/thread/turn requests never establish an active turn.
             # Steer rejections are handled separately by the active callback.
+            record_native_failure(error, 'codex_request', error.method)
             raise ChatFailure(error.failure_code, "startup") from None
         finally:
             if request.bind_steer is not None:
-                request.bind_steer(None)
+                try:
+                    request.bind_steer(None)
+                except Exception as error:
+                    record_native_failure(error, 'codex_steer_release')
+                    raise
 
     async def _run(self, request: RunRequest, emit, ask, bind):
         if request.sandbox not in ("read-only", "workspace-write"):
@@ -521,7 +610,9 @@ class CodexAdapter:
                 if params.get("willRetry", False) or not _thread_scoped():
                     return
                 if not completion.done():
-                    completion.set_exception(codex_failure(params.get("error"), "execution" if turn_id else "startup"))
+                    failure = codex_failure(params.get("error"), "execution" if turn_id else "startup")
+                    record_native_failure(failure, 'codex_terminal', method)
+                    completion.set_exception(failure)
                 return
 
             envelope_thread = params.get("threadId")
@@ -594,9 +685,52 @@ class CodexAdapter:
                 if turn.get("status") == "completed":
                     completion.set_result(None)
                 else:
-                    completion.set_exception(codex_failure(turn.get("error")))
+                    failure = codex_failure(turn.get("error"))
+                    record_native_failure(failure, 'codex_terminal', method)
+                    completion.set_exception(failure)
 
         async def respond(method, params):
+            if method == 'item/permissions/requestApproval':
+                denied = {'permissions': {}, 'scope': 'turn'}
+
+                def current_request():
+                    item_id = params.get('itemId')
+                    return (bool(thread_id) and bool(turn_id) and not completion.done()
+                            and params.get('threadId') == thread_id and params.get('turnId') == turn_id
+                            and _permission_text(item_id) and len(item_id) <= 256)
+
+                if not current_request():
+                    return denied
+                required = {'threadId', 'turnId', 'itemId', 'cwd', 'permissions', 'startedAtMs'}
+                if (not required.issubset(params) or set(params) - required - {'environmentId', 'reason'}
+                        or not _permission_text(params['cwd'])
+                        or type(params['startedAtMs']) is not int
+                        or not -(2 ** 63) <= params['startedAtMs'] < 2 ** 63
+                        or (params.get('environmentId') is not None and not _permission_text(params['environmentId']))
+                        or (params.get('reason') is not None and not isinstance(params['reason'], str))):
+                    return denied
+                try:
+                    permissions = _requested_permission_profile(params['permissions'])
+                except (ValueError, TypeError):
+                    return denied
+                if not permissions:
+                    return denied
+                if request.auto_allow_tools:
+                    emit('activity', 'Codex：已自动允许本轮请求的工具权限')
+                else:
+                    reason = params.get('reason') or '本轮工具执行需要以下网络或文件权限。'
+                    answers = await ask([{
+                        'questionId': 'permission', 'header': '执行授权', 'kind': 'approval',
+                        'requiresHuman': True,
+                        'question': 'Codex 请求额外权限（仅本轮）：' + reason + '\n' +
+                                    json.dumps(permissions, ensure_ascii=False),
+                        'options': [{'label': '允许本次'}, {'label': '拒绝'}],
+                    }])
+                    if answers.get('permission') != ['允许本次'] or not current_request():
+                        return denied
+                # A per-turn response also lets a later settings change revoke
+                # automatic grants, without leaving sticky session permissions.
+                return {'permissions': permissions, 'scope': 'turn'}
             if params.get("threadId") != thread_id or (
                     turn_id and params.get("turnId", turn_id) != turn_id):
                 raise HarnessError("不属于当前会话的请求")
@@ -629,8 +763,8 @@ class CodexAdapter:
                     except asyncio.CancelledError:
                         outcome.cancel()
                         raise
-                    except Exception:
-                        result = failed
+                    except Exception as error:
+                        result = _video_host_business_failure(error) or failed
                     outcome.set_result(result)
                     return result
                 if params.get('tool') == 'easel_workshop_delivery':
@@ -861,7 +995,9 @@ class CodexAdapter:
                     'the complete prompt/model/reference scope and asks a real human about fixed generation '
                     'count and unknown cost. No default answer or model-provided approved boolean can authorize it. '
                     'After approval, prepare each fixed clip with only workshopId, clipId and planId; propose, '
-                    'submit once, observe the original task, and collect. Each clip has one submission, no '
+                    'submit once, observe the original task only when its receipt includes taskId, and collect. '
+                    'Without taskId, tracking.canPoll is false: report the missing task receipt and operator '
+                    'investigation instead of claiming generation or polling has started. Each clip has one submission, no '
                     'automatic retakes. The selected resolution is the local delivery target; use catalog '
                     'nativeResolution for understanding the source, never claim the provider generated the '
                     'delivery dimensions. A collected production_segment is source media, not the complete film. '
@@ -893,7 +1029,8 @@ class CodexAdapter:
                     'Legacy prepare with explicit model/aspectRatio/seconds/prompt remains for a single '
                     'authorized clip only and cannot bypass any pending, declined or approved plan. '
                     'Never use shell, scripts, external network or browser requests to replace this Host channel. '
-                    'A failed or unknown submission is not permission to buy another video. Query the original task. '
+                    'A failed or unknown submission is not permission to buy another video. Query the original '
+                    'task only when taskId is known; otherwise stop polling and report operator investigation. '
                     'A from-scratch dynamic clip must use actual video generation, never static-image slides; '
                     'video-production skills requiring an existing source film do not apply to a new idea. '
                     'The final delivered workspacePath/path is a real file; call present with that path to obtain immutable '

@@ -20,4 +20,9 @@
 .empty-ip-form{display:flex;gap:10px;max-width:90vw}.empty-ip-form input{width:230px;min-width:0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;color:var(--text);background:var(--bg-elev);font:inherit;font-size:13px}
 
 .space-breadcrumb-action { flex: none; white-space: nowrap; }
+.project-home-link { display: flex; align-items: center; gap: 7px; border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: 11px; padding: 0 0 17px; cursor: pointer; }
+.project-home-link:hover { color: var(--text); }
+.project-settings-link { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; background: none; color: var(--text-secondary); font-size: 10px; padding: 10px 3px 0; cursor: pointer; }
+.project-settings-link:hover { color: var(--accent-end); }
+.space-owner { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .space-breadcrumb-action { margin-inline-start: auto; } }

@@ -16,6 +16,7 @@ export interface QueuedMessage {
   references?: ChatReference[];
   sessionReferences?: ChatSessionReference[];
   command?: ChatCommand;
+  workshopRef?: WorkshopReference;
   created: number;
   modelOverride?: string;
   delivery?: 'sending' | 'rejected' | 'unconfirmed';
@@ -23,6 +24,7 @@ export interface QueuedMessage {
 
 export interface ChatFailure {
   code: 'authentication' | 'model_unavailable' | 'rate_limit' | 'quota_exhausted' | 'network'
+    | 'server_queue_full' | 'server_owner_queue_full' | 'server_queue_timeout' | 'server_unavailable'
     | 'timeout' | 'permission_denied' | 'session_conflict' | 'storage' | 'unknown';
   retryable: boolean;
   phase: 'startup' | 'execution' | 'finalization';
@@ -101,7 +103,13 @@ export interface ChatSession {
 }
 
 /** 进行中的流式状态（存于 App，不随页面切换/ChatPage 卸载而丢失）。 */
-export interface StreamState {
+export interface ChatExecutionState {
+  executionState: 'queued' | 'running';
+  /** Position when admitted to the server queue, not a continuously updated ETA. */
+  queuePosition?: number;
+}
+
+export interface StreamState extends Partial<ChatExecutionState> {
   requestedModel?: string;
   steerTurnId?: string;
   content: string;
@@ -113,7 +121,7 @@ export interface StreamState {
   questions: ChatQuestion[];   // ask_user 问答题卡片（进行中）
   events?: AgentEvent[];
   timeline?: AgentTimelineObservation[];
-  lifecycle?: 'recovering' | 'running' | 'waiting_input' | 'stopping' | 'stop_failed';
+  lifecycle?: 'recovering' | 'queued' | 'running' | 'waiting_input' | 'stopping' | 'stop_failed';
 }
 
 /** 发布中心草稿：持久化到 localStorage，切页/刷新都不丢。 */
@@ -124,6 +132,7 @@ export interface PublishDraft {
   overrides: Record<string, string>;
   tags: string;   // 话题标签，逗号分隔（小红书绑话题；其它平台按需写入）
   aiGenerated?: boolean;
+  mediaPaths?: string[];
   mediaReferences?: PublicationMediaReference[];
   approvalReference?: PublicationApprovalReference;
 }
@@ -144,8 +153,17 @@ function readMigratedLocalValue(key: string, suffix: string): string | null {
 }
 
 const PUBLISH_DEFAULT: PublishDraft = {
-  title: '', body: '', platforms: ['xiaohongshu', 'douyin'], overrides: {}, tags: '', aiGenerated: false, mediaReferences: [],
+  title: '', body: '', platforms: ['xiaohongshu', 'douyin'], overrides: {}, tags: '', aiGenerated: false, mediaReferences: [], mediaPaths: [],
 };
+
+function publicationMediaPaths(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((item): item is string => typeof item === 'string'
+    && !!item.trim() && item.length <= 4096 && !item.startsWith('/')
+    && !/^[a-z][a-z\d+.-]*:/i.test(item) && !/[\\\p{Cc}]/u.test(item)
+    && !item.split('/').some(part => part === '.' || part === '..')))].slice(0, 32);
+}
+
 export function loadPublishDraft(): PublishDraft {
   try {
     const raw = readMigratedLocalValue(PUBLISH_KEY, 'publish_draft');
@@ -153,14 +171,18 @@ export function loadPublishDraft(): PublishDraft {
     const saved = JSON.parse(raw) as PublishDraft;
     return { ...PUBLISH_DEFAULT, ...saved,
       aiGenerated: saved.aiGenerated === true,
+      mediaPaths: publicationMediaPaths(saved.mediaPaths),
       mediaReferences: Array.isArray(saved.mediaReferences) ? saved.mediaReferences.filter(item => validPublicationMediaReference(item)) : [],
       approvalReference: validPublicationApprovalReference(saved.approvalReference) ? saved.approvalReference : undefined };
   } catch {
     return { ...PUBLISH_DEFAULT };
   }
 }
-export function savePublishDraft(d: PublishDraft): void {
-  try { localStorage.setItem(PUBLISH_KEY, JSON.stringify(d)); } catch { /* quota */ }
+export function savePublishDraft(d: PublishDraft): boolean {
+  try {
+    localStorage.setItem(PUBLISH_KEY, JSON.stringify(d));
+    return true;
+  } catch { return false; }
 }
 
 const STORAGE_KEY = projectStorageKey('easel_sessions');

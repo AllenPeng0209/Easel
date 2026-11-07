@@ -1,6 +1,6 @@
 import { projectUrl, projectFetch } from './projectScope';
 import type { AgentEvent } from './agentEvents';
-import type { ChatMessage, ChatSession, ChatHistoryWindow, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef } from './store';
+import type { ChatMessage, ChatSession, ChatHistoryWindow, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef, ChatExecutionState } from './store';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
 import type { ChatCommand, ChatCommandOption } from './chatCommands';
 import { mergeSessionCatalog } from './sessionSync';
@@ -43,6 +43,7 @@ export interface HarnessSettingsResponse {
   models: Record<string, string>;
   sandbox: string;
   codex_auto_approve: boolean;
+  tool_approval_mode?: 'manual' | 'ordinary' | 'all';
   locked: boolean;
   agents: { id: string; label: string; protocol: string; installed: boolean; install_hint: string }[];
 }
@@ -472,7 +473,15 @@ export function fetchAccountDirectory(signal?: AbortSignal): Promise<AccountDire
   return request<AccountDirectory>('/api/accounts/directory', { signal });
 }
 
+export interface RemoteLoginDescriptor {
+  id: string;
+  platform: string;
+}
+
 export interface LoginStart {
+  remote?: RemoteLoginDescriptor;
+  /** Browser-free login attempt; used for precise cancellation, never for frame polling. */
+  attempt?: RemoteLoginDescriptor;
   mode: 'qr' | 'browser' | 'terminal' | 'credentials';
   state?: string;       // starting | qr_ready | success | expired | error | unknown
   message?: string;
@@ -518,6 +527,9 @@ export function mpLoginStatus(platform: string): Promise<LoginStatus> {
 }
 
 export interface LoginStatus {
+  remote?: RemoteLoginDescriptor;
+  /** Browser-free login attempt; used for precise cancellation, never for frame polling. */
+  attempt?: RemoteLoginDescriptor;
   mode: 'qr' | 'browser';
   state: string;
   message: string;
@@ -722,6 +734,7 @@ function parseAnswerCompletion(value: unknown): AnswerCompletion | undefined {
 const chatFailureCodes = new Set<ChatFailure['code']>([
   'authentication', 'model_unavailable', 'rate_limit', 'quota_exhausted', 'network',
   'timeout', 'permission_denied', 'session_conflict', 'storage', 'unknown',
+  'server_queue_full', 'server_owner_queue_full', 'server_queue_timeout', 'server_unavailable',
 ]);
 
 function parseChatFailure(value: unknown): ChatFailure {
@@ -729,7 +742,16 @@ function parseChatFailure(value: unknown): ChatFailure {
   if (!value || typeof value !== 'object') return fallback;
   const { code, phase, retryable } = value as Partial<ChatFailure>;
   if (!code || !chatFailureCodes.has(code) || (phase !== 'startup' && phase !== 'execution' && phase !== 'finalization')) return fallback;
-  return { code, phase, retryable: phase === 'startup' && retryable === true && ['network', 'timeout', 'rate_limit'].includes(code) };
+  return { code, phase, retryable: phase === 'startup' && retryable === true
+    && ['network', 'timeout', 'rate_limit', 'server_queue_full', 'server_owner_queue_full', 'server_queue_timeout'].includes(code) };
+}
+
+function parseChatExecutionState(value: unknown): ChatExecutionState | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { executionState, queuePosition } = value as Partial<ChatExecutionState>;
+  if (executionState !== 'queued' && executionState !== 'running') return undefined;
+  return { executionState, ...(executionState === 'queued' && Number.isInteger(queuePosition)
+    && queuePosition! >= 1 && queuePosition! <= 256 ? { queuePosition } : {}) };
 }
 
 function chatFailureError(failure: ChatFailure, message = '执行失败', unconfirmed = false) {
@@ -763,6 +785,7 @@ export function streamChat(
   onAnswerCompleted?: (receipt: AnswerCompletion) => void,
   planRef?: ChatPlanRef,
   modelOverride?: string,
+  onExecutionState?: (state: ChatExecutionState) => void,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -831,6 +854,11 @@ export function streamChat(
           } catch { /* Ignore malformed answer receipts. */ }
         } else if (currentEvent === 'activity' && onActivity) {
           try { onActivity(JSON.parse(data) as string); } catch { onActivity(data); }
+        } else if (currentEvent === 'execution_state' && onExecutionState) {
+          try {
+            const state = parseChatExecutionState(JSON.parse(data));
+            if (state) onExecutionState(state);
+          } catch { /* Unknown future states do not imply that a model has started. */ }
         } else if (currentEvent === 'agent_event' && onAgentEvent) {
           try {
             const event = JSON.parse(data) as AgentEvent;
@@ -966,20 +994,41 @@ export function streamChat(
 }
 
 /** 取某会话最近一轮的完整结果（SSE 断线后据此取回）。 */
-interface LastChatTurn {
-  status: string; text: string; turn_id?: string; events?: AgentEvent[]; questions?: ChatQuestion[];
+export interface LastChatTurnStatus extends Partial<ChatExecutionState> {
+  status: string;
+  turn_id?: string;
+  statusUnavailable?: boolean;
+  requestedModel?: string;
   outcome?: Exclude<ChatTurnOutcome, 'unconfirmed'>; clean_end?: boolean; stop_reason?: string;
+  error?: ChatFailure;
+}
+
+interface LastChatTurn extends LastChatTurnStatus {
+  text: string; events?: AgentEvent[]; questions?: ChatQuestion[];
   reasoning_summary?: ReasoningSummary;
   answer_completed?: AnswerCompletion;
-  error?: ChatFailure;
 }
 
 export async function fetchLastTurn(sessionId: string, turnId?: string, signal?: AbortSignal): Promise<LastChatTurn> {
   const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
   const result = await request<LastChatTurn>(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`, { signal });
-  return { ...result, reasoning_summary: publicReasoningSummary(result.reasoning_summary),
+  const execution = parseChatExecutionState(result);
+  return { ...result, executionState: execution?.executionState, queuePosition: execution?.queuePosition,
+    reasoning_summary: publicReasoningSummary(result.reasoning_summary),
     answer_completed: parseAnswerCompletion(result.answer_completed),
     error: result.error == null ? undefined : parseChatFailure(result.error) };
+}
+
+/** Small status check for stop/archive/delete guards; never use this to recover answer content. */
+export async function fetchLastTurnStatus(sessionId: string, turnId?: string, signal?: AbortSignal): Promise<LastChatTurnStatus> {
+  const query = `?status_only=true${turnId ? `&turn_id=${encodeURIComponent(turnId)}` : ''}`;
+  const result = await request<LastChatTurnStatus>(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`, { signal });
+  const execution = parseChatExecutionState(result);
+  return { status: result.status, turn_id: result.turn_id,
+    statusUnavailable: result.statusUnavailable === true || undefined,
+    requestedModel: result.requestedModel, outcome: result.outcome,
+    clean_end: result.clean_end, stop_reason: result.stop_reason,
+    ...execution, error: result.error == null ? undefined : parseChatFailure(result.error) };
 }
 
 interface ChatSessionPage {

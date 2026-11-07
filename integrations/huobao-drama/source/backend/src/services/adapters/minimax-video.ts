@@ -45,19 +45,43 @@ function parseUrlArray(raw?: string | null): string[] {
   }
 }
 
+export function isLocalMiniMaxVideoConfig(config: Pick<AIConfig, 'baseUrl'>): boolean {
+  const base = new URL(config.baseUrl)
+  return ['127.0.0.1', 'localhost'].includes(base.hostname) && base.pathname.replace(/\/$/, '') === '/v1'
+}
+
 export class MiniMaxVideoAdapter implements VideoProviderAdapter {
   provider = 'minimax'
 
   buildGenerateRequest(config: AIConfig, record: VideoGenerationRecord): ProviderRequest {
     const model = record.model || config.model || DEFAULT_MODEL
-    const base = new URL(config.baseUrl)
-    if (['127.0.0.1', 'localhost'].includes(base.hostname) && base.pathname.replace(/\/$/, '') === '/v1') {
-      const images = [...parseUrlArray(record.referenceImageUrls), ...[record.firstFrameUrl || record.imageUrl].filter(Boolean)]
+    if (isLocalMiniMaxVideoConfig(config)) {
+      const supported = ['minimax-h3-base', 'minimax-h3-dense8', 'minimax-h3-ref2va-ref11-8step', 'pika-h3-flex-6step']
+      if (!supported.includes(model)) throw new Error(`当前本机视频通道未配置模型：${model}`)
+      const images = [...new Set([...parseUrlArray(record.referenceImageUrls), ...[record.firstFrameUrl || record.imageUrl].filter(Boolean)])]
       const videos = parseUrlArray(record.referenceVideoUrls), audios = parseUrlArray(record.referenceAudioUrls)
       const full = model.includes('ref11'), pika = model.startsWith('pika-')
+      const seconds = record.duration ?? 5
+      const minimum = pika ? 5 : 1, maximum = pika ? 15 : 14
+      if (!Number.isInteger(seconds) || seconds < minimum || seconds > maximum) {
+        throw new Error(`当前本机 ${pika ? 'Pika H3 Flex' : 'H3'} 仅支持 ${minimum}–${maximum} 整数秒；请明确修改计划时长，尚未提交生成`)
+      }
+      if (record.resolution != null && typeof record.resolution !== 'string') throw new Error('原生分辨率必须为文本')
+      const resolution = record.resolution?.trim().toLowerCase()
+      if (pika && resolution && !['480p', '768p'].includes(resolution)) {
+        throw new Error('当前本机 Pika 原生分辨率仅支持 480p / 768p；不会静默替换请求的规格')
+      }
+      if (!pika && resolution) {
+        throw new Error('当前本机 H3 通道使用固定原生尺寸，不接受 resolution 请求；导出分辨率须在后期单独设置')
+      }
+      if (!record.prompt?.trim()) throw new Error('本机视频生成必须提供完整提示词')
+      if (pika && (Array.from(record.prompt).length > 8000 || record.prompt.includes('\0'))) {
+        throw new Error('当前本机 Pika 提示词须为不含空字符的 1–8000 字符文本')
+      }
       if (!full && (images.length > 1 || videos.length || audios.length || record.lastFrameUrl)) throw new Error('当前本机视频通道只支持文字或一张参考图')
-      const body: any = { model, prompt: record.prompt, seconds: Math.max(pika ? 5 : 1, Math.min(full ? 14 : 15, record.duration || 5)),
+      const body: any = { model, prompt: record.prompt, seconds,
         size: record.aspectRatio || '9:16', request_id: `huobao-${process.env.XIANGYA_INSTANCE_ID || 'local'}:task-${record.id}` }
+      if (pika) body.resolution = resolution || '480p'
       if (full) { for (const [kind, values] of Object.entries({ images, videos, audios })) if (values.length) body[kind] = values.map(data_url => ({ data_url })) }
       else if (images.length) { if (pika) body.images = images.map(data_url => ({ data_url })); else body.image = images[0] }
       return { url: config.baseUrl.replace(/\/$/, '') + '/videos', method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` }, body }

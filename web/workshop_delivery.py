@@ -97,7 +97,7 @@ def run_workshop_delivery(payload: object, *, outputs: Path, ip: str, authorize)
         request = Production.model_validate({'expected_revision': raw['expectedRevision'], **raw['production']})
         authorize()
         project = WorkshopStore(outputs).production(raw['workshopId'], request.expected_revision,
-            request.model_dump(exclude={'expected_revision'}, exclude_none=True))
+            request.production_values())
         return [{'workshopId': project['id'], 'revision': project['revision'], 'stage': project['stage']}]
     episodes = load_episodes(manifest, outputs, selected, plan_only)
     if len(episodes) > 12:
@@ -114,7 +114,7 @@ def run_workshop_delivery(payload: object, *, outputs: Path, ip: str, authorize)
         if parts == ['production']:
             from web.workshop_routes import Production
             request = Production.model_validate(body)
-            return store.production(workshop, request.expected_revision, request.model_dump(exclude={'expected_revision'}, exclude_none=True))
+            return store.production(workshop, request.expected_revision, request.production_values())
         if parts == ['deliverables']:
             return store.deliver(workshop, body['expected_revision'], body['path'])
         raise ValueError("无法识别工坊流程步骤")

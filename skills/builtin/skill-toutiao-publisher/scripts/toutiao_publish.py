@@ -33,9 +33,11 @@ import argparse
 import json
 import os
 import re
+import signal
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # PROJECT_ROOT：优先 EASEL_ROOT env（gateway/CLI/web 注入），否则按 __file__ 上溯。
 # ⚠️ 本脚本会被 openclaw/sync.sh 拍平复制到 workspace，那里相对层级会变——故 env 兜底不可省
@@ -47,6 +49,7 @@ if str(_SHARED_SCRIPTS) not in sys.path:
 
 import content_guard  # noqa: E402  出站内容安全闸门
 import output_paths  # noqa: E402  产物路径规约
+import login_remote_debug
 
 PROFILE_DIR = Path.home() / ".easel-browser-profiles" / "ToutiaoProfile"
 
@@ -540,13 +543,23 @@ def _whoami_parser() -> argparse.ArgumentParser:
 
 
 def _is_logged_in(page) -> bool:
-    """URL 已离开登录/SSO 域即视为已登录。
-
-    优先用 URL 而不是元素选择器：未登录时头条号后台会重定向到登录页，
-    这个信号比容易随改版失效的 DOM 特征稳定得多。
-    """
-    url = (page.url or "").lower()
-    return not any(h in url for h in _LOGIN_URL_HINTS)
+    """Require the real creator page, a scoped session and its own account UI."""
+    parsed = urlsplit(page.url or "")
+    if (parsed.scheme != "https" or parsed.hostname != "mp.toutiao.com"
+            or not parsed.path.startswith("/profile_v4/")
+            or any(hint in parsed.path.lower() for hint in _LOGIN_URL_HINTS)):
+        return False
+    try:
+        cookies = page.context.cookies([HOME_URL])
+        if not any(cookie.get("name") in {"sessionid", "sessionid_ss"}
+                   and cookie.get("value") for cookie in cookies):
+            return False
+        account = page.locator(".auth-avator-name").first
+        return bool(account.count() and account.is_visible()
+                    and (account.inner_text() or "").strip())
+    except Exception:
+        # Incomplete navigation or a verification page is never authentication.
+        return False
 
 
 def _capture_qr(page, qr_out: Path) -> bool:
@@ -584,31 +597,46 @@ def _qr_login(profile: Path, qr_out: Path, status_file: Path, timeout_s: int,
     profile.mkdir(parents=True, exist_ok=True)
     qr_out.parent.mkdir(parents=True, exist_ok=True)
     login_state.write_status(str(status_file), "starting", "启动浏览器…")
+    remote_mode = login_remote_debug.enabled()
+    previous_handler = signal.getsignal(signal.SIGTERM)
+
+    def stop_login(signum, frame):
+        raise SystemExit(0)
+
     with sync_playwright() as pw:
         ctx = None
         try:
-            ctx = pw.chromium.launch_persistent_context(
-                str(profile), headless=not headed, locale="zh-CN", args=LAUNCH_ARGS,
+            signal.signal(signal.SIGTERM, stop_login)
+            ctx = login_remote_debug.launch_persistent_context(
+                pw.chromium, profile, headless=not headed, locale="zh-CN", args=LAUNCH_ARGS,
                 viewport={"width": 1440, "height": 900},
             )
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            login_remote_debug.publish_page(ctx, page)
             page.goto(LOGIN_URL, wait_until="domcontentloaded")
             page.wait_for_timeout(2500)
             if _is_logged_in(page):
+                ctx.close()
+                ctx = None
                 login_state.write_status(str(status_file), "success", "已登录")
                 print("✅ 今日头条 已登录（登录态在持久化目录）")
                 return 0
-            if not _capture_qr(page, qr_out):
+            qr_available = _capture_qr(page, qr_out)
+            if not qr_available and not remote_mode:
                 login_state.write_status(str(status_file), "error",
                                          "未找到登录二维码（头条号后台可能已改版）")
                 return 1
-            login_state.write_status(str(status_file), "qr_ready", "二维码已就绪，请扫码",
-                                     qr=str(qr_out))
-            print(f"📱 二维码已保存：{qr_out}")
+            login_state.write_status(str(status_file), "qr_ready" if qr_available else "window_login",
+                                     "二维码已就绪，请扫码" if qr_available else "请在下方平台页面完成登录或安全验证",
+                                     qr=str(qr_out) if qr_available else "")
+            if qr_available:
+                print(f"📱 二维码已保存：{qr_out}")
             deadline = time.time() + max(timeout_s, 30)
             while time.time() < deadline:
                 page.wait_for_timeout(2000)
                 if _is_logged_in(page):
+                    ctx.close()
+                    ctx = None
                     login_state.write_status(str(status_file), "success", "登录成功")
                     try:
                         qr_out.unlink()  # 成功后清掉二维码图，避免误扫过期码
@@ -621,11 +649,16 @@ def _qr_login(profile: Path, qr_out: Path, status_file: Path, timeout_s: int,
         except Exception as exc:
             # 浏览器起不来（内核没装 / profile 被占用）也必须把状态写成 error：
             # 真机踩到过——launch 抛异常时状态文件卡在 starting，前端只能等进程退出才兜出失败。
-            login_state.write_status(str(status_file), "error", f"登录失败：{exc}")
+            message = (f"登录页面未能完成操作（{type(exc).__name__}），请检查网络后重试"
+                       if remote_mode else f"登录失败：{exc}")
+            login_state.write_status(str(status_file), "error", message)
             return 1
         finally:
-            if ctx is not None:
-                ctx.close()
+            try:
+                if ctx is not None:
+                    ctx.close()
+            finally:
+                signal.signal(signal.SIGTERM, previous_handler)
 
 
 def _probe_identity(headed: bool = False) -> dict:
@@ -663,7 +696,7 @@ def _probe_identity(headed: bool = False) -> dict:
 
 def _read_display_name(page) -> str:
     """尽力读头条号昵称；读不到返回空串（不阻断 whoami）。"""
-    for sel in ("[class*='user-name']", "[class*='userName']", "[class*='nickname']",
+    for sel in (".auth-avator-name", "[class*='user-name']", "[class*='userName']", "[class*='nickname']",
                 "[class*='user-info'] span", "[class*='avatar'] + *"):
         try:
             el = page.locator(sel).first

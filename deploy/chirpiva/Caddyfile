@@ -1,0 +1,22 @@
+# Caddy owns only public HTTP/HTTPS. The app and all native runtimes stay loopback.
+{
+    servers {
+        strict_sni_host on
+    }
+}
+
+www.chirpiva.com {
+    redir https://chirpiva.com{uri} permanent
+}
+
+chirpiva.com {
+    encode zstd gzip
+    # First administrator creation is available only through a local SSH tunnel.
+    @bootstrap path /api/auth/setup /api/auth/setup/*
+    respond @bootstrap 403
+
+    reverse_proxy 127.0.0.1:7860 {
+        # Forward streaming chat/SSE chunks immediately.
+        flush_interval -1
+    }
+}

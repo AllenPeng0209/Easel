@@ -55,7 +55,7 @@ const replyLabels: Record<string, string> = {
   'reply.label': '已接受的问答', 'reply.skipped': '未提供答案', 'reply.answerLabel': '答复：', copied: '已复制', copy: '复制',
 };
 
-function QuestionResolution({ question }: { question: QuestionDetails }) {
+function QuestionResolution({ question, compact }: { question: QuestionDetails; compact: boolean }) {
   const executionApproval = isExecutionApproval(question);
   const closedLabels: Record<string, string> = {
     historical: '历史授权请求无法在此提交', revoked: '操作权限已撤销',
@@ -67,6 +67,10 @@ function QuestionResolution({ question }: { question: QuestionDetails }) {
     questions: question.questions.map(item => ({ id: item.questionId, question: item.question, header: item.header })),
     answers: Object.entries(question.answers || {}).map(([id, selected]) => ({ id, selected })),
   };
+  const answerSummary = question.questions.flatMap(item => {
+    const answers = question.answers?.[item.questionId];
+    return answers?.length ? [`${item.header || '答复'}：${answers.join('、')}`] : [];
+  }).join('；').replace(/\s+/g, ' ').slice(0, 180);
   return <div className="question-resolution" data-question-request={question.id} data-question-phase={question.status}>
     {question.publication && <><PublicationSubjectView subject={question.publication.subject} />
       <PublicationReviewLink publication={question.publication} /></>}
@@ -75,7 +79,10 @@ function QuestionResolution({ question }: { question: QuestionDetails }) {
       : question.status === 'declined' ? '未获授权，操作未执行'
       : !settledStatuses.has(question.status || '') ? closedLabel
         : question.resolvedBy === 'default' || question.status === 'defaulted' ? '已按默认答案继续' : '已答复'}</div>
-    {!executionApproval && (question.answers ? <QuestionReplyBubble data={data} t={key => replyLabels[key] || key} />
+    {!executionApproval && (question.answers ? <details className="question-resolution__answers" data-question-answer-history open={!compact}>
+      <summary>{answerSummary || '查看已接受的答复'}</summary>
+      <QuestionReplyBubble data={data} t={key => replyLabels[key] || key} />
+    </details>
       : ['answered', 'resolved', 'defaulted'].includes(question.status || '')
         ? <p className="agent-event__note">答复已被服务端接受，正在同步记录。</p> : null)}
   </div>;
@@ -93,9 +100,10 @@ function QuestionResolution({ question }: { question: QuestionDetails }) {
  * （gateway 对 multiSelect=false 的多值直接报 "does not allow multiple answers"，
  * 前端只按数据渲染，不绕过校验）。
  */
-function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: {
+function QuestionCard({ question: original, sessionId, requestKey, onReceipt, compact }: {
   question: QuestionDetails; sessionId: string; requestKey: string;
   onReceipt?: (receipt: ChatQuestionClosed) => void;
+  compact: boolean;
 }) {
   const [resolution, setResolution] = useState<ChatQuestionClosed>();
   const authoritativeStatus = terminalStatuses.has(original.status || '') ? original.status : undefined;
@@ -253,7 +261,7 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
     setReconcile(value => value + 1);
   };
 
-  if (settled || executionApproval && terminalStatuses.has(status)) return <QuestionResolution question={{ ...question, status }} />;
+  if (settled || executionApproval && terminalStatuses.has(status)) return <QuestionResolution question={{ ...question, status }} compact={compact} />;
   const seconds = Math.max(0, Math.ceil(((question.autoResolveAtMs || 0) - now) / 1000));
   return (
     <div className="message-row assistant">
@@ -362,10 +370,11 @@ function QuestionCard({ question: original, sessionId, requestKey, onReceipt }: 
 }
 
 /** Keep a request visible until its exact terminal observation arrives. */
-export default function QuestionCards({ questions, sessionId = 'legacy', onDone, historical = false }: {
+export default function QuestionCards({ questions, sessionId = 'legacy', onDone, historical = false, compact = true }: {
   questions: ChatQuestion[];
   sessionId?: string;
   historical?: boolean;
+  compact?: boolean;
   onDone?: (receipt: ChatQuestionClosed) => void;
 }) {
   if (!questions.length) return null;
@@ -374,9 +383,9 @@ export default function QuestionCards({ questions, sessionId = 'legacy', onDone,
       const key = requestIdentity(question, sessionId);
       if (historical && isExecutionApproval(question)) {
         const status = terminalStatuses.has(question.status || '') ? question.status : 'historical';
-        return <QuestionResolution key={key} question={{ ...question, status }} />;
+        return <QuestionResolution key={key} question={{ ...question, status }} compact={compact} />;
       }
-      return <QuestionCard key={key} question={question} sessionId={sessionId} requestKey={key} onReceipt={onDone} />;
+      return <QuestionCard key={key} question={question} sessionId={sessionId} requestKey={key} onReceipt={onDone} compact={compact} />;
     })}
   </>;
 }

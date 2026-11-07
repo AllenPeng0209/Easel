@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -13,7 +14,7 @@ from contextvars import ContextVar, copy_context
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from starlette.responses import JSONResponse
 
 _project = ContextVar("easel_project", default="default")
@@ -108,11 +109,18 @@ def _registry(root: Path) -> list[dict]:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, list):
                 raise ValueError("invalid registry")
-            return [{**item, "name": "默认 IP"} if item.get("id") == "default"
-                    and item.get("name") == "默认项目" else item for item in data]
+            return [{**item, "name": "我的 IP"} if item.get("id") == "default"
+                    and item.get("name") in {"默认项目", "默认 IP"} else item for item in data]
         except (ValueError, OSError):
             raise HTTPException(500, "IP 列表无法读取，请检查本地数据文件") from None
-    return [{"id": "default", "name": "默认 IP", "description": "原有账号、对话与内容", "createdAt": 0}]
+    # The legacy ID is only a compatibility record for real pre-existing data.
+    # A fresh installation and every new user start without a project.
+    from easel.access import AccessStore
+    legacy_data = any((root / name).is_file() for name in ('cookies.json', 'wechat-publisher.yaml')) or any(
+        directory.is_dir() and any(directory.iterdir()) for directory in (root / 'outputs', root / 'profiles', root / 'browser'))
+    if legacy_data or AccessStore(root).members('default'):
+        return [{"id": "default", "name": "我的 IP", "description": "原有账号与内容", "createdAt": 0}]
+    return []
 
 
 def _save(root: Path, items: list[dict]):
@@ -131,11 +139,13 @@ def _validate(name: str, description: str):
 
 
 class ProjectInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     name: str
     description: str = ""
 
 
 class ProjectUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     name: str
     description: str | None = None
 
@@ -143,10 +153,15 @@ class ProjectUpdate(BaseModel):
 def create_router(get_root):
     router = APIRouter()
 
+    def describe(item, actor, access):
+        from web.access_control import role_permissions
+        role = access.require_role(actor['id'], item['id'], {'owner', 'operator', 'viewer'})
+        return {**item, **access.project_access(item['id']), 'role': role,
+                'permissions': role_permissions(role, actor['is_admin'])}
+
     @router.get("/api/projects")
     async def projects_list(request: Request):
         from easel.access import AccessStore
-        from web.access_control import role_permissions
         actor = getattr(request.state, 'user', None)
         if not actor:
             raise HTTPException(401, '请先登录')
@@ -156,7 +171,7 @@ def create_router(get_root):
             for item in _registry(get_root()):
                 role = access.role(actor['id'], item['id'])
                 if role:
-                    result.append({**item, 'role': role, 'permissions': role_permissions(role, actor['is_admin'])})
+                    result.append(describe(item, actor, access))
             return result
 
     @router.post("/api/projects")
@@ -183,9 +198,30 @@ def create_router(get_root):
             for document in documents.glob('*.md'):
                 (directory / document.name).write_text(document.read_text(encoding='utf-8'), encoding='utf-8')
             items.append(item)
-            AccessStore(root).add_owner(item['id'], actor['id'])
-            _save(root, items)
-            return {**item, 'role': 'owner'}
+            access = AccessStore(root)
+            try:
+                access.add_owner(item['id'], actor['id'])
+                _save(root, items)
+            except BaseException:
+                access.remove_project(item['id'])
+                shutil.rmtree(directory)
+                raise
+            access.audit(actor['id'], 'project.create', item['id'])
+            return describe(item, actor, access)
+
+    @router.get('/api/projects/{identifier}')
+    async def projects_get(identifier: str, request: Request):
+        from easel.access import AccessStore
+        actor = getattr(request.state, 'user', None)
+        if not actor:
+            raise HTTPException(401, '请先登录')
+        access = AccessStore(get_root())
+        access.require_role(actor['id'], identifier, {'owner', 'operator', 'viewer'})
+        with _registry_lock:
+            item = next((item for item in _registry(get_root()) if item['id'] == identifier), None)
+            if item is None:
+                raise HTTPException(404, 'IP 不存在或没有访问权限')
+            return describe(item, actor, access)
 
     @router.patch("/api/projects/{identifier}")
     async def projects_update(identifier: str, req: ProjectUpdate, request: Request):
@@ -193,9 +229,10 @@ def create_router(get_root):
         actor = getattr(request.state, 'user', None)
         if not actor:
             raise HTTPException(401, '请先登录')
-        AccessStore(get_root()).require_role(actor['id'], identifier, {'owner'})
+        access = AccessStore(get_root())
         _validate(req.name, req.description or "")
         with _registry_lock:
+            access.require_role(actor['id'], identifier, {'owner'})
             items = _registry(get_root())
             item = next((item for item in items if item["id"] == identifier), None)
             if item is None:
@@ -204,7 +241,8 @@ def create_router(get_root):
             if req.description is not None:
                 item["description"] = req.description.strip()
             _save(get_root(), items)
-            return item
+            access.audit(actor['id'], 'project.update', identifier)
+            return describe(item, actor, access)
 
     return router
 
@@ -228,7 +266,7 @@ class ProjectScopeMiddleware:
             # Do not expose registry operations inside a project URL.
             if resource == "projects" or resource.startswith("projects/"):
                 return await JSONResponse({"detail": "无效 IP 路径"}, status_code=404)(scope, receive, send)
-            if resource != 'members' and not resource.startswith('members/'):
+            if resource not in {'members', 'transfer', 'leave', 'activity'} and not resource.startswith('members/'):
                 scope = {**scope, "path": "/api/" + resource,
                          "raw_path": ("/api/" + resource).encode("utf-8")}
         with project_context(identifier, self.get_root()):

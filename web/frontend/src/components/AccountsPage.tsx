@@ -4,10 +4,12 @@ import {
   accountWhoami, submitLoginSms,
   saveCredentials, getCredentials, startMpLogin, mpLoginStatus,
 } from '../lib/api';
-import type { AccountItem } from '../lib/api';
+import type { AccountItem, RemoteLoginDescriptor } from '../lib/api';
 import { setWhoamiCache } from '../lib/whoami';
 import { useIpPermissions } from './ProjectSpace';
 import InteractionAccounts from './InteractionAccounts';
+import { closeRemoteLogin } from './RemoteLoginView';
+import PlatformLoginView, { LegacyPlatformLoginView } from './PlatformLoginView';
 
 type QRState = {
   platform: string;
@@ -17,6 +19,10 @@ type QRState = {
   qr: string;          // outputs 相对路径
   qrTs?: number;       // 二维码文件 mtime，作 img 缓存键：码刷新一次就变，避免看到过期旧码
   mode?: 'qr' | 'browser';
+  remote?: RemoteLoginDescriptor;
+  attempt?: RemoteLoginDescriptor;
+  account: AccountItem;
+  kind: 'standard' | 'mp';
 };
 
 const STATE_LABEL: Record<string, string> = {
@@ -31,6 +37,7 @@ const STATE_LABEL: Record<string, string> = {
   error: '登录出错',
   unknown: '等待中…',
 };
+const awaitingQrScan = (state: string) => ['starting', 'qr_ready', 'window_login'].includes(state);
 
 export default function AccountsPage() {
   const { canManageAccounts } = useIpPermissions();
@@ -39,6 +46,7 @@ export default function AccountsPage() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [err, setErr] = useState('');
   const [qr, setQr] = useState<QRState | null>(null);
+  const qrSession = useRef(qr); qrSession.current = qr;
   const [qrNonce, setQrNonce] = useState(0);   // 每次登录 +1，稳定缓存 key，避免每次轮询 img 闪烁
   const [terminalMsg, setTerminalMsg] = useState('');
   const [, setBusy] = useState('');
@@ -56,6 +64,7 @@ export default function AccountsPage() {
   const qrPlatformRef = useRef('');   // 当前登录中的平台，供 submitSms 稳定引用
   const whoamiRequests = useRef<Record<string, number>>({});
   const qrRequest = useRef(0);
+  const replacement = useRef({ id: '', revision: 0 });
 
   useEffect(() => {
     aliveRef.current = true;
@@ -102,13 +111,20 @@ export default function AccountsPage() {
     setCred(null);
   }, [canManageAccounts, stopPoll]);
 
+  const loginSettled = useCallback((_attempt: RemoteLoginDescriptor, acknowledged: boolean) => {
+    if (acknowledged) load();
+    else setErr('结束本次验证的回执尚未确认，请稍后重试连接。');
+  }, [load]);
+
   const closeQr = useCallback(() => {
+    const ownedAttempt = qrSession.current?.remote || qrSession.current?.attempt;
     qrRequest.current += 1;
     stopPoll();
     setQr(null);
     setBusy('');
     setSmsCode(''); setSmsErr(''); setSmsBusy(false);
-    load();
+    // Owned attempts refresh the account directory only after their close acknowledgement.
+    if (!ownedAttempt) load();
   }, [stopPoll, load]);
 
   const submitSms = useCallback(async () => {
@@ -162,8 +178,8 @@ export default function AccountsPage() {
   }, [cred, credForm, runWhoami, closeCred]);
 
   const handleLogin = useCallback(async (a: AccountItem) => {
-    if (!a.supported) return;
-    if (a.backend === 'wechat-oa') { openCred(a); return; }   // 公众号走凭证表单，不扫码
+    if (!a.supported) return false;
+    if (a.backend === 'wechat-oa') { openCred(a); return false; }   // 公众号走凭证表单，不扫码
     const sequence = ++qrRequest.current;
     stopPoll();
     setErr('');
@@ -174,41 +190,45 @@ export default function AccountsPage() {
     setSmsCode(''); setSmsErr('');
     qrPlatformRef.current = a.platform;
     setQrNonce((n) => n + 1);
-    setQr({ platform: a.platform, name: a.name, state: 'starting',
+    setQr({ account: a, kind: 'standard', platform: a.platform, name: a.name, state: 'starting',
             mode: a.loginMode || 'qr',
             message: a.loginMode === 'browser' ? '正在打开平台登录浏览器…' : '正在启动浏览器并准备二维码…', qr: '' });
     try {
       const res = await startLogin(a.platform);
-      if (!aliveRef.current || qrRequest.current !== sequence) return;
+      if (!aliveRef.current || qrRequest.current !== sequence) {
+        if (res.remote || res.attempt) void closeRemoteLogin((res.remote || res.attempt)!);
+        return false;
+      }
       if (res.mode === 'terminal') {
         setQr(null);
         setTerminalMsg(res.message || '请在终端登录');
-        return;
+        return false;
       }
-      if (res.mode === 'credentials') { setQr(null); openCred(a); return; }
-      setQr({ platform: a.platform, name: a.name, state: res.state || 'starting',
+      if (res.mode === 'credentials') { setQr(null); openCred(a); return false; }
+      setQr({ account: a, kind: 'standard', platform: a.platform, name: a.name, state: res.state || 'starting',
               mode: res.mode === 'browser' ? 'browser' : 'qr',
-              message: res.message || '', qr: res.qr || '', qrTs: res.qrTs });
+              message: res.message || '', qr: res.qr || '', qrTs: res.qrTs, remote: res.remote, attempt: res.attempt });
       stopPoll();
       let polling = false;
       let finished = false;
       let failures = 0;
       const startedAt = Date.now();
       pollRef.current = setInterval(async () => {
-        if (!aliveRef.current || qrRequest.current !== sequence || polling || finished) return;
-        if (Date.now() - startedAt > 360000) {
-          finished = true;
-          stopPoll();
-          setQr((previous) => previous && ({ ...previous, state: 'expired',
-            message: '登录等待超时，请关闭后重新登录', qr: '' }));
-          return;
-        }
+        if (!aliveRef.current || qrRequest.current !== sequence || polling || finished || replacement.current.id || document.visibilityState === 'hidden') return;
+        const revision = replacement.current.revision;
         polling = true;
         try {
           const s = await loginStatus(a.platform);
-          if (!aliveRef.current || qrRequest.current !== sequence) return;
+          if (!aliveRef.current || qrRequest.current !== sequence || revision !== replacement.current.revision) return;
           failures = 0;
-          setQr((prev) => prev && ({ ...prev, state: s.state, message: s.message, qr: s.qr, qrTs: s.qrTs }));
+          // On return from a hidden tab, read the authoritative outcome first.
+          if (!['success', 'expired', 'error'].includes(s.state) && Date.now() - startedAt > 620000) {
+            finished = true; stopPoll();
+            setQr(previous => previous && ({ ...previous, state: 'expired',
+              message: '登录等待超时，请关闭后重新登录', qr: '' }));
+            return;
+          }
+          setQr((prev) => prev && ({ ...prev, state: s.state, message: s.message, qr: s.qr, qrTs: s.qrTs, remote: s.remote || prev.remote, attempt: s.attempt || prev.attempt }));
           if (['success', 'expired', 'error'].includes(s.state)) {
             finished = true;
             stopPoll();
@@ -219,7 +239,7 @@ export default function AccountsPage() {
             }
           }
         } catch {
-          if (!aliveRef.current || qrRequest.current !== sequence) return;
+          if (!aliveRef.current || qrRequest.current !== sequence || revision !== replacement.current.revision) return;
           failures += 1;
           if (failures >= 5) {
             finished = true;
@@ -231,10 +251,12 @@ export default function AccountsPage() {
           polling = false;
         }
       }, 1000);
+      return !['error', 'expired'].includes(res.state || 'starting');
     } catch (e) {
-      if (!aliveRef.current || qrRequest.current !== sequence) return;
+      if (!aliveRef.current || qrRequest.current !== sequence) return false;
       const message = e instanceof Error ? e.message : '启动登录失败';
       setQr((previous) => previous && ({ ...previous, state: 'error', message, qr: '' }));
+      return false;
     } finally {
       if (aliveRef.current && qrRequest.current === sequence) setBusy('');
     }
@@ -248,33 +270,37 @@ export default function AccountsPage() {
     setBusy(a.platform + ':mp');
     setSmsCode(''); setSmsErr('');
     setQrNonce((n) => n + 1);
-    setQr({ platform: a.platform, name: a.name + ' · 后台取数', state: 'starting',
+    setQr({ account: a, kind: 'mp', platform: a.platform, name: a.name + ' · 后台取数', state: 'starting',
             message: '正在启动浏览器并准备二维码…', qr: '' });
     try {
       const res = await startMpLogin(a.platform);
-      if (!aliveRef.current || qrRequest.current !== sequence) return;
-      setQr({ platform: a.platform, name: a.name + ' · 后台取数', state: res.state || 'starting',
-              message: res.message || '', qr: res.qr || '', qrTs: res.qrTs });
+      if (!aliveRef.current || qrRequest.current !== sequence) {
+        if (res.remote || res.attempt) void closeRemoteLogin((res.remote || res.attempt)!);
+        return false;
+      }
+      setQr({ account: a, kind: 'mp', platform: a.platform, name: a.name + ' · 后台取数', state: res.state || 'starting',
+              message: res.message || '', qr: res.qr || '', qrTs: res.qrTs, remote: res.remote, attempt: res.attempt });
       stopPoll();
       let polling = false;
       let finished = false;
       let failures = 0;
       const startedAt = Date.now();
       pollRef.current = setInterval(async () => {
-        if (!aliveRef.current || qrRequest.current !== sequence || polling || finished) return;
-        if (Date.now() - startedAt > 360000) {
-          finished = true;
-          stopPoll();
-          setQr((previous) => previous && ({ ...previous, state: 'expired',
-            message: '登录等待超时，请关闭后重新登录', qr: '' }));
-          return;
-        }
+        if (!aliveRef.current || qrRequest.current !== sequence || polling || finished || replacement.current.id || document.visibilityState === 'hidden') return;
+        const revision = replacement.current.revision;
         polling = true;
         try {
           const s = await mpLoginStatus(a.platform);
-          if (!aliveRef.current || qrRequest.current !== sequence) return;
+          if (!aliveRef.current || qrRequest.current !== sequence || revision !== replacement.current.revision) return;
           failures = 0;
-          setQr((prev) => prev && ({ ...prev, state: s.state, message: s.message, qr: s.qr, qrTs: s.qrTs }));
+          // On return from a hidden tab, read the authoritative outcome first.
+          if (!['success', 'expired', 'error'].includes(s.state) && Date.now() - startedAt > 620000) {
+            finished = true; stopPoll();
+            setQr(previous => previous && ({ ...previous, state: 'expired',
+              message: '登录等待超时，请关闭后重新登录', qr: '' }));
+            return;
+          }
+          setQr((prev) => prev && ({ ...prev, state: s.state, message: s.message, qr: s.qr, qrTs: s.qrTs, remote: s.remote || prev.remote, attempt: s.attempt || prev.attempt }));
           if (['success', 'expired', 'error'].includes(s.state)) {
             finished = true;
             stopPoll();
@@ -286,7 +312,7 @@ export default function AccountsPage() {
             }
           }
         } catch {
-          if (!aliveRef.current || qrRequest.current !== sequence) return;
+          if (!aliveRef.current || qrRequest.current !== sequence || revision !== replacement.current.revision) return;
           failures += 1;
           if (failures >= 5) {
             finished = true;
@@ -298,14 +324,38 @@ export default function AccountsPage() {
           polling = false;
         }
       }, 1000);
+      return !['error', 'expired'].includes(res.state || 'starting');
     } catch (e) {
-      if (!aliveRef.current || qrRequest.current !== sequence) return;
+      if (!aliveRef.current || qrRequest.current !== sequence) return false;
       const message = e instanceof Error ? e.message : '启动后台登录失败';
       setQr((previous) => previous && ({ ...previous, state: 'error', message, qr: '' }));
+      return false;
     } finally {
       if (aliveRef.current && qrRequest.current === sequence) setBusy('');
     }
   }, [stopPoll, runWhoami, load]);
+
+  const restartLogin = async (remote: RemoteLoginDescriptor, closeOld: () => Promise<boolean>) => {
+    const original = qrSession.current;
+    const version = qrRequest.current;
+    const current = () => aliveRef.current && accountPermission.current && qrRequest.current === version
+      && qrSession.current?.remote?.id === remote.id && qrSession.current.remote.platform === remote.platform
+      && awaitingQrScan(qrSession.current.state);
+    if (!original || replacement.current.id || !current()) return false;
+    const status = original.kind === 'mp' ? mpLoginStatus : loginStatus;
+    replacement.current = { id: remote.id, revision: replacement.current.revision + 1 };
+    try {
+      const before = await status(original.platform);
+      if (!current() || before.remote?.id !== remote.id || before.remote?.platform !== remote.platform
+          || !awaitingQrScan(before.state)) return false;
+      if (!await closeOld() || !current()) return false;
+      const after = await status(original.platform);
+      if (!current() || after.remote || after.attempt || !['error', 'expired'].includes(after.state)) return false;
+      return await (original.kind === 'mp' ? handleMpLogin(original.account) : handleLogin(original.account));
+    } finally {
+      if (replacement.current.id === remote.id) replacement.current.id = '';
+    }
+  };
 
   return (
     <div className="accounts-page">
@@ -331,23 +381,28 @@ export default function AccountsPage() {
       }} />
       {canManageAccounts && qr && (
         <div className="overlay" onClick={closeQr}>
-          <div className="modal" style={{ width: 360, maxWidth: '100%', textAlign: 'center' }}
+          <div className="modal" style={{ width: qr.remote ? 1120 : 360, maxWidth: '100%', textAlign: 'center' }}
             onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 4px' }}>登录 {qr.name}</h3>
             <div style={{ fontSize: 13, marginBottom: 14,
               color: qr.state === 'success' ? 'var(--green)'
                 : ['error', 'expired'].includes(qr.state) ? 'var(--red)' : 'var(--text-secondary)' }}>
               {/* 窗口登录（X）没有二维码，expired 表示「窗口登录超时」而非「二维码过期」 */}
-              {(qr.state === 'expired' && !qr.qr ? '登录超时/未完成' : STATE_LABEL[qr.state]) || qr.state}
+              {(qr.remote && qr.state === 'window_login' ? '正在等待平台登录与身份核验'
+                : qr.state === 'expired' && !qr.qr ? '登录超时/未完成' : STATE_LABEL[qr.state]) || qr.state}
               {qr.message ? ` — ${qr.message}` : ''}
             </div>
-            {qr.state === 'window_login' ? (
-              <div className="loading" style={{ padding: '28px 8px', lineHeight: 1.7, flexDirection: 'column', gap: 12 }}>
-                <div className="spinner" />
-                <div>在运行 响芽 的电脑上，切换到新打开的浏览器完成登录。</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>完成后自动保存登录状态，并更新此页面。</div>
-              </div>
-            ) : qr.state === 'sms_required' ? (
+            {qr.remote && !['success', 'expired', 'error'].includes(qr.state) ? (
+              <PlatformLoginView remote={qr.remote} onSettled={loginSettled} onRestart={awaitingQrScan(qr.state) ? restartLogin : undefined} />
+            ) : <>
+              <LegacyPlatformLoginView key={`${qr.platform}:${qr.kind}`} platform={qr.platform} name={qr.name} state={qr.state} attempt={qr.attempt} onSettled={loginSettled}
+                image={qr.qr ? `${mediaUrl(qr.qr)}?v=${qr.qrTs || qrNonce}` : undefined}
+                onRefresh={async () => {
+                  if (!accountPermission.current) return;
+                  if (qr.kind === 'mp') await handleMpLogin(qr.account);
+                  else await handleLogin(qr.account);
+                }} />
+              {qr.state === 'sms_required' && (
               <div style={{ padding: '6px 4px 2px' }}>
                 <div style={{ fontSize: 13, marginBottom: 10,
                   color: /错误|过期|失败|重新|未找到|未完成|不正确|失效/.test(qr.message || '')
@@ -368,30 +423,8 @@ export default function AccountsPage() {
                   {smsBusy ? '提交中…' : '提交验证码'}
                 </button>
               </div>
-            ) : qr.state === 'qr_ready' && qr.qr ? (
-              <img className="qr-img" src={`${mediaUrl(qr.qr)}?v=${qr.qrTs || qrNonce}`} alt="登录二维码" />
-            ) : qr.state === 'scanned' ? (
-              <div className="loading" style={{ padding: 40 }}><div className="spinner" />
-                {qr.message || '扫码成功，请在手机上确认登录，正在等待平台验证…'}
-              </div>
-            ) : qr.state === 'verifying' ? (
-              <div className="loading" style={{ padding: 40 }}><div className="spinner" />正在验证验证码，登录中…</div>
-            ) : qr.state === 'window_login' ? (
-              <div className="loading" style={{ padding: '28px 8px', lineHeight: 1.7, flexDirection: 'column', gap: 12 }}>
-                <div className="spinner" />
-                <div>在运行 响芽 的电脑上，切换到新打开的浏览器完成登录。</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>完成后自动保存登录状态，并更新此页面。</div>
-              </div>
-            ) : qr.state === 'success' ? (
-              <div style={{ fontSize: 48, padding: 40 }}>✅</div>
-            ) : ['error', 'expired'].includes(qr.state) ? (
-              <div style={{ fontSize: 13, color: 'var(--red)', padding: 30 }}>
-                {qr.message || '登录失败'}<br />请根据上方具体原因排查；可关闭后重试，日志在 outputs/_login/。
-              </div>
-            ) : (
-              <div className="loading" style={{ padding: 40 }}><div className="spinner" />
-                {qr.mode === 'browser' ? '正在打开登录浏览器…' : '准备二维码…'}</div>
-            )}
+              )}
+            </>}
             <div style={{ marginTop: 16 }}>
               <button className="btn" onClick={closeQr}>{qr.state === 'success' ? '完成' : '关闭'}</button>
             </div>

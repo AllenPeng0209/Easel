@@ -14,6 +14,10 @@ _MESSAGES = {
     "authentication": "登录已失效或账号没有访问权限，请检查登录和凭据配置。",
     "model_unavailable": "当前账号无法使用所选模型，请检查模型配置。",
     "rate_limit": "请求频率已达限制。",
+    "server_queue_full": "服务器的 AI 任务队列已满，本轮尚未调用模型，请稍后重试。",
+    "server_owner_queue_full": "你的 AI 排队任务已达上限，本轮尚未调用模型，请等待或取消已有排队任务。",
+    "server_queue_timeout": "等待服务器资源超时，本轮尚未调用模型，可以稍后重试。",
+    "server_unavailable": "服务器暂时无法接收任务，本轮尚未调用模型，请联系管理员检查资源设置。",
     "quota_exhausted": "账号用量已达限制，请检查剩余额度。",
     "network": "模型服务连接中断，请检查网络或本机网关。",
     "timeout": "本轮请求超时。",
@@ -23,7 +27,7 @@ _MESSAGES = {
     "unknown": "本轮执行状态未确认，请核对已有产物和发布回执。",
 }
 _PHASES = ("startup", "execution", "finalization")
-_TRANSIENT = ("rate_limit", "network", "timeout")
+_TRANSIENT = ("rate_limit", "network", "timeout", "server_queue_full", "server_owner_queue_full", "server_queue_timeout")
 
 
 def chat_failure(code: str = "unknown", phase: str = "execution", *, safe_to_retry: bool = False) -> dict:

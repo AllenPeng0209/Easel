@@ -9,10 +9,12 @@ import { inspectTerminalText, inspectToolValue } from '../lib/toolValueInspectio
 import AgentSubagentLineage, { type OpenSubagent } from './AgentSubagentLineage';
 import BusinessObjectCard from './BusinessObjectCard';
 import WorkshopRenderObservation from './WorkshopRenderObservation';
-import { normalizeBusinessObject } from '../lib/businessObjects';
+import { businessObjectIdentity, businessObjectOpenHref, normalizeBusinessObject, type BusinessObject } from '../lib/businessObjects';
 import { fetchBusinessObject } from '../lib/businessObjectApi';
 import PublicationReceiptCard from './PublicationReceiptCard';
-import { publicationReceiptInScope } from '../lib/publicationReceipt';
+import { publicationReceiptAccepts, publicationReceiptIdentity, publicationReceiptInScope, publicationReceiptView } from '../lib/publicationReceipt';
+import type { PublicationApprovalRecord } from '../lib/publicationApproval';
+import { requestApprovalPublication } from '../lib/publicationHandoff';
 import { fetchPublicationApproval } from '../lib/api';
 import { DisclosureRow } from '../vendor/deepseek-harness/message/DisclosureRow';
 import { projectToolCallTree, type ToolCallBranch } from '../vendor/deepseek-harness/tool/tool-call-tree';
@@ -25,6 +27,7 @@ const statusText: Record<string, string> = {
 const names: Record<string, string> = {
   commandExecution: '运行命令', fileChange: '修改文件', mcpToolCall: '调用工具',
   webSearch: '搜索网页', reasoning: '整理信息', todo_write: '任务清单',
+  easel_ask_user: '确认需求',
 };
 function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
   const result: AgentEvent[] = [];
@@ -54,6 +57,10 @@ function toolSnapshots(events: AgentEvent[]): AgentEvent[] {
   return result;
 }
 
+interface ToolSummaryRecords extends ToolRendererRecords {
+  publicationObservations?: { record: PublicationApprovalRecord; observedAt: number; sequence: number }[];
+}
+
 /** Join separate typed Host records to their original tool row. */
 function joinToolRecords(snapshots: AgentEvent[]) {
   const nativeBusiness = new Set(snapshots.map(nativeBusinessToolKey).filter(key => key !== undefined));
@@ -61,9 +68,9 @@ function joinToolRecords(snapshots: AgentEvent[]) {
     const key = nativePublicationToolKey(event);
     return key ? [[key, agentToolKey(event)] as const] : [];
   }));
-  const records = new Map<string, ToolRendererRecords>();
+  const records = new Map<string, ToolSummaryRecords>();
   const joined = new Set<AgentEvent>();
-  for (const event of snapshots) {
+  for (const [sequence, event] of snapshots.entries()) {
     if (event.kind === 'business' && event.business?.kind === 'workshop') {
       const key = businessToolCallKey(event);
       if (!key || !nativeBusiness.has(key)) continue;
@@ -80,6 +87,8 @@ function joinToolRecords(snapshots: AgentEvent[]) {
       if (!key || !publicationReceiptInScope(event.publication)) continue;
       const group = records.get(key) ?? {};
       (group.publications ??= []).push(event.publication);
+      (group.publicationObservations ??= []).push({ record: event.publication,
+        observedAt: event.completedAt ?? event.startedAt ?? 0, sequence });
       records.set(key, group);
       joined.add(event);
     }
@@ -87,15 +96,59 @@ function joinToolRecords(snapshots: AgentEvent[]) {
   return { records, joined };
 }
 
-function ToolEvent({ event, open, automatic, settled, children, childCount, onToggle, records, located }: {
+const compactText = (value: string) => value.replace(/\s+/g, ' ').trim().slice(0, 220);
+
+/** Show only scoped, typed business facts; raw tool payloads remain in details. */
+function ToolKeySummary({ records }: { records?: ToolRendererRecords }) {
+  if (!records) return null;
+  const workshops = new Map<string, BusinessObject>();
+  for (const value of records.workshops || []) {
+    const record = normalizeBusinessObject(value);
+    if (!record) continue;
+    const identity = businessObjectIdentity(record);
+    if (!workshops.has(identity) || workshops.get(identity)!.observedAt < record.observedAt) workshops.set(identity, record);
+  }
+  const publications = new Map<string, PublicationApprovalRecord>();
+  for (const record of records.publications || []) {
+    if (!publicationReceiptInScope(record)) continue;
+    const identity = publicationReceiptIdentity(record);
+    const current = publications.get(identity);
+    // These observations are ordered by Host time below. Apply the existing
+    // correlation and lifecycle checks before replacing a visible receipt.
+    if (!current || publicationReceiptAccepts(current, record)) publications.set(identity, record);
+  }
+  if (!workshops.size && !publications.size) return null;
+  return <div className="agent-tool__key-summary" data-tool-key-summary aria-label="关键结果">
+    {[...workshops.values()].map(record => <section key={businessObjectIdentity(record)}>
+      <div><strong>{compactText(record.title || '视频工坊')}</strong><span role="status">{record.status.label}</span></div>
+      {record.summary && <p>{compactText(record.summary)}</p>}
+      {record.actions.map(action => {
+        const href = businessObjectOpenHref(record, action);
+        return href ? <a key={`${action.target}:${action.entityId}`} href={href}>{action.label}</a> : null;
+      })}
+    </section>)}
+    {[...publications].map(([identity, record]) => {
+      const status = publicationReceiptView(record);
+      return <section key={identity}>
+        <div><strong>{compactText(record.subject.title || '发布内容')}</strong><span role="status">{status.label}</span></div>
+        <p>{record.subject.platform.name} · {record.subject.account.name}</p>
+        {status.note && <p>{status.note}</p>}
+        <button type="button" className="btn btn-secondary" onClick={() => requestApprovalPublication(record)}>到发布中心核对</button>
+      </section>;
+    })}
+  </div>;
+}
+
+function ToolEvent({ event, open, automatic, settled, children, childCount, onToggle, records, summaryRecords, located }: {
   event: AgentEvent; open: boolean; automatic: boolean; settled: boolean; children?: ReactNode; childCount: number;
   onToggle: (open: boolean) => void;
   records?: ToolRendererRecords; located: boolean;
+  summaryRecords?: ToolRendererRecords;
 }) {
   const renderer = useMemo(() => resolveToolRenderer(event, settled, records), [event, settled, records]);
   const view = renderer.kind === 'specialized' ? renderer.view : undefined;
   const { status: state, phase, awaitingTerminal: unconfirmed } = toolLifecycle(view?.status ?? event.status, settled);
-  const disclosure = useWorkDisclosure(open || (automatic && state === 'failed'), automatic);
+  const disclosure = useWorkDisclosure(open, automatic);
   const running = phase === 'running' || (phase === 'preparing' && state === 'preparing');
   const visualState = phase === 'unconfirmed' || view?.unconfirmed ? 'unconfirmed' : state;
   const workshopRender = view?.workshopRender;
@@ -129,6 +182,7 @@ function ToolEvent({ event, open, automatic, settled, children, childCount, onTo
         <ToolRendererDetails event={event} renderer={renderer} showTerminalFacts={phase === 'terminal' || settled} />
       </div>
     </DisclosureRow>
+    {!disclosure.open && <ToolKeySummary records={summaryRecords} />}
   </div>;
 }
 
@@ -171,13 +225,27 @@ function OtherEvent({ event }: { event: AgentEvent }) {
 
 /** Adapted from DeepSeek ui-tool ToolCallTree.tsx: one atomic tool card per branch. */
 function ToolBranch({ branch, settled, toolDisclosure, onToggle, typedRecords, locatedKey }: {
-  branch: ToolCallBranch<AgentEvent>; settled: boolean; locatedKey?: string; typedRecords: ReadonlyMap<string, ToolRendererRecords>;
+  branch: ToolCallBranch<AgentEvent>; settled: boolean; locatedKey?: string; typedRecords: ReadonlyMap<string, ToolSummaryRecords>;
   toolDisclosure: (branch: ToolCallBranch<AgentEvent>) => { open: boolean; automatic: boolean };
   onToggle: (key: string, open: boolean) => void;
 }) {
   const disclosure = toolDisclosure(branch);
+  const summaryRecords = useMemo(() => {
+    const workshops: BusinessObject[] = [];
+    const observations: NonNullable<ToolSummaryRecords['publicationObservations']> = [];
+    const pending = [branch];
+    while (pending.length) {
+      const next = pending.pop()!;
+      const records = typedRecords.get(next.key);
+      workshops.push(...records?.workshops || []);
+      observations.push(...records?.publicationObservations || []);
+      pending.push(...next.children);
+    }
+    observations.sort((left, right) => left.observedAt - right.observedAt || left.sequence - right.sequence);
+    return { workshops, publications: observations.map(observation => observation.record) };
+  }, [branch, typedRecords]);
   return <ToolEvent event={branch.value} {...disclosure} settled={settled} childCount={branch.children.length}
-    records={typedRecords.get(branch.key)} located={branch.key === locatedKey} onToggle={open => onToggle(branch.key, open)}>
+    records={typedRecords.get(branch.key)} summaryRecords={summaryRecords} located={branch.key === locatedKey} onToggle={open => onToggle(branch.key, open)}>
     {branch.children.length > 0 && <div className="agent-tool__children" data-subcalls>
       {branch.children.map(child => <ToolBranch key={child.key} branch={child} settled={settled}
         toolDisclosure={toolDisclosure} onToggle={onToggle} typedRecords={typedRecords} locatedKey={locatedKey} />)}
@@ -234,9 +302,9 @@ export default function AgentEventPanel({ events, expandedCallId, expandedRunId,
   }, [location]);
 
   if (!snapshots.length) return null;
-  const toolDisclosure = ({ key, value, children }: ToolCallBranch<AgentEvent>) => {
+  const toolDisclosure = ({ key, value }: ToolCallBranch<AgentEvent>) => {
     const manual = openCalls.get(key);
-    const preferred = defaultOpen === true || children.length > 0 || typed.records.has(key) ||
+    const preferred = defaultOpen === true ||
       (value.callId === expandedCallId && (expandedRunId === undefined || value.runId === expandedRunId));
     return { open: manual ?? preferred, automatic: manual === undefined && defaultOpen !== undefined };
   };

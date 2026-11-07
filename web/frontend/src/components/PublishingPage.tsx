@@ -48,7 +48,7 @@ export default function PublishingPage({ persona, handoff, onHandoffConsumed }: 
           : '保留原有账号检查、预检、确认及自动提交流程。'}</span>
     </div>
     <div className="publishing-mode-content">
-      {manual ? <ManualPublishPage persona={persona} /> : <AutomatedPublishPage persona={persona} handoff={handoff} onHandoffConsumed={onHandoffConsumed} />}
+      {manual ? <ManualPublishPage persona={persona} handoff={handoff} onHandoffConsumed={onHandoffConsumed} /> : <AutomatedPublishPage persona={persona} handoff={handoff} onHandoffConsumed={onHandoffConsumed} />}
     </div>
   </div>;
 }

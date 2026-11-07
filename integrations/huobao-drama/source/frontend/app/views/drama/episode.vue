@@ -46,11 +46,13 @@
             :show-config="videoModelMultiCfg"
           />
           <ModelSelect
+            v-if="!isFixedNativeVideo"
             v-model="episodeResolution"
             :label="t('episode.topbar.resolution')"
             :options="resolutionOptions"
             hide-default
           />
+          <span v-else class="tag mono" title="此接口使用固定原生尺寸；导出规格在后期设置">{{ nativeResolutionLabel }}</span>
         </div>
         <div class="studio-actions">
           <LocaleSwitcher />
@@ -587,7 +589,8 @@
                         <i :class="['dot', videoTaskState(task.storyboard) === 'done' && 'ok', videoTaskState(task.storyboard) === 'pending' && 'pending']" />{{ videoTaskStatusLabel(task.storyboard) }}
                       </span>
                       <span class="video-task-sep">·</span>
-                      <span>{{ task.duration }}s</span>
+                      <span>计划 {{ formatVideoSeconds(task.duration) }}s</span>
+                      <span v-if="task.actualDuration != null">成片 {{ formatVideoSeconds(task.actualDuration) }}s</span>
                       <template v-if="task.meta">
                         <span class="video-task-sep">·</span>
                         <span class="video-task-loc truncate">{{ task.meta }}</span>
@@ -692,7 +695,8 @@
                       :placeholder="t('episode.inspector.videoPromptPlaceholder')"
                       @commit="v => updateField(selectedSb, 'video_prompt', v)"
                     />
-                    <p class="voice-reference-hint">{{ t('characterVoice.referenceHint') }}</p>
+                    <p v-if="isPikaVideo" class="voice-reference-hint">H3 Flex 有原生声音，但当前接口不支持音色参考。具体台词以本镜分镜说明为准。</p>
+                    <p v-else class="voice-reference-hint">{{ t('characterVoice.referenceHint') }}</p>
                   </section>
               </div>
               </div>
@@ -706,7 +710,8 @@
                     <span :class="['dot', videoTaskState(selectedSb) === 'done' && 'ok', videoTaskState(selectedSb) === 'pending' && 'pending']" />
                     {{ videoTaskStatusLabel(selectedSb) }}
                   </span>
-                  <span v-if="selectedSb.duration" class="video-player-sub">{{ selectedSb.duration }}s</span>
+                  <span class="video-player-sub">计划 {{ formatVideoSeconds(selectedSb.duration) }}s</span>
+                  <span v-if="selectedVideoActualDuration != null" class="video-player-sub">成片 {{ formatVideoSeconds(selectedVideoActualDuration) }}s</span>
                 </div>
                 <button
                   v-if="previewVideoUrl && !playerIsRemote"
@@ -806,6 +811,22 @@
                       </button>
                     </div>
                     <div v-else class="video-bound-refs-empty">{{ t('episode.inspector.noBoundRefs') }}</div>
+                    <div v-if="isSingleImageVideo" class="video-main-reference">
+                      <label for="video-main-reference">本次主参考图</label>
+                      <select id="video-main-reference" class="input" :value="selectedReferencePlan.selectedUrl"
+                        :disabled="primaryReferenceSaving[selectedSb.id]"
+                        @change="onPrimaryVideoReferenceChange">
+                        <option value="">{{ selectedReferencePlan.candidates.length ? '请选择本镜主参考图' : '文生视频，不发送参考图' }}</option>
+                        <option v-for="image in selectedReferencePlan.candidates" :key="image.url" :value="image.url">
+                          {{ image.names.join(' / ') || '参考图' }}
+                        </option>
+                      </select>
+                      <img v-if="selectedReferencePlan.selectedUrl" :src="thumbOf(assetImageSrc({ imageUrl: selectedReferencePlan.selectedUrl }))"
+                        alt="本次实际发送的主参考图" @error="thumbFallback($event, assetImageSrc({ imageUrl: selectedReferencePlan.selectedUrl }))" />
+                      <p v-if="selectedReferencePlan.error" role="alert">{{ selectedReferencePlan.error }}</p>
+                      <p v-else-if="primaryReferenceSaving[selectedSb.id]">正在保存主参考图…</p>
+                      <p v-else>本次发送 {{ selectedReferencePlan.urls.length }} 张图。绑定关系仍保留，未选素材不会作为图片发送。</p>
+                    </div>
                   </section>
                 </div>
 
@@ -816,17 +837,20 @@
                       <span class="video-param-name">{{ t('episode.inspector.duration') }}</span>
                       <span class="video-param-control">
                         <input
-                          :value="selectedSb.duration || 10"
+                          :value="selectedSb.duration ?? 10"
                           type="number"
-                          min="2"
-                          max="30"
+                          :min="videoDurationLimits.min"
+                          :max="videoDurationLimits.max"
+                          step="1"
+                          :aria-invalid="!!selectedVideoDurationError"
                           class="input video-duration-input"
                           @change="onVideoDurationChange"
                         />
-                        <span class="video-param-unit">{{ t('episode.inspector.durationUnit') }}</span>
+                        <span class="video-param-unit">秒（{{ videoDurationLimits.min }}–{{ videoDurationLimits.max }}，整数）</span>
                       </span>
                     </div>
                     <div class="video-param-hint">{{ t('episode.inspector.durationHint') }}</div>
+                    <p v-if="selectedVideoDurationError" class="video-input-error" role="alert">{{ selectedVideoDurationError }}</p>
                   </section>
                   <div class="video-inspector-effective">
                     {{ t('episode.inspector.effective', { model: effectiveVideoModelLabel || t('episode.vid.defaultModel'), res: episodeResolutionShort, dur: effectiveVideoDuration }) }}
@@ -1460,6 +1484,7 @@ import { api, dramaAPI, episodeAPI, storyboardAPI, characterAPI, sceneAPI, propA
 import { startTour, autoTour } from '~/composables/useTour'
 import { useAgent } from '~/composables/useAgent'
 import { resolveTextModelSelection } from '~/utils/text-model-selection'
+import { localVideoInputProfile, videoDurationConstraints, videoDurationError, videoReferencePlan, generatedVideoDuration, formatVideoSeconds } from '~/utils/video-generation-inputs'
 import { toastError, mapError, MODERATION_RE } from '~/composables/useToast'
 import LocaleSwitcher from '~/components/LocaleSwitcher.vue'
 import { xiangyaContext, xiangyaAction, xiangyaBack, xiangyaMediaUrl } from '~/composables/useXiangyaBridge'
@@ -2074,6 +2099,7 @@ const allVideoTaskRows = computed(() => sbs.value.map((sb, index) => {
     title: sb.description || t('episode.vid.shotN', { n: String(index + 1).padStart(2, '0') }),
     meta: sceneName,
     duration: Number.isFinite(duration) ? duration : 5,
+    actualDuration: videoActualDuration(sb),
     referenceCount,
     state: videoTaskState(sb),
     // 只有当前处于失败状态才显示错误,避免重试成功的分镜残留历史错误信息
@@ -2134,8 +2160,8 @@ const RESOLUTION_DISPLAY = {
   minimax: { '480p': '768P', '720p': '768P', '1080p': '2K' },
   aliyun: { '480p': '480P', '720p': '720P', '1080p': '1080P' },
 }
-const resolutionProvider = computed(() => JSON.stringify([videoModel.value, selectedVideoConfig.value?.model]).includes('pika-h3') ? 'pika' : RESOLUTION_TIERS[selectedVideoConfig.value?.provider] ? selectedVideoConfig.value.provider : 'volcengine')
-const resolutionOptions = computed(() => RESOLUTION_TIERS[resolutionProvider.value].map(key => ({
+const resolutionProvider = computed(() => isPikaVideo.value ? 'pika' : RESOLUTION_TIERS[selectedVideoConfig.value?.provider] ? selectedVideoConfig.value.provider : 'volcengine')
+const resolutionOptions = computed(() => isFixedNativeVideo.value ? [] : RESOLUTION_TIERS[resolutionProvider.value].map(key => ({
   key,
   model: `${RESOLUTION_DISPLAY[resolutionProvider.value][key]} · ${t(`episode.resolution.${key === '480p' ? 'smooth' : key === '720p' ? 'hd' : 'uhd'}`)}`,
 })))
@@ -2213,7 +2239,7 @@ const isWan3Video = computed(() => selectedVideoConfig.value?.provider === 'aliy
   || bareModelName(videoModel.value).startsWith('wan3.0-video'))
 
 // 参考图上限（Wan 3.0 官方 10 张，其他模型 9 张），绑定素材收集与 @名字 映射统一读取
-const refImageLimit = computed(() => JSON.stringify([videoModel.value, selectedVideoConfig.value?.model]).includes('pika-h3') ? 1 : isWan3Video.value ? 10 : 9)
+const refImageLimit = computed(() => isSingleImageVideo.value ? 1 : isWan3Video.value ? 10 : 9)
 
 // 本次生成的生效配置（模型/分辨率/时长），用于右侧小结与批量确认弹窗
 const effectiveVideoModelLabel = computed(() => {
@@ -2221,11 +2247,24 @@ const effectiveVideoModelLabel = computed(() => {
   if (explicit) return explicit
   return configModels(selectedVideoConfig.value)[0] || ''
 })
+const nativeVideoProfile = computed(() => localVideoInputProfile(effectiveVideoModelLabel.value, selectedVideoConfig.value))
+const isFixedNativeVideo = computed(() => nativeVideoProfile.value?.kind === 'fixed')
+const nativeResolutionLabel = computed(() => {
+  const dimensions = nativeVideoProfile.value?.dimensions?.[dramaAspectRatio.value]
+  return dimensions ? `固定原生（${dimensions}）` : '固定原生'
+})
+const videoDurationLimits = computed(() => videoDurationConstraints(effectiveVideoModelLabel.value, selectedVideoConfig.value))
+const isPikaVideo = computed(() => nativeVideoProfile.value?.kind === 'pika')
+const isSingleImageVideo = computed(() => videoDurationLimits.value.singleImage)
+const selectedVideoDurationError = computed(() => videoDurationError(selectedSb.value?.duration ?? 10, videoDurationLimits.value))
+const selectedReferencePlan = computed(() => getShotReferencePlan(selectedSb.value))
 const episodeResolutionLabel = computed(() =>
-  resolutionOptions.value.find(o => o.key === episodeResolution.value)?.model || episodeResolution.value)
+  isFixedNativeVideo.value ? nativeResolutionLabel.value
+    : resolutionOptions.value.find(o => o.key === episodeResolution.value)?.model || episodeResolution.value)
 // 短档位标签（480p / 768P / 2K 等厂商原生档位），用于底部生效配置小结
 const episodeResolutionShort = computed(() =>
-  RESOLUTION_DISPLAY[resolutionProvider.value][episodeResolution.value] || episodeResolution.value)
+  isFixedNativeVideo.value ? nativeResolutionLabel.value
+    : RESOLUTION_DISPLAY[resolutionProvider.value][episodeResolution.value] || episodeResolution.value)
 const effectiveVideoDuration = computed(() => Number(selectedSb.value?.duration || 10))
 const batchVideoTotalDuration = computed(() =>
   batchVideoConfirm.value.targets.reduce((sum, sb) => sum + (Number(sb.duration) || 5), 0))
@@ -2233,6 +2272,8 @@ const batchVideoTotalDuration = computed(() =>
 function openBatchVideoConfirm(pool) {
   const targets = pool.filter(s => !isPendingVideo(s.id))
   if (!targets.length) { toast.info(t('episode.vid.noneToGenerate')); return }
+  const invalid = targets.find(sb => videoInputError(sb))
+  if (invalid) { toast.error(videoInputError(invalid)); return }
   batchVideoConfirm.value = { open: true, targets }
 }
 function batchVideos() {
@@ -2248,6 +2289,8 @@ async function retryFailedVideos() {
 }
 function confirmBatchVideos() {
   const targets = [...batchVideoConfirm.value.targets]
+  const invalid = targets.find(sb => videoInputError(sb))
+  if (invalid) { toast.error(videoInputError(invalid)); return }
   batchVideoConfirm.value = { open: false, targets: [] }
   if (!targets.length) return
   const ids = targets.map(s => s.id)
@@ -2616,6 +2659,9 @@ const currentSubStageLabel = computed(() => currentStageLabel.value)
 
 const totalDuration = computed(() => sbs.value.reduce((s, sb) => s + (sb.duration || 10), 0))
 const selectedSb = ref(null)
+const primaryReferenceSaving = ref({})
+const primaryReferenceWrites = ref({})
+let primaryReferenceVersion = 0
 const selectedVideoTaskNumber = computed(() => {
   const index = videoTaskRows.value.findIndex(task => String(task.id) === String(selectedSb.value?.id))
   return index >= 0 ? index + 1 : 0
@@ -2702,6 +2748,7 @@ watch(rawContent, v => { localRaw.value = v }, { immediate: true })
 watch(scriptContent, v => { localScript.value = v }, { immediate: true })
 
 async function refresh() {
+  const referenceVersionAtStart = primaryReferenceVersion
   try {
     drama.value = await dramaAPI.get(dramaId)
     const ep = drama.value.episodes?.find(e => (e.episode_number || e.episodeNumber) === episodeNumber)
@@ -2710,7 +2757,14 @@ async function refresh() {
       try { chars.value = await episodeAPI.characters(ep.id) } catch { chars.value = [] }
       try { scenes.value = await episodeAPI.scenes(ep.id) } catch { scenes.value = [] }
       try { propItems.value = await episodeAPI.props(ep.id) } catch { propItems.value = [] }
-      sbs.value = await episodeAPI.storyboards(ep.id)
+      const storyboardRows = await episodeAPI.storyboards(ep.id)
+      sbs.value = storyboardRows.map(row => {
+        const saved = primaryReferenceWrites.value[row.id]
+        // A read started before this successful save must not undo the user's
+        // choice. A later read remains authoritative, including external edits.
+        return saved && saved.version > referenceVersionAtStart
+          ? { ...row, first_frame_image: saved.value, firstFrameImage: saved.value } : row
+      })
       selectedVideoSbIds.value = selectedVideoSbIds.value.filter(id => sbs.value.some(sb => sb.id === id))
       if (sbs.value.length) {
         const currentSelectedId = selectedSb.value?.id
@@ -3100,6 +3154,18 @@ function taskVideoPath(t) { return t?.local_path || t?.localPath || t?.result_ur
 function taskCreatedAt(t) { return t?.created_at || t?.createdAt || '' }
 function isCurrentVideo(t) { const p = taskVideoPath(t); return !!p && p === getVideoUrl(selectedSb.value) }
 
+function videoActualDuration(sb, previewPath = '') {
+  if (!sb) return null
+  const path = previewPath || getVideoUrl(sb)
+  if (!path) return null
+  const rows = [...genTasks.value, ...(selectedSb.value?.id === sb.id ? sbVideoHistory.value : [])]
+  const task = rows.find(row => (row.storyboard_id ?? row.storyboardId) === sb.id
+    && row.type === 'video' && taskVideoPath(row) === path)
+  return generatedVideoDuration(task)
+}
+
+const selectedVideoActualDuration = computed(() => videoActualDuration(selectedSb.value, previewVideoUrl.value))
+
 async function loadSbVideoHistory() {
   previewVideoUrl.value = ''
   if (!selectedSb.value?.id) { sbVideoHistory.value = []; return }
@@ -3145,21 +3211,55 @@ function formatHistoryTime(iso) {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function getShotReferenceImages(sb) {
-  const refs = []
-  const pushRef = (value) => {
-    if (!value || refs.includes(value) || refs.length >= refImageLimit.value) return
-    refs.push(value)
-  }
+function getShotReferenceAssets(sb) {
+  const assets = []
+  if (!sb) return assets
   const scene = getStoryboardScene(sb)
-  pushRef(scene?.image_url || scene?.imageUrl)
+  assets.push({ name: scene?.location || '', url: scene?.image_url || scene?.imageUrl })
   for (const char of getStoryboardCharacters(sb)) {
-    pushRef(char?.image_url || char?.imageUrl)
+    assets.push({ name: char.name || '', url: char?.image_url || char?.imageUrl })
   }
   for (const prop of getStoryboardProps(sb)) {
-    pushRef(prop?.image_url || prop?.imageUrl)
+    assets.push({ name: prop.name || '', url: prop?.image_url || prop?.imageUrl })
   }
-  return refs
+  return assets
+}
+
+function getShotReferencePlan(sb) {
+  return videoReferencePlan(getShotReferenceAssets(sb), {
+    limit: refImageLimit.value,
+    singleImage: videoDurationConstraints(effectiveVideoModelLabel.value, selectedVideoConfig.value).singleImage,
+    primaryImage: sb && 'first_frame_image' in sb ? sb.first_frame_image : sb?.firstFrameImage || '',
+  })
+}
+
+function getShotReferenceImages(sb) {
+  return getShotReferencePlan(sb).urls
+}
+
+async function onPrimaryVideoReferenceChange(event) {
+  const sb = selectedSb.value
+  if (!sb || primaryReferenceSaving.value[sb.id]) return
+  const url = event.target.value
+  if (url && !getShotReferencePlan(sb).candidates.some(item => item.url === url)) return
+  primaryReferenceSaving.value = { ...primaryReferenceSaving.value, [sb.id]: true }
+  try {
+    await storyboardAPI.update(sb.id, { first_frame_image: url || null })
+    const value = url || null
+    primaryReferenceWrites.value = { ...primaryReferenceWrites.value,
+      [sb.id]: { version: ++primaryReferenceVersion, value } }
+    for (const target of new Set([sb, sbs.value.find(row => row.id === sb.id),
+      selectedSb.value?.id === sb.id ? selectedSb.value : null])) {
+      if (!target) continue
+      target.first_frame_image = value
+      target.firstFrameImage = value
+    }
+  } catch (error) {
+    toastError(error)
+  } finally {
+    primaryReferenceSaving.value = { ...primaryReferenceSaving.value, [sb.id]: false }
+    if (selectedSb.value?.id === sb.id) event.target.value = getShotReferencePlan(selectedSb.value).selectedUrl
+  }
 }
 
 // 右侧参考素材面板：本集全部可绑定素材（场景单选、角色/道具多选），bound 标记是否已绑定
@@ -3218,7 +3318,7 @@ const refBindableAssets = computed(() => {
   return sb ? shotBindableAssets(sb) : []
 })
 
-// 右栏「绑定参考图」：当前分镜已绑定素材（生成时作为参考图提交），按分组顺序平铺展示
+// 绑定关系与本次实际发送的图片分别展示；单图模型由主参考图选择决定。
 const boundRefAssets = computed(() => refBindableAssets.value.filter(a => a.bound))
 
 // 参考面板分组顺序（kind code 驱动，label 渲染时求值）
@@ -3256,7 +3356,7 @@ const mentionOptions = computed(() => {
       group: t('common.role'),
       image: thumbOf(assetImageSrc(c)),
     })),
-    ...getStoryboardCharacters(sb).filter(c => c.voice_audio_url || c.voiceAudioUrl).map(c => ({
+    ...getStoryboardCharacters(sb).filter(c => !isPikaVideo.value && (c.voice_audio_url || c.voiceAudioUrl)).map(c => ({
       label: c.name,
       value: c.name,
       aliases: [`${c.name}音色`],
@@ -3283,54 +3383,44 @@ const mentionOptions = computed(() => {
 
 // 按参考图顺序（场景图在前、角色图居中、道具图在后）为 @名字 建立索引映射，供视频提示词引用替换
 function getShotReferenceIndexMap(sb) {
-  const ordered = []
-  const seen = new Set()
-  const push = (name, url) => {
-    if (!url || seen.has(url) || ordered.length >= refImageLimit.value) return
-    seen.add(url)
-    ordered.push({ name, imageUrl: url })
-  }
-  const scene = getStoryboardScene(sb)
-  push(scene?.location || '', scene?.image_url || scene?.imageUrl)
-  for (const char of getStoryboardCharacters(sb)) {
-    push(char.name || '', char?.image_url || char?.imageUrl)
-  }
-  for (const prop of getStoryboardProps(sb)) {
-    push(prop.name || '', prop?.image_url || prop?.imageUrl)
-  }
-  const nameToIndex = {}
-  ordered.forEach((a, i) => { if (a.name && !(a.name in nameToIndex)) nameToIndex[a.name] = i + 1 })
-  return nameToIndex
+  return getShotReferencePlan(sb).nameToIndex
 }
 
 // 将视频提示词里的 @名字 替换为 @图片N名字（N 为参考图序号，1 起），生成时使用
 function resolveVideoPromptRefs(sb) {
   const prompt = sb.video_prompt || sb.videoPrompt || ''
   const map = getShotReferenceIndexMap(sb)
-  const names = Object.keys(map).sort((a, b) => b.length - a.length)
+  const names = [...new Set(getShotReferenceAssets(sb).map(item => item.name).filter(Boolean))].sort((a, b) => b.length - a.length)
   if (!names.length) return prompt
   return prompt.replace(/@([^\s@#]+)/g, (m, raw) => {
     for (const name of names) {
       if (raw.startsWith(name)) {
-        return `@图片${map[name]}${name}${raw.slice(name.length)}`
+        return `${map[name] ? `@图片${map[name]}` : ''}${name}${raw.slice(name.length)}`
       }
     }
     return m
   })
 }
 
-// 分镜时长（视频生成参数区直接编辑并保存到分镜）：
-// 统一限制 2-30s，列表/批量/单次生成统一读取该值；超出厂商支持范围由后端适配器收敛
+// 计划时长需明确符合所选模型，不用实际片长替换，也不静默改变用户输入。
 function onVideoDurationChange(e) {
   const sb = selectedSb.value
   if (!sb) return
-  const min = 2
-  const max = 30
-  let v = Math.round(Number(e.target.value))
-  if (!Number.isFinite(v)) v = Number(sb.duration || 10)
-  v = Math.min(max, Math.max(min, v))
+  const error = videoDurationError(e.target.value, videoDurationLimits.value)
+  if (error) {
+    e.target.value = sb.duration ?? 10
+    toast.error(error)
+    return
+  }
+  const v = Number(e.target.value)
   e.target.value = v
   updateField(sb, 'duration', v)
+}
+
+function videoInputError(sb) {
+  if (primaryReferenceSaving.value[sb.id]) return '主参考图正在保存，请稍候再生成。'
+  return videoDurationError(sb.duration ?? 10, videoDurationConstraints(effectiveVideoModelLabel.value, selectedVideoConfig.value))
+    || getShotReferencePlan(sb).error
 }
 
 function pickFile(accept, cb) {
@@ -3373,6 +3463,8 @@ function uploadAssetImage(kind, id) {
 
 async function genVid(sb, opts = {}) {
   if (!opts.forceNew && canRecoverVideo(sb.id)) return recoverVideo(sb)
+  const inputError = videoInputError(sb)
+  if (inputError) { toast.error(inputError); return }
   const latest = latestVideoTask(sb.id)
   const forceNew = opts.forceNew || latest?.status === 'failed'
   if (forceNew && !window.confirm(t('episode.recovery.confirmNew'))) return
@@ -3382,12 +3474,15 @@ async function genVid(sb, opts = {}) {
     storyboard_id: sb.id,
     drama_id: dramaId,
     prompt: resolveVideoPromptRefs(sb),
-    duration: Number(sb.duration || 10),
+    duration: Number(sb.duration ?? 10),
     aspect_ratio: dramaAspectRatio.value,
     generate_audio: true,
     model: bareModelName(videoModel.value) || undefined,
     config_id: ownerConfigId(videoModelOptions.value, videoModel.value),
     reference_image_urls: referenceImages,
+  }
+  if (localVideoInputProfile(effectiveVideoModelLabel.value, selectedVideoConfig.value)?.kind === 'pika') {
+    params.resolution = episodeResolution.value
   }
   if (!params.prompt && !referenceImages.length) {
     toast.error(t('episode.vid.needRefOrPrompt'))
@@ -5324,6 +5419,13 @@ button.video-task-metric.on { box-shadow: 0 0 0 2px var(--accent); }
 .video-param-control { display: inline-flex; align-items: center; gap: 6px; }
 .video-param-unit { font-size: 11px; color: var(--text-2); }
 .video-duration-input { width: 56px; height: 24px; padding: 2px 6px; font-size: 12px; font-weight: 700; font-family: var(--font-mono); text-align: center; }
+.video-duration-input[aria-invalid="true"] { border-color: var(--error, #dc2626); }
+.video-input-error, .video-main-reference [role="alert"] { color: var(--error, #dc2626); font-size: 12px; line-height: 1.6; }
+.video-main-reference { display: grid; gap: 8px; margin-top: 12px; }
+.video-main-reference label { font-size: 12px; font-weight: 600; }
+.video-main-reference select { width: 100%; max-width: 100%; }
+.video-main-reference img { width: 100%; max-height: 160px; object-fit: contain; border-radius: 6px; }
+.video-main-reference p { margin: 0; font-size: 12px; line-height: 1.6; }
 
 /* Prod grid */
 .prod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
@@ -5945,12 +6047,15 @@ button.video-task-metric.on { box-shadow: 0 0 0 2px var(--accent); }
   }
 
   .video-task-workbench.has-player {
-    grid-template-columns: var(--vleft, 208px) minmax(0, 1fr);
+    grid-template-columns: min(var(--vleft, 208px), 208px) minmax(0, 1fr);
   }
 
   .video-task-side {
-    grid-template-columns: minmax(0, 1fr) var(--vright, 260px);
+    grid-template-columns: minmax(0, 1fr) min(var(--vright, 260px), 260px);
   }
+
+  .video-col-divider.is-left { left: calc(min(var(--vleft, 208px), 208px) - 4px); }
+  .video-col-divider.is-right { right: calc(min(var(--vright, 260px), 260px) - 4px); }
 
   .video-main-grid {
     grid-template-columns: 1fr;
@@ -6168,8 +6273,9 @@ button.video-task-metric.on { box-shadow: 0 0 0 2px var(--accent); }
     flex-direction: column;
   }
 
-  .video-task-workbench {
-    grid-template-columns: 1fr;
+  .video-task-workbench,
+  .video-task-workbench.has-player {
+    grid-template-columns: minmax(0, 1fr);
     overflow-y: auto;
   }
 

@@ -9,6 +9,7 @@ from easel import __version__
 
 from .base import HarnessError, RunRequest
 from .commands import base_command, codex_override
+from .catalog_cache import catalog_ttl, protected_catalog
 from .rpc import RPC
 
 
@@ -19,13 +20,24 @@ def valid_model_id(value):
 
 
 async def _codex_models(request: RunRequest, *, include_config: bool = False) -> tuple[list[dict], str | None]:
+    command = (codex_override(request.env) or base_command("codex")) + ["app-server"]
+    ttl = catalog_ttl(request.env)
+    if not ttl:
+        return await _probe_codex_models(request, command, include_config=include_config)
+    # Do not retain a caller's large prompt or Host callbacks in the probe queue.
+    metadata_request = RunRequest('', request.cwd, dict(request.env), sandbox='read-only')
+    return await protected_catalog(metadata_request, command, include_config,
+        lambda: _probe_codex_models(metadata_request, command, include_config=include_config, bounded=True), ttl)
+
+
+async def _probe_codex_models(request: RunRequest, command: list[str], *, include_config: bool, bounded=False):
     async def reject(method, params):
         raise HarnessError("读取模型列表时不允许执行工具")
 
     models = []
     configured = None
     cursor = None
-    async with RPC(request, (codex_override(request.env) or base_command("codex")) + ["app-server"],
+    async with RPC(request, command,
                    lambda method, params: None, reject) as rpc:
         await rpc.call("initialize", {
             "clientInfo": {"name": "easel", "version": __version__},
@@ -46,6 +58,8 @@ async def _codex_models(request: RunRequest, *, include_config: bool = False) ->
             response = await rpc.call("model/list", params, timeout=15)
             if not isinstance(response, dict) or not isinstance(response.get("data"), list):
                 raise HarnessError("Codex 返回了无效的模型列表")
+            if bounded and len(response['data']) > 100:
+                raise HarnessError("模型目录超过请求分页大小，请检查原生配置")
             for item in response.get("data") or []:
                 if not isinstance(item, dict):
                     continue
@@ -56,6 +70,8 @@ async def _codex_models(request: RunRequest, *, include_config: bool = False) ->
                                    "label": label if valid_model_id(label) else identifier,
                                    "default": bool(item.get("isDefault"))})
             following = response.get("nextCursor")
+            if bounded and following and (following == cursor or page == 19):
+                raise HarnessError("模型目录分页未完整结束，请检查原生配置")
             if not following or following == cursor:
                 break
             cursor = following
