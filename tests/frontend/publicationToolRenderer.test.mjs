@@ -23,7 +23,7 @@ const native = (callId, name = 'easel_publish', fields = {}) => ({ id: 'tool-' +
 const receipt = (callId, name = 'easel_publish', fields = {}) => ({ id: 'same-durable-event-id', kind: 'publication',
   runId: 'run-one', callId, name, completedAt: 20, publication: record(), ...fields });
 const show = events => parseHTML(renderToStaticMarkup(React.createElement(
-  componentModule('components/AgentEventPanel.tsx', { user }).default, { events, settled: true },
+  componentModule('components/AgentEventPanel.tsx', { user }).default, { events, settled: true, defaultOpen: true },
 ))).document;
 const row = (doc, call) => doc.querySelector(`[data-tool-call="${call}"]`);
 const card = '[data-publication-receipt]';

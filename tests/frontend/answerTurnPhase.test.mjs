@@ -56,3 +56,11 @@ test('an explicit answer result does not turn awaiting input, stop or recovery i
     assert.equal(document.querySelector('[data-turn-phase=completed]'), null);
   }
 });
+
+
+test('a queued turn reports resource waiting without claiming the model is running', () => {
+  const document = show({}, { isStreaming: true, turnLifecycle: 'queued', activity: '等待服务器资源' });
+  assert.match(document.querySelector('[data-turn-phase=queued]')?.textContent || '', /等待服务器资源/);
+  assert.equal(document.querySelector('[data-turn-phase=running]'), null);
+  assert.equal(document.querySelector('[data-answer-phase]'), null);
+});

@@ -1,6 +1,7 @@
 """Private, IP-scoped runtime and data bridge for the unmodified Huobao production flow."""
 from __future__ import annotations
 from contextlib import contextmanager
+from collections import defaultdict
 import hashlib
 import json
 import math
@@ -13,6 +14,7 @@ import socket
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -52,6 +54,11 @@ class HuobaoRuntime:
         self.database_path = self.directory / 'data' / 'huobao.sqlite3'
         self.data_root = self.directory / 'data'
         self.state = json.loads(self.state_path.read_text()) if self.state_path.is_file() else {}
+        self._http_client = None
+        self._http_identity = None
+        self._http_lock = threading.RLock()
+        self._healthy_until = 0.0
+        self._observed_reads = {}
 
     @contextmanager
     def database(self):
@@ -65,11 +72,20 @@ class HuobaoRuntime:
 
     def request(self, method, path, data=None):
         try:
-            with httpx.Client(base_url=self.state['base'], headers={'X-Xiangya-Runtime': self.state['token']},
-                              trust_env=False, follow_redirects=False, timeout=120) as client:
-                result = client.request(method, path, json=data)
-                result.raise_for_status()
-                return result.json()
+            identity = (self.state['base'], self.state['token'])
+            with self._http_lock:
+                if self._http_identity != identity or self._http_client is None:
+                    if self._http_client is not None:
+                        self._http_client.close()
+                    self._http_client = httpx.Client(base_url=identity[0], headers={'X-Xiangya-Runtime': identity[1]},
+                        trust_env=False, follow_redirects=False, timeout=httpx.Timeout(120, connect=3),
+                        limits=httpx.Limits(max_connections=16, max_keepalive_connections=8))
+                    self._http_identity = identity
+                client = self._http_client
+            timeout = 3 if path == '/api/v1/health' else 15 if method == 'GET' else 120
+            result = client.request(method, path, json=data, timeout=timeout)
+            result.raise_for_status()
+            return result.json()
         except (httpx.HTTPError, ValueError, KeyError):
             raise WorkshopError('火宝制作服务暂时不可用，请刷新原项目', 503) from None
 
@@ -118,9 +134,12 @@ class HuobaoRuntime:
         node_runtime = self._node_runtime()
         binaries = {'node_bin': node_runtime['node'],
                     'ffmpeg_bin': shutil.which('ffmpeg') or '', 'ffprobe_bin': shutil.which('ffprobe') or ''}
+        if time.monotonic() < self._healthy_until and all(self.state.get(key) == value for key, value in binaries.items()):
+            return
         if self.state:
             try:
                 if self.request('GET', '/api/v1/health').get('status') == 'ok' and all(self.state.get(key)==value for key,value in binaries.items()):
+                    self._healthy_until = time.monotonic() + 5
                     return
             except WorkshopError:
                 pass
@@ -138,6 +157,7 @@ class HuobaoRuntime:
                     pass
                 if healthy:
                     if all(self.state.get(key) == value for key, value in binaries.items()):
+                        self._healthy_until = time.monotonic() + 5
                         return
                     with self.database() as db:
                         active_tasks = db.execute("SELECT COUNT(*) FROM sys_task WHERE status='processing'").fetchone()[0]
@@ -169,7 +189,11 @@ class HuobaoRuntime:
                 FFMPEG_BIN=binaries['ffmpeg_bin'], FFPROBE_BIN=binaries['ffprobe_bin'])
             log = os.open(self.directory / 'backend.log', os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
             with os.fdopen(log, 'ab') as stream:
-                self.process = subprocess.Popen([node_runtime['node'], str(executable), 'src/index.ts'], cwd=SOURCE / 'backend', env=env,
+                from easel.workload_isolation import worker_command, worker_environment, scope_unit
+                command = worker_command([node_runtime['node'], str(executable), 'src/index.ts'], kind='video')
+                if unit := scope_unit(command):
+                    self.state['scope_unit'] = unit
+                self.process = subprocess.Popen(command, cwd=SOURCE / 'backend', env=worker_environment(env),
                     stdin=subprocess.DEVNULL, stdout=stream, stderr=stream, start_new_session=True)
             self.state['pid'] = self.process.pid
             _json(self.state_path, self.state)
@@ -183,11 +207,23 @@ class HuobaoRuntime:
             else:
                 raise WorkshopError('火宝制作服务启动尚未确认', 503)
             self.seed_configuration()
+            self._healthy_until = time.monotonic() + 5
 
     def stop(self):
         if self.process is not None and self.process.poll() is None:
             os.killpg(self.process.pid, signal.SIGTERM)
             self.process.wait(timeout=10)
+        elif self.state.get('scope_unit'):
+            from easel.workload_isolation import worker_environment, scope_unit
+            unit = self.state['scope_unit']
+            if scope_unit(['--unit=' + str(unit)]) == unit:
+                subprocess.run(['/usr/bin/systemctl', '--user', 'stop', unit],
+                    env=worker_environment(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=10, check=False)
+        if self._http_client is not None:
+            self._http_client.close()
+            self._http_client = None
+        self._healthy_until = 0.0
 
     def seed_configuration(self):
         from easel.direct_api import read_settings
@@ -244,9 +280,16 @@ class HuobaoRuntime:
         for kind, table in [('character','characters'), ('scene','scenes'), ('prop','props')]:
             result['assets'][kind] = [dict(row) for row in db.execute(f'SELECT * FROM {table} WHERE drama_id=? AND deleted_at IS NULL ORDER BY id', (binding['drama_id'],))]
         result['shots'] = [dict(row) for row in db.execute('SELECT * FROM storyboards WHERE episode_id=? ORDER BY storyboard_number,id', (binding['episode_id'],))]
+        characters, props = defaultdict(list), defaultdict(list)
+        for row in db.execute('SELECT storyboard_id,character_id FROM storyboard_characters WHERE storyboard_id IN '
+                              '(SELECT id FROM storyboards WHERE episode_id=?) ORDER BY storyboard_id,character_id', (binding['episode_id'],)):
+            characters[row[0]].append(row[1])
+        for row in db.execute('SELECT storyboard_id,prop_id FROM storyboard_props WHERE storyboard_id IN '
+                              '(SELECT id FROM storyboards WHERE episode_id=?) ORDER BY storyboard_id,prop_id', (binding['episode_id'],)):
+            props[row[0]].append(row[1])
         for shot in result['shots']:
-            shot['character_ids'] = [row[0] for row in db.execute('SELECT character_id FROM storyboard_characters WHERE storyboard_id=? ORDER BY character_id', (shot['id'],))]
-            shot['prop_ids'] = [row[0] for row in db.execute('SELECT prop_id FROM storyboard_props WHERE storyboard_id=? ORDER BY prop_id', (shot['id'],))]
+            shot['character_ids'] = characters[shot['id']]
+            shot['prop_ids'] = props[shot['id']]
         result['tasks'] = [dict(row) for row in db.execute("SELECT id,storyboard_id,drama_id,prompt,task_id,local_path,status,created_at,updated_at FROM sys_task WHERE (drama_id=? OR storyboard_id IN (SELECT id FROM storyboards WHERE episode_id=?)) AND type='video' AND status='completed' ORDER BY id", (binding['drama_id'],binding['episode_id']))]
         result['merges'] = [dict(row) for row in db.execute("SELECT * FROM video_merges WHERE episode_id=? AND status='completed' AND deleted_at IS NULL ORDER BY id", (binding['episode_id'],))]
         return result
@@ -255,6 +298,7 @@ class HuobaoRuntime:
         self.ensure()
         with _file_lock(self.directory / 'sync.lock'):
             bindings = self.bindings()
+            before_bindings = _fingerprint(bindings)
             project = self.store.get(identifier)
             binding = bindings.get(identifier)
             if binding is None:
@@ -287,8 +331,36 @@ class HuobaoRuntime:
             # Track exactly the snapshot consumed/imported. A later UI change
             # must remain dirty for the next pull, including during artwork I/O.
             binding['engine_digest'] = _fingerprint(snapshot)
-            _json(self.bindings_path, bindings)
+            if _fingerprint(bindings) != before_bindings:
+                _json(self.bindings_path, bindings)
             return binding
+
+    def read_binding(self, identifier):
+        """Warm editor reads need only a healthy transport and matching revision."""
+        self.ensure()
+        project = self.store.get(identifier)
+        binding = self.bindings().get(identifier)
+        if binding and binding.get('engine_digest') and binding.get('native_revision') == project['revision']:
+            return binding
+        return self.open(identifier)
+
+    def pull_if_changed(self, identifier):
+        # Capture before reading. A concurrent SQLite/WAL update therefore
+        # remains dirty and is seen by the next read instead of being swallowed.
+        def stamp(path):
+            try:
+                info = path.stat()
+                return info.st_ino, info.st_size, info.st_mtime_ns
+            except FileNotFoundError:
+                return None
+        token = (stamp(self.database_path), stamp(Path(str(self.database_path) + '-wal')), stamp(self.bindings_path))
+        if identifier in self._observed_reads and self._observed_reads[identifier] == token:
+            return self.store.get(identifier)
+        result = self.pull(identifier)
+        # pull() may update bindings itself; bind to its post-write identity
+        # while retaining the SQLite version observed before the snapshot.
+        self._observed_reads[identifier] = (*token[:2], stamp(self.bindings_path))
+        return result
 
     def _canonical_selection(self, project, binding, snapshot):
         with self.database() as db:

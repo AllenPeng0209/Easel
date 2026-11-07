@@ -82,6 +82,12 @@ def test_login_dispatch_uses_toutiao_login_subcommand(monkeypatch, client):
         def poll(self):
             return None  # 进程还活着
 
+        def terminate(self):
+            captured['terminated'] = True
+
+        def wait(self, timeout=None):
+            return 0
+
     monkeypatch.setattr(web.subprocess, "Popen", FakePopen)
 
     r = client.post("/api/login/toutiao")

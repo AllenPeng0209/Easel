@@ -181,6 +181,8 @@ def test_catalog_lookup_is_private_even_when_business_outputs_are_shared(artifac
 
 @pytest.fixture
 def artifact_http_environment(tmp_path, monkeypatch):
+    # The default ID in these snapshot tests represents actual migrated content.
+    (tmp_path / 'outputs' / 'topic').mkdir(parents=True)
     from fastapi.testclient import TestClient
     from web import app as web
     monkeypatch.setattr(web, 'PROJECT_ROOT', tmp_path)
@@ -206,7 +208,7 @@ def artifact_http_environment(tmp_path, monkeypatch):
     from easel.request_identity import actor_context
     from easel.projects import project_context
     from easel.chat_artifacts import ChatArtifactStore
-    (tmp_path / 'outputs' / 'topic').mkdir(parents=True)
+    (tmp_path / 'outputs' / 'topic').mkdir(parents=True, exist_ok=True)
     (tmp_path / 'outputs' / 'topic' / 'report.txt').write_bytes(b'owned-result')
     (tmp_path / 'outputs' / 'topic' / 'page.html').write_text('<script>document.body.dataset.preview="ready"</script>')
     with actor_context(owner.get('/api/auth/me').json()), project_context('default', tmp_path):

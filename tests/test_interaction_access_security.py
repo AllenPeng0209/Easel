@@ -16,6 +16,7 @@ from easel.projects import ProjectScopeMiddleware, project_context, space_path
 from easel.request_identity import actor_context
 from web.access_control import AccessControlMiddleware
 from web.interaction_routes import create_router
+from tests.repository_helpers import transfer_project
 
 pytestmark = pytest.mark.access_integration
 
@@ -58,8 +59,9 @@ def team(tmp_path):
     people = {'admin': (admin, admin_token)}
     for role in ('owner', 'operator', 'viewer'):
         user = access.create_user(role + '-user', role + '-password-123')
-        access.set_member('default', user['id'], role)
+        access.set_member('default', user['id'], 'operator' if role == 'owner' else role)
         people[role] = (user, access.login(role + '-user', role + '-password-123')[1])
+    transfer_project(access, 'default', people['owner'][0]['id'])
     app = FastAPI()
     app.include_router(create_router(lambda: space_path(tmp_path, tmp_path / 'outputs', 'outputs')))
     app.add_middleware(ProjectScopeMiddleware, get_root=lambda: tmp_path)
@@ -90,6 +92,10 @@ def test_nonadmin_owner_cannot_create_or_replace_a_global_credential_reference(t
 def test_admin_delegated_legacy_prefix_remains_bound_to_its_ip_after_restart(team):
     root, client = team
     admin = client('admin')
+    access = AccessStore(root)
+    administrator = access.authenticate_token(admin.cookies.get('easel_session'))
+    owner_id = access.project_access('default')['owner']['id']
+    transfer_project(access, 'default', administrator['id'])
     client_id = admin.get('/api/interactions/bootstrap').json()['client_id']
     prefix = 'EASEL_INTERACTION_LEGACY_CORPORATE'
     response = admin.post('/api/interactions/channels', json={'client_id': client_id,
@@ -97,6 +103,7 @@ def test_admin_delegated_legacy_prefix_remains_bound_to_its_ip_after_restart(tea
         'config': {'env_prefix': prefix, 'video_id': 'video-one'}})
     assert response.status_code == 200
     delegated = response.json()['channels'][0]
+    transfer_project(access, 'default', owner_id)
     # Current actor=None models the periodic worker. The configured multi-user
     # database still requires the persisted IP ownership proof.
     adapter = InteractionChannels(environ=credentials(prefix), workspace=root)

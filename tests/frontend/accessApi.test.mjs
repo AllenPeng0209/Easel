@@ -36,6 +36,26 @@ function setup(pathname = '/', response = { ok: true, status: 200, data: {} }, i
   return { api: exports, calls, events, eventDetails, sessionStorage };
 }
 
+test('public registration uses no previous identity header and sends no extra privileges', async () => {
+  const {api,calls}=setup('/',{ok:true,status:200,data:{user:{id:'new-user'}}},null);
+  assert.equal(typeof api.registerAccount,'function');
+  await api.registerAccount({username:'creator',display_name:'创作者',password:TEST_PASSWORD,is_admin:true,role:'owner'});
+  assert.equal(calls[0].url,'/api/auth/register');
+  assert.equal(new Headers(calls[0].options.headers).get('X-Easel-User'),null);
+  assert.deepEqual(JSON.parse(calls[0].options.body),{username:'creator',display_name:'创作者',password:TEST_PASSWORD});
+});
+
+test('ownership transfer pins the expected owner and confirms the repository before submitting', async () => {
+  const {api,calls}=setup();
+  assert.equal(typeof api.transferOwnership,'function');
+  await api.transferOwnership('ip one',{user_id:'new/owner',expected_owner_id:'old-owner',confirmation:'城市观察',is_admin:true});
+  assert.equal(calls[0].url,'/api/projects/ip%20one/transfer');
+  assert.deepEqual(JSON.parse(calls[0].options.body),{user_id:'new/owner',expected_owner_id:'old-owner',confirmation:'城市观察'});
+  await api.leaveProject('ip one');
+  assert.equal(calls[1].url,'/api/projects/ip%20one/leave');
+  assert.equal(calls[1].options.method,'POST');
+});
+
 test('authentication uses same-origin cookies and preserves proxy paths without IP scope', async () => {
   const { api, calls } = setup('/workspace/index.html', { ok: true, status: 200, data: { user: { id: 'user-1' } } });
   assert.equal(typeof api.loginAccount, 'function');
@@ -46,6 +66,12 @@ test('authentication uses same-origin cookies and preserves proxy paths without 
   assert.deepEqual(JSON.parse(calls[0].options.body), { username: 'operator', password: TEST_PASSWORD });
   assert.equal(new Headers(calls[0].options.headers).get('Content-Type'), 'application/json');
   assert.equal(new Headers(calls[0].options.headers).get('Authorization'), null);
+});
+
+for(const pathname of ['/workspace/login/','/workspace/register/'])test(`authentication from ${pathname} uses the application API rather than nesting it under the auth page`,async()=>{
+  const {api,calls}=setup(pathname);
+  await api.loginAccount({username:'creator',password:TEST_PASSWORD});
+  assert.equal(calls[0].url,'/workspace/api/auth/login');
 });
 
 test('member operations encode each IP and user id and send only the intended membership update', async () => {

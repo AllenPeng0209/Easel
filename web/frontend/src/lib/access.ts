@@ -61,7 +61,7 @@ export class AccessError extends Error {
   }
 }
 
-const BASE = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '');
+const BASE = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '').replace(/\/(?:login|register)$/, '');
 const PUBLIC_AUTH_PATHS = new Set(['/api/auth/bootstrap', '/api/auth/login', '/api/auth/register', '/api/auth/setup']);
 
 export async function accessRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -101,8 +101,8 @@ function send<T>(path: string, method: string, data?: unknown): Promise<T> {
   return accessRequest<T>(path, { method, ...(data === undefined ? {} : { body: JSON.stringify(data) }) });
 }
 
-export function fetchAuthBootstrap(): Promise<{ configured: boolean }> {
-  return accessRequest('/api/auth/bootstrap');
+export function fetchAuthBootstrap(): Promise<{ configured: boolean; user?: User | null }> {
+  return accessRequest('/api/auth/bootstrap', { headers: { 'X-Easel-Bootstrap-Identity': '1' } });
 }
 
 export function fetchAuthUser(): Promise<User> {

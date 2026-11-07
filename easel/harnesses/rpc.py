@@ -228,11 +228,12 @@ class RPC:
         self.native_id = ""
 
     async def __aenter__(self):
+        from easel.workload_isolation import worker_command, worker_environment
         env = {**self.request.env, "EASEL_ROOT": str(self.request.cwd.resolve()),
                "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
         try:
             self.process = await asyncio.create_subprocess_exec(
-                *self.command, cwd=str(self.request.cwd), env=env,
+                *worker_command(self.command, kind='agent'), cwd=str(self.request.cwd), env=worker_environment(env),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE, limit=MAX_MESSAGE_BYTES,
                 start_new_session=os.name != "nt")

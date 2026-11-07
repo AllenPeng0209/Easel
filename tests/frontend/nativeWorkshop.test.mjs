@@ -1,3 +1,4 @@
+import { componentModule } from './agentMessagesHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -35,7 +36,7 @@ async function view(initialView) {
   const calls = [], inputs = [];
   const scope = { projectUrl: value => value, projectFetch: async (url, options = {}) => {
     calls.push({ url, options });
-    let data = url.endsWith('/projects') ? { projects: [current] } : current;
+    let data = url.split('?')[0].endsWith('/projects') ? { projects: [current] } : current;
     if (url.endsWith('/select')) {
       current = { ...current, revision: 4, shots: [{ ...current.shots[0], selected_candidate_id: '2'.repeat(32) }] }; data = current;
     }
@@ -53,7 +54,7 @@ async function view(initialView) {
   const environment = { URL, AbortController, console, window, document, setTimeout: () => 1, clearTimeout() {},
     setInterval: () => 1, clearInterval() {} };
   const library = {};
-  runInNewContext(compile('lib/workshop.ts'), { ...environment, exports: library, require: () => scope });
+  runInNewContext(compile('lib/workshop.ts'), { ...environment, exports: library, require: name => name === './scopedReadCache' ? componentModule('lib/scopedReadCache.ts') : scope });
   const module = {};
   runInNewContext(compile('components/WorkshopReviewPanel.tsx'), { ...environment, exports: module,
     require: name => name === 'react' ? React : name === 'react/jsx-runtime' ? {

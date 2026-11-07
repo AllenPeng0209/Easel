@@ -1,5 +1,6 @@
 import type { PublicationApprovalSubject } from './publicationApproval';
-import { projectUrl, projectFetch } from './projectScope';
+import { projectUrl, projectFetch, ACTIVE_USER_ID, ACTIVE_PROJECT_ID } from './projectScope';
+import { ScopedReadCache } from './scopedReadCache';
 export type ReviewKind = 'human' | 'simulated';
 export type ReviewDecision = 'approved' | 'changes_requested';
 
@@ -269,14 +270,24 @@ class WorkshopRequestError extends Error {
   }
 }
 
+const conditionalReads = new Map<string, { etag: string; data: unknown }>();
+const sharedWorkshopReads = new ScopedReadCache();
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const read = !options.method || options.method === 'GET';
+  const key = `${ACTIVE_USER_ID}:${ACTIVE_PROJECT_ID}:${projectUrl(path)}`;
+  if (!read) { conditionalReads.clear(); sharedWorkshopReads.invalidate(); }
+  const load = async (signal?: AbortSignal): Promise<T> => {
+  const cached = read ? conditionalReads.get(key) : undefined;
   const result = await projectFetch(projectUrl(`/api/workshop${path}`), {
     cache: 'no-store',
     ...options,
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: { 'Content-Type': 'application/json', ...(cached ? { 'If-None-Match': cached.etag } : {}), ...options.headers },
+    ...(signal ? { signal } : {}),
   });
+  if (result.status === 304 && cached) return cached.data as T;
   const data = await result.json().catch(() => null);
   if (!result.ok) {
+    conditionalReads.delete(key);
     const detail = data?.detail;
     const message = typeof detail === 'string' ? detail
       : typeof detail?.message === 'string' ? detail.message
@@ -284,15 +295,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       : result.status === 409 ? '项目已发生变化，请刷新后核对再提交。' : `工坊请求失败（${result.status}）`;
     throw new WorkshopRequestError(message, result.status);
   }
+  const etag = result.headers?.get('etag');
+  if (read && etag) {
+    conditionalReads.set(key, { etag, data });
+    if (conditionalReads.size > 64) conditionalReads.delete(conditionalReads.keys().next().value!);
+  }
   return data as T;
+  };
+  return read ? sharedWorkshopReads.read(key, load, { signal: options.signal ?? undefined }) : load();
 }
 
 export function fetchWorkshopStatus(signal?: AbortSignal): Promise<WorkshopStatus> {
   return request('/status', { signal });
 }
 
-export function fetchWorkshopProjects(signal?: AbortSignal): Promise<{ projects: WorkshopProject[] }> {
-  return request('/projects', { signal });
+export function fetchWorkshopProjects(signal?: AbortSignal, summary = false): Promise<{ projects: WorkshopProject[] }> {
+  return request(summary ? '/projects?summary=true' : '/projects', { signal });
 }
 
 export function fetchWorkshopProject(id: string, signal?: AbortSignal): Promise<WorkshopProject> {
@@ -481,6 +499,10 @@ export class WorkshopRenderFlow {
     const pending = request<WorkshopRenderReceipt>(renderPath(this.projectId, receipt.id)).then(next => {
       if (this.current?.id === receipt.id && !retainRenderReceipt(this.current, next)) this.current = next;
       return this.current || next;
+    }).catch(error => {
+      if (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError' && this.current
+        && this.current !== receipt && this.current.id === receipt.id) return this.current;
+      throw error;
     });
     this.polling = pending;
     try { return await pending; }
@@ -510,12 +532,13 @@ export class WorkshopRenderFlow {
   }
 }
 
-export function workshopMediaUrl(path: string): string | null {
+export function workshopMediaUrl(path: string, playback = false): string | null {
   if (!path || path.startsWith('/') || path.includes('\\') || path.includes(':')
     || [...path].some(character => character.charCodeAt(0) < 32)) return null;
   const parts = path.split('/');
   if (parts.some(part => !part || part === '.' || part === '..')) return null;
-  return projectUrl('/api/media/' + parts.map(encodeURIComponent).join('/'));
+  return projectUrl('/api/media/' + parts.map(encodeURIComponent).join('/'))
+    + (playback && /\.mp4$/i.test(path) ? '?playback=original' : '');
 }
 
 export function deliveryReviewState(project: WorkshopProject, artifact?: WorkshopDeliverable) {

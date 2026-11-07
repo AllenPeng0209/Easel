@@ -1,0 +1,12 @@
+[Unit]
+Description=Chirpiva native agents and video workloads
+
+[Slice]
+MemoryAccounting=yes
+CPUAccounting=yes
+MemoryHigh=768M
+MemoryMax=1024M
+MemorySwapMax=1536M
+CPUQuota=100%
+CPUWeight=50
+TasksMax=256

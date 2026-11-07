@@ -64,9 +64,12 @@ def users(tmp_path):
         created[username] = response.json()
     for username in ("owner", "operator", "viewer"):
         response = owner.post("/api/projects/aaaaaaaaaaaaaaaa/members", json={
-            "user_id": created[username]["id"], "role": username,
+            "user_id": created[username]["id"], "role": 'operator' if username == 'owner' else username,
         })
         assert response.status_code == 200, response.text
+    transferred = owner.post('/api/projects/aaaaaaaaaaaaaaaa/transfer', json={
+        'user_id': created['owner']['id'], 'expected_owner_id': admin['id'], 'confirmation': '汽车观察'})
+    assert transferred.status_code == 200, transferred.text
     clients = {"admin": owner}
     for username in created:
         client = boundary(tmp_path, auth_routes=True)
@@ -151,7 +154,7 @@ def test_revocation_and_stale_tab_identity_take_effect_on_the_next_request(users
     client = clients["operator"]
     assert client.get(target, headers={"X-Easel-User": people["operator"]["id"]}).status_code == 200
     assert client.get(target, headers={"X-Easel-User": people["viewer"]["id"]}).status_code == 401
-    assert clients["admin"].patch("/api/projects/aaaaaaaaaaaaaaaa/members/" + people["operator"]["id"],
+    assert clients["owner"].patch("/api/projects/aaaaaaaaaaaaaaaa/members/" + people["operator"]["id"],
                                    json={"role": "viewer"}).status_code == 200
     assert client.post(target).status_code == 403
 
@@ -189,7 +192,7 @@ def test_an_open_chat_stream_stops_disclosing_tokens_after_role_is_revoked(users
     clients, people = users
     store = AccessStore(people["_root"])
     def revoke():
-        store.set_member("aaaaaaaaaaaaaaaa", people["operator"]["id"], "viewer", actor_id=people["admin"]["id"])
+        store.set_member("aaaaaaaaaaaaaaaa", people["operator"]["id"], "viewer", actor_id=people["owner"]["id"])
     client = boundary(people["_root"], during_stream=revoke)
     client.cookies.update(clients["operator"].cookies)
     response = client.post("/api/projects/aaaaaaaaaaaaaaaa/chat/stream")

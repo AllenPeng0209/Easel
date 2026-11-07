@@ -40,3 +40,30 @@ test('a legacy host response without a cursor still restores history', async () 
     Response.json({ sessions: [session('legacy')], deletedIds: [] }) } });
   assert.equal((await fetchChatSessions()).sessions[0].id, 'legacy');
 });
+
+test('compact first-page restoration does not wait for older catalog pages', async () => {
+  const calls = [];
+  const { fetchChatSessions } = componentModule('lib/api.ts', { globals: { fetch: async url => {
+    calls.push(url);
+    return Response.json({ sessions: [session('first')], deletedIds: ['retired'], nextCursor: 'first-page-end' });
+  } } });
+  const result = await fetchChatSessions(undefined, true, true);
+  assert.equal(calls.length, 1);
+  assert.equal(result.nextCursor, 'first-page-end');
+  assert.equal(result.sessions[0].id, 'first');
+});
+
+test('a compact saved projection replaces an identical heavy browser snapshot', () => {
+  const { mergeSessionCatalog } = componentModule('lib/sessionSync.ts');
+  const window = { start: 0, base: 'a'.repeat(64), before: null };
+  const saved = { ...session('first', 3), historyWindow: window,
+    messages: [{ role: 'assistant', content: 'ready', events: [{ id: 'event', detailRef: 'b'.repeat(64) }] }] };
+  const local = { ...saved, messages: [{ role: 'assistant', content: 'ready', events: [{ id: 'event', output: 'x'.repeat(100000) }] }] };
+  assert.equal(mergeSessionCatalog([local], [saved])[0], saved);
+  const running = { ...local, pendingTurnId: 'ongoing' };
+  assert.equal(mergeSessionCatalog([running], [saved])[0], running);
+  const legacy = { ...local }; delete legacy.historyWindow;
+  assert.equal(mergeSessionCatalog([legacy], [saved])[0] === saved, true);
+  const edited = { ...legacy, messages: [{ role: 'assistant', content: 'local unsaved text' }] };
+  assert.equal(mergeSessionCatalog([edited], [saved])[0] === edited, true);
+});

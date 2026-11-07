@@ -121,7 +121,7 @@ function appBoundary(initial, overrides = {}) {
     Date, Math, Error, Boolean, Array, AbortController, AbortSignal, undefined, nextSessionRevision, mergeWindowedCatalog, nextQueuedMessage,
     sessions: plain(initial), sessionsRef: { current: plain(initial) }, streams: {},
     streamCtl: { current: {} }, streamAcc: { current: {} }, typingBuf: { current: {} }, queueEdits: { current: {} },
-    selectedPersona: 'another-brand-persona', historyReady: true, canOperate: true,
+    workshopPanel: null, selectedPersona: 'another-brand-persona', historyReady: true, canOperate: true,
     projectStorageKey, localStorage, sessionStorage: { setItem() {}, getItem() { return null; }, removeItem() {} },
     ...prompt, ...chatReferences, ...chatCommands, admissionFeedback: {},
     loadChatDraft: () => ({ text: '', attachments: [] }), chatDraftOwner: () => 'composer',
@@ -394,7 +394,7 @@ test('fast server hydration waits for delayed tab ownership before restoring rem
     setTimeout: (callback, milliseconds) => { const id = ++clock; timers.set(id, { callback, milliseconds }); return id; },
     clearTimeout: id => timers.delete(id),
     fetchChatSessions: async () => { fetches += 1; return { sessions: plain(remote), deletedIds: [] }; },
-    setHistoryNotice() {}, setHistoryReady: value => { ui.context.historyReady = value; },
+    setHistoryNotice() {}, setHistoryCursor() {}, setHistoryReady: value => { ui.context.historyReady = value; },
     createSession: () => { throw new Error('The unclaimed local session should be reused'); },
   });
   ui.context.setNavigationReady = value => { ui.context.navigationReady = value; };
@@ -684,7 +684,7 @@ test('running archive waits for an explicit choice and leaves a failed stop visi
     setArchiveRequest: value => { intent = value; },
     setHistoryNotice() {},
     handleStopStream: async (id, target) => { assert.equal(id, 's'); assert.equal(target, owner); return false; },
-    fetchLastTurn: async id => { reads.push(id); return { status: 'running', turn_id: owner.turnId }; },
+    fetchLastTurnStatus: async id => { reads.push(id); return { status: 'running', turn_id: owner.turnId }; },
     applySessionArchive: () => assert.fail('unconfirmed stop must keep the session visible'),
   });
   ui.context.streamAcc.current.s = owner;
@@ -703,7 +703,7 @@ test('archiving a different browser’s active session keeps its original turn r
     archiveGeneration: { current: 0 },
     setArchiveRequest: value => { intent = value; },
     setHistoryNotice() {},
-    fetchLastTurn: async () => ({ status: 'running', turn_id: 'remote-turn' }),
+    fetchLastTurnStatus: async () => ({ status: 'running', turn_id: 'remote-turn' }),
     applySessionArchive: (...args) => archives.push(args),
     resumePendingTurn: (...args) => resumed.push(args),
   });
@@ -723,7 +723,7 @@ test('stop then archive uses the original remote turn and rejects a newer or fai
     archiveGeneration: { current: 1 },
     confirmChatStop: async stop => stop(),
     stopChat: async (id, turn) => { effects.push(['stop', id, turn]); return { stopped: true, status: 'stopped' }; },
-    fetchLastTurn: async () => latest,
+    fetchLastTurnStatus: async () => latest,
     applySessionArchive: (...args) => effects.push(['archive', ...args]),
     resumePendingTurn: (...args) => effects.push(['resume', ...args]),
   });

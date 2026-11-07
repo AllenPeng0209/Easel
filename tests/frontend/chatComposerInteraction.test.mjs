@@ -458,7 +458,7 @@ test('quoting a settled answer inserts into the current draft without sending', 
   assert.equal(quotes.length, 1);
 });
 
-test('work details preference controls persist and defer folding until the selected point', async () => {
+test('work details controls persist the mode without exposing deferred compact expansion', async () => {
   const drafts = new Map();
   const queueProps = { session: { id: 's1', title: 'Work details', created: 1, messages: [
     { role: 'user', content: 'first' }, { role: 'assistant', content: 'previous result' },
@@ -469,14 +469,12 @@ test('work details preference controls persist and defer folding until the selec
   let nodes = await ui.ready();
   assert.equal(select(nodes, '工作细节').props.value, 'compact');
   const assistantRows = nodes => nodes.filter(node => node.type === 'message-bubble' && node.props.message.role === 'assistant');
-  assert.deepEqual(assistantRows(nodes).map(node => node.props.foldWorkDetails), [true, true]);
-  select(nodes, '简洁模式自动折叠').props.onChange({ target: { value: 'next-input' } });
-  nodes = ui.render();
-  assert.deepEqual(assistantRows(nodes).map(node => node.props.foldWorkDetails), [true, false]);
+  assert.deepEqual(assistantRows(nodes).map(node => node.props.detailMode), ['compact', 'compact']);
+  assert.equal(select(nodes, '简洁模式自动折叠'), undefined);
   select(nodes, '工作细节').props.onChange({ target: { value: 'detailed' } });
   nodes = await view({ queueProps, sharedDrafts: drafts }).ready();
   assert.equal(select(nodes, '工作细节').props.value, 'detailed');
-  assert.equal(select(nodes, '简洁模式自动折叠').props.value, 'next-input');
+  assert.equal(select(nodes, '简洁模式自动折叠'), undefined);
   assert.equal(assistantRows(nodes)[1].props.detailMode, 'detailed');
 });
 
@@ -549,4 +547,43 @@ test('the model choice sits immediately left of the send button', async () => {
   const children = [controls.props.children].flat(Infinity).filter(Boolean);
   assert.equal(children.at(-2)?.type, 'session-model-control');
   assert.equal(children.at(-1)?.props['aria-label'], '发送');
+});
+
+
+test('server-queued work has a truthful position and cancels the current turn without steering or sending', async () => {
+  let stopped = 0;
+  let sent = 0;
+  const ui = view({ stream: { ...running, executionState: 'queued', queuePosition: 3 },
+    onSend: () => { sent++; return true; }, onSteer: async () => true,
+    queueProps: { onStop: () => { stopped++; } } });
+  const nodes = await ui.ready();
+  const status = nodes.find(node => node.props?.className?.startsWith('chat-session-status'));
+  assert.equal(text(status), '资源排队 · 入队第 3 位');
+  assert.equal(nodes.find(node => node.type === 'message-bubble').props.turnLifecycle, 'queued');
+  assert.match(text(nodes.find(node => node.props?.['data-server-queue-notice'])), /尚未调用模型/);
+  assert.equal(control(nodes, '立即指导'), undefined);
+  const cancel = control(nodes, '取消排队');
+  assert.ok(cancel);
+  assert.equal(cancel.props.disabled, false);
+  cancel.props.onClick();
+  assert.equal(stopped, 1);
+  assert.equal(sent, 0);
+  ui.unmount();
+});
+
+test('queued stop confirmation takes precedence and unknown legacy states stay neutral', async () => {
+  for (const [fields, label, button] of [
+    [{ executionState: 'queued', queuePosition: 2, lifecycle: 'stopping' }, '正在取消排队', '取消中'],
+    [{ executionState: 'queued', queuePosition: 2, lifecycle: 'stop_failed', stopFeedback: { kind: 'unconfirmed' } }, '取消排队未确认', '重试取消'],
+    [{ executionState: 'queued', queuePosition: -1 }, '等待服务器资源', '取消排队'],
+    [{ executionState: 'future_state', queuePosition: 2 }, '任务进行中', '停止'],
+    [{}, '任务进行中', '停止'],
+  ]) {
+    const ui = view({ stream: { ...running, ...fields } });
+    const nodes = await ui.ready();
+    assert.equal(text(nodes.find(node => node.props?.className?.startsWith('chat-session-status'))), label);
+    assert.equal(text(nodes.find(node => node.props?.className === 'composer-stop-btn')), button);
+    if (fields.lifecycle === 'stopping') assert.equal(nodes.find(node => node.props?.className === 'composer-stop-btn').props.disabled, true);
+    ui.unmount();
+  }
 });

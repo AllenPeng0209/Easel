@@ -365,6 +365,8 @@ def test_channels_unauthenticated_spa_route_is_not_login_success():
     page.query_selector.return_value = SimpleNamespace(is_visible=lambda: True)
     page.query_selector.side_effect = lambda selector: SimpleNamespace(is_visible=lambda: True) \
         if selector == ".finder-nickname" else None
+    assert not web_publisher._is_logged_in(page, web_publisher.PLATFORMS["weixin-channels"])
+    page.context = SimpleNamespace(_easel_channel_account={"id": "own-channel", "name": "Own account"})
     assert web_publisher._is_logged_in(page, web_publisher.PLATFORMS["weixin-channels"])
 
 
@@ -538,6 +540,7 @@ def test_mp_runner_releases_profile_before_success(tmp_path, monkeypatch, reused
     monkeypatch.setattr(weixin_mp_stats, "_capture_qr", Mock(return_value=True))
     tokens = iter(["own" if reused else "", "own"])
     monkeypatch.setattr(weixin_mp_stats, "_extract_token", lambda url: next(tokens))
+    monkeypatch.setattr(weixin_mp_stats, "_account_identity", lambda page: {"name": "Own account", "avatar": ""})
     write_status = login_state.write_status
 
     def record(*args, **kwargs):

@@ -1,3 +1,4 @@
+import { componentModule } from './agentMessagesHarness.mjs';
 import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -12,7 +13,7 @@ const compiled = ts.transpileModule(source, { compilerOptions: {
   module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
 } }).outputText;
 const api = {};
-runWithProjectScope(compiled, { exports: api, URL, AbortController, require: () => projectScope });
+runWithProjectScope(compiled, { exports: api, URL, AbortController, require: name => name.includes('scopedReadCache') ? componentModule('lib/scopedReadCache.ts') : projectScope });
 
 const artifact = { id: 'delivery-1', path: 'sample/final.mp4', sha256: 'sha-current', revision: 3,
   engine_revision: 8, created_at: '2026-11-02T01:00:00Z' };

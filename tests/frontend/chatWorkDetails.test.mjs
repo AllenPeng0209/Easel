@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { componentModule } from './agentMessagesHarness.mjs';
 
-const defaults = { mode: 'compact', collapseTiming: 'completion' };
-const preference = { mode: 'detailed', collapseTiming: 'next-input' };
+const defaults = { mode: 'compact' };
+const preference = { mode: 'detailed' };
 const load = options => componentModule('lib/chatWorkDetails.ts', options);
 const plain = value => JSON.parse(JSON.stringify(value));
 
-test('restores display mode and independent fold timing only for the current actor and IP', () => {
+test('restores display mode only for the current actor and IP', () => {
   const storageValues = new Map();
   const inScope = { user: 'owner', project: 'studio', storageValues };
   assert.deepEqual(plain(load(inScope).loadWorkDetailsPreferences()), defaults);
@@ -27,7 +27,7 @@ test('normalizes legacy detail aliases without writing them and recovers invalid
   for (const alias of ['normal', 'expanded']) {
     const stored = JSON.stringify({ mode: alias, collapseTiming: 'invalid' });
     storageValues.set(key, stored);
-    assert.deepEqual(plain(loadWorkDetailsPreferences()), { mode: 'detailed', collapseTiming: 'completion' });
+    assert.deepEqual(plain(loadWorkDetailsPreferences()), { mode: 'detailed' });
     assert.equal(storageValues.get(key), stored);
   }
   storageValues.set(key, 'malformed-json');

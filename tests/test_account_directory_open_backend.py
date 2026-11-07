@@ -141,10 +141,11 @@ def test_native_identity_logout_and_generation_changes_during_runtime_start_are_
 def test_permission_removed_while_loading_manager_cannot_start_runtime(host):
     actor = host.access.authenticate_token(host.client.cookies.get(SESSION_COOKIE))
     other = host.access.create_user('second-backend-owner', 'temporary-second-owner-password')
-    host.access.set_member('default', other['id'], 'owner')
+    host.access.set_member('default', other['id'], 'operator')
 
     async def changed():
-        host.access.set_member('default', actor['id'], 'operator')
+        from tests.repository_helpers import transfer_project
+        transfer_project(host.access, 'default', other['id'])
 
     fake = backend(host, manager_action=changed)
     response = host.client.post('/api/accounts/directory/' + action_key(host, 1) + '/open-backend')
@@ -156,7 +157,7 @@ def test_permission_removed_while_loading_manager_cannot_start_runtime(host):
 @pytest.mark.parametrize('change', ['generation', 'actor', 'actor_mutation', 'project', 'publication_lock'])
 def test_sync_authorizer_rechecks_fences_inside_vendor_browser_lock(host, change):
     other = host.access.create_user('backend-race-owner', 'temporary-race-owner-password')
-    host.access.set_member('default', other['id'], 'owner')
+    host.access.set_member('default', other['id'], 'operator')
 
     async def changed(authorize):
         if change == 'generation':

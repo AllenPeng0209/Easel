@@ -10,13 +10,13 @@ const source = readFileSync(new URL('../../web/frontend/src/components/AccountsP
 const parsed = ts.createSourceFile('AccountsPage.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const component = parsed.statements.find(node =>
   ts.isFunctionDeclaration(node) && node.name?.text === 'AccountsPage');
-const names = ['closeQr', 'handleLogin', 'handleMpLogin'];
+const names = ['closeQr', 'handleLogin', 'handleMpLogin', 'loginSettled'];
 const statements = component.body.statements.filter(node =>
   ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration =>
     names.includes(declaration.name.getText(parsed))));
 assert.equal(statements.length, names.length);
 const { outputText } = ts.transpileModule(
-  statements.map(node => node.getText(parsed)).join('\n') + '\n({ closeQr, handleLogin, handleMpLogin });',
+  statements.map(node => node.getText(parsed)).join('\n') + '\n({ closeQr, handleLogin, handleMpLogin, loginSettled });',
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } });
 
 test('a failed old avatar does not prevent a newly verified avatar from rendering', () => {
@@ -84,7 +84,9 @@ test('failed post-login verification preserves verified identity and does not in
 });
 
 function setup() {
-  const state = { qr: null, busy: '', err: '', intervals: [], verifies: [], accounts: [] };
+  const document = { visibilityState: 'visible' };
+  let now = Date.now();
+  const state = { qr: null, busy: '', err: '', intervals: [], verifies: [], accounts: [], refreshes: 0 };
   const pending = [];
   const qrRequest = { current: 0 };
   const pollRef = { current: null };
@@ -96,16 +98,16 @@ function setup() {
     state[key] = typeof value === 'function' ? value(state[key]) : value;
   };
   const handlers = runInNewContext(outputText, {
-    Error,
+    Error, document, Date: { now: () => now },
     useCallback: callback => callback,
     qrRequest, aliveRef, pollRef,
-    whoamiRequests: { current: {} }, qrPlatformRef: { current: '' },
+    whoamiRequests: { current: {} }, replacement: { current: { id: '', revision: 0 } }, qrPlatformRef: { current: '' }, qrSession: { get current() { return state.qr; } },
     setQr: change('qr'), setBusy: change('busy'), setErr: change('err'),
     setAccounts: change('accounts'), setWhoami: () => {},
     setSmsCode: () => {}, setSmsErr: () => {}, setSmsBusy: () => {},
     setTerminalMsg: change('terminalMsg'), setQrNonce: () => {},
     setWhoamiCache: () => {}, openCred: () => { state.credentials = true; },
-    load: () => {}, runWhoami: platform => state.verifies.push(platform),
+    load: () => { state.refreshes++; }, runWhoami: platform => state.verifies.push(platform),
     stopPoll: () => { pollRef.current = null; },
     startLogin: start, startMpLogin: start,
     loginStatus: () => statusRequest(), mpLoginStatus: () => statusRequest(),
@@ -115,7 +117,7 @@ function setup() {
       return interval;
     },
   });
-  return { handlers, state, pending, aliveRef, setStatus: value => { status = value; },
+  return { handlers, state, pending, aliveRef, hidden: value => { document.visibilityState = value ? 'hidden' : 'visible'; }, advance: ms => { now += ms; }, setStatus: value => { status = value; },
     setStatusRequest: callback => { statusRequest = callback; } };
 }
 
@@ -221,5 +223,32 @@ for (const handler of ['handleLogin', 'handleMpLogin']) {
     assert.equal(view.state.verifies.length, 0);
     view.pending[1].resolve({ mode: 'qr', state: 'starting' });
     await second;
+  });
+}
+
+test('closing an owned login refreshes accounts after its acknowledgement, not before', async () => {
+  const view = setup();
+  const account = { platform: 'bilibili', name: 'B站', supported: true };
+  const attempt = { id: 'owned-api-login', platform: 'bilibili' };
+  const operation = view.handlers.handleLogin(account);
+  view.pending[0].resolve({ mode: 'qr', state: 'qr_ready', qr: 'qr.png', attempt }); await operation;
+  view.handlers.closeQr();
+  assert.equal(view.state.refreshes, 0);
+  view.handlers.loginSettled(attempt, false);
+  assert.equal(view.state.refreshes, 0); assert.match(view.state.err, /尚未确认/);
+  view.handlers.loginSettled(attempt, true); assert.equal(view.state.refreshes, 1);
+});
+
+for (const handler of ['handleLogin', 'handleMpLogin']) {
+  test(`${handler} pauses hidden status polls and rechecks success before its wait deadline`, async () => {
+    const view = setup(); let calls = 0;
+    const operation = view.handlers[handler]({ platform: 'bilibili', name: 'B站', supported: true });
+    view.pending[0].resolve({ mode: 'qr', state: 'starting' }); await operation;
+    view.setStatusRequest(async () => { calls++; return {state:'success',message:'',qr:''}; });
+    view.hidden(true); view.advance(700000);
+    for (let i = 0; i < 3; i++) await view.state.intervals[0].callback();
+    assert.equal(calls, 0); assert.equal(view.state.qr.state, 'starting');
+    view.hidden(false); await view.state.intervals[0].callback();
+    assert.equal(calls, 1); assert.equal(view.state.qr.state, 'success');
   });
 }

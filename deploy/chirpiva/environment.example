@@ -15,3 +15,12 @@ PATH=/srv/chirpiva/app/.venv/bin:/srv/chirpiva/.local/bin:/srv/chirpiva/.npm-glo
 # Do not copy Mac absolute paths, localhost model tunnels, native login tokens,
 # or macOS browser profiles without validating their Linux replacement.
 # DISPLAY=:99 is appropriate only after a protected desktop session is running.
+# Shared low-cost admission; user activity is queued rather than duplicating workers.
+EASEL_AGENT_MAX_CONCURRENT=1
+EASEL_AGENT_MAX_PENDING=4
+EASEL_AGENT_MAX_PENDING_PER_OWNER=1
+EASEL_RPC_MAX_IDLE_PROCESSES=0
+EASEL_RPC_IDLE_SECONDS=30
+EASEL_CODEX_CATALOG_CACHE_TTL_SECONDS=60
+# Enable after installing the user slice, enabling linger, and validating stdio.
+EASEL_WORKLOAD_ISOLATION=1

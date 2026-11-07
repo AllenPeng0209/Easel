@@ -41,6 +41,13 @@ def permission():
                   "command": os.environ.get("FAKE_HARNESS_COMMAND", "read public file")}
         if mode != "uncorrelated-permission":
             params["turnId"] = turn_id
+        if kind == "permissions":
+            params.pop("command")
+            params.update(cwd=os.getcwd(), startedAtMs=int(time.time() * 1000),
+                          permissions={"network": {"enabled": True}})
+        params.update(json.loads(os.environ.get("FAKE_HARNESS_APPROVAL_PARAMS", "{}")))
+        for key in json.loads(os.environ.get("FAKE_HARNESS_APPROVAL_OMIT", "[]")):
+            params.pop(key, None)
         send({"id": "permission-request", "method": f"item/{kind}/requestApproval", "params": params})
     else:
         send({"id": "permission-request", "method": "session/request_permission",
@@ -72,7 +79,7 @@ while True:
                                     {"model": "hidden-model", "hidden": True},
                                     {"model": "bad\nmodel"}], "nextCursor": "next"})
     elif method in ("thread/start", "thread/resume"):
-        if mode == "stable-resume" and method == "thread/resume":
+        if (mode == "stable-resume" or os.environ.get("FAKE_HARNESS_PRESERVE_THREAD") == "1") and method == "thread/resume":
             thread_id = message["params"]["threadId"]
         reply(message, {"thread": {"id": thread_id}})
     elif method in ("session/new", "session/load"):

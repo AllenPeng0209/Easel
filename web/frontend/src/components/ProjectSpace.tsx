@@ -1,11 +1,12 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ACTIVE_PROJECT_ID, openProjectHome, projectFetch, switchProject } from '../lib/projectScope';
+import { ACTIVE_PROJECT_ID, ACTIVE_USER_ID, openProjectHome, projectFetch, switchProject } from '../lib/projectScope';
 import { useAuth } from './AuthGate';
 import AccessMembersPanel from './AccessMembersPanel';
 import ProjectHome from './ProjectHome';
 import type { Repository } from '../lib/access';
+import { ScopedReadCache } from '../lib/scopedReadCache';
 import '../styles/projects.css';
 
 interface Space { projects: Repository[]; current: Repository; refresh: () => Promise<void> }
@@ -22,28 +23,50 @@ export function useIpPermissions() {
 }
 
 const apiBase = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '');
+const projectReads = new ScopedReadCache();
 async function projectRequest<T = Repository[]>(path = '', options?: RequestInit): Promise<T> {
+  const read = !options?.method || options.method === 'GET';
+  if (!read) projectReads.invalidate();
+  const load = async (signal?: AbortSignal): Promise<T> => {
   const response = await projectFetch(`${apiBase}/api/projects${path}`, {
-    cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...options?.headers },
+    cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...options?.headers }, ...(signal ? { signal } : {}),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'IP 操作失败，请重试');
   return data;
+  };
+  return read ? projectReads.read(`${ACTIVE_USER_ID}:${apiBase}/api/projects${path}`, load, { signal: options?.signal ?? undefined }) : load();
 }
 
 export default function ProjectSpace({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<Repository[]>([]);
   const [error, setError] = useState('');
   const [loaded, setLoaded] = useState(false);
-  const refresh = async () => { setProjects(await projectRequest()); setError(''); setLoaded(true); };
+  const refresh = async () => { projectReads.invalidate(); setProjects(await projectRequest()); setError(''); setLoaded(true); };
   useEffect(() => {
-    let alive = true;
-    const update = () => { void projectRequest().then(items => { if (alive) { setProjects(items); setError(''); setLoaded(true); } })
-      .catch(error => { if (alive) setError(error.message); }); };
-    update();
+    let alive = true, reading = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const visible = () => document.visibilityState !== 'hidden';
+    const update = async () => {
+      if (!alive || reading) return;
+      clearTimeout(timer);
+      if (!visible()) return;
+      reading = true;
+      try {
+        const items = await projectRequest<Repository[]>('', { signal: controller.signal });
+        if (alive) { setProjects(items); setError(''); setLoaded(true); }
+      } catch (error) {
+        if (alive && (!(error instanceof Error) || error.name !== 'AbortError')) setError(error instanceof Error ? error.message : '项目列表暂不可用');
+      } finally {
+        reading = false;
+        if (alive && visible()) timer = setTimeout(update, 15000);
+      }
+    };
+    void update();
     window.addEventListener('focus', update);
-    const timer = setInterval(update, 15_000);
-    return () => { alive = false; window.removeEventListener('focus', update); clearInterval(timer); };
+    document.addEventListener('visibilitychange', update);
+    return () => { alive = false; controller.abort(); window.removeEventListener('focus', update); document.removeEventListener('visibilitychange', update); clearTimeout(timer); };
   }, []);
   const current = projects.find(project => project.id === ACTIVE_PROJECT_ID);
   const home = !window.location.hash || window.location.hash === '#projects';

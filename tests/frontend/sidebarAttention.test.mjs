@@ -18,7 +18,13 @@ test('sidebar gives each session status a text label and summarizes live attenti
   Object.defineProperties(globalThis, { window: { value: window, configurable: true },
     document: { value: document, configurable: true }, IS_REACT_ACT_ENVIRONMENT: { value: true, configurable: true } });
   const root = createRoot(document.getElementById('root'));
-  const Sidebar = componentModule('components/Sidebar.tsx', { globals: { window, document } }).default;
+  const account={id:'operator',username:'operator',display_name:'Operator',is_admin:false,active:true};
+  const originalContext=React.useContext;
+  // This sidebar is mounted as an authenticated project operator; the actual
+  // sidebar, permissions hook and session-attention renderer still run.
+  const reactWithContext={...React,useContext:context=>originalContext(context) || {
+    user:account,current:{id:'default',name:'项目',role:'operator'},projects:[],refresh:async()=>{}}};
+  const Sidebar = componentModule('components/Sidebar.tsx', { globals: { window, document },externals:{react:reactWithContext} }).default;
   const states = { a: 'approval', b: 'question', c: 'running', d: 'stopping', e: 'stop_failed', f: 'failed', g: 'completed-unread', h: 'approval', aa: 'recovering',
     archived: 'failed', unrelated: 'approval' };
   const sessions = Object.keys(states).filter(id => id !== 'unrelated').map(id => ({

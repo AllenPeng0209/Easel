@@ -13,6 +13,7 @@ from easel.access import AccessStore, SESSION_COOKIE
 from easel.account_sessions import begin_generation, load_session, save_session
 from easel.projects import ProjectMap, project_context
 from web import app as web
+from tests.repository_helpers import transfer_project
 
 pytestmark = pytest.mark.access_integration
 A, B = 'a' * 16, 'b' * 16
@@ -223,11 +224,11 @@ def test_permission_removed_while_loading_runtime_cannot_start_native_revocation
     snapshot(host.root)
     actor = host.access.authenticate_token(host.client.cookies.get(SESSION_COOKIE))
     other = host.access.create_user('second-owner', 'second-owner-password-42')
-    host.access.set_member('default', other['id'], 'owner')
+    host.access.set_member('default', other['id'], 'operator')
     connection = SimpleNamespace(revoke_account=AsyncMock())
 
     async def changed_manager():
-        host.access.set_member('default', actor['id'], 'operator')
+        transfer_project(host.access, 'default', other['id'])
         return SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(connections=connection)))
 
     host.monkeypatch.setattr(web, '_operations_manager', changed_manager)

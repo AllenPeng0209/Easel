@@ -10,7 +10,7 @@ const { parseHTML } = require('linkedom');
 
 const tool = (id, callId, fields = {}) => ({ id, callId, kind: 'tool', name: callId, runId: 'run-a', ...fields });
 const render = events => parseHTML(renderToStaticMarkup(React.createElement(
-  componentModule('components/AgentEventPanel.tsx').default, { events },
+  componentModule('components/AgentEventPanel.tsx').default, { events, defaultOpen: true },
 ))).document;
 const rows = document => [...document.querySelectorAll('[data-tool-call]')];
 const find = (document, callId, runId) => rows(document).find(row =>
@@ -96,7 +96,7 @@ test('modern event IDs still deduplicate conflicting tool calls within the same 
   assert.equal(reduceAgentEvents(state, tool('same', 'conflicting')), state);
 });
 
-test('an existing row opens for late children and honors a subsequent explicit collapse', async () => {
+test('late children cannot open a folded row and user choices survive later updates', async () => {
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   const descriptors = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT'].map(
     name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
@@ -113,10 +113,15 @@ test('an existing row opens for late children and honors a subsequent explicit c
     await update([media]);
     assert.equal(toggle().getAttribute('aria-expanded'), 'false');
     await update([media, voice]);
+    assert.equal(toggle().getAttribute('aria-expanded'), 'false');
+    assert.equal(find(document, 'voice'), undefined);
+    await React.act(() => toggle().dispatchEvent(new window.Event('click', { bubbles: true })));
     assert.equal(toggle().getAttribute('aria-expanded'), 'true');
     assert.equal(parent(find(document, 'voice')).dataset.toolCall, 'media');
-    await React.act(() => toggle().dispatchEvent(new window.Event('click', { bubbles: true })));
     await update([media, { ...voice, status: 'completed' }]);
+    assert.equal(toggle().getAttribute('aria-expanded'), 'true');
+    await React.act(() => toggle().dispatchEvent(new window.Event('click', { bubbles: true })));
+    await update([{ ...media, status: 'completed' }, { ...voice, status: 'completed' }]);
     assert.equal(toggle().getAttribute('aria-expanded'), 'false');
     assert.equal(find(document, 'voice'), undefined);
     await React.act(() => toggle().dispatchEvent(new window.Event('click', { bubbles: true })));

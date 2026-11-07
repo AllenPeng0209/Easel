@@ -9,7 +9,7 @@ const ts = require('typescript');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const permissions = role => ({ role, canOperate: role !== 'viewer', canManageAccounts: role === 'owner', isPlatformAdmin: false });
 
-function component(name, role, props = {}) {
+function component(name, role, props = {}, apiOverrides = {}) {
   const source = readFileSync(new URL(`../../web/frontend/src/components/${name}.tsx`, import.meta.url), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
@@ -25,6 +25,7 @@ function component(name, role, props = {}) {
     { platform: 'youtube', name: 'YouTube', backend: 'social-browser', supported: true, loggedIn: false, loginMode: 'browser' },
   ];
   const api = new Proxy({
+    ...apiOverrides,
     fetchAccounts: async () => { calls.push('fetchAccounts'); return accounts; },
     fetchSchedule: async () => [], fetchOutputs: async () => [],
     fetchAnalyticsPlatforms: async () => accounts.map(account => ({ ...account })),
@@ -227,3 +228,37 @@ test('an old profile-data callback cannot collect or write after a viewer downgr
   assert.ok(!ui.calls.includes('fetchAccountAnalytics'));
   assert.ok(!ui.calls.includes('savePersonaFile'));
 });
+
+
+test('remote account QR replacement reuses the selected platform protocol and refuses scanned progress', async () => {
+  const remote={platform:'wechat-oa',id:'attempt-a'};
+  let starts=0, closed=false, status='qr_ready';
+  const ui=component('AccountsPage','owner',{}, {
+    startMpLogin: async () => ({mode:'qr',state:'qr_ready',qr:'',message:'',remote:++starts===1?remote:{...remote,id:'attempt-b'}}),
+    mpLoginStatus: async () => ({mode:'qr',state:closed?'expired':status, qr:'',message:'',remote:closed?undefined:remote}),
+  });
+  const nodes=await ui.ready();
+  await nodes.find(n=>n.props?.onPlatformLogin).props.onPlatformLogin(ui.catalog.find(a=>a.platform==='wechat-oa'));
+  const restart=ui.render().find(n=>n.props?.remote?.id==='attempt-a').props.onRestart;
+  assert.equal(typeof restart,'function');
+  assert.equal(await restart(remote,async()=>false),false); assert.equal(starts,1);
+  status='scanned';
+  assert.equal(await restart(remote,async()=>assert.fail('scanned attempt must not close')),false); assert.equal(starts,1);
+});
+
+for (const [platform, starter, statusMethod] of [['wechat-oa','startMpLogin','mpLoginStatus'],['youtube','startLogin','loginStatus']]) {
+  test(`${platform} reopens its own normal login protocol after an expired attempt closes`, async () => {
+    const remote={platform,id:'old-attempt'};
+    let starts=0,closed=false;
+    const ui=component('AccountsPage','owner',{}, {
+      [starter]:async(p)=>{assert.equal(p,platform);return {mode:'browser',state:'window_login',qr:'',message:'',remote:++starts===1?remote:{platform,id:'new-attempt'}};},
+      [statusMethod]:async(p)=>{assert.equal(p,platform);return {mode:'browser',state:closed?'error':'window_login',qr:'',message:'',remote:closed?undefined:remote};},
+    });
+    const nodes=await ui.ready();
+    await nodes.find(n=>n.props?.onPlatformLogin).props.onPlatformLogin(ui.catalog.find(x=>x.platform===platform));
+    const restart=ui.render().find(n=>n.props?.remote?.id==='old-attempt').props.onRestart;
+    assert.equal(await restart(remote,async()=>{closed=true;return true;}),true);
+    assert.equal(starts,2);assert.ok(ui.render().some(n=>n.props?.remote?.id==='new-attempt'));
+    assert.equal(await restart(remote,async()=>assert.fail('old attempt must not close again')),false);
+  });
+}

@@ -1,7 +1,8 @@
 import { xiangyaApiBase, xiangyaWait, xiangyaHeaders } from './useXiangyaBridge'
+import { jobReceipt } from '../utils/job-receipt'
 const BASE = xiangyaApiBase()
 
-async function req<T = any>(method: string, path: string, body?: any): Promise<T> {
+async function req<T = any>(method: string, path: string, body?: any, receiptOnly = false): Promise<T> {
   const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json', ...xiangyaHeaders() } }
   if (body) opts.body = JSON.stringify(body)
 
@@ -19,7 +20,15 @@ async function req<T = any>(method: string, path: string, body?: any): Promise<T
     }
 
     console.log(`%c[API] %c${method} ${path} %c${resp.status} %c${ms}ms`, 'color:#888', 'color:#66bb6a', 'color:#66bb6a;font-weight:bold', 'color:#888')
-    if (json.xiangyaJob) await xiangyaWait(json.xiangyaJob)
+    const receipt = jobReceipt(json.data ?? json, json.xiangyaJob, xiangyaWait)
+    const context = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('xiangyaProject') : ''
+    if (context) window.parent.postMessage({ type: 'chirpiva-performance', project: context,
+      metric: json.xiangyaJob ? 'job_accept' : 'api', valueMs: ms, label: 'studio' }, window.location.origin)
+    if (json.xiangyaJob && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('xiangya:job-accepted', { detail: json.xiangyaJob }))
+    }
+    if (receiptOnly) return receipt as T
+    await receipt.completion()
     return json.data ?? json
   } catch (err: any) {
     if (!err.message?.match(/^\d{3}$/)) {
@@ -31,6 +40,7 @@ async function req<T = any>(method: string, path: string, body?: any): Promise<T
 }
 
 export const api = {
+  start: <T = any>(p: string, b?: any) => req<{ data: T; job?: { id: string }; completion: () => Promise<void> }>('POST', p, b, true),
   get: <T = any>(p: string) => req<T>('GET', p),
   post: <T = any>(p: string, b?: any) => req<T>('POST', p, b),
   put: <T = any>(p: string, b?: any) => req<T>('PUT', p, b),

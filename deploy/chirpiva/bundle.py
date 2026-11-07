@@ -18,7 +18,8 @@ import tarfile
 
 DEPLOY_FILES = {
     "bundle.py", "README.md", "install-dependencies.sh", "environment.example",
-    "chirpiva.service", "Caddyfile",
+    "chirpiva.service", "chirpiva-resource-limits.conf", "Caddyfile",
+    "chirpiva-workloads.slice", "performance.caddy", "precompress-assets.mjs",
 }
 EXTRA_FILES = {f"deploy/chirpiva/{name}" for name in DEPLOY_FILES} | {
     "tests/test_chirpiva_deployment.py", "assets/branding/xiangya-wordmark.png",

@@ -82,7 +82,13 @@ class WorkshopActions:
         return project['shots']
 
     async def observe(self, row):
-        events = self.host._read_job_events(row['turn_id'])
+        self.scope()
+        active = row['turn_id'] in self.host._ACTIVE_TURN_IDS
+        if not active and row.get('finished_at') and row['status'] in {'completed', 'failed', 'cancelled'}:
+            # A durable result must not be reclassified by later manual edits,
+            # nor should every status poll decode all historical tool output.
+            return self._public(row)
+        events = await asyncio.to_thread(self.host._read_job_events, row['turn_id'])
         questions = {}
         for event in events:
             kind, value = event.get('event'), event.get('data')
@@ -104,7 +110,8 @@ class WorkshopActions:
             elif kind == 'done':
                 outcome = value.get('outcome') if isinstance(value, dict) else None
                 state = {'completed': 'completed', 'failed': 'failed', 'stopped': 'cancelled'}.get(outcome, 'unconfirmed')
-                row.update(status=state, finished_at=event.get('id') and int(time.time() * 1000))
+                row.update(status=state)
+                if event.get('id'): row.setdefault('finished_at', int(time.time() * 1000))
         active = row['turn_id'] in self.host._ACTIVE_TURN_IDS
         if active:
             row['status'] = 'waiting_input' if questions else 'running'
@@ -115,7 +122,11 @@ class WorkshopActions:
             if self._evidence(current, row['action']) == row['before']:
                 row.update(status='failed', message='AI 已结束，但没有保存本次要求的制作结果。')
         row['questions'] = list(questions.values()) if active else []
-        self._save(row)
+        await asyncio.to_thread(self._save, row)
+        return self._public(row)
+
+    @staticmethod
+    def _public(row):
         return {key: row[key] for key in ('id', 'workshop_id', 'action', 'label', 'status', 'session_id', 'turn_id',
                 'shot_ids', 'asset_ids', 'created_at', 'questions', 'message', 'finished_at') if key in row}
 

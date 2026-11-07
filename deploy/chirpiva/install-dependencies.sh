@@ -21,6 +21,7 @@ python3.12 -m venv .venv
 npm --prefix web/frontend ci --no-audit --no-fund
 npm --prefix web/frontend run build
 bash integrations/huobao-drama/install.sh
+node deploy/chirpiva/precompress-assets.mjs web/frontend/dist/assets integrations/huobao-drama/source/frontend/.output/public/_nuxt
 .venv/bin/python -m playwright install chromium
 .venv/bin/python -m patchright install chromium
 test -s web/frontend/dist/index.html

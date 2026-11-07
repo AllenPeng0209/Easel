@@ -338,10 +338,11 @@ def test_native_change_during_import_is_synced_on_the_next_open(engine, monkeypa
     project = store.create({'title': '导入时并发编辑'})
     project = store.production(project['id'], 1, {'script': '导入开始前的剧本', 'assets': [], 'shots': []})
     push = engine._push
-    def import_then_native_edit(snapshot, binding):
-        push(snapshot, binding)
+    def import_then_native_edit(snapshot, binding, **kwargs):
+        imported = push(snapshot, binding, **kwargs)
         current = store.get(project['id'])
         store.production(project['id'], current['revision'], {'script': '导入期间AI保存的新剧本', 'assets': [], 'shots': []})
+        return imported
     monkeypatch.setattr(engine, '_push', import_then_native_edit)
     binding = engine.open(project['id'])
     monkeypatch.setattr(engine, '_push', push)
@@ -355,7 +356,7 @@ def test_failed_first_import_does_not_block_native_edits_or_a_later_retry(engine
     store = WorkshopStore(engine.workspace / 'outputs')
     project = store.create({'title': '首次导入失败后继续制作'})
     push = engine._push
-    def fail_import(*_):
+    def fail_import(*_, **__):
         raise sqlite3.OperationalError('fixture import failure')
     monkeypatch.setattr(engine, '_push', fail_import)
     with pytest.raises(sqlite3.OperationalError, match='fixture import failure'):

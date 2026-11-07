@@ -205,3 +205,52 @@ def test_access_restriction_remains_visible_while_user_can_retry_in_browser(runn
     assert social_login.cmd_login(args) == 0
     assert observed[0]["state"] == "window_login"
     assert "429" in observed[0]["message"]
+
+
+@pytest.mark.parametrize(('remote', 'url', 'html', 'error_type', 'expected'), [
+    (True, 'https://www.tiktok.com/login', '<main>选择登录方式</main>', 'timeout', 'expired'),
+    (True, 'https://accounts.google.com/signin', '<main>登录 Google</main>', 'timeout', 'expired'),
+    (False, 'https://www.tiktok.com/login', '<main>选择登录方式</main>', 'timeout', 'error'),
+    (True, 'https://www.tiktok.com.evil.test/login', '<main>其他网站</main>', 'timeout', 'error'),
+    (True, 'about:blank', '<main>空白页</main>', 'timeout', 'error'),
+    (True, 'https://www.tiktok.com/login', '', 'timeout', 'error'),
+    (True, 'https://www.tiktok.com/login', '<main>选择登录方式</main>', 'network', 'error'),
+])
+def test_remote_slow_navigation_keeps_only_visible_official_page_without_claiming_login(
+        page, tmp_path, monkeypatch, remote, url, html, error_type, expected):
+    from playwright.sync_api import TimeoutError as BrowserTimeout
+    page.goto(url)
+    page.set_content(html)
+    if remote:
+        monkeypatch.setenv('EASEL_LOGIN_REMOTE_ENDPOINT_FILE', str(tmp_path / 'private-endpoint.json'))
+    else:
+        monkeypatch.delenv('EASEL_LOGIN_REMOTE_ENDPOINT_FILE', raising=False)
+    error = BrowserTimeout('navigation deadline') if error_type == 'timeout' else RuntimeError('network failure')
+    monkeypatch.setattr(page, 'goto', lambda *a, **k: (_ for _ in ()).throw(error))
+    monkeypatch.setattr('playwright.sync_api.sync_playwright', lambda: nullcontext(None))
+    monkeypatch.setattr(social_login, '_launch_context', lambda *a, **k: page.context)
+    args = SimpleNamespace(platform='youtube' if 'google' in url else 'tiktok',
+        status_file=str(tmp_path / 'status.json'), profile_base=str(tmp_path / 'browser'), timeout=0)
+    assert social_login.cmd_login(args) == 1
+    status = login_state.read_status(args.status_file)
+    assert status['state'] == expected
+    assert status['state'] != 'success'
+
+
+def test_x_login_runner_uses_current_official_entrypoint(runner):
+    args, context, page = runner
+    args.platform, args.timeout = 'x', 0
+    visited = []
+    page.goto = lambda url, **kwargs: visited.append(url)
+    assert social_login.cmd_login(args) == 1
+    assert visited == ['https://x.com/login']
+
+
+@pytest.mark.parametrize('url,form', [
+    ('https://x.com/i/jf/onboarding/web', ''),
+    ('https://x.com/home', '<input name="username_or_email">'),
+    ('https://x.com/home', '<input autocomplete="username webauthn">'),
+])
+def test_x_new_onboarding_and_login_fields_never_verify_stale_authenticated_ui(page, url, form):
+    cfg = load(page, 'x', AUTH_HTML['x'] + form, cookies=True, url=url)
+    assert social_login.inspect_account(page, cfg)['loggedIn'] is False

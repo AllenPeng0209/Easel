@@ -97,7 +97,8 @@ def test_revocation_during_snapshot_verification_closes_the_pending_download(art
         opened.append(stream)
         access = AccessStore(root)
         other = access.create_user('replacement-owner', __import__('secrets').token_urlsafe(24), 'Replacement')
-        access.set_member('default', other['id'], 'owner')
+        from tests.repository_helpers import transfer_project
+        transfer_project(access, 'default', other['id'])
         access.set_member('default', user['id'], 'viewer')
         return stream
     monkeypatch.setattr(ChatArtifactStore, 'open_content', revoke_after_verification)

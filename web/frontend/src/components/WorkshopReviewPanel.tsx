@@ -41,7 +41,7 @@ export default function WorkshopReviewPanel({ project, onUpdate, onUseWorkshop, 
   return <div className="workshop-review-layout"><section className="workshop-panel workshop-delivery"><div className="workshop-section-title"><h2>成片预览</h2><span>{summary.label}</span></div>
     {!!project.deliverables.length && <label><span className="field-label">交付版本</span><select className="field" value={artifact?.id || ''} onChange={event => { setSelected(event.target.value); setChecked(''); }}>
       {[...project.deliverables].reverse().map(item => <option key={item.id} value={item.id}>V{item.revision} · {item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : '成片'}</option>)}</select></label>}
-    {artifact ? <><video className="workshop-player" key={artifact.id} src={workshopMediaUrl(artifact.path) || undefined} controls preload="metadata" />
+    {artifact ? <><video className="workshop-player" key={artifact.id} src={workshopMediaUrl(artifact.path, true) || undefined} controls preload="metadata" />
       <div className="workshop-delivery-foot"><span>工程 V{artifact.revision}</span><a className="btn btn-sm" href={workshopMediaUrl(artifact.path) || undefined} download>下载成片</a>
         {canOperate && onUseWorkshop && <button className="btn btn-sm" onClick={() => void onUseWorkshop({ id: project.id, revision: project.revision, artifactId: artifact.id, artifactSha256: artifact.sha256 })}>带回对话继续修改</button>}</div>
       {!eligibility.canReview && <p className="workshop-hint">{eligibility.message}</p>}</> : <p className="workshop-hint">AI 完成制作后，成片会自动进入这里等待审核。</p>}

@@ -19,6 +19,10 @@ export function componentModule(relative, { user = '', project = 'default', stor
     setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
   const load = filename => {
     if (filename.endsWith('.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => key }) };
+    if (/\.(png|jpe?g|webp|avif|woff2)$/.test(filename)) {
+      if (!existsSync(filename)) throw new Error(`Missing static asset: ${filename}`);
+      return { __esModule: true, default: filename };
+    }
     const candidate = ['', '.ts', '.tsx', '.js'].map(ext => filename + ext).find(existsSync);
     if (!candidate) throw new Error(`Missing component module: ${filename}`);
     if (cache.has(candidate)) return cache.get(candidate).exports;

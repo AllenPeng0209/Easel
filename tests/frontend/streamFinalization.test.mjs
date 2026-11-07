@@ -36,7 +36,7 @@ function setup(stopReceipt, readFinal = async () => undefined, deleteReceipt) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText, { exports: control, Date, Error });
   const context = {
-    useCallback: callback => callback, finalizers, streamAcc, typingBuf, AbortSignal, reduceAgentEvents, recoverAgentTimeline, fetchLastTurn: readFinal,
+    useCallback: callback => callback, finalizers, streamAcc, typingBuf, AbortSignal, reduceAgentEvents, recoverAgentTimeline, fetchLastTurn: readFinal, fetchLastTurnStatus: readFinal,
     streamCtl: { current: { session: { abort() { aborted += 1; } } } },
     document: { visibilityState: 'visible' },
     setTimeout: callback => { callbacks.push(callback); return callbacks.length; },

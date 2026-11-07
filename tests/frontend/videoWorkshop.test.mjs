@@ -1,3 +1,4 @@
+import { componentModule } from './agentMessagesHarness.mjs';
 import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
@@ -16,7 +17,7 @@ const api = {};
 const requests = [];
 let response = { ok: true, status: 200, data: {} };
 runWithProjectScope(outputText, {
-  exports: api, URL, AbortController, require: () => projectScope,
+  exports: api, URL, AbortController, require: name => name.includes('scopedReadCache') ? componentModule('lib/scopedReadCache.ts') : projectScope,
   fetch: async (url, options) => {
     requests.push({ url, options });
     const current = await (typeof response === 'function' ? response(url, options) : response);
@@ -73,7 +74,7 @@ function workshopView() {
     window: { setInterval(callback) { const id = timers.size + 1; timers.set(id, callback); return id; },
       clearInterval(id) { timers.delete(id); }, addEventListener() {}, removeEventListener() {} },
     document: { visibilityState: 'visible', getElementById: () => null },
-    require: name => name === 'react' ? hooks : name === 'react/jsx-runtime' ? { jsx, jsxs: jsx, Fragment: 'fragment' }
+    require: name => name.includes('scopedReadCache') ? componentModule('lib/scopedReadCache.ts') : name === 'react' ? hooks : name === 'react/jsx-runtime' ? { jsx, jsxs: jsx, Fragment: 'fragment' }
       : name.endsWith('/workshop') ? api : name.endsWith('/ProjectSpace') ? { useIpPermissions: () => ({ role: 'owner', canOperate: true, canManageAccounts: true, isPlatformAdmin: true }) }
       : name.endsWith('/icons') ? new Proxy({}, { get: (_, name) => name }) : {},
   });

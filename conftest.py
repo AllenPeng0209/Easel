@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+# Pin our helper package before vendored skills collect another `tests` package.
+# This keeps full-repository collection equivalent to running the owning suite.
+import tests as _owning_tests
+
 
 # Runtime IP spaces link back to shared skills; collect the owning source once.
 collect_ignore = ["projects"]

@@ -72,7 +72,7 @@ function resolvePath(roots: OutputNode[], names: string[]): OutputNode[] {
 
 function Thumb({ f, big }: { f: OutputNode | null; big?: boolean }) {
   if (f && f.kind === 'image') return <img src={mediaUrl(f.path)} alt="" loading="lazy" />;
-  if (f && f.kind === 'video') return <video src={mediaUrl(f.path)} preload="metadata" muted />;
+  if (f && f.kind === 'video') return <video src={mediaUrl(f.path, true)} preload="none" muted />;
   return <div className="gcard-ph">{kindIcon(f?.kind, big ? 34 : 30)}</div>;
 }
 
@@ -180,7 +180,7 @@ export default function OutputsPage({ jumpPath, onJumpHandled }: OutputsPageProp
     if (!selected) return null;
     const url = mediaUrl(selected.path);
     if (selected.kind === 'image') return <img src={url} alt={selected.name} style={{ maxWidth: '100%', borderRadius: 'var(--radius)' }} />;
-    if (selected.kind === 'video') return <video src={url} controls style={{ maxWidth: '100%', borderRadius: 'var(--radius)' }} />;
+    if (selected.kind === 'video') return <video src={mediaUrl(selected.path, true)} controls style={{ maxWidth: '100%', borderRadius: 'var(--radius)' }} />;
     if (selected.kind === 'audio') return <audio src={url} controls style={{ width: '100%' }} />;
     if (selected.kind === 'text' && isHtml(selected.name)) return (
       <>

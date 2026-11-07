@@ -2,9 +2,11 @@
 
 import asyncio
 from copy import deepcopy
+from contextlib import asynccontextmanager
 import importlib
 import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 from fastapi import HTTPException
@@ -932,3 +934,819 @@ async def test_native_login_preserves_default_reauth_and_checks_the_candidate_be
         assert (
             account.creator_storage_state == "" and account.nickname == "Same nickname"
         )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("platform", ["douyin", "xhs"])
+async def test_remote_login_is_task_scoped_and_revoked_after_verified_completion(runtime, monkeypatch, platform):
+    install_platform(runtime, monkeypatch)
+    real_runner = runtime.module._run_login
+    created = []
+    bound = []
+
+    class Remote:
+        def __init__(self, project, actor, platform, task, **callbacks):
+            self.owner = project, actor, platform, task
+            self.callbacks = callbacks
+            self.stopped = False
+
+        def public(self):
+            return {"id": "remote-test-session", "platform": platform}
+
+        def bind_context(self, context, page=None):
+            bound.append((context, page))
+
+        async def stop(self, cancel=True):
+            self.stopped = True
+            if cancel:
+                self.callbacks["cancel"]()
+
+    def create(*args, **kwargs):
+        session = Remote(*args, **kwargs)
+        created.append(session)
+        return session
+
+    monkeypatch.setitem(sys.modules, "easel.login_remote", SimpleNamespace(
+        registry=SimpleNamespace(create=create), enabled=lambda: True,
+    ))
+    contexts = [object(), object()]
+    pages = [object(), object()]
+
+    async def runner(task, **kwargs):
+        index = int(kwargs["creator"])
+        assert 0 < kwargs["timeout_seconds"] <= 600
+        kwargs.pop("context_callback")(contexts[index], page=pages[index])
+        kwargs.pop("timeout_seconds")
+        await real_runner(task, **kwargs)
+
+    monkeypatch.setattr(runtime.module, "_run_login", runner)
+    api = connections(runtime)
+    started = await api.start(platform, actor_id="owner-one")
+    assert started["remote"] == {"id": "remote-test-session", "platform": platform}
+    assert created[0].owner == ("default", "owner-one", platform, started["task_id"])
+    assert created[0].callbacks["is_active"]()
+    await api._runners[started["task_id"]]
+    result = api.poll(started["task_id"], actor_id="owner-one")
+    assert result["status"] == "confirmed"
+    assert "remote" not in result
+    assert bound == list(zip(contexts, pages))
+    await asyncio.wait_for(asyncio.gather(*tuple(api._remote_finalizers)), 1)
+    assert created[0].stopped and not created[0].callbacks["is_active"]()
+    await api.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("platform,creator", [("douyin", False), ("douyin", True), ("xhs", False), ("xhs", True)])
+async def test_native_remote_binding_reaches_the_selected_login_adapter(runtime, monkeypatch, platform, creator):
+    native_account(runtime, platform)
+    module = runtime.module
+    with module.get_session() as db:
+        account = db.get(module.DouyinAccount, 1)
+        identity = SimpleNamespace(account_id=1, key=1, platform=platform,
+                                   profile_dir=account.profile_dir, proxy="", ua="", identity_mode="native")
+    monkeypatch.setattr(module, "browser", SimpleNamespace(
+        identity_for=lambda _: identity, environment_snapshot=lambda *a, **k: {},
+    ))
+    monkeypatch.setattr(module, "ensure_identity", lambda *a, **k: None)
+    selected = {("douyin", False): "interactive_login", ("douyin", True): "interactive_creator_login",
+                ("xhs", False): "interactive_xhs_login", ("xhs", True): "interactive_xhs_creator_login"}
+    observed = []
+    context, page = object(), object()
+
+    async def login(browser, current, **kwargs):
+        assert kwargs["timeout_seconds"] == 550
+        kwargs["context_callback"](context, page=page)
+        return False, "", ""
+
+    monkeypatch.setattr(module, selected[(platform, creator)], login)
+    await module._run_login("remote-adapter", platform=platform, creator=creator, account_id=1,
+                            context_callback=lambda ctx, **kwargs: observed.append((ctx, kwargs["page"])),
+                            timeout_seconds=550)
+    assert observed == [(context, page)]
+    assert module.login_tasks["remote-adapter"]["status"] != "confirmed"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("function", ["interactive_login", "interactive_creator_login", "interactive_xhs_login", "interactive_xhs_creator_login"])
+async def test_remote_adapter_binds_the_login_page_before_navigation(runtime, function):
+    module = importlib.import_module(runtime.namespace + ".browser.login")
+    observed, closed = [], []
+
+    async def unreachable(*args, **kwargs):
+        raise RuntimeError("fixture stops before network navigation")
+
+    page = SimpleNamespace(goto=unreachable)
+
+    async def new_page():
+        return page
+
+    async def close():
+        closed.append(True)
+
+    context = SimpleNamespace(new_page=new_page, close=close, pages=[object()])
+
+    async def get_context(identity):
+        return context
+
+    @asynccontextmanager
+    async def visible(identity):
+        yield page
+
+    manager = SimpleNamespace(open_headed=get_context, context_for=get_context, visible_page=visible)
+    with pytest.raises(RuntimeError, match="fixture stops"):
+        await getattr(module, function)(manager, SimpleNamespace(),
+            context_callback=lambda ctx, **kwargs: observed.append((ctx, kwargs["page"])))
+    assert observed == [(context, page)]
+    if function.startswith("interactive_xhs") is False:
+        assert closed == [True]
+
+
+@pytest.mark.anyio
+async def test_cancel_before_native_runner_starts_releases_remote_without_clearing_account(runtime, monkeypatch):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    native_account(runtime)
+    install_platform(runtime, monkeypatch)
+    with runtime.module.get_session() as db:
+        before = db.get(runtime.module.DouyinAccount, 1).model_dump()
+    api = connections(runtime)
+    started = await api.start("douyin", account_id=1, actor_id="owner-one")
+    session = registry.get(started["remote"]["id"], "default", "owner-one", "douyin")
+    # A cancellation can arrive before asyncio first enters the login coroutine.
+    session._cancel()
+    await session.stop(cancel=False)
+    await asyncio.gather(api._runners[started["task_id"]], return_exceptions=True)
+    result = api.poll(started["task_id"], actor_id="owner-one")
+    assert result["status"] in {"error", "expired"}
+    assert result["stage"] == "canceled"
+    assert "remote" not in result
+    with runtime.module.get_session() as db:
+        assert db.get(runtime.module.DouyinAccount, 1).model_dump() == before
+    await api.close()
+
+
+@pytest.mark.anyio
+async def test_revoked_login_request_cancels_the_waiting_browser_without_erasing_account(runtime, monkeypatch):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    native_account(runtime)
+    install_platform(runtime, monkeypatch, unknown_read=True)
+    with runtime.module.get_session() as db:
+        before = db.get(runtime.module.DouyinAccount, 1).model_dump()
+    entered, flushed = asyncio.Event(), asyncio.Event()
+
+    async def waiting_browser(*args, **kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            flushed.set()
+
+    monkeypatch.setattr(runtime.module, "_run_login", waiting_browser)
+    authorized = True
+
+    def authorize():
+        if not authorized:
+            raise HTTPException(401, "request session ended")
+
+    api = connections(runtime)
+    started = await api.start("douyin", account_id=1, actor_id="owner-one", authorize=authorize)
+    await asyncio.wait_for(entered.wait(), 1)
+    session = registry.get(started["remote"]["id"], "default", "owner-one", "douyin")
+    authorized = False
+    try:
+        assert session._is_active() is False
+        await asyncio.wait_for(flushed.wait(), 1)
+        await asyncio.gather(api._runners[started["task_id"]], return_exceptions=True)
+        result = api.poll(started["task_id"], actor_id="owner-one")
+        assert result["status"] == "error" and "remote" not in result
+        with runtime.module.get_session() as db:
+            assert db.get(runtime.module.DouyinAccount, 1).model_dump() == before
+    finally:
+        await api.close()
+
+
+@pytest.mark.anyio
+async def test_login_waiting_for_coordinator_lock_rechecks_its_request_session(runtime, monkeypatch):
+    install_platform(runtime, monkeypatch)
+    api = connections(runtime)
+    authorized = True
+
+    def authorize():
+        if not authorized:
+            raise HTTPException(401, "session ended")
+
+    async with api._lock:
+        task = asyncio.create_task(api.start("douyin", actor_id="owner", authorize=authorize))
+        await asyncio.sleep(0)
+        authorized = False
+    with pytest.raises(HTTPException) as ended:
+        await task
+    assert ended.value.status_code == 401
+    assert api._records == {}
+    await api.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_failed_remote_native_login_flushes_only_its_account_context(runtime, monkeypatch, cancel):
+    native_account(runtime)
+    module = runtime.module
+    closed, entered = [], asyncio.Event()
+    with module.get_session() as db:
+        before = db.get(module.DouyinAccount, 1).model_dump()
+    identity = SimpleNamespace(account_id=1, key=1, platform="douyin",
+                               profile_dir=before["profile_dir"], proxy="", ua="", identity_mode="native")
+
+    async def close_context(key):
+        closed.append(key)
+
+    monkeypatch.setattr(module, "browser", SimpleNamespace(identity_for=lambda _: identity,
+        environment_snapshot=lambda *a, **k: {}, close_context=close_context))
+    monkeypatch.setattr(module, "ensure_identity", lambda *a, **k: None)
+
+    async def login(*args, **kwargs):
+        entered.set()
+        if cancel:
+            await asyncio.Event().wait()
+        return False, "", ""
+
+    monkeypatch.setattr(module, "interactive_login", login)
+    task = asyncio.create_task(module._run_login("remote-close", platform="douyin", account_id=1,
+                                                 context_callback=lambda *a, **k: None))
+    await entered.wait()
+    if cancel:
+        task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert closed == [1]
+    with module.get_session() as db:
+        assert db.get(module.DouyinAccount, 1).model_dump() == before
+
+
+@pytest.mark.anyio
+async def test_remote_capacity_rejection_preserves_verified_session_and_creates_no_login(runtime, monkeypatch, session_store):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    native_account(runtime)
+    install_platform(runtime, monkeypatch)
+    generation = session_store.begin_generation(runtime.workspace, "douyin")
+    session_store.save_session(runtime.workspace, "douyin", 1, state("douyin", "existing-session"),
+        identity={"uid": "100", "accountIdentityStatus": "verified"},
+        capabilities={"creator": "verified"}, expected_generation=generation)
+    before = session_store.load_session(runtime.workspace, "douyin")
+
+    def capacity_full(*args, **kwargs):
+        raise HTTPException(409, "another login is still using the browser slot")
+
+    monkeypatch.setattr(login_remote, "registry", SimpleNamespace(create=capacity_full))
+    api = connections(runtime)
+    with pytest.raises(HTTPException) as busy:
+        await api.start("douyin", actor_id="owner", account_id=1)
+    assert busy.value.status_code == 409
+    assert session_store.session_generation(runtime.workspace, "douyin") == generation
+    assert session_store.load_session(runtime.workspace, "douyin") == before
+    assert api._records == {} and api._runners == {}
+    await api.close()
+
+
+@pytest.mark.anyio
+async def test_remote_close_waits_until_native_browser_cleanup_has_finished(runtime, monkeypatch):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    native_account(runtime)
+    install_platform(runtime, monkeypatch, unknown_read=True)
+    entered, cleanup_started, release_cleanup = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def waiting_browser(*args, **kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            await release_cleanup.wait()
+
+    monkeypatch.setattr(runtime.module, "_run_login", waiting_browser)
+    api = connections(runtime)
+    started = await api.start("douyin", actor_id="owner", account_id=1)
+    await asyncio.wait_for(entered.wait(), 1)
+    session = registry.get(started["remote"]["id"], "default", "owner", "douyin")
+    closing = asyncio.create_task(session.stop())
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), 1)
+        await asyncio.sleep(0)
+        assert not closing.done(), "The browser slot was released while native cleanup was still running"
+        release_cleanup.set()
+        await asyncio.wait_for(closing, 1)
+        assert api._runners[started["task_id"]].done()
+    finally:
+        release_cleanup.set()
+        await api.close()
+        await asyncio.gather(closing, return_exceptions=True)
+        await registry.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("remote_enabled,actor", [(False, "owner"), (True, None)])
+async def test_local_login_is_not_blocked_by_remote_browser_capacity(runtime, monkeypatch, remote_enabled, actor):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1" if remote_enabled else "0")
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN_MAX_ACTIVE", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    registry.create("other-project", "other-owner", "facebook", "other-task")
+    install_platform(runtime, monkeypatch)
+    api = connections(runtime)
+    try:
+        started = await api.start("douyin", actor_id=actor)
+        assert "remote" not in started
+        await api._runners[started["task_id"]]
+        assert api.poll(started["task_id"], actor_id=actor)["status"] == "confirmed"
+    finally:
+        await api.close()
+        await registry.close()
+
+
+@pytest.mark.anyio
+async def test_failed_generation_write_releases_reserved_remote_capacity(runtime, monkeypatch, session_store):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN_MAX_ACTIVE", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    install_platform(runtime, monkeypatch)
+    api = connections(runtime)
+
+    def failing_generation(*args, **kwargs):
+        raise OSError("fixture cannot write generation")
+
+    monkeypatch.setattr(session_store, "begin_generation", failing_generation)
+    try:
+        with pytest.raises(OSError, match="fixture cannot write"):
+            await api.start("douyin", actor_id="owner")
+        assert api._records == {} and api._runners == {}
+        assert registry.create("other-project", "other-owner", "facebook", "next-task").public()["platform"] == "facebook"
+    finally:
+        await api.close()
+        await registry.close()
+
+
+@pytest.mark.anyio
+async def test_confirmed_native_login_releases_slot_only_after_cleanup_without_self_wait(runtime, monkeypatch):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN_MAX_ACTIVE", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    install_platform(runtime, monkeypatch)
+    api = connections(runtime)
+    cleanup_started, release_cleanup = asyncio.Event(), asyncio.Event()
+    original_cleanup = api._cleanup_unbound
+
+    async def cleanup(record):
+        cleanup_started.set()
+        await release_cleanup.wait()
+        await original_cleanup(record)
+
+    monkeypatch.setattr(api, "_cleanup_unbound", cleanup)
+    try:
+        started = await api.start("douyin", actor_id="owner")
+        await asyncio.wait_for(cleanup_started.wait(), 1)
+        assert api.poll(started["task_id"], actor_id="owner")["status"] == "confirmed"
+        with pytest.raises(HTTPException) as busy:
+            registry.create("other-project", "other-owner", "facebook", "next-task")
+        assert busy.value.status_code == 409
+        release_cleanup.set()
+        await asyncio.wait_for(api._runners[started["task_id"]], 1)
+        await asyncio.wait_for(asyncio.gather(*tuple(api._remote_finalizers)), 1)
+        assert registry.create("other-project", "other-owner", "facebook", "next-task").public()["platform"] == "facebook"
+    finally:
+        release_cleanup.set()
+        await api.close()
+        await registry.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("remote,explicit,want", [
+    (False, None, "https://www.douyin.com/"),
+    (True, None, "https://creator.douyin.com/"),
+    (True, "https://www.douyin.com/", "https://www.douyin.com/"),
+])
+async def test_remote_douyin_uses_official_creator_login_without_changing_local_or_explicit_entry(
+    runtime, remote, explicit, want
+):
+    module = importlib.import_module(runtime.namespace + ".browser.login")
+    navigated, closed = [], []
+
+    async def goto(url, **kwargs):
+        navigated.append(url)
+        raise RuntimeError("fixture stops before navigation")
+
+    page = SimpleNamespace(goto=goto)
+
+    async def new_page():
+        return page
+
+    async def close():
+        closed.append(True)
+
+    context = SimpleNamespace(new_page=new_page, close=close)
+
+    async def open_headed(identity):
+        return context
+
+    options = {}
+    if remote:
+        options["context_callback"] = lambda ctx, **kwargs: None
+    if explicit is not None:
+        options["start_url"] = explicit
+    with pytest.raises(RuntimeError, match="fixture stops"):
+        await module.interactive_login(SimpleNamespace(open_headed=open_headed), SimpleNamespace(), **options)
+    assert navigated == [want]
+    assert closed == [True]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("remote,want", [
+    (False, "https://www.xiaohongshu.com/"),
+    (True, "https://www.xiaohongshu.com/login"),
+])
+async def test_remote_xhs_uses_explicit_login_while_local_keeps_homepage(runtime, remote, want):
+    module = importlib.import_module(runtime.namespace + ".browser.login")
+    navigated = []
+
+    async def goto(url, **kwargs):
+        navigated.append(url)
+        raise RuntimeError("fixture stops before navigation")
+
+    page = SimpleNamespace(goto=goto)
+    context = SimpleNamespace(pages=[])
+
+    async def context_for(identity):
+        return context
+
+    @asynccontextmanager
+    async def visible_page(identity):
+        yield page
+
+    manager = SimpleNamespace(context_for=context_for, visible_page=visible_page)
+    options = {"context_callback": lambda ctx, **kwargs: None} if remote else {}
+    with pytest.raises(RuntimeError, match="fixture stops"):
+        await module.interactive_xhs_login(manager, SimpleNamespace(), **options)
+    assert navigated == [want]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("platform,remote,configured,fail", [
+    ("xhs", True, True, False), ("xhs", True, False, False),
+    ("xhs", False, True, False), ("douyin", True, True, False),
+    ("xhs", True, True, True),
+])
+async def test_backend_xhs_proxy_is_scoped_to_remote_xhs_and_never_returned(runtime, monkeypatch, platform, remote, configured, fail):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1" if remote else "0")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    proxy = "http://fixture-user:fixture-proxy-password@127.0.0.1:20810"
+    if configured:
+        monkeypatch.setenv("EASEL_XHS_LOGIN_PROXY", proxy)
+    else:
+        monkeypatch.delenv("EASEL_XHS_LOGIN_PROXY", raising=False)
+    install_platform(runtime, monkeypatch)
+    original = runtime.module._run_login
+    used = []
+
+    async def login(task, **kwargs):
+        used.append(kwargs["proxy_choice"])
+        if fail:
+            raise RuntimeError(proxy)
+        await original(task, **kwargs)
+
+    monkeypatch.setattr(runtime.module, "_run_login", login)
+    api = connections(runtime)
+    try:
+        started = await api.start(platform, actor_id="owner")
+        await api._runners[started["task_id"]]
+        result = api.poll(started["task_id"], actor_id="owner")
+        expected = proxy if platform == "xhs" and remote and configured else ""
+        assert used == ([expected] if fail else [expected, expected])
+        assert result["status"] == ("error" if fail else "confirmed")
+        assert "fixture-proxy-password" not in json.dumps(started) + json.dumps(result)
+        assert "fixture-user" not in json.dumps(started) + json.dumps(result)
+    finally:
+        await api.close()
+        await registry.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("check_during_creator", [True, False])
+async def test_verified_read_login_survives_closing_creator_verification_and_releases_other_platform(
+    runtime, monkeypatch, session_store, check_during_creator
+):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN_MAX_ACTIVE", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    install_platform(runtime, monkeypatch)
+    original = runtime.module._run_login
+    creator_waiting, creator_closed = asyncio.Event(), asyncio.Event()
+
+    async def login(task_id, **kwargs):
+        if kwargs["creator"]:
+            runtime.module.login_tasks[task_id] = {
+                "status": "waiting", "platform": kwargs["platform"],
+                "account_id": kwargs["account_id"],
+            }
+            creator_waiting.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                creator_closed.set()
+        else:
+            await original(task_id, **kwargs)
+
+    monkeypatch.setattr(runtime.module, "_run_login", login)
+    api = connections(runtime)
+    try:
+        started = await api.start("xhs", actor_id="owner", new_account=True)
+        await asyncio.wait_for(creator_waiting.wait(), 1)
+        if check_during_creator:
+            pending = api.poll(started["task_id"], actor_id="owner")
+            assert pending.get("loginSaved") is True
+            assert pending["capabilities"]["comments"] == "verified"
+            assert pending["capabilities"]["creator"] == "needs_verification"
+            assert session_store.load_session(runtime.workspace, "xhs") is not None
+        session = registry.get(started["remote"]["id"], "default", "owner", "xhs")
+        await asyncio.wait_for(session.stop(), 2)
+        result = api.poll(started["task_id"], actor_id="owner")
+        assert result["status"] == "confirmed" and result["completion"] == "partial"
+        assert result["loginSaved"] is True
+        assert result["capabilities"]["comments"] == "verified"
+        assert result["capabilities"]["creator"] == "needs_verification"
+        assert result["capabilities"]["publish"] == "needs_verification"
+        saved = session_store.load_session(runtime.workspace, "xhs")
+        assert saved["account_id"] == result["account_id"]
+        assert saved["identity"]["accountId"] == "100"
+        assert saved["storage_state"] == state("xhs", "read-session")
+        with runtime.module.get_session() as db:
+            account = db.get(runtime.module.DouyinAccount, result["account_id"])
+            assert account.status == "active" and account.storage_state
+            assert account.creator_storage_state == ""
+        from easel.account_directory import build_account_directory, read_native_accounts
+        directory = build_account_directory("default", [{"platform": "xiaohongshu", "name": "小红书",
+            "backend": "xhs", "supported": True, "loggedIn": False}],
+            read_native_accounts(runtime.workspace), shared_sessions={"xiaohongshu": saved})
+        row = directory["accounts"][0]
+        assert row["loggedIn"] is True and row["status"] == "logged_in" and row["identityVerified"] is True
+        assert row["capabilities"]["comments"] == "verified" and row["capabilities"]["creator"] == "needs_verification"
+        assert creator_closed.is_set()
+        assert runtime.module._active_login_task() is None
+        assert api._runners[started["task_id"]].done()
+        other = await api.start("douyin", actor_id="owner", new_account=True)
+        assert other["platform"] == "douyin"
+        await registry.get(other["remote"]["id"], "default", "owner", "douyin").stop()
+        await api.revoke_account(result["account_id"])
+        assert session_store.load_session(runtime.workspace, "xhs") is None
+        assert api.poll(started["task_id"], actor_id="owner")["loginSaved"] is False
+    finally:
+        await api.close()
+        await registry.close()
+
+
+def test_revoking_a_partial_checkpoint_cannot_erase_a_newer_generation(tmp_path, session_store):
+    first = session_store.begin_generation(tmp_path, "xhs")
+    session_store.save_session(tmp_path, "xhs", 1, state("xhs", "first"),
+        identity={"accountId": "100"}, capabilities={"comments": "verified"}, expected_generation=first)
+    second = session_store.begin_generation(tmp_path, "xhs")
+    session_store.save_session(tmp_path, "xhs", 2, state("xhs", "second"),
+        identity={"accountId": "200"}, capabilities={"comments": "verified"}, expected_generation=second)
+    assert session_store.revoke_session(tmp_path, "xhs", expected_generation=first) is False
+    assert session_store.load_session(tmp_path, "xhs")["account_id"] == 2
+    assert session_store.revoke_session(tmp_path, "xhs", expected_generation=second) is True
+    assert session_store.load_session(tmp_path, "xhs") is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("verified", [True, False])
+async def test_existing_native_session_recovers_partial_only_after_authoritative_read_proof(
+    runtime, monkeypatch, session_store, verified
+):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    native_account(runtime, "xhs")
+    with runtime.module.get_session() as db:
+        account = db.get(runtime.module.DouyinAccount, 1)
+        account.status = "invalid"
+        db.add(account)
+        db.commit()
+    install_platform(runtime, monkeypatch, unknown_read=not verified, fail_creator=True)
+    waiting = asyncio.Event()
+
+    async def login(task, **kwargs):
+        runtime.module.login_tasks[task] = {"status": "waiting", "platform": "xhs", "account_id": 1}
+        waiting.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(runtime.module, "_run_login", login)
+    api = connections(runtime)
+    try:
+        assert session_store.load_session(runtime.workspace, "xhs") is None
+        started = await api.start("xhs", account_id=1, actor_id="owner")
+        await asyncio.wait_for(waiting.wait(), 1)
+        pending = api.poll(started["task_id"], actor_id="owner")
+        assert pending["loginSaved"] is verified
+        assert pending["stage"] == ("creator" if verified else "read")
+        saved = session_store.load_session(runtime.workspace, "xhs")
+        assert (saved is not None) is verified
+        with runtime.module.get_session() as db:
+            account = db.get(runtime.module.DouyinAccount, 1)
+            assert account.status == ("active" if verified else "invalid")
+        await registry.get(started["remote"]["id"], "default", "owner", "xhs").stop()
+        final = api.poll(started["task_id"], actor_id="owner")
+        assert final["status"] == ("confirmed" if verified else "error")
+    finally:
+        await api.close()
+        await registry.close()
+
+
+@pytest.mark.anyio
+async def test_close_cannot_preserve_a_checkpoint_after_creator_identity_mismatch(runtime, monkeypatch, session_store):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    install_platform(runtime, monkeypatch, creator_subject="200")
+    original = runtime.module._run_login
+    mismatch_seen = asyncio.Event()
+
+    async def login(task, **kwargs):
+        await original(task, **kwargs)
+        if kwargs["creator"]:
+            mismatch_seen.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(runtime.module, "_run_login", login)
+    api = connections(runtime)
+    try:
+        started = await api.start("xhs", actor_id="owner", new_account=True)
+        await asyncio.wait_for(mismatch_seen.wait(), 1)
+        assert api._records[started["task_id"]]["_mismatch"] is True
+        await registry.get(started["remote"]["id"], "default", "owner", "xhs").stop()
+        result = api.poll(started["task_id"], actor_id="owner")
+        assert result["status"] == "error" and result["loginSaved"] is False
+        assert result["capabilities"]["comments"] == "needs_verification"
+        assert session_store.load_session(runtime.workspace, "xhs") is None
+        with runtime.module.get_session() as db:
+            assert db.get(runtime.module.DouyinAccount, result["account_id"]).status == "invalid"
+    finally:
+        await api.close()
+        await registry.close()
+
+
+def publish_newer_same_account(runtime, session_store, account_id, platform):
+    generation = session_store.begin_generation(runtime.workspace, platform)
+    snapshot = state(platform, "newer-verified-session")
+    identity = {"accountId": "100", "accountIdKind": "user_id" if platform == "xhs" else "uid",
+                "accountIdentityStatus": "verified"}
+    with runtime.module.get_session() as db:
+        account = db.get(runtime.module.DouyinAccount, account_id)
+        account.status = "active"
+        account.storage_state = json.dumps(snapshot)
+        db.add(account)
+        db.commit()
+    session_store.save_session(runtime.workspace, platform, account_id, snapshot,
+        identity=identity, capabilities={"comments": "verified"}, expected_generation=generation)
+    return session_store.load_session(runtime.workspace, platform)
+
+
+@pytest.mark.anyio
+async def test_stale_mismatch_cannot_invalidate_a_newer_same_account_login(runtime, monkeypatch, session_store):
+    install_platform(runtime, monkeypatch, final_subject="200")
+    api = connections(runtime)
+    original = api._read_proof
+    calls, newer = 0, None
+
+    async def read(platform, identity):
+        nonlocal calls, newer
+        result = await original(platform, identity)
+        calls += 1
+        if calls == 2:
+            newer = publish_newer_same_account(runtime, session_store, identity.account_id, platform)
+        return result
+
+    monkeypatch.setattr(api, "_read_proof", read)
+    try:
+        started = await api.start("douyin")
+        await api._runners[started["task_id"]]
+        assert newer is not None
+        assert session_store.load_session(runtime.workspace, "douyin") == newer
+        with runtime.module.get_session() as db:
+            account = db.get(runtime.module.DouyinAccount, newer["account_id"])
+            assert account.status == "active"
+            assert json.loads(account.storage_state) == newer["storage_state"]
+    finally:
+        await api.close()
+
+
+@pytest.mark.anyio
+async def test_delayed_mismatch_close_cannot_invalidate_a_newer_same_account_login(runtime, monkeypatch, session_store):
+    from easel import login_remote
+
+    monkeypatch.setenv("EASEL_REMOTE_LOGIN", "1")
+    registry = login_remote.RemoteLoginRegistry()
+    monkeypatch.setattr(login_remote, "registry", registry)
+    install_platform(runtime, monkeypatch, creator_subject="200")
+    original = runtime.module._run_login
+    mismatch_seen, cleanup_started, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def login(task, **kwargs):
+        await original(task, **kwargs)
+        if kwargs["creator"]:
+            mismatch_seen.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release.wait()
+
+    monkeypatch.setattr(runtime.module, "_run_login", login)
+    api = connections(runtime)
+    closing = None
+    try:
+        started = await api.start("xhs", actor_id="owner", new_account=True)
+        await asyncio.wait_for(mismatch_seen.wait(), 1)
+        session = registry.get(started["remote"]["id"], "default", "owner", "xhs")
+        closing = asyncio.create_task(session.stop())
+        await asyncio.wait_for(cleanup_started.wait(), 1)
+        account_id = api.poll(started["task_id"], actor_id="owner")["account_id"]
+        newer = publish_newer_same_account(runtime, session_store, account_id, "xhs")
+        release.set()
+        await asyncio.wait_for(closing, 2)
+        assert session_store.load_session(runtime.workspace, "xhs") == newer
+        with runtime.module.get_session() as db:
+            account = db.get(runtime.module.DouyinAccount, account_id)
+            assert account.status == "active"
+            assert json.loads(account.storage_state) == newer["storage_state"]
+    finally:
+        release.set()
+        await api.close()
+        if closing is not None:
+            await asyncio.gather(closing, return_exceptions=True)
+        await registry.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("superseded", [False, True])
+async def test_final_read_error_invalidates_only_its_current_generation(runtime, monkeypatch, session_store, superseded):
+    _, closed = install_platform(runtime, monkeypatch)
+    api = connections(runtime)
+    original = api._read_proof
+    calls, newer, account_id = 0, None, None
+
+    async def read(platform, identity):
+        nonlocal calls, newer, account_id
+        result = await original(platform, identity)
+        calls += 1
+        if calls == 2:
+            account_id = identity.account_id
+            if superseded:
+                newer = publish_newer_same_account(runtime, session_store, account_id, platform)
+            raise RuntimeError("fixture final identity endpoint unavailable")
+        return result
+
+    monkeypatch.setattr(api, "_read_proof", read)
+    try:
+        started = await api.start("douyin")
+        await api._runners[started["task_id"]]
+        assert account_id is not None
+        with runtime.module.get_session() as db:
+            account = db.get(runtime.module.DouyinAccount, account_id)
+            assert account.status == ("active" if superseded else "invalid")
+            if superseded:
+                assert json.loads(account.storage_state) == newer["storage_state"]
+        if superseded:
+            assert session_store.load_session(runtime.workspace, "douyin") == newer
+            assert closed == []
+        else:
+            assert closed == [account_id]
+    finally:
+        await api.close()

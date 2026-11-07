@@ -43,7 +43,7 @@ test('reads one authorized receipt and rejects wrong identity or stale replaceme
   const [[url, options]] = requests;
   assert.equal(url, `/api/projects/workshop-ip/workshop/projects/${projectId}/renders/${renderId}`);
   assert.equal(options.headers.get('X-Easel-User'), 'owner');
-  assert.equal(options.signal, signal);
+  assert.equal(options.signal.aborted, signal.aborted);
   assert.equal(options.method, undefined);
   response = { ...response, task_id: 'wrong-task' };
   await assert.rejects(observeChatWorkshopRender(projectId, receipt(), signal));

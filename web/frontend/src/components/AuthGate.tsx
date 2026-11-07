@@ -6,6 +6,7 @@ import {
   loginAccount, logoutAccount, patchUser, registerAccount, setupAccount,
 } from '../lib/access';
 import type { User } from '../lib/access';
+import LandingPage from './LandingPage';
 import '../styles/access.css';
 
 export interface AuthState {
@@ -21,6 +22,9 @@ export const AuthContext = createContext<AuthState | null>(null);
 export function useAuth(): AuthState | null { return useContext(AuthContext); }
 
 const USER_MARKER = 'easel_authenticated_user';
+const PAGE_PATH = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '');
+const AUTH_PAGE = PAGE_PATH.endsWith('/register') ? 'register' : PAGE_PATH.endsWith('/login') ? 'login' : null;
+const PUBLIC_BASE = AUTH_PAGE ? PAGE_PATH.slice(0, -(AUTH_PAGE.length + 1)) : PAGE_PATH;
 
 function marker(): string | null {
   try { return sessionStorage.getItem(USER_MARKER); } catch { return null; }
@@ -53,13 +57,14 @@ export default function AuthGate({ children, onAuthenticated }: {
   const validating = useRef<Promise<User | null> | null>(null);
   const generation = useRef(0);
   const reloadRequired = useRef(false);
+  const wasAuthenticated = useRef(false);
 
   const signedOut = useCallback(() => {
     generation.current += 1;
     setUser(null);
     setPassword('');
     setConfirmPassword('');
-    setPhase('login');
+    setPhase(AUTH_PAGE || 'login');
     clearMarker();
     callback.current?.(null);
   }, []);
@@ -67,6 +72,14 @@ export default function AuthGate({ children, onAuthenticated }: {
   const accepted = useCallback((account: User): boolean => {
     if (!account.active) { signedOut(); return false; }
     callback.current?.(account);
+    if (AUTH_PAGE) {
+      setUser(null); setPhase('loading');
+      try {
+        sessionStorage.setItem(USER_MARKER, account.id);
+        window.location.replace(`${PUBLIC_BASE}/#projects`);
+      } catch { setError('无法切换用户工作空间，请允许会话存储并刷新页面后重试。'); }
+      return false;
+    }
     if (reloadRequired.current || marker() !== account.id) {
       // This marker only selects local draft namespaces. Authentication stays in
       // the server's HttpOnly cookie, and a reload discards the previous user's UI.
@@ -82,6 +95,7 @@ export default function AuthGate({ children, onAuthenticated }: {
       return false;
     }
     setUser(account);
+    wasAuthenticated.current = true;
     setPassword('');
     setConfirmPassword('');
     setError('');
@@ -98,6 +112,7 @@ export default function AuthGate({ children, onAuthenticated }: {
     }).catch(error => {
       if (error instanceof AccessError && error.status === 401) {
         signedOut();
+        if (wasAuthenticated.current) window.location.assign(`${PUBLIC_BASE}/login/`);
         return null;
       }
       throw error;
@@ -114,11 +129,14 @@ export default function AuthGate({ children, onAuthenticated }: {
       const status = await fetchAuthBootstrap();
       if (version !== generation.current) return;
       if (!status.configured) { setPhase('setup'); return; }
-      await refresh();
+      if ('user' in status) {
+        if (status.user) accepted(status.user);
+        else signedOut();
+      } else await refresh();
     } catch (error) {
       if (version === generation.current) setError(errorMessage(error));
     }
-  }, [refresh]);
+  }, [refresh, accepted, signedOut]);
 
   useEffect(() => { void bootstrap(); }, [bootstrap]);
 
@@ -126,7 +144,7 @@ export default function AuthGate({ children, onAuthenticated }: {
     const expired = (event: Event) => {
       const expected = (event as CustomEvent<{ userId?: string | null }>).detail?.userId;
       if (expected && marker() && expected !== marker()) return;
-      signedOut(); setError('登录已失效，请重新登录');
+      signedOut(); setError('登录已失效，请重新登录'); window.location.assign(`${PUBLIC_BASE}/login/`);
     };
     window.addEventListener('easel:auth-required', expired);
     return () => window.removeEventListener('easel:auth-required', expired);
@@ -158,7 +176,7 @@ export default function AuthGate({ children, onAuthenticated }: {
   const logout = useCallback(async () => {
     try { await logoutAccount(); }
     catch (error) { if (!(error instanceof AccessError) || error.status !== 401) throw error; }
-    signedOut();
+    wasAuthenticated.current = false; signedOut();
     channel.current?.postMessage({ type: 'changed' });
     window.location.reload();
   }, [signedOut]);
@@ -177,7 +195,7 @@ export default function AuthGate({ children, onAuthenticated }: {
           : await loginAccount({ username: username.trim(), password });
       if (version !== generation.current) return;
       channel.current?.postMessage({ type: 'changed' });
-      window.location.hash = '#projects';
+      if (!AUTH_PAGE) window.location.hash = '#projects';
       accepted(result.user);
     } catch (error) { if (version === generation.current) setError(errorMessage(error)); }
     finally { setBusy(false); }
@@ -188,10 +206,10 @@ export default function AuthGate({ children, onAuthenticated }: {
   </AuthContext.Provider>;
 
   const registering = phase === 'register';
-  const switchMode = (mode: 'login' | 'register') => { if (busy) return; generation.current += 1; setPhase(mode); setPassword(''); setConfirmPassword(''); setError(''); };
+  if (!AUTH_PAGE && phase !== 'setup' && !(phase === 'loading' && error)) return <LandingPage />;
   return <main className="auth-screen auth-landing">
-    <header className="auth-site-header"><a className="chirpiva-wordmark" href="#" aria-label="Chirpiva 响芽首页"><span className="chirpiva-mark" aria-hidden="true">c</span><strong>Chirpiva<span>响芽</span></strong></a>
-      <span className="auth-header-note">为每一个认真创作的 IP</span></header>
+    <header className="auth-site-header"><a className="chirpiva-wordmark" href={`${PUBLIC_BASE}/`} aria-label="Chirpiva 响芽首页"><span className="chirpiva-mark" aria-hidden="true">c</span><strong>Chirpiva<span>响芽</span></strong></a>
+      <a className="auth-back-home" href={`${PUBLIC_BASE}/`}>← 返回官网</a></header>
     <div className="auth-landing-grid">
     <section className="auth-story" aria-labelledby="auth-story-title">
       <div className="auth-story-eyebrow"><span />YOUR IP. YOUR SPACE.</div>
@@ -206,8 +224,8 @@ export default function AuthGate({ children, onAuthenticated }: {
     </section>
     <section className="auth-card" aria-labelledby="auth-title" aria-busy={busy || phase === 'loading'}>
       {phase !== 'setup' && phase !== 'loading' && <div className="auth-mode-tabs" aria-label="账号入口">
-        <button type="button" data-auth-mode="login" aria-pressed={!registering} disabled={busy} onClick={() => switchMode('login')}>登录</button>
-        <button type="button" data-auth-mode="register" aria-pressed={registering} disabled={busy} onClick={() => switchMode('register')}>注册</button>
+        <a data-auth-mode="login" href={`${PUBLIC_BASE}/login/`} aria-current={!registering ? 'page' : undefined} onClick={event => { if (busy) event.preventDefault(); }}>登录</a>
+        <a data-auth-mode="register" href={`${PUBLIC_BASE}/register/`} aria-current={registering ? 'page' : undefined} onClick={event => { if (busy) event.preventDefault(); }}>注册</a>
       </div>}
       <h2 id="auth-title">{phase === 'loading' ? '正在打开你的空间…' : phase === 'setup' ? '初始化 Chirpiva' : registering ? '开启你的创作事业' : '欢迎回来'}</h2>
       <p className="auth-intro">{phase === 'setup' ? '创建平台管理员，完成首次初始化。' : registering ? '创建账号后，建立你的第一个 IP 项目。' : '登录后，继续经营你的 IP 项目。'}</p>

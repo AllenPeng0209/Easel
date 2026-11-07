@@ -1,5 +1,6 @@
 """Real application authentication and per-IP authorization, with isolated data."""
 from pathlib import Path
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +17,9 @@ def test_unconfigured_platform_does_not_start_unowned_background_automation(tmp_
 
 @pytest.fixture
 def environment(tmp_path, monkeypatch):
+    (tmp_path / 'projects').mkdir()
+    (tmp_path / 'projects' / '_registry.json').write_text(json.dumps([
+        {'id': 'default', 'name': '原有品牌', 'description': '', 'createdAt': 0}]))
     monkeypatch.setattr(web, 'PROJECT_ROOT', tmp_path)
     monkeypatch.setattr(web, 'OUTPUTS_DIR', tmp_path / 'outputs')
     monkeypatch.setattr(web, 'PROFILES_DIR', tmp_path / 'profiles')

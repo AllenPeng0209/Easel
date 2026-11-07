@@ -370,6 +370,24 @@ class VideoGenerationService:
                 self._check_replacement_records(plan, project)
         return self.plan_store.decide(plan_id, scope_hash, approved)
 
+    def plan_reconfirmation(self, workshop_id, plan_id):
+        """Host-only preflight for a new human card about an unchanged expired scope."""
+        self.authorize()
+        self._owned_project(workshop_id)
+        plan = self.plan_store.reconfirmation(plan_id, workshop_id=workshop_id)
+        for clip in plan['clips']:
+            self._verify_references(clip)
+        return plan
+
+    def plan_reconfirmation_decision(self, workshop_id, plan_id, scope_hash, expired_at, approved):
+        self.authorize()
+        self._owned_project(workshop_id)
+        plan = self.plan_store.get(plan_id, workshop_id=workshop_id)
+        if approved is True:
+            for clip in plan['clips']:
+                self._verify_references(clip)
+        return self.plan_store.reconfirm(plan_id, scope_hash, expired_at, approved, workshop_id=workshop_id)
+
     def _verify_references(self, spec):
         refs = spec.get('references', [])
         if refs:
@@ -434,7 +452,7 @@ class VideoGenerationService:
     def _public(self, record):
         keys = ("workshopId", "clipId", "status", "shotId", "taskId", "spec", "receiptType",
                 "artifact", "media",
-                "sourceMedia", "normalization", "hostTaskStatus", "providerStatus", "providerObservedAt", "planId")
+                "sourceMedia", "normalization", "hostTaskStatus", "providerStatus", "providerObservedAt", "planId", "timings", "queuePosition")
         value = {**{key: record[key] for key in keys if key in record},
                  "workshopUrl": f"/#/business/{quote(self.ip, safe='')}/workshop/{record['workshopId']}"}
         if record.get("artifact"):
@@ -508,7 +526,8 @@ class VideoGenerationService:
         record = {'version': 2, 'id': identifier, 'actorId': self.actor_id, 'ip': self.ip,
             'sessionId': self.session_id, 'workshopId': project['id'], 'clipId': payload['clipId'],
             'shotId': shot_id, 'shotSnapshot': self._shot_snapshot(project, shot_id), 'spec': spec, 'status': 'prepared', 'operationId': 'easel-video:' + identifier,
-            'receiptType': 'production_segment' if plan_id else 'generation'}
+            'receiptType': 'production_segment' if plan_id else 'generation',
+            'timings': {'preparedAt': int(time.time() * 1000)}}
         if plan_id:
             record['planId'] = plan_id
         self._budget(record)
@@ -536,6 +555,16 @@ class VideoGenerationService:
         if state not in {'queued', 'running', 'succeeded', 'failed', 'cancelled', 'unknown'}:
             raise WorkshopError('原视频任务状态无法核对', 409)
         record['status'] = 'unconfirmed' if state == 'unknown' else state
+        timings = record.setdefault('timings', {})
+        now = int(time.time() * 1000)
+        timings['lastObservedAt'] = now
+        if state == 'running':
+            timings.setdefault('runningObservedAt', now)
+        if state in {'succeeded', 'failed', 'cancelled'}:
+            timings.setdefault('completedObservedAt', now)
+        position = task.get('queue_position')
+        if type(position) is int and 0 <= position <= 10000:
+            record['queuePosition'] = position
         self._save(path, record)
 
     def _submit(self, record, path):
@@ -550,6 +579,8 @@ class VideoGenerationService:
                                                  workshop_id=record['workshopId'])
             if not claimed['claimed']:
                 raise WorkshopError('原计划已存在提交意图，只能查询原任务', 409)
+        began = time.perf_counter()
+        record.setdefault('timings', {})['submitStartedAt'] = int(time.time() * 1000)
         record.update(submitAttempted=True, status='unconfirmed')
         self._save(path, record)
         try:
@@ -559,6 +590,7 @@ class VideoGenerationService:
             if not isinstance(task_id, str) or not re.fullmatch(_H3_JOB, task_id):
                 raise VideoProviderError('invalid_receipt')
             record['taskId'] = task_id
+            record['timings'].update(acceptedAt=int(time.time() * 1000), submitDurationMs=round((time.perf_counter() - began) * 1000, 2))
             self._save(path, record)
         except VideoProviderError as error:
             record['submissionError'] = {**error.diagnostic, 'observedAt': int(time.time() * 1000)}
@@ -584,7 +616,11 @@ class VideoGenerationService:
         original = directory / ('source-' + record['id'] + '.mp4')
         destination = directory / (record['id'] + '.mp4')
         self.authorize()
+        began = time.perf_counter()
+        record.setdefault('timings', {})['downloadStartedAt'] = int(time.time() * 1000)
+        self._save(path, record)
         self.client.download(record['spec']['modelId'], record['taskId'], original)
+        record['timings'].update(downloadFinishedAt=int(time.time() * 1000), downloadDurationMs=round((time.perf_counter() - began) * 1000, 2))
         source_media = probe_generated_video(original, record['spec'], source=True)
         if (source_media['width'], source_media['height']) == target_dimensions(record['spec']):
             destination, media, normalization = original, source_media, 'native_dimensions'
@@ -613,6 +649,7 @@ class VideoGenerationService:
                 existing = current['deliverables'][-1]
             artifact = existing
         record.update(artifact=artifact, media=media, status='collected')
+        record['timings']['collectedAt'] = int(time.time() * 1000)
         self._save(path, record)
         return self._public(record)
 

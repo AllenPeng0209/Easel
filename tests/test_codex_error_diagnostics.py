@@ -140,3 +140,23 @@ def test_provider_payment_required_is_typed_quota_without_payload():
     code, message = classify_provider_failure({"status": 402, "message": "private provider account reference"})
     assert code == "quota_exhausted"
     assert "private provider" not in message
+
+
+@pytest.mark.parametrize('code', ['server_queue_full', 'server_owner_queue_full', 'server_queue_timeout'])
+def test_server_capacity_failures_are_distinct_safe_startup_retry_codes(code):
+    from easel.harnesses.diagnostics import chat_failure, normalize_chat_failure
+    result = normalize_chat_failure({'code': code, 'phase': 'startup', 'retryable': True,
+                                     'message': 'private host or upstream payload'})
+    assert result['code'] == code
+    assert result['retryable'] is True
+    assert '尚未调用模型' in result['message']
+    assert 'private' not in str(result)
+    assert chat_failure(code, 'execution', safe_to_retry=True)['retryable'] is False
+
+
+def test_server_configuration_failure_does_not_claim_model_rate_limit_or_offer_retry():
+    from easel.harnesses.diagnostics import chat_failure, classify_provider_failure
+    failure = chat_failure('server_unavailable', 'startup', safe_to_retry=True)
+    assert failure['code'] == 'server_unavailable'
+    assert failure['retryable'] is False
+    assert classify_provider_failure({'status': 429})[0] == 'rate_limit'

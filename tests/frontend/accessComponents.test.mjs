@@ -9,14 +9,14 @@ const ts = require('typescript');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const owner = {id:'owner',username:'owner',display_name:'主理人',is_admin:true,active:true};
 
-function harness(file, component, context, api, initialMarker = 'owner') {
+function harness(file, component, context, api, initialMarker = 'owner', pathname = '/') {
   const path = new URL(`../../web/frontend/src/components/${file}.tsx`, import.meta.url);
   const source = existsSync(path) ? readFileSync(path, 'utf8') : '';
   const compiled = ts.transpileModule(source, {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   let cursor = 0;
   let effectCursor = 0;
   let effects = [];
-  const states = [], effectStates = [], listeners = new Map(), markers = new Map(initialMarker ? [['easel_authenticated_user',initialMarker]] : []), reloads = [];
+  const states = [], effectStates = [], listeners = new Map(), markers = new Map(initialMarker ? [['easel_authenticated_user',initialMarker]] : []), reloads = [], navigations=[];
   const jsx = (type, props) => ({type,props});
   const hooks = {
     createContext: () => ({Provider:'provider'}), useContext: () => context,
@@ -29,17 +29,134 @@ function harness(file, component, context, api, initialMarker = 'owner') {
   };
   const exports = {};
   const sessionStorage={getItem:key=>markers.get(key)??null,setItem:(key,value)=>markers.set(key,value),removeItem:key=>markers.delete(key)};
-  runInNewContext(compiled, {exports,console,Error,Promise,document:{body:{},activeElement:null},
+  const modules={};
+  const environment={console,Error,Promise,document:{body:{},activeElement:null},
     sessionStorage,
-    window:{location:{pathname:'/',reload:()=>reloads.push(true)},addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)},
+    window:{location:{pathname,reload:()=>reloads.push(true),assign:url=>navigations.push(url),replace:url=>navigations.push(url)},addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)},
     setInterval:()=>1,clearInterval(){},
-    require:name=>name==='react'?hooks:name==='react-dom'?{createPortal:child=>child}:name==='react/jsx-runtime'?{jsx,jsxs:jsx,Fragment:'fragment'}
-      :name.includes('/access')?api:name.includes('AuthGate')?{useAuth:()=>context,useAccessDialog(){}}:{},
-  });
-  const flatten = tree => {const result=[];const walk=node=>{if(!node||typeof node!=='object')return;result.push(node);[node.props?.children].flat(Infinity).forEach(walk);};walk(tree);return result;};
-  return {exports,listeners,markers,reloads,sessionStorage,render(props={}) {assert.equal(typeof exports[component],'function',`${component} must be implemented`);cursor=0;effectCursor=0;
+  };
+  const resolve=name=>{
+    if(name==='react')return hooks;
+    if(name==='react-dom')return {createPortal:child=>child};
+    if(name==='react/jsx-runtime')return {jsx,jsxs:jsx,Fragment:'fragment'};
+    if(/\.(png|jpe?g|webp|avif)$/.test(name))return {__esModule:true,default:name};
+    if(name.includes('LandingPage')){
+      if(!modules.landing){const url=new URL('../../web/frontend/src/components/LandingPage.tsx',import.meta.url);modules.landing={};
+        if(existsSync(url))runInNewContext(ts.transpileModule(readFileSync(url,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText,{...environment,exports:modules.landing,require:resolve});}
+      return modules.landing;
+    }
+    return name.includes('/access')?api:name.includes('AuthGate')?{useAuth:()=>context,useAccessDialog(){}}:{};
+  };
+  runInNewContext(compiled,{...environment,exports,require:resolve});
+  const flatten = tree => {const result=[];const walk=node=>{if(!node||typeof node!=='object')return;result.push(node);
+    if(typeof node.type==='function'){walk(node.type(node.props));return;}[node.props?.children].flat(Infinity).forEach(walk);};walk(tree);return result;};
+  return {exports,listeners,markers,reloads,navigations,sessionStorage,render(props={}) {assert.equal(typeof exports[component],'function',`${component} must be implemented`);cursor=0;effectCursor=0;
     const tree=exports[component](props); const tasks=effects;effects=[];tasks.forEach(fn=>fn());return {tree,nodes:flatten(tree)};}};
 }
+
+test('anonymous visitors see the website introduction with real separate login and registration links',async()=>{
+  class ApiError extends Error {constructor(status){super('请先登录');this.status=status;}}
+  const ui=harness('AuthGate','default',null,{AccessError:ApiError,fetchAuthBootstrap:async()=>({configured:true}),fetchAuthUser:async()=>{throw new ApiError(401);}});
+  ui.render();await settle();let view=ui.render();
+  assert.ok(!view.nodes.some(node=>node.type==='form'),'The brand homepage should not be an always-open sign-in form');
+  assert.equal(view.nodes.find(node=>node.type==='a' && node.props['data-auth-mode']==='login')?.props.href,'/login/');
+  assert.equal(view.nodes.find(node=>node.type==='a' && node.props['data-auth-mode']==='register')?.props.href,'/register/');
+  assert.ok(!view.nodes.some(node=>node.props?.role==='dialog'));
+});
+
+test('registration remains directly reachable before session discovery finishes',async()=>{
+  class ApiError extends Error {constructor(status){super('请先登录');this.status=status;}}
+  let resolveBootstrap;
+  const ui=harness('AuthGate','default',null,{AccessError:ApiError,fetchAuthBootstrap:()=>new Promise(resolve=>{resolveBootstrap=resolve;}),fetchAuthUser:async()=>{throw new ApiError(401);}});
+  let view=ui.render();
+  const register=view.nodes.find(node=>node.type==='a' && node.props['data-auth-mode']==='register');
+  assert.equal(register?.props.href,'/register/');
+  resolveBootstrap({configured:true});await settle();view=ui.render();
+  assert.equal(view.nodes.find(node=>node.type==='a' && node.props['data-auth-mode']==='register')?.props.href,'/register/');
+});
+
+test('interactive product preview switches content locally without executing a real creative task',()=>{
+  const ui=harness('LandingPage','default',null,{});
+  let view=ui.render();
+  const publish=view.nodes.find(node=>node.type==='button' && node.props.role==='tab' && node.props['data-preview-tab']==='publish');
+  assert.ok(publish,'Visitors need a usable product preview');publish.props.onClick();
+  view=ui.render();
+  assert.ok(view.nodes.some(node=>node.props?.role==='tabpanel' && node.props['data-preview-panel']==='publish'));
+  assert.equal(view.nodes.find(node=>node.type==='a' && node.props['data-auth-mode']==='register')?.props.href,'/register/');
+});
+
+test('the direct registration page shows its own form without administrator setup', async () => {
+  class ApiError extends Error { constructor(status) { super('请先登录'); this.status=status; } }
+  const ui=harness('AuthGate','default',null,{AccessError:ApiError,fetchAuthBootstrap:async()=>({configured:true}),
+    fetchAuthUser:async()=>{throw new ApiError(401);}},'','/register/');
+  ui.render({children:'PRIVATE APP'}); await settle();
+  let view=ui.render();
+  assert.ok(view.nodes.some(node=>node.type==='input' && node.props.name==='display_name'));
+  assert.ok(view.nodes.some(node=>node.type==='input' && node.props.name==='confirm_password'));
+  assert.ok(!view.nodes.some(node=>node.type==='input' && node.props.type==='checkbox'));
+});
+
+test('registration checks password confirmation and never mounts an old users workspace', async () => {
+  class ApiError extends Error { constructor(status) { super('请先登录'); this.status=status; } }
+  const calls=[];
+  const ui=harness('AuthGate','default',null,{AccessError:ApiError,fetchAuthBootstrap:async()=>({configured:true}),
+    fetchAuthUser:async()=>{throw new ApiError(401);},registerAccount:async input=>{calls.push(input);return {user:{...owner,id:'new-user',is_admin:false}};}},'','/register/');
+  ui.render({children:'PRIVATE APP'}); await settle();
+  let view=ui.render();
+  for(const [name,value] of Object.entries({username:'new-creator',display_name:'创作者',password:'fixture123',confirm_password:'different-password'})) {
+    view.nodes.find(node=>node.type==='input' && node.props.name===name).props.onChange({target:{value}});
+  }
+  view=ui.render(); await view.nodes.find(node=>node.type==='form').props.onSubmit({preventDefault(){}});
+  assert.equal(calls.length,0);
+  view=ui.render(); assert.ok(view.nodes.some(node=>node.props?.role==='alert'));
+  view.nodes.find(node=>node.type==='input' && node.props.name==='confirm_password').props.onChange({target:{value:'fixture123'}});
+  view=ui.render(); await view.nodes.find(node=>node.type==='form').props.onSubmit({preventDefault(){}});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{username:'new-creator',display_name:'创作者',password:'fixture123'}]);
+  assert.equal(ui.markers.get('easel_authenticated_user'),'new-user');
+  assert.deepEqual(ui.navigations,['/#projects']);
+  assert.ok(!ui.render({children:'PRIVATE APP'}).nodes.some(node=>node.props?.children==='PRIVATE APP'));
+});
+
+test('owner membership is a fixed badge and ordinary grants offer only collaborator roles', async () => {
+  const api={fetchMembers:async()=>[{user_id:'owner',username:'owner',display_name:'主理人',role:'owner',active:true}],
+    fetchUserDirectory:async()=>[{id:'operator',username:'operator',display_name:'运营'}]};
+  const ui=harness('AccessMembersPanel','default',{user:owner},api);
+  const props={projectId:'ip-one',projectName:'汽车观察',onClose(){}};
+  ui.render(props);await settle();
+  const view=ui.render(props);
+  assert.ok(!view.nodes.some(node=>node.type==='option' && node.props.value==='owner'));
+  assert.ok(!view.nodes.some(node=>node.type==='select' && node.props['aria-label']==='主理人 的角色'));
+  assert.ok(!view.nodes.some(node=>node.props?.['data-action']==='remove-member'));
+});
+
+test('ownership transfer requires the current project name and the expected Owner', async () => {
+  const calls=[];
+  const repository={id:'ip-one',name:'城市观察',description:'城市生活',owner:{id:'owner',username:'owner',display_name:'主理人'},created_by:{id:'owner'},role:'owner'};
+  const api={fetchProject:async()=>repository,transferOwnership:async(id,input)=>{calls.push({id,input});return {};} };
+  const ui=harness('RepositorySettings','default',{user:owner},api);
+  const props={projectId:'ip-one',canManage:true,members:[{user_id:'owner',role:'owner',active:true},
+    {user_id:'next',username:'next',display_name:'新 Owner',role:'operator',active:true}],onChanged(){},onTransferred:async()=>{}};
+  ui.render(props);await settle();let view=ui.render(props);
+  const target=view.nodes.find(node=>node.type==='select' && node.props.name==='new_owner');
+  assert.ok(target,'Owner needs a dedicated transfer form');target.props.onChange({target:{value:'next'}});
+  view=ui.render(props);
+  assert.ok(view.nodes.find(node=>node.type==='button' && node.props['data-action']==='transfer-ownership').props.disabled);
+  view.nodes.find(node=>node.type==='input' && node.props.name==='confirmation').props.onChange({target:{value:'城市观察'}});
+  view=ui.render(props);await view.nodes.find(node=>node.type==='form' && node.props['data-form']==='transfer').props.onSubmit({preventDefault(){}});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{id:'ip-one',input:{user_id:'next',expected_owner_id:'owner',confirmation:'城市观察'}}]);
+});
+
+test('viewers cannot see settings write controls and must confirm leaving their project',async()=>{
+  const user={...owner,id:'viewer',is_admin:false};
+  const api={fetchProject:async()=>({id:'ip-one',name:'城市观察',description:'城市生活',owner:{id:'owner',username:'owner'}})};
+  const ui=harness('RepositorySettings','default',{user},api);
+  const props={projectId:'ip-one',canManage:false,members:[],onChanged(){},onTransferred:async()=>{}};
+  ui.render(props);await settle();const view=ui.render(props);
+  assert.ok(!view.nodes.some(node=>node.type==='form'));
+  assert.ok(!view.nodes.some(node=>node.props?.['data-action']==='transfer-ownership'));
+  assert.ok(view.nodes.some(node=>node.type==='button' && node.props['data-action']==='request-leave'));
+  assert.ok(!view.nodes.some(node=>node.type==='button' && node.props['data-action']==='confirm-leave'));
+});
 
 test('authenticated application is withheld until initialization and login succeed', async () => {
   let resolveBootstrap;
@@ -60,7 +177,14 @@ test('a session-expired event immediately unmounts the authenticated application
   ui.listeners.get('easel:auth-required')({});
   const expired=ui.render({children:'PRIVATE APP'});
   assert.ok(!expired.nodes.some(node=>node.type==='provider'));
-  assert.ok(expired.nodes.some(node=>node.type==='form'));
+  assert.deepEqual(ui.navigations,['/login/']);
+});
+
+test('an authenticated visit to a nested login page returns to the project homepage',async()=>{
+  const ui=harness('AuthGate','default',null,{fetchAuthBootstrap:async()=>({configured:true}),fetchAuthUser:async()=>owner},'owner','/studio/login/');
+  ui.render({children:'PRIVATE APP'});await settle();
+  assert.deepEqual(ui.navigations,['/studio/#projects']);
+  assert.ok(!ui.render({children:'PRIVATE APP'}).nodes.some(node=>node.props?.children==='PRIVATE APP'));
 });
 
 test('the first-owner form submits explicit credentials and does not authenticate until the server replies', async () => {

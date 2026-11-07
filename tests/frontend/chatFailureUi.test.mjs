@@ -118,3 +118,25 @@ test('settings is explicit and a retry click is latched against repeated activat
     }
   }
 });
+
+
+test('server capacity failures explain local waiting without blaming the model service', () => {
+  for (const [code, expected] of [
+    ['server_queue_full', /服务器.*队列已满/],
+    ['server_owner_queue_full', /你的排队任务已达上限/],
+    ['server_queue_timeout', /等待服务器资源超时/],
+  ]) {
+    const doc = show({ failure: failure(code, 'startup', true) });
+    const notice = doc.querySelector(`[data-chat-failure=${code}]`);
+    assert.ok(notice, code);
+    assert.match(notice.textContent, expected);
+    assert.match(notice.textContent, /尚未调用模型/);
+    assert.doesNotMatch(notice.textContent, /模型请求受到频率限制/);
+    assert.ok(notice.querySelector('[data-chat-failure-action=retry]'));
+    assert.equal(show({ failure: failure(code, 'execution', true) }).querySelector('[data-chat-failure-action=retry]'), null);
+  }
+  const unavailable = show({ failure: failure('server_unavailable', 'startup', true) });
+  assert.match(unavailable.querySelector('[data-chat-failure=server_unavailable]').textContent, /服务器暂时无法接收任务/);
+  assert.equal(unavailable.querySelector('[data-chat-failure-action=retry]'), null);
+  assert.match(show({ failure: failure('rate_limit', 'startup', true) }).querySelector('[data-chat-failure=rate_limit]').textContent, /模型请求受到频率限制/);
+});

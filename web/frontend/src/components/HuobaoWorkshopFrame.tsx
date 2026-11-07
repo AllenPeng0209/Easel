@@ -3,6 +3,7 @@ import { fetchWorkshopProject, openHuobaoStudio } from '../lib/workshop';
 import type { WorkshopProject, WorkshopReference } from '../lib/workshop';
 import type { ChatQuestion } from '../lib/api';
 import WorkshopReviewPanel from './WorkshopReviewPanel';
+import { recordPerformance, type PerformanceMetric } from '../lib/performance';
 const Questions = lazy(() => import('./QuestionCards'));
 interface Props {
   project: WorkshopProject; initialView?: 'production' | 'review'; initialArtifactId?: string;
@@ -32,8 +33,13 @@ export default function HuobaoWorkshopFrame({ project, initialView, initialArtif
   useEffect(() => {
     const controller = new AbortController();
     const receive = async (event: MessageEvent) => {
-      if (event.origin !== location.origin || event.source !== frame.current?.contentWindow
-        || event.data?.type !== 'xiangya-huobao' || event.data.project !== project.id) return;
+      if (event.origin !== location.origin || event.source !== frame.current?.contentWindow || event.data?.project !== project.id) return;
+      if (event.data.type === 'chirpiva-performance') {
+        recordPerformance(event.data.metric as PerformanceMetric, event.data.valueMs,
+          typeof event.data.label === 'string' ? event.data.label : 'workshop');
+        return;
+      }
+      if (event.data.type !== 'xiangya-huobao') return;
       if (event.data.action === 'back') { onBack(); return; }
       if (event.data.action === 'job') {
         const job = event.data.job;

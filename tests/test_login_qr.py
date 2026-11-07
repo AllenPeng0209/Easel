@@ -308,7 +308,7 @@ def test_zhihu_anonymous_redirect_is_not_a_login(url):
 @pytest.mark.parametrize("visible,wall,expected", [
     (True, False, True), (False, False, False), (True, True, False),
 ])
-def test_zhihu_requires_visible_account_and_no_login_wall(visible, wall, expected):
+def test_zhihu_requires_authenticated_self_and_no_login_wall(visible, wall, expected):
     def query(selector):
         if selector == ".AppHeader-profile":
             return SimpleNamespace(is_visible=lambda: visible)
@@ -316,7 +316,9 @@ def test_zhihu_requires_visible_account_and_no_login_wall(visible, wall, expecte
             return SimpleNamespace(is_visible=lambda: wall)
         return None
 
-    page = SimpleNamespace(url="https://www.zhihu.com/", query_selector=query)
+    context = SimpleNamespace(request=SimpleNamespace(get=lambda *args, **kwargs: SimpleNamespace(
+        status=200 if visible else 401, json=lambda: {"id": "own-id", "name": "Own account"})))
+    page = SimpleNamespace(url="https://www.zhihu.com/", query_selector=query, context=context)
     assert web_publisher._is_logged_in(page, web_publisher.PLATFORMS["zhihu"]) is expected
 
 
@@ -789,12 +791,16 @@ def test_zhihu_runner_handles_launch_failure_or_login_during_capture(tmp_path, m
 
 def web_functions():
     tree = ast.parse((ROOT / "web/app.py").read_text(encoding="utf-8"))
-    names = {"api_login_start", "_start_login", "_login_status"}
+    names = {"api_login_start", "_start_login", "_login_status", "_remote_runner_key",
+             "_remote_owner_binding", "_with_remote_login", "_prepare_remote_login", "_bind_remote_process"}
     nodes = [node for node in tree.body
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
     for node in nodes:
         node.decorator_list = []
     env = {"json": json, "subprocess": subprocess, "sys": sys, "asyncio": asyncio,
+           "Request": object, "PROJECT_ROOT": ROOT, "_LOGIN_REMOTE_RUNNERS": {},
+           "project_id": lambda: 'default', "current_user": lambda: None,
+           "_require_operation": Mock(),
            "_LOGIN_START_LOCKS": {}, "_require_publication_profile_idle": Mock()}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "web/app.py", "exec"), env)
     env["_login_dir"] = lambda: env["LOGIN_DIR"]

@@ -1,3 +1,4 @@
+import { componentModule } from './agentMessagesHarness.mjs';
 import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -13,7 +14,7 @@ function load(name, imports = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   });
   const exports = {};
-  runWithProjectScope(outputText, { exports, require: id => id === './projectScope' ? projectScope : imports[id], window: { location: { pathname: '/' } } });
+  runWithProjectScope(outputText, { exports, require: id => id === './projectScope' ? projectScope : id === './chatCatalogSync' ? componentModule('lib/chatCatalogSync.ts') : id === './scopedReadCache' ? componentModule('lib/scopedReadCache.ts') : id === './performance' ? componentModule('lib/performance.ts') : imports[id], window: { location: { pathname: '/' } } });
   return exports;
 }
 const api = load('api');

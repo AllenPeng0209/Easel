@@ -83,6 +83,16 @@ sudo caddy validate --config /srv/chirpiva/app/deploy/chirpiva/Caddyfile --adapt
 
 Caddy 通过域名自动申请/续签 TLS，www 跳转到 apex；保留 Host 和代理 scheme，SSE 立即刷新。`/api/auth/setup` 在公网反代层明确拒绝。Uvicorn 只信同机 127.0.0.1 的转发头；不要改为 `*`，不要把 7860 直接暴露公网。
 
+### 性能配置与独立工作进程
+
+`performance.caddy` 必须安装为 `/etc/caddy/chirpiva-performance.caddy`，在现有站点的 Web 代理位置引入，保留已有私有路由。React `dist/assets` 和 Nuxt `.output/public/_nuxt` 的构建产物分别同步到 `/srv/chirpiva-public/assets`、`/srv/chirpiva-public/huobao-studio/_nuxt`。该树只允许公开构建文件，目录 0755、文件 0644；不要给 Caddy 增加读取应用凭据、私有产物或浏览器资料的组权限。先运行 `precompress-assets.mjs` 生成 Brotli/gzip，保留原文件与旧版本的哈希 chunk；页面入口只在后端健康后原子切换。
+
+原生 Agent、视频引擎和媒体转换通过服务用户的 systemd scope 分离，避免与 Web 共用内存回收预算。安装 `chirpiva-workloads.slice` 到 `/srv/chirpiva/.config/systemd/user/`，开启 `loginctl enable-linger chirpiva`，以该用户的 `XDG_RUNTIME_DIR=/run/user/1001`、`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus` 重载 user manager（实际 UID 以主机为准）。在生产开启 `EASEL_WORKLOAD_ISOLATION=1` 前，验证 scope 的 UID、stdin/stdout、进程组取消和内存/CPU上限；不支持 user systemd 的环境保持关闭。`chirpiva-resource-limits.conf` 是 Web 本身的资源上限，不能误当工作负载 slice 安装。
+
+视频播放使用私有、按内容版本缓存的 faststart 副本；原画默认无损封装，流畅预览单独转码，下载仍返回原文件。媒体缓存只在认证与 IP 权限通过后允许私有 ETag 重验证，不能加入公共静态树。大工具记录仍完整存储，页面和 SSE 只按需投影摘要，展开时读取同用户/IP的原始详情。
+
+`GET /api/performance/summary` 供管理员读取本 IP 的 p50/p95。客户端指标只上报固定类别、耗时和字节数，不采集提示词、媒体 URL 或凭据；视频生成的阶段耗时记录用于区分排队、模型生成、下载与交付，不代表外部模型耗时能由页面优化消除。
+
 ## 4. 首次安全验证与数据切换
 
 应用没有完整“禁用后台任务”开关。启动 lifespan 会恢复运营、SuperAgent 和互动任务，某些 API 也能懒启动运营引擎。不能把完整生产快照复制到第二台机器后随意启动，也不能把 `--lifespan off` 当成安全维护模式。

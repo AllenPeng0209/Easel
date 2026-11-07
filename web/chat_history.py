@@ -7,6 +7,7 @@ transcript is removed or rewritten by catalog operations.
 from __future__ import annotations
 
 import json
+import base64
 import math
 import os
 import sqlite3
@@ -120,6 +121,38 @@ class ChatHistoryStore:
         return {"sessions": [project_history_window(session) for session in sessions] if windowed else sessions,
                 "deletedIds": deleted, "nextCursor": next_cursor}
 
+    def recent_page(self, limit: int, cursor: str | None = None, *, windowed: bool = False) -> dict:
+        point = None
+        if cursor:
+            try:
+                if not cursor.startswith('recent1.'):
+                    raise ValueError
+                encoded = cursor[len('recent1.'):]
+                point = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+                if (not isinstance(point, list) or len(point) != 3 or not isinstance(point[2], str)
+                    or len(point[2]) > 256 or any(type(value) not in (int, float) or not math.isfinite(value)
+                                                 for value in point[:2])):
+                    raise ValueError
+            except (ValueError, TypeError, UnicodeError):
+                raise ValueError('无效的会话分页游标') from None
+        with self._connect() as connection:
+            connection.execute('BEGIN')
+            ceiling = point[0] if point else connection.execute('SELECT COALESCE(MAX(updated),0) FROM sessions WHERE deleted=0').fetchone()[0]
+            where, args = 'deleted=0 AND updated<=?', [ceiling]
+            if point:
+                where += ' AND (updated<? OR (updated=? AND id>?))'
+                args.extend([point[1], point[1], point[2]])
+            rows = connection.execute('SELECT id,updated,payload FROM sessions WHERE ' + where
+                                      + ' ORDER BY updated DESC,id LIMIT ?', [*args, limit+1]).fetchall()
+            deleted = [row[0] for row in connection.execute('SELECT id FROM sessions WHERE deleted=1 ORDER BY id')]
+        next_cursor = None
+        if len(rows) > limit:
+            last = rows[limit-1]
+            next_cursor = 'recent1.' + base64.urlsafe_b64encode(json.dumps([ceiling, last[1], last[0]], separators=(',', ':')).encode()).decode().rstrip('=')
+        sessions = [json.loads(row[2]) for row in rows[:limit]]
+        return {'sessions': [project_history_window(session) for session in sessions] if windowed else sessions,
+                'deletedIds': deleted, 'nextCursor': next_cursor}
+
     def deleted_ids(self) -> list[str]:
         with self._connect() as connection:
             return [row[0] for row in connection.execute("SELECT id FROM sessions WHERE deleted=1 ORDER BY id")]
@@ -182,7 +215,7 @@ class ChatHistoryStore:
             if result.rowcount != 1:
                 raise sqlite3.IntegrityError("steer reservation is no longer available")
 
-    def merge(self, values: list[dict], *, windowed: bool = False) -> list[dict]:
+    def merge(self, values: list[dict], *, windowed: bool = False, only_submitted: bool = False) -> list[dict]:
         from web.chat_session_forks import has_forks, preserve_fork_prefix
 
         if not isinstance(values, list):
@@ -219,7 +252,8 @@ class ChatHistoryStore:
                     "ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,payload=excluded.payload "
                     "WHERE sessions.deleted=0 AND excluded.updated>sessions.updated",
                     (session["id"], session["updated"], json.dumps(session, ensure_ascii=False)))
-        saved = self.sessions()
+        saved = ([current for identifier in dict.fromkeys(session['id'] for session in sessions)
+                  if (current := self.session(identifier)) is not None] if only_submitted else self.sessions())
         return ([project_history_window(session, start=requested_starts.get(session["id"])) for session in saved]
                 if windowed else saved)
 

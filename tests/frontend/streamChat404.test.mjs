@@ -1,3 +1,4 @@
+import { componentModule } from './agentMessagesHarness.mjs';
 import { projectScope, runWithProjectScope } from './projectScopeHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -32,7 +33,7 @@ function loadApi(fetchImpl) {
   const sandbox = {
     exports: module.exports,
     BASE: '',
-    require: (name) => name === './projectScope' ? projectScope : require(name),
+    require: (name) => name === './projectScope' ? projectScope : name === './chatCatalogSync' ? componentModule('lib/chatCatalogSync.ts') : name === './scopedReadCache' ? componentModule('lib/scopedReadCache.ts') : name === './performance' ? componentModule('lib/performance.ts') : require(name),
     console,
     window: { location: { pathname: '/' } },
     AbortController,

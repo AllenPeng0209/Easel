@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -44,7 +44,7 @@ async function view(respond = () => directory(), initialProps = {}) {
   const root = createRoot(document.getElementById('root'));
   const calls = [];
   const timers = new Map();
-  let timerId = 0;
+  let timerId = 0, now = Date.now();
   const modules = new Map();
   const handlers = new Map();
   let permissions = { canOperate: true, canManageAccounts: true };
@@ -53,7 +53,7 @@ async function view(respond = () => directory(), initialProps = {}) {
     const exports = {};
     modules.set(path, exports);
     const code = compile(path);
-    runInNewContext(code, { exports, window, document, HTMLElement: window.HTMLElement, AbortController, Error,
+    runInNewContext(code, { exports, window, document, Date: class extends Date { static now() { return now; } }, HTMLElement: window.HTMLElement, AbortController, Error, queueMicrotask,
       navigator: { userAgent: 'offline test', platform: 'MacIntel', maxTouchPoints: 0 },
       setTimeout: callback => { const id = ++timerId; timers.set(id, callback); return id; },
       clearTimeout: id => timers.delete(id),
@@ -63,6 +63,7 @@ async function view(respond = () => directory(), initialProps = {}) {
           const runtime = require(name);
           const observe = method => (type, props, ...args) => {
             if (type === 'button' && typeof props.children === 'string') handlers.set(props.children, props.onClick);
+            if (typeof type === 'function' && type.name === 'PlatformLoginView') handlers.set('remote-restart', props.onRestart);
             return runtime[method](type, props, ...args);
           };
           return { ...runtime, jsx: observe('jsx'), jsxs: observe('jsxs') };
@@ -74,7 +75,9 @@ async function view(respond = () => directory(), initialProps = {}) {
           return { ok: true, json: async () => data };
         } };
         if (name.endsWith('.css')) return {};
-        return load(resolve(dirname(path), name + '.ts'));
+        if (name.endsWith('NativeBrowserStream')) return { __esModule: true, default: () => null };
+        const target = resolve(dirname(path), name);
+        return load(existsSync(target + '.ts') ? target + '.ts' : target + '.tsx');
       },
     });
     return exports;
@@ -93,7 +96,7 @@ async function view(respond = () => directory(), initialProps = {}) {
     await tick();
   });
   await render({});
-  return { document, calls, button, render, click, handler: label => handlers.get(label),
+  return { document, calls, button, render, click, advance: ms => { now += ms; }, handler: label => handlers.get(label),
     async select(label, value) { await act(async () => {
       const target = [...document.querySelectorAll('label')].find(node => node.firstChild?.textContent === label)?.querySelector('select');
       assert.ok(target, `Missing selector ${label}`);
@@ -537,4 +540,206 @@ test('an unmounted account list cannot run retained backend controls or consume 
     assert.equal(ui.calls.filter(call => call.options.method === 'POST').length, 1);
     assert.equal(ui.document.querySelector('[role="status"]'), null);
   } finally { if (!disposed) await ui.dispose(); }
+});
+
+test('a saved main-site login is distinct from pending creator verification and survives closing the dialog', async () => {
+  const pendingClose = deferred(); let saved = false;
+  const remote = { id: 'saved-xhs-login', platform: 'xhs' };
+  const partial = { ...account('扫码后的账号'), platform: 'xiaohongshu', platformName: '小红书',
+    capabilities: { comments: 'verified', creator: 'needs_verification', dm: 'needs_verification' } };
+  const ui = await view(async url => {
+    if (url.includes('/start')) return { task_id: 'partial-xhs', status: 'waiting', stage: 'creator', loginSaved: true,
+      capabilities: partial.capabilities, remote, hint: '正在检查创作后台。' };
+    if (url.endsWith('/frame')) return { state: 'starting' };
+    if (url.endsWith('/close')) { await pendingClose.promise; saved = true; return { ok: true }; }
+    return directory(saved ? [partial] : []);
+  });
+  try {
+    await ui.click('＋ 添加账号'); await ui.select('平台', 'xiaohongshu'); await ui.click('打开登录窗口');
+    assert.match(ui.document.querySelector('[role="dialog"]').textContent, /主站登录已保存/);
+    assert.match(ui.document.querySelector('[role="dialog"]').textContent, /创作后台.*待.*验证/);
+    await ui.click('关闭账号连接');
+    assert.equal(ui.document.querySelector('[role="dialog"]'), null);
+    assert.equal(ui.button('＋ 添加账号').disabled, true, 'Another login waits for the old browser cleanup');
+    await ui.settle(() => pendingClose.resolve());
+    assert.ok(ui.document.body.textContent.includes('扫码后的账号'));
+    assert.match(ui.document.body.textContent, /已登录/);
+    assert.match(ui.document.body.textContent, /创作后台待验证/);
+    assert.equal(ui.button('＋ 添加账号').disabled, false);
+    assert.equal(ui.calls.filter(call => call.url.endsWith('/close')).length, 1);
+    const closeIndex = ui.calls.findIndex(call => call.url.endsWith('/close'));
+    assert.ok(ui.calls.slice(closeIndex + 1).some(call => call.url === '/api/accounts/directory'));
+  } finally { await ui.dispose(); }
+});
+
+test('a creator-stage poll surfaces a newly persisted login without claiming full capability verification', async () => {
+  const ui = await view(url => url.includes('/start') ? { task_id: 'read-first', status: 'waiting', stage: 'read', loginSaved: false }
+    : url.includes('/poll') ? { status: 'waiting', stage: 'creator', loginSaved: true,
+      capabilities: { comments: 'verified', creator: 'needs_verification' }, hint: '正在检查创作后台。' } : directory([]));
+  try {
+    await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
+    assert.doesNotMatch(ui.document.querySelector('[role="dialog"]').textContent, /主站登录已保存/);
+    await ui.poll();
+    assert.match(ui.document.querySelector('[role="dialog"]').textContent, /主站登录已保存/);
+    assert.ok(ui.button('保留登录并关闭'));
+    assert.doesNotMatch(ui.document.querySelector('[role="dialog"]').textContent, /内容后台与主站登录已完成检查/);
+  } finally { await ui.dispose(); }
+});
+
+test('closing a terminal login whose remote cleanup already finished does not leave account creation blocked', async () => {
+  const remote = { id: 'finished-remote', platform: 'douyin' };
+  const ui = await view(url => url.includes('/start') ? { task_id: 'finished-login', status: 'waiting', remote }
+    : url.includes('/poll') ? { status: 'error', hint: '创作后台验证未完成。', loginSaved: true }
+      : url.endsWith('/frame') ? { state: 'starting' } : url.endsWith('/close') ? { ok: true } : directory());
+  try {
+    await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
+    for (let attempt = 0; attempt < 3 && !ui.document.body.textContent.includes('重试登录'); attempt++) await ui.poll();
+    assert.equal(ui.calls.filter(call => call.url.endsWith('/close')).length, 1);
+    await ui.click('关闭账号连接');
+    assert.equal(ui.button('＋ 添加账号').disabled, false);
+    assert.equal(ui.calls.filter(call => call.url.endsWith('/close')).length, 1);
+  } finally { await ui.dispose(); }
+});
+
+test('a failed close keeps new login disabled until retry confirms cleanup and refreshes saved accounts', async () => {
+  let closes = 0;
+  const remote = { id: 'retry-close', platform: 'douyin' };
+  const ui = await view(url => {
+    if (url.includes('/start')) return { task_id: 'close-retry-login', status: 'waiting', loginSaved: true,
+      stage: 'creator', remote, capabilities: { comments: 'verified', creator: 'needs_verification' } };
+    if (url.endsWith('/frame')) return { state: 'starting' };
+    if (url.endsWith('/close')) { if (++closes === 1) throw new Error('network'); return { ok: true }; }
+    return directory();
+  });
+  try {
+    await ui.click('＋ 添加账号'); await ui.click('打开登录窗口'); await ui.click('关闭账号连接');
+    assert.equal(ui.button('＋ 添加账号').disabled, true);
+    assert.match(ui.document.body.textContent, /登录窗口尚未结束/);
+    await ui.click('重试关闭');
+    assert.equal(closes, 2);
+    assert.equal(ui.button('＋ 添加账号').disabled, false);
+    assert.doesNotMatch(ui.document.body.textContent, /登录窗口尚未结束/);
+    assert.ok(ui.document.body.textContent.includes('测试账号'));
+  } finally { await ui.dispose(); }
+});
+
+for (const directoryFailure of [false, true]) test(`closing does not claim retained login when ${directoryFailure ? 'directory refresh fails' : 'identity verification was revoked during cleanup'}`, async () => {
+  let closed = false;
+  const remote = { id: `uncertain-close-${directoryFailure}`, platform: 'douyin' };
+  const ui = await view(url => {
+    if (url.includes('/start')) return { task_id: 'uncertain-login', account_id: 91, status: 'waiting', stage: 'creator',
+      loginSaved: true, remote, capabilities: { comments: 'verified', creator: 'needs_verification' } };
+    if (url.endsWith('/frame')) return { state: 'starting' };
+    if (url.endsWith('/close')) { closed = true; return { ok: true }; }
+    if (closed && directoryFailure) throw new Error('账号目录暂时无法读取');
+    return directory(closed ? [{ ...account('待重新核实账号'), nativeAccountId: 91, loggedIn: false,
+      status: 'needs_login', identityVerified: false, capabilities: { comments: 'needs_verification', creator: 'needs_verification' } }] : []);
+  });
+  try {
+    await ui.click('＋ 添加账号'); await ui.click('打开登录窗口'); await ui.click('关闭账号连接');
+    assert.doesNotMatch(ui.document.body.textContent, /账号登录已保留|主站登录已保留|登录保持不变/);
+    assert.match(ui.document.body.textContent, /登录窗口已关闭.*账号状态/);
+    if (directoryFailure) assert.match(ui.document.body.textContent, /账号目录暂时无法读取/);
+    else assert.match(ui.document.body.textContent, /需要登录/);
+  } finally { await ui.dispose(); }
+});
+
+test('hidden connection dialogs pause status requests and visibility resume stays single-flight', async () => {
+  const pending = deferred();
+  const ui = await view(url => url.includes('/start') ? {task_id:'waiting-login',status:'waiting'}
+    : url.includes('/poll') ? pending.promise : directory());
+  try {
+    await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
+    Object.defineProperty(ui.document, 'visibilityState', {value:'hidden', configurable:true});
+    await ui.settle(() => ui.document.dispatchEvent(new ui.document.defaultView.Event('visibilitychange')));
+    assert.equal(ui.pendingPolls, 0);
+    assert.equal(ui.calls.filter(call => call.url.includes('/poll')).length, 0);
+    Object.defineProperty(ui.document, 'visibilityState', {value:'visible', configurable:true});
+    await ui.settle(() => ui.document.dispatchEvent(new ui.document.defaultView.Event('visibilitychange')));
+    await ui.settle(() => ui.document.dispatchEvent(new ui.document.defaultView.Event('visibilitychange')));
+    assert.equal(ui.calls.filter(call => call.url.includes('/poll')).length, 1);
+    await ui.settle(() => pending.resolve({status:'confirmed', capabilities:{creator:'verified',comments:'verified'}}));
+    assert.equal(ui.document.querySelector('[role="dialog"]'), null);
+    assert.equal(ui.pendingPolls, 0);
+  } finally { await ui.dispose(); }
+});
+
+
+test('replacement preserves the selected account and starts once after exact close acknowledgement', async () => {
+  const remote = {id:'remote-a',platform:'douyin'}, close = deferred();
+  let starts = 0, closes = 0, closed = false;
+  const scoped = {task_id:'task-a',platform:'douyin',account_id:1,stage:'read',status:'waiting',loginSaved:false,remote};
+  const ui = await view(url => {
+    if (url.includes('/connect/start')) return ++starts === 1 ? scoped : {...scoped,task_id:'task-b',remote:{...remote,id:'remote-b'}};
+    if (url.includes('/connect/poll')) return closed ? {...scoped,status:'error',stage:'canceled',remote:undefined} : scoped;
+    if (url.endsWith('/qrcode')) return {state:'expired',pageId:'page-a',version:'a'.repeat(64)};
+    return directory();
+  });
+  try {
+    await ui.click('管理'); await ui.click('检查登录');
+    const restart = ui.handler('remote-restart'); assert.equal(typeof restart,'function');
+    const closeOld = async () => { closes++; const ack = await close.promise; closed = ack; return ack; };
+    let result;
+    await ui.settle(() => {result = restart(remote,closeOld);});
+    assert.equal(starts,1); assert.equal(closes,1);
+    assert.equal(await restart(remote,closeOld),false);
+    await act(async () => {close.resolve(true); assert.equal(await result,true);});
+    assert.deepEqual(ui.calls.filter(call=>call.url.includes('/connect/start')).map(call=>call.url),Array(2).fill('/api/operations/api/accounts/connect/start?platform=douyin&account_id=1'));
+    assert.equal(await restart(remote,closeOld),false); assert.equal(closes,1);
+  } finally {await ui.dispose();}
+});
+
+test('replacement rechecks platform progress before cancelling or opening another attempt', async () => {
+  const remote = {id:'remote-a',platform:'douyin'};
+  const scoped = {task_id:'task-a',platform:'douyin',stage:'read',status:'waiting',loginSaved:false,remote};
+  let progress = scoped, starts = 0;
+  const ui=await view(url=>url.includes('/connect/start')?(starts++,scoped):url.includes('/connect/poll')?progress:url.endsWith('/qrcode')?{state:'expired',pageId:'page-a',version:'a'.repeat(64)}:directory());
+  try {
+    await ui.click('＋ 添加账号'); await ui.click('打开登录窗口');
+    const restart=ui.handler('remote-restart');assert.equal(typeof restart,'function');
+    progress={...scoped,loginSaved:true,stage:'creator'};
+    await act(async()=>assert.equal(await restart(remote,()=>assert.fail('proved account must not be cancelled')),false));
+    assert.equal(starts,1);
+  } finally {await ui.dispose();}
+});
+
+test('phone confirmation that arrives during close wins over an expired-QR replacement', async () => {
+  const remote={id:'remote-a',platform:'douyin'}, scoped={task_id:'task-a',platform:'douyin',stage:'read',status:'waiting',loginSaved:false,remote};
+  let starts=0, closed=false;
+  const ui=await view(url=>url.includes('/connect/start')?(starts++,scoped):url.includes('/connect/poll')?
+    closed?{...scoped,status:'confirmed',stage:'complete',loginSaved:true,remote:undefined}:scoped
+    :url.endsWith('/qrcode')?{state:'expired',pageId:'page-a',version:'a'.repeat(64)}:directory());
+  try {
+    await ui.click('＋ 添加账号');await ui.click('打开登录窗口');
+    const restart=ui.handler('remote-restart');
+    await act(async()=>assert.equal(await restart(remote,async()=>{closed=true;return true;}),false));
+    assert.equal(starts,1);
+  } finally {await ui.dispose();}
+});
+
+
+test('an expired QR can be replaced end-to-end in the same account dialog', async () => {
+  const remote = { platform:'douyin', id:'remote-a' };
+  const next = { platform:'douyin', id:'remote-b' };
+  const scope = {task_id:'task-a',platform:'douyin',account_id:1,stage:'read',status:'waiting',loginSaved:false,remote};
+  const close = deferred(); let starts=0, closed=false, closes=0;
+  const ui=await view(async url=>{
+    if(url.includes('/connect/start')) return ++starts === 1 ? scope : {...scope,task_id:'task-b',remote:next};
+    if(url.includes('/connect/poll')) return closed ? {...scope,stage:'canceled',status:'error',remote:undefined} : scope;
+    if(url.endsWith('/remote/remote-a/qrcode')) return {state:'expired',pageId:'old',version:'a'.repeat(64)};
+    if(url.endsWith('/remote/remote-b/qrcode')) return {state:'ready',pageId:'new',version:'b'.repeat(64),image:'data:image/png;base64,YWJj'};
+    if(url.endsWith('/qrcode/refresh')) return {ok:true};
+    if(url.endsWith('/remote/remote-a/close')) {closes++; await close.promise;closed=true;return {ok:true};}
+    return directory();
+  });
+  try {
+    await ui.click('管理');await ui.click('检查登录');await ui.click('刷新二维码');
+    for(let i=0;i<10 && !ui.document.body.textContent.includes('重新获取二维码');i++){ui.advance(2500);await ui.poll();}
+    assert.match(ui.document.body.textContent,/平台未更新二维码/);
+    await ui.click('重新获取二维码');assert.equal(starts,1);assert.equal(closes,1);
+    await ui.settle(()=>close.resolve(true));
+    assert.equal(starts,2);assert.equal(closes,1);
+    assert.equal(ui.document.querySelector('img[alt="抖音登录二维码"]')?.getAttribute('src'),'data:image/png;base64,YWJj');
+    assert.ok(ui.document.querySelector('[role="dialog"]'));
+  } finally {await ui.dispose();}
 });

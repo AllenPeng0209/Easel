@@ -7,11 +7,19 @@
  * 存量文件可用 `npm run backfill-artwork`（backend）补齐。
  */
 
+import { xiangyaContext } from './useXiangyaBridge'
+import { thumbnailMediaUrl } from '../utils/media-urls'
+
+function sized(url: string) {
+  const context = xiangyaContext()
+  return context && typeof window !== 'undefined' ? thumbnailMediaUrl(url, context.prefix, window.location.origin, 192) : url
+}
+
 /** 图片地址 → 缩略图地址；非 /static 图片（远程 URL 等）原样返回 */
 export function thumbOf(url: string): string {
   if (!url || !url.includes('/static/')) return url
   if (!/\.(png|jpe?g|webp|gif)$/i.test(url)) return url
-  return url.replace(/\.[^./]+$/, '_thumb.webp')
+  return sized(url.replace(/\.[^./]+$/, '_thumb.webp'))
 }
 
 /** 缩略图加载失败（老数据未回填）时回退原图 */
@@ -19,12 +27,12 @@ export function thumbFallback(e: Event, orig: string) {
   const el = e.target as HTMLImageElement
   if (!el || el.dataset.fbk || !orig) return
   el.dataset.fbk = '1'
-  el.src = orig
+  el.src = sized(orig)
 }
 
 /** 视频地址 → 海报帧地址；无法推导（远程 URL 等）时返回空串，不设置 poster */
 export function posterOf(url: string): string {
   if (!url || !url.includes('/static/')) return ''
   if (!/\.(mp4|webm|mov)$/i.test(url)) return ''
-  return url.replace(/\.[^./]+$/, '_poster.jpg')
+  return sized(url.replace(/\.[^./]+$/, '_poster.jpg'))
 }

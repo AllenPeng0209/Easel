@@ -15,8 +15,5 @@ chirpiva.com {
     @bootstrap path /api/auth/setup /api/auth/setup/*
     respond @bootstrap 403
 
-    reverse_proxy 127.0.0.1:7860 {
-        # Forward streaming chat/SSE chunks immediately.
-        flush_interval -1
-    }
+    import /etc/caddy/chirpiva-performance.caddy
 }

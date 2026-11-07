@@ -1,3 +1,4 @@
+import { componentModule } from './agentMessagesHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -51,12 +52,14 @@ function ui(file, permissions, { delivered = false } = {}) {
     sessionStorage:{getItem:()=>null},localStorage:{getItem:()=>null},
     window:{location:{pathname:'/'},setInterval(fn){const id=timers.size+1;timers.set(id,fn);return id;},clearInterval(id){timers.delete(id);},
       setTimeout(fn){const id=timers.size+1;timers.set(id,fn);return id;},clearTimeout(id){timers.delete(id);},addEventListener(){},removeEventListener(){}},
-    document:{visibilityState:'visible',getElementById:()=>null}};
+    document:{visibilityState:'visible',getElementById:()=>null,addEventListener(){},removeEventListener(){}}};
   environment.setInterval = environment.window.setInterval;
   environment.clearInterval = environment.window.clearInterval;
+  environment.setTimeout = environment.window.setTimeout;
+  environment.clearTimeout = environment.window.clearTimeout;
   const scope={};runInNewContext(compile('../../web/frontend/src/lib/projectScope.ts'),{...environment,exports:scope});
   const library={};const libraryName=file==='VideoWorkshopPage'?'workshop':'interactions';
-  runInNewContext(compile(`../../web/frontend/src/lib/${libraryName}.ts`),{...environment,exports:library,require:()=>scope});
+  runInNewContext(compile(`../../web/frontend/src/lib/${libraryName}.ts`),{...environment,exports:library,require:name=>name.includes('scopedReadCache') ? componentModule('lib/scopedReadCache.ts') : scope});
   const permissionSource = readFileSync(new URL('../../web/frontend/src/components/ProjectSpace.tsx',import.meta.url),'utf8');
   const parsedPermissions = ts.createSourceFile('ProjectSpace.tsx',permissionSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
   const permissionHook = parsedPermissions.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='useIpPermissions');

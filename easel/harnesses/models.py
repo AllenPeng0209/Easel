@@ -88,11 +88,12 @@ async def available_models(runtime: str, request: RunRequest) -> list[dict]:
     if runtime == "codex":
         models, _ = await _codex_models(request)
     elif runtime == "opencode":
+        from easel.workload_isolation import worker_command, worker_environment
         env = {**request.env, "EASEL_ROOT": str(request.cwd.resolve()),
                "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
         process = await asyncio.create_subprocess_exec(
-            *base_command("opencode"), "models",
-            cwd=str(request.cwd), env=env, stdout=asyncio.subprocess.PIPE,
+            *worker_command([*base_command("opencode"), 'models'], kind='catalog'),
+            cwd=str(request.cwd), env=worker_environment(env), stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL, start_new_session=os.name != "nt")
         try:
             async def read_output():

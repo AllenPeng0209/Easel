@@ -18,6 +18,29 @@ from web.workshop_actions import WorkshopActions
 _RUNTIME = {}
 
 
+async def proxy_client(host, engine):
+    clients = getattr(getattr(getattr(host, 'app', None), 'state', None), 'huobao_proxy_clients', None)
+    if clients is None:
+        return httpx.AsyncClient(trust_env=False, follow_redirects=False,
+            timeout=httpx.Timeout(1800, connect=3)), True
+    key = str(engine.directory)
+    identity = (engine.state['base'], engine.state['token'])
+    current = clients.get(key)
+    if current and current[0] == identity:
+        return current[1], False
+    if current:
+        await current[1].aclose()
+    client = httpx.AsyncClient(trust_env=False, follow_redirects=False,
+        timeout=httpx.Timeout(1800, connect=3), limits=httpx.Limits(max_connections=16, max_keepalive_connections=8))
+    clients[key] = (identity, client)
+    return client, False
+
+
+async def close_runtimes():
+    await asyncio.gather(*(asyncio.to_thread(engine.stop) for engine in list(_RUNTIME.values())), return_exceptions=True)
+    _RUNTIME.clear()
+
+
 def runtime(host):
     workspace = host._workspace_root()
     key = (str(host.PROJECT_ROOT), str(workspace), project_id())
@@ -34,7 +57,7 @@ def reconcile(host, identifier):
         return WorkshopStore(host._outputs_dir()).get(identifier)
     engine = runtime(host)
     if engine.bindings_path.is_file() and identifier in engine.bindings():
-        return engine.pull(identifier)
+        return engine.pull_if_changed(identifier)
     return engine.store.get(identifier)
 
 
@@ -103,7 +126,11 @@ def create_router(get_host):
         public=(SOURCE/'frontend'/'.output'/'public').resolve()
         candidate=(public/path).resolve()
         if public not in candidate.parents and candidate!=public:raise HTTPException(404)
-        if candidate.is_file():return FileResponse(candidate)
+        if candidate.is_file():
+            hashed = (path.startswith('_nuxt/') and '/builds/' not in path
+                      and re.search(r'(?:^|[/.])[A-Za-z0-9_-]{6,}\.(?:js|css|woff2?)$', path))
+            headers = {'Cache-Control': 'public, max-age=31536000, immutable'} if hashed else {}
+            return FileResponse(candidate, headers=headers)
         if path.startswith(('_nuxt/','icons/')):raise HTTPException(404)
         return FileResponse(public/'index.html',headers={'Cache-Control':'no-cache'})
 
@@ -116,7 +143,7 @@ def create_router(get_host):
         try:
             project=engine.store.get(identifier)
             engine.store._expect(project,body.get('expected_revision'))
-            binding=await asyncio.to_thread(engine.open,identifier)
+            binding=await asyncio.to_thread(engine.read_binding if request.method in {'GET', 'HEAD'} else engine.open,identifier)
         except WorkshopError as error:
             raise HTTPException(error.status,str(error)) from None
         stage='videos' if project['shots'] else 'assets' if project['script'] else 'script'
@@ -129,13 +156,29 @@ def create_router(get_host):
     async def jobs(identifier: str):
         return {'jobs':await WorkshopActions(get_host()).list(identifier)}
 
-    @router.api_route('/api/workshop/projects/{identifier}/engine/{path:path}',methods=['GET','POST','PUT','DELETE'])
+    @router.api_route('/api/workshop/projects/{identifier}/engine/{path:path}',methods=['GET','HEAD','POST','PUT','DELETE'])
     async def proxy(identifier: str,path: str,request: Request):
         host=get_host();engine=runtime(host)
         try:
-            binding=await asyncio.to_thread(engine.open,identifier)
             if not path.startswith(('api/v1/','static/')) or '..' in path.split('/'):
                 raise HTTPException(404)
+            if request.method in {'GET', 'HEAD'} and path.startswith('static/'):
+                # The immutable media tree remains readable when the editor is
+                # idle or offline. Authentication/role checks run in middleware.
+                from easel.media_delivery import MediaDelivery
+                def media():
+                    engine.store.get(identifier)
+                    if identifier not in engine.bindings():
+                        raise HTTPException(404, '此视频项目尚未连接制作引擎')
+                    delivery = MediaDelivery(engine.directory / 'media-cache', engine.data_root / 'static')
+                    user = current_user()
+                    try:
+                        return delivery.response(request, path[len('static/'):],
+                                                 actor_scope=f"{project_id()}:{user['id']}")
+                    except (ValueError, OSError):
+                        raise HTTPException(404, '视频素材暂不可用') from None
+                return await asyncio.to_thread(media)
+            binding=await asyncio.to_thread(engine.open,identifier)
             if path.startswith(('api/v1/server-update','api/v1/storage')):
                 raise HTTPException(404, '此管理功能由响芽宿主提供')
             body=await request.body()
@@ -155,7 +198,7 @@ def create_router(get_host):
                     if operation['status_key']:
                         with _file_lock(engine.directory/'sync.lock'):
                             data=engine.bindings();data[identifier].setdefault('agent_jobs',{})[operation['status_key']]=job['id'];_json(engine.bindings_path,data)
-                    return {'code':200,'data':{'started':True,'total':len(operation['shot_ids'])},'xiangyaJob':{'id':job['id']}}
+                    return JSONResponse({'code':200,'data':{'started':True,'total':len(job.get('shot_ids', operation['shot_ids']))},'xiangyaJob':{'id':job['id']}}, headers={'X-Chirpiva-Job-Id': job['id']})
             if request.method=='GET' and path.endswith(('extract-status','video-prompts-status')) and binding.get('agent_jobs'):
                 rows={row['id']:row for row in await WorkshopActions(host).list(identifier)}
                 def state(key):
@@ -164,24 +207,32 @@ def create_router(get_host):
                     return {'status':'done' if row['status']=='completed' else 'error' if row['status'] in {'failed','cancelled','unconfirmed'} else 'running','error':row.get('message')}
                 value=({key:state('extract:'+key) for key in ('characters','scenes','props')} if path.endswith('extract-status') else state('video-prompts'))
                 return {'code':200,'data':value}
-            client=httpx.AsyncClient(trust_env=False,follow_redirects=False,timeout=httpx.Timeout(1800,connect=5))
+            client, owns_client = await proxy_client(host, engine)
             headers={'X-Xiangya-Runtime':engine.state['token']}
             for key in ('content-type','range'):
                 if value:=request.headers.get(key):headers[key]=value
             url=engine.state['base']+'/'+path
             if request.url.query:url+='?'+request.url.query
-            response=await client.send(client.build_request(request.method,url,content=body,headers=headers),stream=True)
+            timeout = httpx.Timeout(15, connect=3) if request.method in {'GET', 'HEAD'} else httpx.Timeout(1800, connect=3)
+            try:
+                response=await client.send(client.build_request(request.method,url,content=body,headers=headers,timeout=timeout),stream=True)
+            except BaseException:
+                if owns_client: await client.aclose()
+                raise
             if 'application/json' in response.headers.get('content-type',''):
                 raw=await response.aread();status=response.status_code
-                await response.aclose();await client.aclose()
+                await response.aclose()
+                if owns_client: await client.aclose()
                 data=json.loads(raw)
-                if status<400:await asyncio.to_thread(engine.pull,identifier)
+                if status<400 and request.method not in {'GET', 'HEAD'}:
+                    await asyncio.to_thread(engine.pull,identifier)
                 return JSONResponse(_redact(data),status_code=status)
             async def content():
                 try:
                     async for chunk in response.aiter_bytes():yield chunk
                 finally:
-                    await response.aclose();await client.aclose()
+                    await response.aclose()
+                    if owns_client: await client.aclose()
             return StreamingResponse(content(),status_code=response.status_code,headers={key:value for key,value in response.headers.items()
                 if key in {'content-type','content-range','accept-ranges'}})
         except WorkshopError as error:

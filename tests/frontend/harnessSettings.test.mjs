@@ -40,7 +40,7 @@ test('sidebar keeps its settings button unwrapped beside a truncated status', ()
 });
 
 function setup({ runtime = 'openclaw', locked = false, installed = true, saveError = '', modelError = '',
-  settingsErrors = [] } = {}) {
+  settingsErrors = [], toolApprovalMode } = {}) {
   const state = [];
   let cursor = 0;
   const effects = [];
@@ -54,6 +54,7 @@ function setup({ runtime = 'openclaw', locked = false, installed = true, saveErr
     runtime,
     models: { codex: 'codex-model', opencode: 'provider/model' },
     sandbox: 'workspace-write',
+    tool_approval_mode: toolApprovalMode,
     locked,
     agents: ['api', 'openclaw', 'opencode', 'codex', 'acp'].map(id => ({
       id, label: id === 'api' ? '仅聊天模式' : id,
@@ -174,6 +175,21 @@ test('Codex permanent approval defaults off, saves explicitly and stays exclusiv
   nodes(view.render(), 'button')[0].props.onClick();
   await settle();
   assert.equal(view.saves[1].codexAutoApprove, undefined);
+});
+
+test('deployment-wide full approval is shown without a misleading ordinary-permission switch', async () => {
+  const view = setup({ runtime: 'codex', toolApprovalMode: 'all' });
+  view.render();
+  await settle();
+  let tree = view.render();
+  assert.match(text(tree), /全部自动授权/);
+  assert.equal(nodes(tree, 'button').some(node => node.props.role === 'switch'), false);
+  assert.doesNotMatch(text(tree), /sudo、删除、系统修改、执行脚本/);
+  nodes(tree, 'button')[0].props.onClick();
+  await settle();
+  assert.equal(view.saves[0].codexAutoApprove, undefined);
+  tree = view.render();
+  assert.match(text(tree), /全部自动授权/);
 });
 
 test('environment-locked harness cannot be changed or saved', async () => {

@@ -42,12 +42,12 @@ export default function VideoWorkshopPage({ initialProjectId, initialView, initi
   }, [initialProjectId, appliedNavigation]);
   useEffect(() => {
     const controller = new AbortController();
-    let running = false, timer: ReturnType<typeof setTimeout> | undefined;
+    let running = false, failures = 0, timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
       timer = setTimeout(() => {
         if (document.visibilityState === 'hidden') schedule();
         else void load();
-      }, 5000);
+      }, Math.min((selectedId ? 8000 : 15000) * 2 ** failures, 60000));
     };
     const load = async (manual = false) => {
       if (running || controller.signal.aborted) return;
@@ -56,15 +56,16 @@ export default function VideoWorkshopPage({ initialProjectId, initialView, initi
       if (manual) { setLoading(true); setError(''); setMissing(false); }
       let lookingUpProject = false;
       try {
-        const result = await fetchWorkshopProjects(controller.signal);
-        if (controller.signal.aborted || current !== sequence.current) return;
         lookingUpProject = !!selectedId && !invalid;
         const detail = lookingUpProject ? await fetchWorkshopProject(selectedId, controller.signal) : null;
+        const result = lookingUpProject ? null : await fetchWorkshopProjects(controller.signal, true);
         if (controller.signal.aborted || current !== sequence.current) return;
-        const rows = result.projects.map(row => row.id === detail?.id ? detail : row);
-        setProjects(detail && !rows.some(row => row.id === detail.id) ? [detail, ...rows] : rows);
+        setProjects(rows => detail ? rows.some(row => row.id === detail.id)
+          ? rows.map(row => row.id === detail.id ? detail : row) : [detail, ...rows] : result!.projects);
+        failures = 0;
         setVerifiedId(detail?.id || ''); setMissing(false); setError('');
       } catch (cause) {
+        failures++;
         if (!controller.signal.aborted && current === sequence.current) {
           setMissing(lookingUpProject && cause instanceof Error && 'status' in cause && cause.status === 404);
           setError(cause instanceof Error ? cause.message : '视频项目暂不可用。');
@@ -82,8 +83,9 @@ export default function VideoWorkshopPage({ initialProjectId, initialView, initi
     refresh.current = manualRefresh;
     void load();
     window.addEventListener('focus', focus);
+    document.addEventListener('visibilitychange', focus);
     return () => {
-      controller.abort(); clearTimeout(timer); window.removeEventListener('focus', focus);
+      controller.abort(); clearTimeout(timer); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus);
       if (refresh.current === manualRefresh) refresh.current = () => {};
     };
   }, [selectedId, invalid]);

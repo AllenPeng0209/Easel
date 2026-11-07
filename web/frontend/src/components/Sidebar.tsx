@@ -24,6 +24,9 @@ interface SidebarProps {
   currentPage: Page;
   onPageChange: (page: Page) => void;
   sessions: ChatSession[];
+  hasMoreSessions?: boolean;
+  loadingMoreSessions?: boolean;
+  onLoadMoreSessions?: () => void;
   activeSessionId: string | null;
   onSessionSelect: (id: string) => void;
   onSessionDelete: (id: string) => void;
@@ -78,6 +81,9 @@ export default function Sidebar({
   currentPage,
   onPageChange,
   sessions,
+  hasMoreSessions = false,
+  loadingMoreSessions = false,
+  onLoadMoreSessions,
   activeSessionId,
   onSessionSelect,
   onSessionDelete,
@@ -325,6 +331,8 @@ export default function Sidebar({
                 {active.slice(0, historyWindow).map(session => renderItem(session, false))}
                 {active.length > historyWindow && <button className="session-show-more" aria-label="显示更多历史对话"
                   onClick={() => setHistoryLimit(value => Math.max(value, historyWindow) + 5)}>显示更多 · 还有 {active.length - historyWindow} 条</button>}
+                {hasMoreSessions && <button className="session-show-more" disabled={loadingMoreSessions}
+                  onClick={onLoadMoreSessions}>{loadingMoreSessions ? '正在读取较早对话…' : '加载较早对话'}</button>}
                 {!active.length && !archived.length && <p className="sidebar-history-empty">{historyQuery ? '没有匹配的对话。' : '还没有对话，从 AI 对话开始吧。'}</p>}
                 {!active.length && archived.length > 0 && archiveFilter === 'default' && <p className="sidebar-history-empty">{historyQuery ? '未归档中无匹配，可展开已归档。' : '暂无未归档对话。'}</p>}
                 {archived.length > 0 && <>

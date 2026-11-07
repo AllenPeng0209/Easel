@@ -3,18 +3,8 @@ import { ProjectBreadcrumb, useIpPermissions } from './components/ProjectSpace';
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import type { Page } from './components/Sidebar';
-import ChatPage from './components/ChatPage';
 import ArchiveRunningChatDialog from './components/ArchiveRunningChatDialog';
 import DeleteChatDialog from './components/DeleteChatDialog';
-import SkillPage from './components/SkillPage';
-import OutputsPage from './components/OutputsPage';
-import AccountsPage from './components/AccountsPage';
-import ProfilePage from './components/ProfilePage';
-import DashboardPage from './components/DashboardPage';
-import CalendarPage from './components/CalendarPage';
-import PublishPage from './components/PublishingPage';
-import OnboardingWizard from './components/OnboardingWizard';
-import SettingsPanel from './components/SettingsPanel';
 import { useChatSuperagent } from './components/SuperagentPage';
 import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, fetchLastTurnStatus, stopChat, steerChat, fetchChatSessions, syncChatSessions, deleteChatSession, forkChatSession, forkPrefixHash, fetchEarlierChatTurns, fetchCompleteChatSession, fetchSessionModels, type SessionModelCapability } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion, ChatQuestionClosed, ChatTurnOutcome } from './lib/api';
@@ -49,6 +39,16 @@ import type { ChatSession, ChatMessage, QueuedMessage, StreamState, ReasoningSum
 
 const TAB_SESSION_KEY = projectStorageKey('easel_tab_session');
 const ONBOARDING_SEEN_KEY = projectStorageKey('easel_onboarding_seen');
+const ChatPage = lazy(() => import('./components/ChatPage'));
+const SkillPage = lazy(() => import('./components/SkillPage'));
+const OutputsPage = lazy(() => import('./components/OutputsPage'));
+const AccountsPage = lazy(() => import('./components/AccountsPage'));
+const ProfilePage = lazy(() => import('./components/ProfilePage'));
+const DashboardPage = lazy(() => import('./components/DashboardPage'));
+const CalendarPage = lazy(() => import('./components/CalendarPage'));
+const PublishPage = lazy(() => import('./components/PublishingPage'));
+const OnboardingWizard = lazy(() => import('./components/OnboardingWizard'));
+const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
 const VideoWorkshopPage = lazy(() => import('./components/VideoWorkshopPage'));
 const WorkshopJobsDrawer = lazy(() => import('./components/WorkshopJobsDrawer'));
 const InteractionCenterPage = lazy(() => import('./components/InteractionCenterPage'));
@@ -131,6 +131,9 @@ export default function App() {
   const [historyReady, setHistoryReady] = useState(false);
   const [navigationReady, setNavigationReady] = useState(false);
   const [historyNotice, setHistoryNotice] = useState('');
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [historyMoreLoading, setHistoryMoreLoading] = useState(false);
+  const historyMoreRequest = useRef<AbortController | null>(null);
   const [admissionFeedback, setAdmissionFeedback] = useState<Record<string, string>>({});
   const [historyRetry, setHistoryRetry] = useState(0);
   // 装完还没配模型时，首开要把用户直接带到模型设置页（安装脚本不再在终端问 Key）
@@ -407,9 +410,10 @@ export default function App() {
     if (!canOperate || !navigationReady) return;
     let cancelled = false;
     const controller = new AbortController();
-    void fetchChatSessions(controller.signal, true).then(result => {
+    void fetchChatSessions(controller.signal, true, true).then(result => {
       if (cancelled) return;
       const remote = Array.isArray(result.sessions) ? result.sessions : [];
+      setHistoryCursor(result.nextCursor || null);
       setSessions(previous => {
         const merged = mergeWindowedCatalog(previous, remote, result.deletedIds);
         saveSessions(merged);
@@ -425,6 +429,27 @@ export default function App() {
     }).finally(() => { if (!cancelled) setHistoryReady(true); });
     return () => { cancelled = true; controller.abort(); };
   }, [canOperate, navigationReady]);
+
+  useEffect(() => () => historyMoreRequest.current?.abort(), []);
+  const loadMoreHistory = useCallback(async () => {
+    if (!canOperate || !historyCursor || historyMoreRequest.current) return;
+    const controller = new AbortController();
+    historyMoreRequest.current = controller; setHistoryMoreLoading(true);
+    try {
+      const result = await fetchChatSessions(controller.signal, true, true, historyCursor);
+      if (controller.signal.aborted) return;
+      setSessions(previous => {
+        const next = mergeWindowedCatalog(previous, result.sessions, result.deletedIds);
+        saveSessions(next); return next;
+      });
+      setHistoryCursor(result.nextCursor || null); setHistoryNotice('');
+    } catch {
+      if (!controller.signal.aborted) setHistoryNotice('较早的对话暂时无法读取，请稍后重试。');
+    } finally {
+      if (historyMoreRequest.current === controller) historyMoreRequest.current = null;
+      if (!controller.signal.aborted) setHistoryMoreLoading(false);
+    }
+  }, [canOperate, historyCursor]);
 
   const catalogBusy = useRef(false);
   const catalogMounted = useRef(false);
@@ -1905,6 +1930,9 @@ export default function App() {
           setCurrentPage(page);
         }}
         sessions={sessions}
+        hasMoreSessions={!!historyCursor}
+        loadingMoreSessions={historyMoreLoading}
+        onLoadMoreSessions={loadMoreHistory}
         activeSessionId={activeSessionId}
         onSessionSelect={id => { businessNavigation.current += 1; setBusinessNotice(''); setWorkshopPanel(null); handleSessionSelect(id); }}
         onSessionDelete={handleSessionDelete}
@@ -1929,7 +1957,7 @@ export default function App() {
         {historyNotice && currentPage !== 'chat' && <p className="agent-event__note" role="status">{historyNotice}</p>}
         {businessNotice && <p className="agent-event__note" role="status">{businessNotice}</p>}
         <div className={visibleWorkshop ? 'page-host workshop-chat-layout' : 'page-host'}>
-          {renderPage()}
+          <Suspense fallback={<div className="dash-empty" role="status">正在打开页面…</div>}>{renderPage()}</Suspense>
           {visibleWorkshop && <aside className="workshop-chat-panel" aria-label="对话关联的视频工坊">
             <div className="workshop-chat-panel-header">
               <strong>视频工坊</strong>
@@ -1980,12 +2008,14 @@ export default function App() {
 
       {/* 画像配置向导 */}
       {showWizard && (
-        <OnboardingWizard onClose={() => setShowWizard(false)} onCreated={handleProfileCreated} />
+        <Suspense fallback={<div className="overlay" role="status">正在打开画像配置…</div>}>
+          <OnboardingWizard onClose={() => setShowWizard(false)} onCreated={handleProfileCreated} />
+        </Suspense>
       )}
 
       {/* 设置（统一入口：模型配置 · 环境安装 · 更多设置） */}
       {settingsOpen && isPlatformAdmin && (
-        <SettingsPanel
+        <Suspense fallback={<div className="overlay" role="status">正在打开设置…</div>}><SettingsPanel
           banner={needModelSetup
             ? '还没有配置模型 —— 填一个 API Key 才能开始对话。保存后会自动同步配置并重启网关。'
             : ''}
@@ -1999,7 +2029,7 @@ export default function App() {
               setGatewayStatus(data.gateway ? 'connected' : 'disconnected');
             }).catch(() => setGatewayStatus('disconnected'));
           }}
-        />
+        /></Suspense>
       )}
     </div>
   );

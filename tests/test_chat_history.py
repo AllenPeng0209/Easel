@@ -80,6 +80,8 @@ def test_invalid_catalog_data_never_commits(tmp_path, bad):
 
 @pytest.mark.access_integration
 def test_catalog_http_boundary_is_private_to_user_and_ip(tmp_path, monkeypatch):
+    # These legacy alias checks represent a migrated, non-empty default IP.
+    (tmp_path / 'outputs' / 'legacy-topic').mkdir(parents=True)
     from fastapi.testclient import TestClient
     from web import app as web
     monkeypatch.setattr(web, 'PROJECT_ROOT', tmp_path)

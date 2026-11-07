@@ -12,6 +12,18 @@ export function mergeSessionCatalog(local: ChatSession[], remote: ChatSession[],
   for (const session of local) {
     if (deleted.has(session.id)) continue;
     const saved = byId.get(session.id);
+    const suffix = saved ? session.messages.slice(-saved.messages.length) : [];
+    const visibleMessage = (value: ChatSession['messages'][number]) => Object.entries(value)
+      .filter(([key]) => key !== 'events').sort(([a], [b]) => a.localeCompare(b));
+    const sameLegacyMessages = saved && !session.historyWindow && suffix.length === saved.messages.length
+      && suffix.every((message, index) => JSON.stringify(visibleMessage(message)) === JSON.stringify(visibleMessage(saved.messages[index])));
+    if (saved && !session.pendingTurnId && saved.historyWindow
+      && (session.historyWindow?.base === saved.historyWindow.base || sameLegacyMessages)
+      && (session.updated ?? session.created) === (saved.updated ?? saved.created)) {
+      const metadata = (value: ChatSession) => Object.entries(value)
+        .filter(([key]) => key !== 'messages' && key !== 'historyWindow').sort(([a], [b]) => a.localeCompare(b));
+      if (JSON.stringify(metadata(session)) === JSON.stringify(metadata(saved))) continue;
+    }
     if (!saved || session.pendingTurnId || (session.updated ?? session.created ?? 0) >= (saved.updated ?? saved.created ?? 0)) {
       byId.set(session.id, session);
     }

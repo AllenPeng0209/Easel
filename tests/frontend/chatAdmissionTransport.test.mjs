@@ -43,7 +43,7 @@ test('truncated admission frame leaves cursor at zero and recovers only by GET f
   const sliced = admission.slice(0, -2);
   const { requests, observed } = await scenario([sliced, admission + frame(2, 'token', 'once') + done]);
   assert.deepEqual(requests.map(request => [request.method, request.url]), [
-    ['POST', '/api/chat/stream'], ['GET', '/api/chat/jobs/exact-turn/stream?after=0'],
+    ['POST', '/api/chat/stream'], ['GET', '/api/chat/jobs/exact-turn/stream?after=0&compact=true'],
   ]);
   assert.equal(JSON.parse(requests[0].body).turnId, 'exact-turn');
   assert.deepEqual(observed, [['admitted', 'exact-turn', 'session'], ['token', 'once'], ['done', 'completed']]);
@@ -55,7 +55,7 @@ test('wrong admission does not consume later tokens, done or cursor until matche
     wrong + frame(2, 'token', 'must not display') + done,
     admission + frame(2, 'token', 'matched') + done,
   ]);
-  assert.equal(requests[1].url, '/api/chat/jobs/exact-turn/stream?after=0');
+  assert.equal(requests[1].url, '/api/chat/jobs/exact-turn/stream?after=0&compact=true');
   assert.deepEqual(observed, [['admitted', 'exact-turn', 'session'], ['token', 'matched'], ['done', 'completed']]);
 });
 
@@ -65,7 +65,7 @@ test('cursor advances through complete frames only and deduplicates replayed adm
     admission + frame(2, 'token', 'first') + partial,
     admission + frame(2, 'token', 'first') + frame(3, 'token', 'second') + frame(4, 'done', { outcome: 'completed' }),
   ]);
-  assert.equal(requests[1].url, '/api/chat/jobs/exact-turn/stream?after=2');
+  assert.equal(requests[1].url, '/api/chat/jobs/exact-turn/stream?after=2&compact=true');
   assert.deepEqual(observed, [
     ['admitted', 'exact-turn', 'session'], ['token', 'first'], ['token', 'second'], ['done', 'completed'],
   ]);
@@ -170,7 +170,7 @@ test('an error before a disconnected live stream resumes the same admitted turn 
     frame(3, 'token', 'final buffered text') + frame(4, 'done', { outcome: 'failed' }),
   ]);
   assert.deepEqual(requests.map(request => [request.method, request.url]), [
-    ['POST', '/api/chat/stream'], ['GET', '/api/chat/jobs/exact-turn/stream?after=2'],
+    ['POST', '/api/chat/stream'], ['GET', '/api/chat/jobs/exact-turn/stream?after=2&compact=true'],
   ]);
   assert.deepEqual(observed, [
     ['admitted', 'exact-turn', 'session'], ['token', 'final buffered text'], ['error', undefined, '执行失败'],
@@ -201,7 +201,7 @@ test('legacy admitted replay resumes with the negotiated shifted cursor', async 
     }),
     frame(3, 'token', 'saved tail') + frame(4, 'done', { outcome: 'completed' }),
   ]);
-  assert.equal(requests[1].url, '/api/chat/jobs/exact-turn/stream?after=2&legacyAdmission=true');
+  assert.equal(requests[1].url, '/api/chat/jobs/exact-turn/stream?after=2&compact=true&legacyAdmission=true');
   assert.deepEqual(observed, [
     ['admitted', 'exact-turn', 'session'], ['token', 'saved prefix'], ['token', 'saved tail'], ['done', 'completed'],
   ]);

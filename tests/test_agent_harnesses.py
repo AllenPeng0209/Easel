@@ -766,6 +766,26 @@ def test_codex_auto_approval_setting_is_persisted_and_isolated(sandbox):
         "runtime": "codex", "codex_auto_approve": "true"}).status_code == 422
 
 
+@pytest.mark.parametrize(("host_mode", "ordinary", "expected"), [
+    (None, False, "manual"), (None, True, "ordinary"),
+    ("1", False, "all"), ("1", True, "all"), ("true", False, "manual"),
+])
+def test_harness_settings_report_effective_tool_approval_mode(sandbox, monkeypatch, host_mode, ordinary, expected):
+    if host_mode is None:
+        monkeypatch.delenv("EASEL_AUTO_ALLOW_AI_TOOLS", raising=False)
+    else:
+        monkeypatch.setenv("EASEL_AUTO_ALLOW_AI_TOOLS", host_mode)
+    response = sandbox.post("/api/settings/harness", json={
+        "runtime": "codex", "codex_auto_approve": ordinary})
+    assert response.status_code == 200
+    assert response.json()["tool_approval_mode"] == expected
+    assert sandbox.get("/api/settings/harness").json()["tool_approval_mode"] == expected
+    # A host-wide grant must not silently overwrite the operator's ordinary-mode preference.
+    saved = json.loads((web.OUTPUTS_DIR / "_harness" / "config.json").read_text())
+    assert saved["codex_auto_approve"] is ordinary
+    assert "tool_approval_mode" not in saved
+
+
 def test_web_config_guards_and_no_credential_mutation(sandbox, monkeypatch):
     before = web.ENV_FILE.read_bytes()
     response = sandbox.post("/api/settings/harness", json={"runtime": "opencode", "model": "provider/model"})

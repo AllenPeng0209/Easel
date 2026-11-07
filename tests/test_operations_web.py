@@ -12,6 +12,7 @@ from easel.operations import OperationsManager
 from easel.operations_web import OperationsMount, interaction_path
 from easel.projects import ProjectScopeMiddleware, create_router as project_router
 from web.access_control import AccessControlMiddleware
+from tests.repository_helpers import transfer_project
 
 pytestmark = pytest.mark.access_integration
 
@@ -63,30 +64,79 @@ def test_old_native_login_starts_cannot_bypass_the_unified_session_fence(tmp_pat
 
 
 def test_unified_login_routes_start_and_poll_the_owned_runtime(tmp_path, monkeypatch):
-    client, manager, _ = native(tmp_path)
+    client, manager, access = native(tmp_path)
+    owner = access.login("native-admin", "native-password-123")[0]
     client.get('/api/operations/api/accounts')
     runtime = manager.runtimes['default']
     monkeypatch.setattr(runtime, 'start', AsyncMock())
     calls = []
 
-    async def start(platform, account_id=None, new_account=False):
-        calls.append((platform, account_id, new_account))
+    async def start(platform, account_id=None, new_account=False, actor_id=None, authorize=None):
+        authorize()
+        calls.append((platform, account_id, new_account, actor_id))
         return {'task_id': 'unified-task', 'status': 'opening'}
 
-    runtime.connections = SimpleNamespace(start=start, poll=lambda task_id: {
+    runtime.connections = SimpleNamespace(start=start, poll=lambda task_id, actor_id=None: {
         'task_id': task_id, 'status': 'confirmed', 'completion': 'partial',
+        'requestedByOwner': actor_id == owner['id'],
         'capabilities': {'comments': 'verified', 'creator': 'needs_verification'},
     })
     result = client.post('/api/operations/api/accounts/connect/start?platform=xhs&account_id=2')
     assert result.status_code == 200, result.text
-    assert calls == [('xhs', 2, False)]
+    assert calls == [('xhs', 2, False, owner['id'])]
     polled = client.get('/api/operations/api/accounts/connect/poll?task_id=unified-task')
     assert polled.status_code == 200, polled.text
     assert polled.json()['capabilities']['creator'] == 'needs_verification'
+    assert polled.json()['requestedByOwner'] is True
     assert 'storage_state' not in polled.json()
     created = client.post('/api/operations/api/accounts/connect/start?platform=douyin')
     assert created.status_code == 200
-    assert calls[-1] == ('douyin', None, True)
+    assert calls[-1] == ('douyin', None, True, owner['id'])
+
+
+def test_login_rechecks_owner_after_waiting_for_runtime_start(tmp_path, monkeypatch):
+    client, manager, access = native(tmp_path)
+    client.get('/api/operations/api/accounts')
+    owner = access.login("native-admin", "native-password-123")[0]
+    other = access.create_user("other-owner", "other-password-123")
+    access.set_member("default", other['id'], "operator")
+    runtime = manager.runtimes['default']
+
+    async def demote():
+        transfer_project(access, 'default', other['id'])
+
+    monkeypatch.setattr(runtime, 'start', demote)
+    started = []
+
+    async def connect(*args, **kwargs):
+        started.append(True)
+        return {'task_id': 'should-not-start'}
+
+    runtime.connections = SimpleNamespace(start=connect)
+    response = client.post('/api/operations/api/accounts/connect/start?platform=xhs')
+    assert response.status_code == 403
+    assert started == []
+
+
+def test_login_rechecks_cookie_after_waiting_for_runtime_start(tmp_path, monkeypatch):
+    client, manager, access = native(tmp_path)
+    client.get('/api/operations/api/accounts')
+    runtime = manager.runtimes['default']
+
+    async def logout():
+        access.logout(client.cookies.get(SESSION_COOKIE))
+
+    monkeypatch.setattr(runtime, 'start', logout)
+    started = []
+
+    async def connect(*args, **kwargs):
+        started.append(True)
+        return {'task_id': 'should-not-start'}
+
+    runtime.connections = SimpleNamespace(start=connect)
+    response = client.post('/api/operations/api/accounts/connect/start?platform=xhs')
+    assert response.status_code == 401
+    assert started == []
 
 
 def test_native_dm_write_requires_approval(tmp_path):

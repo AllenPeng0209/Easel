@@ -134,7 +134,7 @@ test('linked workshop opens the exact historical delivery and explicitly sends t
   }, { projects: [project(A, 'Deliveries', { revision: 2, deliverables: [old, newer] })] });
   try {
     assert.deepEqual(refs, []);
-    assert.match(ui.document.querySelector('video').getAttribute('src'), /old\.mp4$/);
+    assert.match(ui.document.querySelector('video').getAttribute('src'), /old\.mp4\?playback=original$/);
     const button = [...ui.document.querySelectorAll('button')].find(item => item.textContent === '带回对话继续修改');
     assert.ok(button);
     await act(async () => button.click());

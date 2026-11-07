@@ -20,7 +20,7 @@ const business = (id, callId, fields = {}, record = {}) => ({ id: `event-${id}`,
   },
 });
 const show = events => parseHTML(renderToStaticMarkup(React.createElement(
-  componentModule('components/AgentEventPanel.tsx', { user: actor }).default, { events, settled: true },
+  componentModule('components/AgentEventPanel.tsx', { user: actor }).default, { events, settled: true, defaultOpen: true },
 ))).document;
 const card = (document, id) => document.querySelector(`[data-business-object="${id.repeat(32)}"]`);
 const row = (document, id) => document.querySelector(`[data-tool-call="${id}"]`);

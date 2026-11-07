@@ -184,7 +184,7 @@ def test_other_actor_or_ip_cannot_refresh_the_xhs_operation(dispatch_environment
         with actor_context(actor), project_context('default', root):
             workflow, record, _ = await submitted(monkeypatch)
             other = access.create_user('xhs-other', 'temporary-other-test-password')
-            access.set_member('default', other['id'], 'owner')
+            access.set_member('default', other['id'], 'operator')
             with actor_context(other):
                 with pytest.raises(HTTPException) as wrong: await workflow.refresh(record['id'])
                 assert wrong.value.status_code == 404

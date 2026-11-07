@@ -47,6 +47,10 @@ test('locating a failed row opens its ancestors and focuses only its exact messa
     const other = document.querySelector('[data-message-fixture="1"]');
     const parentButton = local.querySelector('[data-tool-call=parent] [data-disclosure-row]');
     assert.ok(parentButton);
+    assert.equal(local.querySelector('[data-run-id=run-two][data-tool-call=reused]'), null);
+    await click(local.querySelector('[data-agent-timeline] summary'));
+    await click(parentButton);
+    assert.ok(local.querySelector('[data-run-id=run-two][data-tool-call=reused]'));
     await click(parentButton);
     assert.equal(local.querySelector('[data-run-id=run-two][data-tool-call=reused]'), null);
     await click(local.querySelector('[data-locate-failed-tool]'));
@@ -67,6 +71,7 @@ test('a missing local match never jumps to the same run and call in another mess
     await render({ timeline: [missing, success] }, { events: [missing] });
     const local = document.querySelector('[data-message-fixture="0"]');
     assert.equal(local.querySelectorAll('[data-locate-failed-tool]').length, 1);
+    await click(local.querySelector('[data-agent-timeline] summary'));
     await click(local.querySelector('[data-locate-failed-tool]'));
     assert.match(local.querySelector('[data-tool-locate-missing]').textContent, /没有.*工具详情/);
     assert.equal(focused.length, 0);
@@ -78,6 +83,7 @@ test('an old failed observation without a run identity cannot guess a local tool
   await fixture(async ({ render, click, document, focused }) => {
     const local = tool('present', 'shared', 'current-run');
     await render({ events: [local], timeline: [tool('unscoped', 'shared', undefined)] });
+    await click(document.querySelector('[data-agent-timeline] summary'));
     await click(document.querySelector('[data-locate-failed-tool]'));
     assert.ok(document.querySelector('[data-tool-locate-missing]'));
     assert.equal(document.querySelector('[data-tool-located]'), null);

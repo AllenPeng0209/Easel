@@ -865,6 +865,8 @@ async def _lifespan(_app: FastAPI):
     """应用生命周期：关机时回收公众号扫码进程（替代已弃用的 on_event）。"""
     global _HARNESS_LOOP
     _HARNESS_LOOP = asyncio.get_running_loop()
+    _app.state.huobao_proxy_clients = {}
+    _app.state.huobao_retired_clients = []
     from easel.interaction_worker import InteractionWorker
     interaction_worker = InteractionWorker(_interaction_tick)
     _app.state.interaction_worker = interaction_worker
@@ -891,6 +893,12 @@ async def _lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
     from easel.harnesses.rpc import close_sessions
     await close_sessions()
+    from web.huobao_bridge import close_runtimes
+    await close_runtimes()
+    for _, client in list(_app.state.huobao_proxy_clients.values()):
+        await client.aclose()
+    for client in _app.state.huobao_retired_clients:
+        await client.aclose()
     _HARNESS_LOOP = None
     from easel.projects import _registry, project_context
     for entry in _registry(PROJECT_ROOT):
@@ -924,6 +932,9 @@ from easel.projects import _registry as _project_registry
 from web.access_control import AccessControlMiddleware
 app.include_router(_access_router(lambda: PROJECT_ROOT, lambda: _project_registry(PROJECT_ROOT)))
 app.add_middleware(AccessControlMiddleware, get_root=lambda: PROJECT_ROOT)
+from web.performance import PerformanceMiddleware, create_router as _performance_router
+app.add_middleware(PerformanceMiddleware)
+app.include_router(_performance_router(lambda: PROJECT_ROOT, lambda: _require_host_tools()))
 from web.superagent_routes import create_router as _superagent_router
 app.include_router(_superagent_router(lambda: PROJECT_ROOT, lambda: _publication_workflow()))
 
@@ -1902,6 +1913,10 @@ async def index():
     if react_index.is_file():
         return FileResponse(react_index, media_type="text/html", headers=no_cache)
     return FileResponse(STATIC_DIR / "index.html", media_type="text/html", headers=no_cache)
+
+
+from web.public_routes import create_router as _public_pages_router
+app.include_router(_public_pages_router(lambda: REACT_DIR, lambda: STATIC_DIR))
 
 
 @app.get("/onepage")
@@ -3411,6 +3426,7 @@ class ChatRequest(BaseModel):
     command: ChatCommand | None = None
     planRef: PlanReference | None = None
     modelOverride: str | None = Field(default=None, min_length=1, max_length=240)
+    compactEvents: bool = False
 
     @field_validator("modelOverride")
     @classmethod
@@ -5637,20 +5653,38 @@ def api_chat_session_reference_turns(request: Request):
 
 
 @app.get("/api/chat/sessions")
-async def api_chat_sessions(limit: int | None = None, cursor: str | None = None, windowed: bool = False):
+async def api_chat_sessions(limit: int | None = None, cursor: str | None = None, windowed: bool = False, compact: bool = False, recent: bool = False):
     _require_operation()
     if limit is not None and not 1 <= limit <= 100:
         raise HTTPException(422, "会话分页每次仅支持 1 至 100 条")
-    if cursor is not None and (limit is None or not cursor or len(cursor) > 256
+    if cursor is not None and (limit is None or not cursor or len(cursor) > (1024 if recent else 256)
                                or any(ord(character) < 32 for character in cursor)):
         raise HTTPException(422, "无效的会话分页游标")
     store = ChatHistoryStore(_sessions_dir())
     if limit is not None:
-        result = await asyncio.to_thread(store.sessions_page, limit, cursor, windowed=windowed)
+        try:
+            result = await asyncio.to_thread(store.recent_page if recent else store.sessions_page, limit, cursor, windowed=windowed)
+        except ValueError:
+            raise HTTPException(422, '无效的会话分页游标') from None
     else:
         result = {"sessions": await asyncio.to_thread(store.sessions, windowed=windowed), "deletedIds": await asyncio.to_thread(store.deleted_ids)}
     _strip_catalog_thinking(result['sessions'])
+    if compact:
+        from web.chat_event_details import EventDetails
+        result['sessions'] = await asyncio.to_thread(EventDetails(_sessions_dir()).compact_sessions, result['sessions'])
+        result['deletedIds'] = await asyncio.to_thread(store.deleted_ids)
     return result
+
+
+@app.get('/api/chat/event-details/{reference}')
+async def api_chat_event_details(reference: str):
+    _require_operation()
+    from web.chat_event_details import EventDetails
+    try:
+        event = await asyncio.to_thread(EventDetails(_sessions_dir()).get, reference)
+        return json.loads(_scrub_secrets(json.dumps(event, ensure_ascii=False)))
+    except (ValueError, OSError):
+        raise HTTPException(404, '完整工具记录暂不可用，请保留当前对话后重试') from None
 
 
 @app.get("/api/chat/sessions/{session_id}/history")
@@ -5678,10 +5712,13 @@ def _strip_catalog_thinking(sessions):
 
 
 @app.put("/api/chat/sessions")
-async def api_chat_sessions_merge(req: ChatSessionsRequest, windowed: bool = False):
+async def api_chat_sessions_merge(req: ChatSessionsRequest, windowed: bool = False, compact: bool = False):
     _require_operation()
     try:
-        sessions = [validated_session(session) for session in req.sessions]
+        from web.chat_event_details import EventDetails
+        details = EventDetails(_sessions_dir())
+        incoming = await asyncio.to_thread(details.restore_sessions, req.sessions) if compact else req.sessions
+        sessions = [validated_session(session) for session in incoming]
         _strip_catalog_thinking(sessions)
         # Imported browser attachment references must retain exactly the same
         # server-verified ownership check as a fresh chat submission.
@@ -5715,12 +5752,14 @@ async def api_chat_sessions_merge(req: ChatSessionsRequest, windowed: bool = Fal
                     if history_request.command is not None:
                         validate_chat_command(history_request.message, history_request.command)
         store = ChatHistoryStore(_sessions_dir())
-        merged = await asyncio.to_thread(store.merge, sessions, windowed=windowed)
+        merged = await asyncio.to_thread(store.merge, sessions, windowed=windowed, only_submitted=compact)
         _strip_catalog_thinking(merged)
+        if compact:
+            merged = await asyncio.to_thread(details.compact_sessions, merged)
         return {"sessions": merged, "deletedIds": await asyncio.to_thread(store.deleted_ids)}
     except ChatHistoryWindowConflict as error:
         raise HTTPException(409, str(error)) from None
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OSError):
         raise HTTPException(400, "会话数据或附件引用无效") from None
 
 
@@ -5783,15 +5822,22 @@ def _load_chat_snapshot(f: Path, turn_id: str | None, status_only: bool) -> dict
 
 
 @app.get("/api/chat/last/{session_id}")
-async def api_chat_last(session_id: str, turn_id: str | None = None, status_only: bool = False):
+async def api_chat_last(session_id: str, turn_id: str | None = None, status_only: bool = False, compact: bool = False):
     """Recover the saved result, or poll bounded status without the full event payload."""
-    return await asyncio.to_thread(_load_chat_snapshot, _turn_file(f"web:{session_id}"), turn_id, status_only)
+    snapshot = await asyncio.to_thread(_load_chat_snapshot, _turn_file(f"web:{session_id}"), turn_id, status_only)
+    if compact and not status_only:
+        from web.chat_event_details import EventDetails
+        details = EventDetails(_sessions_dir())
+        for key in ('agent_events', 'events'):
+            if isinstance(snapshot.get(key), list):
+                snapshot[key] = await asyncio.to_thread(lambda rows=snapshot[key]: [details.compact_event(event) for event in rows])
+    return snapshot
 
 
 @app.get("/api/chat/jobs/{turn_id}/stream")
-async def api_chat_job_stream(turn_id: str, after: int = 0, legacyAdmission: bool = False):
+async def api_chat_job_stream(turn_id: str, after: int = 0, legacyAdmission: bool = False, compact: bool = False):
     """Replay missed events, then tail this turn until its terminal event arrives."""
-    return await _job_stream_response(turn_id, after, recover_legacy_admission=legacyAdmission)
+    return await _job_stream_response(turn_id, after, recover_legacy_admission=legacyAdmission, compact=compact)
 
 
 def _job_owner_alive(claim: dict, turn_id: str) -> bool:
@@ -5812,7 +5858,9 @@ def _turn_admission_event(turn_id: str, session_id: str) -> dict:
 
 
 async def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | None = None,
-                               recover_legacy_admission: bool = False):
+                               recover_legacy_admission: bool = False, compact: bool = False):
+    from web.chat_event_details import EventDetails
+    details = EventDetails(_sessions_dir()) if compact else None
     replay = claim is not None
     path = _job_event_file(turn_id)
     if not path.is_file():
@@ -5868,6 +5916,8 @@ async def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | No
                     if event["event"] == "thinking":
                         continue
                     raw = event.get("data")
+                    if details is not None and event['event'] == 'agent_event' and isinstance(raw, dict):
+                        raw = await asyncio.to_thread(details.compact_event, raw)
                     if event["event"] == "error":
                         saw_error = True
                         raw = normalize_chat_failure(raw)
@@ -5928,10 +5978,10 @@ async def _job_stream_response(turn_id: str, after: int = 0, *, claim: dict | No
     })
 
 
-async def _replay_claimed_turn(claim: dict, session_id: str, payload_hash: str, turn_id: str):
+async def _replay_claimed_turn(claim: dict, session_id: str, payload_hash: str, turn_id: str, *, compact: bool = False):
     if claim["sessionId"] != session_id or claim["payloadHash"] != payload_hash:
         raise HTTPException(409, "同一任务标识已绑定不同的会话或请求，请新建任务")
-    return await _job_stream_response(turn_id, claim=claim, recover_legacy_admission=True)
+    return await _job_stream_response(turn_id, claim=claim, recover_legacy_admission=True, compact=compact)
 
 
 @app.post("/api/chat/stream")
@@ -5965,6 +6015,7 @@ async def api_chat_stream(req: ChatRequest):
     direct = runtime == "api"
     alternate = runtime not in ("api", "openclaw")
     request_payload = req.model_dump()
+    request_payload.pop('compactEvents', None)  # Transport projection never changes admission identity.
     if req.workshopRef is None:
         request_payload.pop("workshopRef")
     if not req.references:
@@ -5983,7 +6034,7 @@ async def api_chat_stream(req: ChatRequest):
         sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
     existing = catalog.turn_claim(req.turnId)
     if existing is not None:
-        return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId)
+        return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId, compact=req.compactEvents)
     plan_store = None
     if req.planRef is not None:
         _require_operation()
@@ -6020,7 +6071,7 @@ async def api_chat_stream(req: ChatRequest):
         # Another identical POST may have been admitted during the scoped read.
         existing = catalog.turn_claim(req.turnId)
         if existing is not None:
-            return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId)
+            return await _replay_claimed_turn(existing, req.sessionId, payload_hash, req.turnId, compact=req.compactEvents)
         raise
     if plan_store is not None and req.planRef is not None:
         _require_operation()
@@ -6039,7 +6090,7 @@ async def api_chat_stream(req: ChatRequest):
     except (OSError, sqlite3.Error):
         raise HTTPException(409, "任务准入记录不可用，未启动执行；请检查已有任务与本地存储") from None
     if not admitted:
-        return await _replay_claimed_turn(claim, req.sessionId, payload_hash, req.turnId)
+        return await _replay_claimed_turn(claim, req.sessionId, payload_hash, req.turnId, compact=req.compactEvents)
     admission = _turn_admission_event(req.turnId, req.sessionId)
     try:
         # Commit admission before running the model or acknowledging the queue row.
@@ -6673,7 +6724,7 @@ async def api_chat_stream(req: ChatRequest):
             except Exception:
                 pass
     task.add_done_callback(_bg_done)
-    return await _job_stream_response(req.turnId, claim=claim)
+    return await _job_stream_response(req.turnId, claim=claim, compact=req.compactEvents)
 
 
 class QuestionAnswerRequest(BaseModel):
@@ -7177,9 +7228,23 @@ async def api_output(path: str):
 
 
 @app.get("/api/media/{path:path}")
-async def api_media(path: str):
+async def api_media(path: str, request: Request = None):
     """原样输出媒体文件（图片/视频/音频/HTML/PDF），供 <img>/<video>/iframe/下载。"""
     full = _safe_output_path(path)
+    if request is not None and current_user() and full.suffix.lower() in (IMAGE_EXTS - {'.svg'}) | VIDEO_EXTS | AUDIO_EXTS:
+        from easel.media_delivery import MediaDelivery
+        from easel.host_state import generation_state_directory
+        delivery = MediaDelivery(generation_state_directory(PROJECT_ROOT, project_id()).parent / 'media-cache', _outputs_dir())
+        actor = current_user()
+        try:
+            # _safe_output_path and access middleware already authorize the
+            # resolved output. Retain owner aliases without letting derivative
+            # creation follow unvalidated symlinks.
+            relative = full.relative_to(_outputs_dir().resolve()).as_posix()
+            return await asyncio.to_thread(delivery.response, request, relative,
+                actor_scope=f"{project_id()}:{actor['id']}")
+        except (ValueError, OSError):
+            raise HTTPException(404, '媒体文件暂不可用') from None
     # HTML 预览会在本地被就地重新生成（如 gzh-design 重排/内联图片），必须禁缓存，
     # 否则浏览器/代理按启发式缓存旧版 → 内容库 iframe 打开的是过期预览（复制粘贴带旧图 URL）。
     headers = ({"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}

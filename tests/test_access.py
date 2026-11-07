@@ -125,13 +125,12 @@ def test_last_owner_cannot_be_removed_demoted_or_disabled(store):
     assert store.authenticate_token(store.login("owner", PASSWORD)[1])
 
 
-def test_last_owner_protection_remains_atomic_during_concurrent_demotions(store):
+def test_owner_cannot_be_replaced_through_concurrent_member_assignments(store):
     first, _ = initialize(store)
     second = store.create_user("second-owner", PASSWORD, "Second")
-    store.set_member("default", second["id"], "owner")
     def demote(identifier):
         try:
-            store.set_member("default", identifier, "viewer")
+            store.set_member("default", identifier, "owner", actor_id=first['id'])
             return 200
         except HTTPException as error:
             return error.status_code
@@ -156,12 +155,12 @@ def test_membership_mutation_rechecks_owner_after_waiting_for_database_lock(stor
     owner, _ = initialize(store)
     replacement = store.create_user("new-owner", PASSWORD)
     target = store.create_user("target-user", PASSWORD)
-    store.set_member("default", replacement["id"], "owner")
+    store.set_member("default", replacement["id"], "operator")
     started = threading.Event()
     def delayed_grant():
         started.set()
         try:
-            store.set_member("default", target["id"], "owner", actor_id=owner["id"])
+            store.set_member("default", target["id"], "operator", actor_id=owner["id"])
             return 200
         except HTTPException as error:
             return error.status_code
@@ -171,6 +170,8 @@ def test_membership_mutation_rechecks_owner_after_waiting_for_database_lock(stor
             pending = pool.submit(delayed_grant)
             assert started.wait(2)
             database.execute("UPDATE memberships SET role='viewer' WHERE project_id='default' AND user_id=?", (owner["id"],))
+            database.execute("UPDATE memberships SET role='owner' WHERE project_id='default' AND user_id=?", (replacement['id'],))
+            database.execute("UPDATE project_ownership SET owner_id=? WHERE project_id='default'", (replacement['id'],))
         assert pending.result(timeout=3) == 403
     assert store.role(target["id"], "default") is None
 

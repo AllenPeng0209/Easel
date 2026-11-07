@@ -1,3 +1,4 @@
+import { componentModule } from './agentMessagesHarness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -21,7 +22,7 @@ function view() {
       return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; } };
   const exports = {};
   runInNewContext(compiled, { exports, document: {body:{}}, window: {location:{pathname:'/'}},
-    require: name => name === 'react' ? hooks : name === 'react-dom' ? {createPortal: child => child}
+    require: name => name.includes('scopedReadCache') ? componentModule('lib/scopedReadCache.ts') : name === 'react' ? hooks : name === 'react-dom' ? {createPortal: child => child}
       : name === 'react/jsx-runtime' ? {jsx, jsxs:jsx, Fragment:'fragment'}
       : name.includes('projectScope') ? {ACTIVE_PROJECT_ID:'a', switchProject:id => switches.push(id)} : {},
   });
@@ -51,13 +52,15 @@ test('a signed-in user with no IP has an actionable empty workspace instead of a
     useState(initial) { const position = index++; return [position === 2 ? true : initial, () => {}]; } };
   const jsx = (type, props) => ({type,props});
   const exports = {};
-  runInNewContext(compiled, {exports,window:{location:{pathname:'/'}},require:name => name === 'react' ? hooks
+  runInNewContext(compiled, {exports,window:{location:{pathname:'/'}},require:name => name.includes('scopedReadCache') ? componentModule('lib/scopedReadCache.ts') : name === 'react' ? hooks
     : name === 'react/jsx-runtime' ? {jsx,jsxs:jsx,Fragment:'fragment'}
     : name.includes('projectScope') ? {ACTIVE_PROJECT_ID:'default'} : {}});
   const tree = exports.default({children:'private space'});
   const nodes = [];
   const visit = node => { if (!node || typeof node !== 'object') return; nodes.push(node); [node.props?.children].flat(Infinity).forEach(visit); };
   visit(tree);
-  assert.ok(nodes.some(node => node.type === 'form'), 'An account without membership must be able to create its own IP');
+  assert.equal(tree.props.loaded,true);
+  assert.equal(tree.props.projects.length,0);
+  assert.equal(typeof tree.props.onCreate,'function', 'An account without membership must reach first-project creation');
   assert.ok(!nodes.some(node => node.props?.children === 'private space'));
 });

@@ -13,6 +13,7 @@ from easel.access import AccessStore
 from easel.projects import project_context
 from easel.request_identity import actor_context
 import web.app as web
+from tests.repository_helpers import transfer_project
 
 
 pytestmark = pytest.mark.access_integration
@@ -38,7 +39,7 @@ def dispatch_environment(tmp_path, monkeypatch):
     access = AccessStore(tmp_path)
     actor, _ = access.setup('owner', 'temporary-dispatch-test-password', project_ids=['default'])
     replacement = access.create_user('replacement', 'temporary-replacement-password')
-    access.set_member('default', replacement['id'], 'owner')
+    transfer_project(access, 'default', replacement['id'])
     async def account(platform):
         return dict(ACCOUNT)
     monkeypatch.setattr(web, '_publication_account', account)

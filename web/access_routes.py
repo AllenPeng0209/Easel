@@ -118,9 +118,15 @@ def create_router(get_root, get_projects) -> APIRouter:
         return current_store, actor
 
     @router.get("/api/auth/bootstrap")
-    def bootstrap(response: Response):
+    def bootstrap(response: Response, request: Request):
         response.headers["Cache-Control"] = "no-store"
-        return {"configured": store().configured()}
+        current_store = store()
+        result = {"configured": current_store.configured()}
+        if request.headers.get('x-easel-bootstrap-identity') == '1':
+            user = current_store.authenticate_token(request.cookies.get(SESSION_COOKIE))
+            expected = request.headers.get('x-easel-user')
+            result['user'] = user if user and (not expected or expected == user['id']) else None
+        return result
 
     @router.post("/api/auth/setup")
     def setup(req: SetupInput, request: Request, response: Response):

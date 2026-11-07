@@ -1,9 +1,12 @@
-import { projectUrl, projectFetch } from './projectScope';
+import { projectUrl, projectFetch, ACTIVE_USER_ID } from './projectScope';
 import type { AgentEvent } from './agentEvents';
 import type { ChatMessage, ChatSession, ChatHistoryWindow, ReasoningSummary, AnswerCompletion, ChatFailure, ChatPlanRef, ChatExecutionState } from './store';
 import type { ChatReference, ChatSessionReference } from './chatReferences';
 import type { ChatCommand, ChatCommandOption } from './chatCommands';
 import { mergeSessionCatalog } from './sessionSync';
+import { CatalogSyncTracker } from './chatCatalogSync';
+import { ScopedReadCache } from './scopedReadCache';
+import { recordPerformance } from './performance';
 function getBasePath(): string {
   const path = window.location.pathname;
   const cleaned = path.replace(/\/index\.html$/, '').replace(/\/$/, '');
@@ -11,11 +14,17 @@ function getBasePath(): string {
 }
 
 const BASE = getBasePath();
+const catalogSync = new CatalogSyncTracker();
+const sharedReads = new ScopedReadCache();
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method || 'GET').toUpperCase();
+  if (!['GET', 'HEAD'].includes(method) && !url.startsWith('/api/chat/')) sharedReads.invalidate();
+  const load = async (signal?: AbortSignal): Promise<T> => {
+  const began = Date.now();
   // 全部是动态应用接口（登录态/数据等），禁止浏览器 HTTP 缓存——否则 /api/accounts 等可能被启发式
   // 缓存住旧响应（曾表现为“扫码登录后卡片仍显示未登录”）。调用方可用 options.cache 覆盖。
-  const res = await projectFetch(projectUrl(`${BASE}${url}`), { cache: 'no-store', ...options });
+  const res = await projectFetch(projectUrl(`${BASE}${url}`), { cache: 'no-store', ...options, ...(signal ? { signal } : {}) });
   if (!res.ok) {
     // 优先显示后端返回的实质错误信息（FastAPI 的 {detail}），而不是无意义的 "API error: 400"
     let detail = '';
@@ -27,7 +36,15 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     }
     throw Object.assign(new Error(detail || `请求失败（${res.status} ${res.statusText}）`), { status: res.status });
   }
-  return res.json() as Promise<T>;
+  const data = await res.json() as T;
+  if (/^\/api\/(?:outputs|status|schedule|personas)(?:\?|\/|$)/.test(url)) {
+    recordPerformance('api', Math.max(0, Date.now() - began), url.split('/')[2].split('?')[0]);
+  }
+  return data;
+  };
+  const shared = method === 'GET' && /^\/api\/(?:outputs|schedule(?:\/context)?|personas|status)(?:\?|$)/.test(url);
+  return shared ? sharedReads.read(`${ACTIVE_USER_ID}:${projectUrl(`${BASE}${url}`)}`, load,
+    { ttl: 3000, signal: options?.signal ?? undefined }) : load(options?.signal ?? undefined);
 }
 
 export interface StatusResponse {
@@ -307,8 +324,9 @@ export function fetchOutputContent(path: string): Promise<OutputContent> {
 }
 
 /** 媒体文件（图片/视频/音频/HTML/PDF）的原样 URL，用于 <img>/<video>/iframe/下载。 */
-export function mediaUrl(path: string): string {
-  return projectUrl(`${BASE}/api/media/${path.split('/').map(encodeURIComponent).join('/')}`);
+export function mediaUrl(path: string, playback = false): string {
+  return projectUrl(`${BASE}/api/media/${path.split('/').map(encodeURIComponent).join('/')}`)
+    + (playback && /\.mp4$/i.test(path) ? '?playback=original' : '');
 }
 
 /** 删除内容库里的文件或整个项目目录（系统数据受保护，后端会拒）。 */
@@ -952,10 +970,10 @@ export function streamChat(
                 ...(references?.length ? { references } : {}),
                 ...(sessionReferences?.length ? { sessionReferences } : {}),
                 ...(command ? { command } : {}), ...(planRef ? { planRef } : {}),
-                ...(modelOverride ? { modelOverride } : {}) }),
+                ...(modelOverride ? { modelOverride } : {}), compactEvents: true }),
               signal: controller.signal,
             })
-          : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}${legacyAdmission ? '&legacyAdmission=true' : ''}`), {
+          : await projectFetch(projectUrl(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}&compact=true${legacyAdmission ? '&legacyAdmission=true' : ''}`), {
               signal: controller.signal,
             });
         if (controller.signal.aborted) return;
@@ -1010,7 +1028,7 @@ interface LastChatTurn extends LastChatTurnStatus {
 }
 
 export async function fetchLastTurn(sessionId: string, turnId?: string, signal?: AbortSignal): Promise<LastChatTurn> {
-  const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
+  const query = `?compact=true${turnId ? `&turn_id=${encodeURIComponent(turnId)}` : ''}`;
   const result = await request<LastChatTurn>(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`, { signal });
   const execution = parseChatExecutionState(result);
   return { ...result, executionState: execution?.executionState, queuePosition: execution?.queuePosition,
@@ -1078,24 +1096,34 @@ export function fetchChatCommands(signal?: AbortSignal): Promise<{ commands: Cha
   return request('/api/chat/commands', { signal });
 }
 
-export async function fetchChatSessions(signal?: AbortSignal, windowed = false): Promise<{ sessions: ChatSession[]; deletedIds: string[] }> {
+export async function fetchChatSessions(signal?: AbortSignal, windowed = false, pageOnly = false, startCursor = ''): Promise<{ sessions: ChatSession[]; deletedIds: string[]; nextCursor?: string | null }> {
   const sessions: ChatSession[] = [];
   const deleted = new Set<string>();
   const seenCursors = new Set<string>();
-  let cursor = '';
+  let cursor = startCursor;
   while (true) {
     signal?.throwIfAborted();
     const query = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-    const page = await request<ChatSessionPage>(`/api/chat/sessions?limit=50${windowed ? '&windowed=true' : ''}${query}`, { signal });
+    const page = await request<ChatSessionPage>(`/api/chat/sessions?limit=50${windowed ? '&windowed=true&compact=true' : ''}${pageOnly ? '&recent=true' : ''}${query}`, { signal });
     if (!Array.isArray(page?.sessions) || (page.deletedIds !== undefined
       && (!Array.isArray(page.deletedIds) || page.deletedIds.some(id => typeof id !== 'string')))) {
       throw new Error('服务器会话目录回执无效');
     }
     for (const session of page.sessions) sessions.push(session);
     for (const id of page.deletedIds || []) deleted.add(id);
+    if (pageOnly) {
+      if (page.nextCursor != null && (typeof page.nextCursor !== 'string' || !page.nextCursor || page.nextCursor === cursor)) {
+        throw new Error('服务器会话目录游标无效');
+      }
+      const merged = mergeSessionCatalog([], sessions, [...deleted]);
+      catalogSync.observe(merged);
+      return { sessions: merged, deletedIds: [...deleted], nextCursor: page.nextCursor ?? null };
+    }
     if (page.nextCursor == null) {
       const deletedIds = [...deleted];
-      return { sessions: mergeSessionCatalog([], sessions, deletedIds), deletedIds };
+      const merged = mergeSessionCatalog([], sessions, deletedIds);
+      catalogSync.observe(merged);
+      return { sessions: merged, deletedIds };
     }
     if (typeof page.nextCursor !== 'string' || !page.nextCursor || seenCursors.has(page.nextCursor) || !page.sessions.length) {
       throw new Error('服务器会话目录游标无效');
@@ -1104,8 +1132,18 @@ export async function fetchChatSessions(signal?: AbortSignal, windowed = false):
     seenCursors.add(cursor);
   }
 }
-export function syncChatSessions(sessions: ChatSession[]): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
-  return request('/api/chat/sessions?windowed=true', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions }) });
+export async function syncChatSessions(sessions: ChatSession[]): Promise<{ sessions: ChatSession[]; deletedIds?: string[] }> {
+  const dirty = catalogSync.pending(sessions);
+  if (!dirty.length) return { sessions: [] };
+  const result = await request<{ sessions: ChatSession[]; deletedIds?: string[] }>('/api/chat/sessions?windowed=true&compact=true',
+    { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions: dirty }) });
+  catalogSync.observe(result.sessions);
+  return result;
+}
+
+export function fetchAgentEventDetails(reference: string, signal?: AbortSignal): Promise<AgentEvent> {
+  if (!/^[a-f0-9]{64}$/.test(reference)) return Promise.reject(new Error('工具记录地址无效'));
+  return request(`/api/chat/event-details/${reference}`, { signal });
 }
 export function fetchEarlierChatTurns(sessionId: string, before: string, signal?: AbortSignal): Promise<{
   messages: ChatMessage[]; historyWindow: ChatHistoryWindow;

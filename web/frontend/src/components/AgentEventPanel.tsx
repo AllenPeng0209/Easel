@@ -1,4 +1,4 @@
-import { useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import type { AgentEvent } from '../lib/agentEvents';
 import { nativePublicationToolKey, publicationCallKey, publicationEventKey, businessEventKey, normalizeAgentEvent, agentEventKey, agentToolKey, mergeToolSnapshots, toolLifecycle } from '../lib/agentEvents';
 import AgentTodoChecklist from './AgentTodoChecklist';
@@ -15,7 +15,7 @@ import PublicationReceiptCard from './PublicationReceiptCard';
 import { publicationReceiptAccepts, publicationReceiptIdentity, publicationReceiptInScope, publicationReceiptView } from '../lib/publicationReceipt';
 import type { PublicationApprovalRecord } from '../lib/publicationApproval';
 import { requestApprovalPublication } from '../lib/publicationHandoff';
-import { fetchPublicationApproval } from '../lib/api';
+import { fetchAgentEventDetails, fetchPublicationApproval } from '../lib/api';
 import { DisclosureRow } from '../vendor/deepseek-harness/message/DisclosureRow';
 import { projectToolCallTree, type ToolCallBranch } from '../vendor/deepseek-harness/tool/tool-call-tree';
 
@@ -139,16 +139,31 @@ function ToolKeySummary({ records }: { records?: ToolRendererRecords }) {
   </div>;
 }
 
-function ToolEvent({ event, open, automatic, settled, children, childCount, onToggle, records, summaryRecords, located }: {
+function ToolEvent({ event: summary, open, automatic, settled, children, childCount, onToggle, records, summaryRecords, located }: {
   event: AgentEvent; open: boolean; automatic: boolean; settled: boolean; children?: ReactNode; childCount: number;
   onToggle: (open: boolean) => void;
   records?: ToolRendererRecords; located: boolean;
   summaryRecords?: ToolRendererRecords;
 }) {
+  const [details, setDetails] = useState<{ reference: string; event: AgentEvent }>();
+  const [detailError, setDetailError] = useState('');
+  const [detailRetry, setDetailRetry] = useState(0);
+  const reference = typeof summary.detailRef === 'string' ? summary.detailRef : '';
+  const event = useMemo(() => reference && details?.reference === reference
+    ? { ...summary, ...details.event } : summary, [summary, reference, details]);
   const renderer = useMemo(() => resolveToolRenderer(event, settled, records), [event, settled, records]);
   const view = renderer.kind === 'specialized' ? renderer.view : undefined;
   const { status: state, phase, awaitingTerminal: unconfirmed } = toolLifecycle(view?.status ?? event.status, settled);
   const disclosure = useWorkDisclosure(open, automatic);
+  useEffect(() => {
+    if (!disclosure.open || !reference || details?.reference === reference) return;
+    const controller = new AbortController();
+    setDetailError('');
+    void fetchAgentEventDetails(reference, controller.signal).then(event => {
+      if (!controller.signal.aborted) setDetails({ reference, event });
+    }).catch(() => { if (!controller.signal.aborted) setDetailError('完整工具记录暂时无法读取'); });
+    return () => controller.abort();
+  }, [disclosure.open, reference, details?.reference, detailRetry]);
   const running = phase === 'running' || (phase === 'preparing' && state === 'preparing');
   const visualState = phase === 'unconfirmed' || view?.unconfirmed ? 'unconfirmed' : state;
   const workshopRender = view?.workshopRender;
@@ -172,15 +187,18 @@ function ToolEvent({ event, open, automatic, settled, children, childCount, onTo
           workshopRender.initial.id, workshopRender.initial.updated_at, workshopRender.initial.artifact_id])} {...workshopRender} />}
         {childCount > 0 && <span className="agent-tool__child-count">{childCount} 个子调用</span>}</span>}
       collapsedContent={event.parentCallId ? <span className="agent-tool__nested">子调用</span> : undefined}>
-      {children}
+      {disclosure.open && <>{children}
       <div className="agent-tool__details">
+        {reference && details?.reference !== reference && <p className="agent-event__note" role="status">
+          {detailError || '正在读取完整工具记录…'}{detailError && <button type="button" onClick={() => setDetailRetry(value => value + 1)}>重试</button>}
+        </p>}
         {unconfirmed && <p className="agent-event__note">本轮已结束，此工具的最终状态仍未确认。</p>}
         {state === 'failed' && event.callId && <p className="agent-event__note">
           调用编号 <code>{inspectTerminalText(event.callId).text}</code>
         </p>}
         {publication && <p className="agent-event__note">平台结果以发布回执为准。</p>}
         <ToolRendererDetails event={event} renderer={renderer} showTerminalFacts={phase === 'terminal' || settled} />
-      </div>
+      </div></>}
     </DisclosureRow>
     {!disclosure.open && <ToolKeySummary records={summaryRecords} />}
   </div>;

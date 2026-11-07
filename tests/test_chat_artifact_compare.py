@@ -145,7 +145,7 @@ def test_compare_rechecks_role_after_verified_blob_read(artifact_http_environmen
     actor = owner.get('/api/auth/me').json()
     access = AccessStore(root)
     replacement = access.create_user('compare-replacement', secrets.token_urlsafe(24), 'Replacement')
-    access.set_member('default', replacement['id'], 'owner')
+    access.set_member('default', replacement['id'], 'operator')
     original = ArtifactBlobStore.open_blob
     handles = []
 
@@ -153,6 +153,8 @@ def test_compare_rechecks_role_after_verified_blob_read(artifact_http_environmen
         stream = original(store, digest, size)
         handles.append(stream)
         if len(handles) == 1:
+            from tests.repository_helpers import transfer_project
+            transfer_project(access, 'default', replacement['id'])
             access.set_member('default', actor['id'], 'viewer')
         return stream
 

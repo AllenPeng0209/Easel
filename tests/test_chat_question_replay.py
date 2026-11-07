@@ -22,7 +22,7 @@ def test_question_replay_preserves_payload(tmp_path, monkeypatch, stored_as_stri
     ]
     path = web._job_event_file("test-turn")
     path.parent.mkdir()
-    path.write_text("\n".join(json.dumps(event, ensure_ascii=False) for event in events),
+    path.write_text("\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n",
                     encoding="utf-8")
     local = "http://127.0.0.1:7860"
     client = TestClient(web.app, base_url=local, client=("127.0.0.1", 51234))

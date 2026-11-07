@@ -125,6 +125,10 @@ def _is_global(resource: str) -> bool:
 def _capability(method: str, resource: str, kind: str) -> str | None:
     """Classify existing endpoints, including GETs that start tools or write state."""
     read = method in {"GET", "HEAD"}
+    if resource == 'performance/metrics' and method == 'POST':
+        return 'view'
+    if resource == 'performance/summary' and read:
+        return 'view'
     if kind == 'repository':
         if resource == 'transfer' and method == 'POST':
             return 'transfer_ownership'
@@ -144,6 +148,8 @@ def _capability(method: str, resource: str, kind: str) -> str | None:
         return "view" if read else "manage_ip"
     if resource == "chat/sessions" or re.fullmatch(r"chat/sessions/[^/]+", resource):
         return "operate"
+    if re.fullmatch(r'chat/event-details/[a-f0-9]{64}', resource) and method in {'GET', 'HEAD'}:
+        return 'operate'
     if re.fullmatch(r"chat/sessions/[^/]+/history", resource):
         return "operate" if read else None
     if re.fullmatch(r"chat/sessions/[^/]+/export/logs", resource):
@@ -255,7 +261,12 @@ class AccessControlMiddleware:
                            if key.lower() not in {b"cache-control", b"x-content-type-options"}]
                 streaming = any(key.lower() == b"content-type" and value.lower().startswith(b"text/event-stream")
                                 for key, value in headers)
-                headers.extend([(b"cache-control", b"no-store"), (b"x-content-type-options", b"nosniff")])
+                private_media = (scope.get('state', {}).get('validated_private_media') is True
+                                 and method in {'GET', 'HEAD'} and ('/engine/static/' in path or '/media/' in path))
+                # Every revalidation still passes the real cookie, identity and
+                # IP role checks before a media route can opt into private cache.
+                cache_control = b'private, no-cache' if private_media else b'no-store'
+                headers.extend([(b"cache-control", cache_control), (b"x-content-type-options", b"nosniff")])
                 message = {**message, "headers": headers}
             elif (streaming and message["type"] == "http.response.body" and message.get("body")
                   and live_access is not None and not live_access()):

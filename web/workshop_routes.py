@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
 from typing import Callable, Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, ValidationError
 
 from easel.video_workshop import ASSET_SUFFIXES, WorkshopCancelAuthorizationError, WorkshopError, WorkshopStore
@@ -186,14 +189,29 @@ def create_router(outputs_provider: Callable[[], Path], *, publication_workflow=
         except OSError:
             raise HTTPException(503, '视频工坊文件暂时无法读写，请保留项目后重试') from None
 
+    def conditional(data, request):
+        body = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()
+        etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+        headers = {'ETag': etag, 'Cache-Control': 'no-store', 'Vary': 'Cookie, X-Easel-User'}
+        validators = [value.strip().removeprefix('W/') for value in request.headers.get('if-none-match', '').split(',')]
+        if etag in validators or '*' in validators:
+            return Response(status_code=304, headers=headers)
+        return Response(body, media_type='application/json', headers=headers)
+
     @router.get('/status')
     def status():
         return {'state': 'running', 'version': 'native', 'message': 'AI 对话制作，工坊审阅后自动发布'}
 
     @router.get('/projects')
-    def projects():
+    def projects(http_request: Request, summary: bool = False):
         rows = perform(store().list)
-        return {'projects': [perform(workshop_sync, row['id']) for row in rows] if workshop_sync is not None else rows}
+        rows = [perform(workshop_sync, row['id']) for row in rows] if workshop_sync is not None else rows
+        if summary:
+            # Lifecycle receipts stay exact; scripts, asset versions and prompts
+            # belong to the selected project's detail, never a polling list.
+            rows = [{**row, 'script': '', 'raw_content': '', 'assets': [], 'shots': [],
+                     'publication_preparation': None, 'summary': True} for row in rows]
+        return conditional({'projects': rows}, http_request)
 
     @router.get('/jobs')
     def jobs():
@@ -210,8 +228,10 @@ def create_router(outputs_provider: Callable[[], Path], *, publication_workflow=
             perform(workshop_sync, identifier)
         if publication_workflow is not None and getattr(http_request.state, 'project_role', None) in {'owner', 'operator'}:
             from web.workshop_publication import WorkshopPublication
-            return perform(WorkshopPublication(current_store, publication_workflow()).observe, identifier)
-        return perform(current_store.get, identifier)
+            result = perform(WorkshopPublication(current_store, publication_workflow()).observe, identifier)
+        else:
+            result = perform(current_store.get, identifier)
+        return conditional(result, http_request)
 
     @router.patch('/projects/{identifier}')
     def edit(identifier: str, request: EditProject):

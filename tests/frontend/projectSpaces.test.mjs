@@ -28,7 +28,7 @@ function load(project, localStorage = storage({}), userId = '') {
     runInNewContext(code, { ...environment, exports, require: name => read(name.replace('./', '')) });
     return exports;
   }
-  return { scope: read('projectScope'), store: read('store'), prompt: read('promptAdmission'), localStorage, sessionStorage };
+  return { scope: read('projectScope'), store: read('store'), prompt: read('promptAdmission'), localStorage, sessionStorage, location:environment.window.location };
 }
 
 test('identical session IDs and publish drafts stay in their own project and survive reload', () => {
@@ -56,6 +56,15 @@ test('API and native media URLs carry the project; a pending request keeps its o
   a.sessionStorage.setItem('easel_project', 'bbbbbbbbbbbbbbbb');
   assert.equal(a.scope.projectUrl('/api/chat/stream'), '/api/projects/aaaaaaaaaaaaaaaa/chat/stream');
   assert.equal(load('default').scope.projectUrl('/api/accounts'), '/api/accounts');
+});
+
+test('entering an IP marks the workspace route instead of reopening the project homepage', () => {
+  const a=load('aaaaaaaaaaaaaaaa',storage({}),'alice');
+  a.scope.switchProject('bbbbbbbbbbbbbbbb');
+  assert.equal(a.sessionStorage.getItem('easel_user:alice:easel_project'),'bbbbbbbbbbbbbbbb');
+  assert.equal(a.location.hash,'#workspace');
+  a.scope.openProjectHome();
+  assert.equal(a.location.hash,'#projects');
 });
 
 test('two users in the same IP never share conversation history or publication drafts', () => {

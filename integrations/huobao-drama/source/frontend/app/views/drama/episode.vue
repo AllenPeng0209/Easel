@@ -15,6 +15,7 @@
             <span class="studio-meta-pill">{{ currentSubStageLabel }}</span>
             <span class="studio-meta-pill is-progress">{{ pipelineProgress }}/{{ pipelineTotal }}</span>
             <span class="studio-meta-inline">{{ t('episode.topbar.meta', { roles: chars.length, shots: sbs.length }) }}</span>
+            <span v-if="hostJobNotice" class="studio-meta-pill" role="status" aria-live="polite">{{ hostJobNotice }}</span>
           </div>
         </div>
       </div>
@@ -568,7 +569,7 @@
                     </span>
                     <video
                       v-if="hasVid(task.storyboard)"
-                      :src="xiangyaMediaUrl(getVideoUrl(task.storyboard))"
+                      :src="playbackSourceUrl(xiangyaMediaUrl(getVideoUrl(task.storyboard)))"
                       :poster="posterOf(xiangyaMediaUrl(getVideoUrl(task.storyboard))) || undefined"
                       preload="none"
                       playsinline
@@ -732,11 +733,14 @@
                   {{ t('common.download') }}
                 </a>
               </div>
+              <label v-if="playerVideoUrl && !playerIsRemote" class="video-preview-quality">预览画质
+                <select v-model="playbackQuality"><option value="original">原画</option><option value="low">流畅</option></select>
+              </label>
               <div class="video-player-stage">
                 <video
                   v-if="playerVideoUrl"
                   :key="playerVideoUrl"
-                  :src="playerVideoUrl"
+                  :src="playbackSourceUrl(playerVideoUrl)"
                   :poster="playerIsRemote ? undefined : posterOf(playerVideoUrl) || undefined"
                   @error="playerLoadFailed = true"
                   controls
@@ -782,7 +786,7 @@
                   @click="previewHistoryVideo(h)"
                   @keydown.enter.prevent="previewHistoryVideo(h)"
                 >
-                  <video :src="videoSourceUrl(taskVideoPath(h))" :poster="posterOf(videoSourceUrl(taskVideoPath(h))) || undefined" preload="none" muted playsinline tabindex="-1" />
+                  <video :src="playbackSourceUrl(videoSourceUrl(taskVideoPath(h)))" :poster="posterOf(videoSourceUrl(taskVideoPath(h))) || undefined" preload="none" muted playsinline tabindex="-1" />
                   <span class="video-history-time">{{ formatHistoryTime(taskCreatedAt(h)) }}</span>
                   <span v-if="isCurrentVideo(h)" class="video-history-badge">{{ t('episode.vid.current') }}</span>
                   <button v-else type="button" class="video-history-del" :title="t('episode.vid.deleteRecord')" @click.stop="removeHistoryVideo(h)">×</button>
@@ -929,7 +933,7 @@
                   <div class="merge-card-thumb">
                     <video
                       v-if="m.status === 'completed' && m.merged_url"
-                      :src="xiangyaMediaUrl(m.merged_url)"
+                      :src="playbackSourceUrl(xiangyaMediaUrl(m.merged_url))"
                       :poster="posterOf(xiangyaMediaUrl(m.merged_url)) || undefined"
                       preload="none"
                       muted
@@ -994,7 +998,7 @@
                   <div class="exp-thumb">
                     <video
                       v-if="hasVid(sb)"
-                      :src="xiangyaMediaUrl(getVideoUrl(sb))"
+                      :src="playbackSourceUrl(xiangyaMediaUrl(getVideoUrl(sb)))"
                       :poster="posterOf(xiangyaMediaUrl(getVideoUrl(sb))) || undefined"
                       preload="none"
                       muted
@@ -1066,7 +1070,7 @@
               <div class="video-task-preview">
                 <video
                   v-if="row.previewUrl && (row.kind === 'video' || row.kind === 'merge')"
-                  :src="genTaskPreviewSrc(row.previewUrl)"
+                  :src="playbackSourceUrl(genTaskPreviewSrc(row.previewUrl))"
                   :poster="posterOf(genTaskPreviewSrc(row.previewUrl)) || undefined"
                   controls
                   preload="none"
@@ -1365,7 +1369,7 @@
           <div class="merge-viewer-body">
             <video
               :key="previewShot.id"
-              :src="xiangyaMediaUrl(getVideoUrl(previewShot))"
+              :src="playbackSourceUrl(xiangyaMediaUrl(getVideoUrl(previewShot)))"
               controls
               autoplay
               playsinline
@@ -1391,7 +1395,7 @@
           <div class="merge-viewer-body">
             <video
               :key="activeMerge.id"
-              :src="xiangyaMediaUrl(activeMerge.merged_url)"
+              :src="playbackSourceUrl(xiangyaMediaUrl(activeMerge.merged_url))"
               controls
               autoplay
               playsinline
@@ -1488,6 +1492,8 @@ import { localVideoInputProfile, videoDurationConstraints, videoDurationError, v
 import { toastError, mapError, MODERATION_RE } from '~/composables/useToast'
 import LocaleSwitcher from '~/components/LocaleSwitcher.vue'
 import { xiangyaContext, xiangyaAction, xiangyaBack, xiangyaMediaUrl } from '~/composables/useXiangyaBridge'
+import { loadEpisodeAssets } from '~/utils/studio-bootstrap'
+import { playbackMediaUrl } from '~/utils/media-urls'
 
 definePageMeta({ layout: 'studio' })
 
@@ -1498,6 +1504,46 @@ const dramaId = Number(route.params.id)
 const episodeNumber = Number(route.params.episodeNumber)
 
 const drama = ref(null), episode = ref(null), chars = ref([]), scenes = ref([]), propItems = ref([]), sbs = ref([]), mergeData = ref(null)
+const playbackQuality = ref('original')
+const hostJobNotice = ref('')
+let observedHostJob = ''
+function receiveHostReceipt(event) {
+  observedHostJob = event.detail?.id || ''
+  hostJobNotice.value = '任务已接收，等待执行'
+}
+function receiveHostStatus(event) {
+  if (event.detail?.id !== observedHostJob) return
+  hostJobNotice.value = ({ queued: '正在排队', running: '制作进行中', waiting_input: '等待你的确认',
+    completed: '制作已完成', failed: '制作未完成，请查看任务', cancelled: '任务已停止', unconfirmed: '结果待核对' })[event.detail.status] || '正在读取任务状态'
+}
+onMounted(() => { window.addEventListener('xiangya:job-accepted', receiveHostReceipt); window.addEventListener('xiangya:job-status', receiveHostStatus) })
+onBeforeUnmount(() => { window.removeEventListener('xiangya:job-accepted', receiveHostReceipt); window.removeEventListener('xiangya:job-status', receiveHostStatus) })
+const playbackMeasurements = new WeakMap()
+function videoTiming(event) {
+  const video = event.target
+  if (!(video instanceof HTMLVideoElement) || !video.controls) return
+  const context = xiangyaContext()
+  if (!context) return
+  let state = playbackMeasurements.get(video)
+  if (!state || event.type === 'loadstart') {
+    state = { load: performance.now(), ...(!video.paused && state?.play !== undefined ? { play: state.play } : {}) }
+    playbackMeasurements.set(video, state)
+  }
+  const send = (metric, valueMs) => window.parent.postMessage({ type: 'chirpiva-performance', project: context.project,
+    metric, valueMs, label: playbackQuality.value === 'low' ? 'workshop_low' : 'workshop_original' }, window.location.origin)
+  if (event.type === 'loadedmetadata') send('video_metadata', performance.now() - state.load)
+  if (event.type === 'play') { state.play = performance.now(); if (video.readyState >= 2) { send('video_first_frame', 0); state.play = undefined } }
+  if ((event.type === 'loadeddata' || event.type === 'playing') && state.play !== undefined) { send('video_first_frame', performance.now() - state.play); state.play = undefined }
+  if (event.type === 'waiting' && !video.paused) state.wait = performance.now()
+  if (event.type === 'pause') { state.wait = undefined; state.play = undefined }
+  if (event.type === 'canplay' && state.wait !== undefined) { send('video_stall', performance.now() - state.wait); state.wait = undefined }
+}
+const videoTimingEvents = ['loadstart', 'loadedmetadata', 'play', 'loadeddata', 'playing', 'waiting', 'canplay', 'pause']
+onMounted(() => videoTimingEvents.forEach(name => document.addEventListener(name, videoTiming, true)))
+onBeforeUnmount(() => videoTimingEvents.forEach(name => document.removeEventListener(name, videoTiming, true)))
+function playbackSourceUrl(value) {
+  return playbackMediaUrl(value, xiangyaContext()?.prefix, window.location.origin, playbackQuality.value)
+}
 // 工作台面板位置记忆（按剧集隔离）：仅页面刷新(reload)时恢复到上次所在步骤；
 // 从列表/详情页点击进入时始终默认「剧本」面板
 const PANEL_STORE_KEY = `huobao:workbench:panel:${dramaId}:${episodeNumber}`
@@ -2754,10 +2800,11 @@ async function refresh() {
     const ep = drama.value.episodes?.find(e => (e.episode_number || e.episodeNumber) === episodeNumber)
     if (ep) {
       episode.value = ep
-      try { chars.value = await episodeAPI.characters(ep.id) } catch { chars.value = [] }
-      try { scenes.value = await episodeAPI.scenes(ep.id) } catch { scenes.value = [] }
-      try { propItems.value = await episodeAPI.props(ep.id) } catch { propItems.value = [] }
-      const storyboardRows = await episodeAPI.storyboards(ep.id)
+      const modules = await loadEpisodeAssets(episodeAPI, ep.id)
+      chars.value = modules.characters
+      scenes.value = modules.scenes
+      propItems.value = modules.props
+      const storyboardRows = modules.storyboards
       sbs.value = storyboardRows.map(row => {
         const saved = primaryReferenceWrites.value[row.id]
         // A read started before this successful save must not undo the user's
@@ -2785,8 +2832,10 @@ async function refresh() {
   } catch (e) {
     toastError(e)
   }
-  try { mergeData.value = await mergeAPI.status(epId.value) } catch {}
-  await Promise.all([loadGenTasks(), loadExportMerges()])
+  await Promise.all([
+    mergeAPI.status(epId.value).then(data => { mergeData.value = data }).catch(() => {}),
+    loadGenTasks(), loadExportMerges(),
+  ])
 }
 
 function saveRaw() { episodeAPI.update(epId.value, { content: localRaw.value }); episode.value.content = localRaw.value }
@@ -2891,19 +2940,21 @@ async function batchVideoPrompts() {
   if (!sbs.value.length) { toast.warning(t('episode.sb.breakFirst')); return }
   // 选择模式下有勾选 → 仅补齐所选；否则全量补齐缺失
   const ids = (videoSelectMode.value && selectedVideoSbIds.value.length) ? [...selectedVideoSbIds.value] : undefined
+  videoPromptBatch.value = { running: true, total: ids?.length || sbs.value.length, completed: 0 }
   try {
     const res = await episodeAPI.generateVideoPrompts(epId.value, chatModelOverride(), chatConfigId(), ids)
     if (!res?.total) {
       if (res?.already_running) {
         videoPromptBatch.value = { running: true, total: 0, completed: 0 }
         pollVideoPromptBatch()
-      } else toast.info(ids ? t('episode.sb.selectedMissing') : t('episode.sb.allHavePrompts'))
+      } else { videoPromptBatch.value = { running: false, total: 0, completed: 0 }; toast.info(ids ? t('episode.sb.selectedMissing') : t('episode.sb.allHavePrompts')) }
       return
     }
     videoPromptBatch.value = { running: true, total: res.total, completed: 0 }
     toast.info(t('episode.sb.batchStarted', { n: res.total }))
     pollVideoPromptBatch()
   } catch (e) {
+    videoPromptBatch.value = { running: false, total: 0, completed: 0 }
     toastError(e)
   }
 }
@@ -3579,7 +3630,7 @@ async function loadConfigs() {
   } catch (e) { console.error('Failed to load AI configs', e) }
 }
 
-onMounted(async () => { await refresh(); loadConfigs(); syncExtractStatus() })
+onMounted(async () => { await Promise.all([refresh(), loadConfigs()]); syncExtractStatus() })
 
 // ===== 应用内引导（工作台）：沿左侧进度栏走 6 步流水线 =====
 const EPISODE_TOUR = [
@@ -3593,6 +3644,8 @@ onMounted(() => setTimeout(() => autoTour('episode', EPISODE_TOUR, t), 900))
 </script>
 
 <style scoped>
+.video-preview-quality { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; color: var(--text-2); }
+.video-preview-quality select { background: var(--bg-2); color: var(--text-1); border: 1px solid var(--border); border-radius: 5px; padding: 3px 7px; }
 .voice-reference-hint {
   margin: 8px 0 0;
   font-size: 11px;

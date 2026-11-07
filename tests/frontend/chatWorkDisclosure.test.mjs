@@ -14,7 +14,7 @@ const events = [tool('normal', 'completed'), tool('failed', 'failed')];
 const timeline = events.map(({ id, callId, runId, kind, status }) => ({ id, callId, runId, kind, status }));
 const message = { role: 'assistant', content: '', events, timeline, reasoningSummary: { text: '公开详情', truncated: false } };
 
-test('compact keeps optional history folded and leaves failure detail visible, while detailed opens defaults', () => {
+test('compact keeps optional and failed details folded, while detailed opens defaults', () => {
   const Bubble = componentModule('components/MessageBubble.tsx').default;
   const show = detailMode => parseHTML(renderToStaticMarkup(React.createElement(Bubble, {
     message, detailMode, foldWorkDetails: true,
@@ -23,7 +23,8 @@ test('compact keeps optional history folded and leaves failure detail visible, w
   assert.equal(compact.querySelector('[data-agent-timeline]').hasAttribute('open'), false);
   assert.equal(compact.querySelector('[data-reasoning-summary-body]'), null);
   assert.equal(compact.querySelector('[data-tool-call=normal] .agent-tool__details'), null);
-  assert.ok(compact.querySelector('[data-tool-call=failed] .agent-tool__details'));
+  assert.equal(compact.querySelector('[data-tool-call=failed] .agent-tool__details'), null);
+  assert.match(compact.querySelector('[data-tool-call=failed]').textContent, /失败/);
   assert.match(compact.querySelector('[data-agent-timeline] summary').textContent, /1 个失败/);
   const detailed = show('detailed');
   assert.equal(detailed.querySelector('[data-agent-timeline]').hasAttribute('open'), true);
@@ -31,7 +32,7 @@ test('compact keeps optional history folded and leaves failure detail visible, w
   assert.ok(detailed.querySelector('[data-tool-call=normal] .agent-tool__details'));
 });
 
-test('manual choices survive completion, deferred folding and mode changes', async () => {
+test('manual choices survive completion and mode changes without reopening untouched compact details', async () => {
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
   window.location = { pathname: '/', origin: 'http://127.0.0.1:7860' };
   const descriptors = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT'].map(
@@ -48,23 +49,29 @@ test('manual choices survive completion, deferred folding and mode changes', asy
     const click = selector => React.act(() => document.querySelector(selector)
       .dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true })));
     await update('compact', false, true);
-    assert.ok(document.querySelector('[data-reasoning-summary-body]'));
+    assert.equal(document.querySelector('[data-reasoning-summary-body]'), null);
+    assert.equal(document.querySelector('[data-tool-call=normal] .agent-tool__details'), null);
+    assert.equal(document.querySelector('[data-tool-call=failed] .agent-tool__details'), null);
     await click('[data-reasoning-summary] button');
     await click('[data-tool-call=normal] [data-disclosure-row]');
+    await click('[data-agent-timeline] summary');
     await update('compact', false);
     assert.equal(document.querySelector('[data-agent-timeline]').hasAttribute('open'), true);
     await update('compact', true);
-    assert.equal(document.querySelector('[data-agent-timeline]').hasAttribute('open'), false);
-    await click('[data-agent-timeline] summary');
+    assert.equal(document.querySelector('[data-agent-timeline]').hasAttribute('open'), true);
+    assert.ok(document.querySelector('[data-reasoning-summary-body]'));
+    assert.ok(document.querySelector('[data-tool-call=normal] .agent-tool__details'));
+    await click('[data-reasoning-summary] button');
+    await click('[data-tool-call=normal] [data-disclosure-row]');
     await update('detailed', false);
     assert.equal(document.querySelector('[data-reasoning-summary-body]'), null);
     assert.equal(document.querySelector('[data-tool-call=normal] .agent-tool__details'), null);
     assert.ok(document.querySelector('[data-agent-timeline]').hasAttribute('open'));
     await update('compact', true);
     assert.ok(document.querySelector('[data-agent-timeline]').hasAttribute('open'));
-    assert.ok(document.querySelector('[data-tool-call=failed] .agent-tool__details'));
+    assert.equal(document.querySelector('[data-tool-call=failed] .agent-tool__details'), null);
 
-    await update('compact', false, true, 'focus');
+    await update('detailed', false, true, 'focus');
     const focusedAction = document.querySelector('[data-locate-failed-tool]');
     await React.act(() => focusedAction.dispatchEvent(new window.Event('focusin', { bubbles: true })));
     await update('compact', true, false, 'focus');
